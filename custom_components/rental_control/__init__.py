@@ -1,31 +1,44 @@
-"""The ical integration."""
-
+# SPDX-License-Identifier: Apache-2.0
+##############################################################################
+# COPYRIGHT 2021 Andrew Grimberg
+#
+# All rights reserved. This program and the accompanying materials
+# are made available under the terms of the Apache 2.0 License
+# which accompanies this distribution, and is available at
+# https://www.apache.org/licenses/LICENSE-2.0
+#
+# Contributors:
+#   Andrew Grimberg - Initial implementation
+##############################################################################
+"""The Rental Control integration."""
 import asyncio
-from datetime import datetime, timedelta
 import logging
+from datetime import datetime
+from datetime import timedelta
 
-from dateutil.rrule import rruleset, rrulestr
-from dateutil.tz import gettz
 import icalendar
 import voluptuous as vol
-
+from dateutil.rrule import rruleset
+from dateutil.rrule import rrulestr
+from dateutil.tz import gettz
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME, CONF_URL, CONF_VERIFY_SSL
+from homeassistant.const import CONF_NAME
+from homeassistant.const import CONF_URL
+from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.util import Throttle, dt
+from homeassistant.util import dt
+from homeassistant.util import Throttle
 
-from .const import CONF_DAYS, CONF_MAX_EVENTS, DOMAIN
+from .const import CONF_DAYS
+from .const import CONF_MAX_EVENTS
+from .const import DOMAIN
+from .const import PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
 
 
 CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
-
-# TODO List the platforms that you want to support.
-# For your initial PR, limit it to 1 platform.
-PLATFORMS = ["sensor", "calendar"]
-# PLATFORMS = ["sensor"]
 
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=120)
 
@@ -36,7 +49,7 @@ def setup(hass, config):
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Set up ical from a config entry."""
+    """Set up Rental Control from a config entry."""
     config = entry.data
     _LOGGER.debug(
         "Running init async_setup_entry for calendar %s", config.get(CONF_NAME)

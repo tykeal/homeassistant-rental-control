@@ -1,4 +1,6 @@
-
-.vscode/
+__pycache__
+pythonenv*
 .python-version
-*.pyc
+.coverage
+venv
+.venv

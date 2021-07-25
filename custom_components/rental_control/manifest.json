@@ -1,0 +1,12 @@
+{
+  "domain": "rental_control",
+  "name": "Rental Control",
+  "documentation": "https://github.com/tykeal/rental-control",
+  "issue_tracker": "https://github.com/tykeal/rental-control/issues",
+  "dependencies": [],
+  "config_flow": true,
+  "codeowners": ["@tykeal"],
+  "requirements": ["icalendar==4.0.7"],
+  "iot_class": "cloud_polling",
+  "version": "v0.0.0"
+}

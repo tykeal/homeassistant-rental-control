@@ -1,14 +1,15 @@
 """Creating sensors for upcoming events."""
-
-
-from datetime import datetime, timedelta
 import logging
-
+from datetime import datetime
+from datetime import timedelta
 
 from homeassistant.const import CONF_NAME
-from homeassistant.helpers.entity import Entity, generate_entity_id
+from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity import generate_entity_id
 
-from .const import CONF_MAX_EVENTS, DOMAIN, ICON
+from .const import CONF_MAX_EVENTS
+from .const import DOMAIN
+from .const import ICON
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,20 +22,21 @@ async def async_setup_platform(hass, config, add_entities, discovery_info=None):
     name = config.get(CONF_NAME)
     max_events = config.get(CONF_MAX_EVENTS)
 
-    ical_events = hass.data[DOMAIN][name]
-    _LOGGER.debug(f"Data: {ical_events}")
-    await ical_events.update()
+    rental_control_events = hass.data[DOMAIN][name]
+    _LOGGER.debug(f"Data: {rental_control_events}")
+    await rental_control_events.update()
 
-    if ical_events.calendar is None:
+    if rental_control_events.calendar is None:
         _LOGGER.error("Unable to fetch iCal")
         return False
 
     sensors = []
     for eventnumber in range(max_events):
-        sensors.append(ICalSensor(hass, ical_events, DOMAIN + " " + name, eventnumber))
+        sensors.append(
+            ICalSensor(hass, rental_control_events, DOMAIN + " " + name, eventnumber)
+        )
 
     add_entities(sensors)
-
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -43,15 +45,17 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     name = config.get(CONF_NAME)
     max_events = config.get(CONF_MAX_EVENTS)
 
-    ical_events = hass.data[DOMAIN][name]
-    await ical_events.update()
-    if ical_events.calendar is None:
+    rental_control_events = hass.data[DOMAIN][name]
+    await rental_control_events.update()
+    if rental_control_events.calendar is None:
         _LOGGER.error("Unable to fetch iCal")
         return False
 
     sensors = []
     for eventnumber in range(max_events):
-        sensors.append(ICalSensor(hass, ical_events, DOMAIN + " " + name, eventnumber))
+        sensors.append(
+            ICalSensor(hass, rental_control_events, DOMAIN + " " + name, eventnumber)
+        )
 
     async_add_entities(sensors)
 
@@ -66,7 +70,7 @@ class ICalSensor(Entity):
     upcoming event.
     """
 
-    def __init__(self, hass, ical_events, sensor_name, event_number):
+    def __init__(self, hass, rental_control_events, sensor_name, event_number):
         """
         Initialize the sensor.
 
@@ -75,7 +79,7 @@ class ICalSensor(Entity):
         """
         self._event_number = event_number
         self._hass = hass
-        self.ical_events = ical_events
+        self.rental_control_events = rental_control_events
         self._entity_id = generate_entity_id(
             "sensor.{}",
             f"{sensor_name} event {self._event_number}",
@@ -127,9 +131,9 @@ class ICalSensor(Entity):
         """Update the sensor."""
         _LOGGER.debug("Running ICalSensor async update for %s", self.name)
 
-        await self.ical_events.update()
+        await self.rental_control_events.update()
 
-        event_list = self.ical_events.calendar
+        event_list = self.rental_control_events.calendar
         # _LOGGER.debug(f"Event List: {event_list}")
         if event_list and (self._event_number < len(event_list)):
             val = event_list[self._event_number]
