@@ -1,13 +1,18 @@
-"""Config flow for ical integration."""
+"""Config flow for Rental Control integration."""
 import logging
 
-import voluptuous as vol
-
-from homeassistant import config_entries, core, exceptions
-from homeassistant.const import CONF_NAME, CONF_URL, CONF_VERIFY_SSL
 import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
+from homeassistant import config_entries
+from homeassistant import core
+from homeassistant import exceptions
+from homeassistant.const import CONF_NAME
+from homeassistant.const import CONF_URL
+from homeassistant.const import CONF_VERIFY_SSL
 
-from .const import CONF_DAYS, CONF_MAX_EVENTS, DOMAIN
+from .const import CONF_DAYS
+from .const import CONF_MAX_EVENTS
+from .const import DOMAIN
 
 DEFAULT_MAX_EVENTS = 5
 DEFAULT_DAYS = 365
@@ -70,7 +75,7 @@ async def validate_input(hass: core.HomeAssistant, data):
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for ical."""
+    """Handle a config flow for Rental Control."""
 
     VERSION = 1
     # TODO pick one of the available connection classes in homeassistant/config_entries.py

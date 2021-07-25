@@ -1,4 +1,7 @@
 {
-  "name": "iCal Sensor",
-  "domains": ["sensor"]
+  "name": "Rental Control",
+  "hacs": "1.13.2",
+  "domains": ["sensor"],
+  "iot_class": "Cloud Polling",
+  "homeassistant": "2021.7.0"
 }
