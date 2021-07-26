@@ -13,6 +13,8 @@
         "data": {
           "url": "URL",
           "name": "Calendar name",
+          "checkin": "Default Check-in time",
+          "checkout": "Default Check-out time",
           "max_events": "Number of event sensors to create",
           "days": "Maximum number of days into the future to fetch",
           "verify_ssl": "Verify SSL certificates"
