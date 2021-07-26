@@ -31,12 +31,12 @@ DEFAULT_CHECKOUT_TIME = datetime.time(DEFAULT_CHECKOUT, 0)
 DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_NAME): cv.string,
-        vol.Required(CONF_URL): cv.string,
-        vol.Required(CONF_CHECKIN, default=DEFAULT_CHECKIN_TIME): cv.time,
-        vol.Required(CONF_CHECKOUT, default=DEFAULT_CHECKOUT_TIME): cv.time,
-        vol.Required(CONF_DAYS, default=DEFAULT_DAYS): cv.positive_int,
-        vol.Required(CONF_MAX_EVENTS, default=DEFAULT_MAX_EVENTS): cv.positive_int,
-        vol.Required(CONF_VERIFY_SSL, default=True): cv.boolean,
+        vol.Optional(CONF_URL): cv.string,
+        vol.Optional(CONF_CHECKIN, default=DEFAULT_CHECKIN_TIME): cv.time,
+        vol.Optional(CONF_CHECKOUT, default=DEFAULT_CHECKOUT_TIME): cv.time,
+        vol.Optional(CONF_DAYS, default=DEFAULT_DAYS): cv.positive_int,
+        vol.Optional(CONF_MAX_EVENTS, default=DEFAULT_MAX_EVENTS): cv.positive_int,
+        vol.Optional(CONF_VERIFY_SSL, default=True): cv.boolean,
     }
 )
 
