@@ -11,17 +11,22 @@ ISSUE_URL = "https://github.com/tykeal/homeassistant-rental-control/issues"
 ICON = "mdi:account-key"
 
 # Platforms
-SENSOR = "sensor"
 CALENDAR = "calendar"
-PLATFORMS = [SENSOR, CALENDAR]
+SENSOR = "sensor"
+PLATFORMS = [CALENDAR, SENSOR]
 
 # Config
-CONF_MAX_EVENTS = "max_events"
+CONF_CHECKIN = "checkin"
+CONF_CHECKOUT = "checkout"
 CONF_DAYS = "days"
+CONF_MAX_EVENTS = "max_events"
 
 # Defaults
-DEFAULT_NAME = DOMAIN
+DEFAULT_CHECKIN = 16
+DEFAULT_CHECKOUT = 11
+DEFAULT_MAX_DAYS = 365
 DEFAULT_MAX_EVENTS = 5
+DEFAULT_NAME = DOMAIN
 
 STARTUP_MESSAGE = f"""
 -------------------------------------------------------------------
