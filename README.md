@@ -1,5 +1,7 @@
 # Rental Control management for Home Assistant
 
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/tykeal/homeassistant-rental-control/main.svg)](https://results.pre-commit.ci/latest/github/tykeal/homeassistant-rental-control/main)
+
 This integration will create sensors for the next few future calendar events,
 called:
 
