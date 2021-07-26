@@ -1,4 +1,5 @@
 """Config flow for Rental Control integration."""
+import datetime
 import logging
 
 import homeassistant.helpers.config_validation as cv
@@ -10,24 +11,32 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 
+from .const import CONF_CHECKIN
+from .const import CONF_CHECKOUT
 from .const import CONF_DAYS
 from .const import CONF_MAX_EVENTS
+from .const import DEFAULT_CHECKIN
+from .const import DEFAULT_CHECKOUT
+from .const import DEFAULT_DAYS
+from .const import DEFAULT_MAX_EVENTS
 from .const import DOMAIN
-
-DEFAULT_MAX_EVENTS = 5
-DEFAULT_DAYS = 365
 
 _LOGGER = logging.getLogger(__name__)
 
-# TODO adjust the data schema to the data that you need
-# DATA_SCHEMA = vol.Schema({CONF_NAME: cv.string, CONF_URL: cv.url, CONF_MAX_EVENTS: cv.positive_int, CONF_DAYS: cv.positive_int, CONF_VERIFY_SSL: cv.boolean})
+# Get time objects for default checkin/out
+DEFAULT_CHECKIN_TIME = datetime.time(DEFAULT_CHECKIN, 0)
+DEFAULT_CHECKOUT_TIME = datetime.time(DEFAULT_CHECKOUT, 0)
+
+# Configure the DATA_SCHEMA
 DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_NAME): cv.string,
-        vol.Optional(CONF_URL): cv.string,
-        vol.Optional(CONF_MAX_EVENTS, default=DEFAULT_MAX_EVENTS): cv.positive_int,
-        vol.Optional(CONF_DAYS, default=DEFAULT_DAYS): cv.positive_int,
-        vol.Optional(CONF_VERIFY_SSL, default=True): cv.boolean,
+        vol.Required(CONF_URL): cv.string,
+        vol.Required(CONF_CHECKIN, default=DEFAULT_CHECKIN_TIME): cv.time,
+        vol.Required(CONF_CHECKOUT, default=DEFAULT_CHECKOUT_TIME): cv.time,
+        vol.Required(CONF_DAYS, default=DEFAULT_DAYS): cv.positive_int,
+        vol.Required(CONF_MAX_EVENTS, default=DEFAULT_MAX_EVENTS): cv.positive_int,
+        vol.Required(CONF_VERIFY_SSL, default=True): cv.boolean,
     }
 )
 
