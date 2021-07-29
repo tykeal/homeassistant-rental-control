@@ -8,6 +8,7 @@ import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant import core
+from homeassistant import exceptions
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
@@ -60,29 +61,22 @@ def _get_config_schema(input_dict: dict[str, Any] = None) -> vol.Schema:
     )
 
 
-# Configure the DATA_SCHEMA
-DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_NAME): cv.string,
-        vol.Required(CONF_URL): cv.string,
-        vol.Required(CONF_CHECKIN, default=DEFAULT_CHECKIN): cv.string,
-        vol.Required(CONF_CHECKOUT, default=DEFAULT_CHECKOUT): cv.string,
-        vol.Optional(CONF_DAYS, default=DEFAULT_DAYS): cv.positive_int,
-        vol.Optional(CONF_MAX_EVENTS, default=DEFAULT_MAX_EVENTS): cv.positive_int,
-        vol.Optional(CONF_VERIFY_SSL, default=True): cv.boolean,
-    }
-)
-
-
 async def validate_input(hass: core.HomeAssistant, data):
     """Validate the user input allows us to connect.
 
     Data has the keys from DATA_SCHEMA with values provided by the user.
     """
 
-    cv.url(data["url"])
-    cv.time(data["checkin"])
-    cv.time(data["checkout"])
+    try:
+        cv.url(data["url"])
+    except vol.Invalid as bad_url:
+        raise InvalidUrl from bad_url
+
+    try:
+        cv.time(data["checkin"])
+        cv.time(data["checkout"])
+    except vol.Invalid as bad_time:
+        raise BadTime from bad_time
 
     # Return info that you want to store in the config entry.
     return {"title": data[CONF_NAME], "url": data[CONF_URL]}
@@ -103,13 +97,33 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Store current values in case setup fails and user needs to edit
             self._user_schema = _get_config_schema(user_input)
-            try:
-                info = await validate_input(self.hass, user_input)
 
-                return self.async_create_entry(title=info["title"], data=user_input)
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
+            # Validate user input
+            try:
+                cv.url(user_input["url"])
+            except vol.Invalid as err:
+                _LOGGER.exception(err.msg)
+                errors["base"] = "invalid_url"
+
+            try:
+                cv.time(user_input["checkin"])
+                cv.time(user_input["checkout"])
+            except vol.Invalid as err:
+                _LOGGER.exception(err.msg)
+                errors["base"] = "bad_time"
+
+            if not errors:
+                return self.async_create_entry(
+                    title=user_input[CONF_NAME], data=user_input
+                )
 
         schema = self._user_schema or _get_config_schema()
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+
+
+class BadTime(exceptions.HomeAssistantError):
+    """Error with checkin/out time."""
+
+
+class InvalidUrl(exceptions.HomeAssistantError):
+    """Error indicates a malformed URL."""
