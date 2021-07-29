@@ -1,5 +1,8 @@
 """Config flow for Rental Control integration."""
+from __future__ import annotations
+
 import logging
+from typing import Any
 
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
@@ -20,6 +23,42 @@ from .const import DEFAULT_MAX_EVENTS
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _get_config_schema(input_dict: dict[str, Any] = None) -> vol.Schema:
+    """
+    Return schema defaults for init step based on user input/config dict.
+
+    Retain info already provided for future form views by setting them as
+    defaults in schema.
+    """
+    if input_dict is None:
+        input_dict = {}
+
+    return vol.Schema(
+        {
+            vol.Required(CONF_NAME, default=input_dict.get(CONF_NAME)): cv.string,
+            vol.Required(CONF_URL, default=input_dict.get(CONF_URL)): cv.string,
+            vol.Required(
+                CONF_CHECKIN, default=input_dict.get(CONF_CHECKIN, DEFAULT_CHECKIN)
+            ): cv.string,
+            vol.Required(
+                CONF_CHECKOUT, default=input_dict.get(CONF_CHECKOUT, DEFAULT_CHECKOUT)
+            ): cv.string,
+            vol.Optional(
+                CONF_DAYS, default=input_dict.get(CONF_DAYS, DEFAULT_DAYS)
+            ): cv.positive_int,
+            vol.Optional(
+                CONF_MAX_EVENTS,
+                default=input_dict.get(CONF_MAX_EVENTS, DEFAULT_MAX_EVENTS),
+            ): cv.positive_int,
+            vol.Optional(
+                CONF_VERIFY_SSL, default=input_dict.get(CONF_VERIFY_SSL, True)
+            ): cv.boolean,
+        },
+        extra=vol.REMOVE_EXTRA,
+    )
+
 
 # Configure the DATA_SCHEMA
 DATA_SCHEMA = vol.Schema(
@@ -54,10 +93,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def __init__(self) -> None:
+        """Initialize config flow."""
+        self._user_schema = None
+
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
         errors = {}
         if user_input is not None:
+            # Store current values in case setup fails and user needs to edit
+            self._user_schema = _get_config_schema(user_input)
             try:
                 info = await validate_input(self.hass, user_input)
 
@@ -66,6 +111,5 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
 
-        return self.async_show_form(
-            step_id="user", data_schema=DATA_SCHEMA, errors=errors
-        )
+        schema = self._user_schema or _get_config_schema()
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
