@@ -188,6 +188,10 @@ class ICalEvents:
                 except Exception:  # pylint: disable=broad-except
                     pass
 
+                if "Reserved" not in event["SUMMARY"]:
+                    # We don't care about non-reserved events
+                    continue
+
                 _LOGGER.debug("DTSTART in event: %s", event["DTSTART"].dt)
                 dtstart = datetime.combine(
                     event["DTSTART"].dt, self.checkin, dt.DEFAULT_TIME_ZONE
