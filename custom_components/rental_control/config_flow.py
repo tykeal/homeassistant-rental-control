@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import homeassistant.helpers.config_validation as cv
@@ -101,6 +102,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Validate user input
             try:
                 cv.url(user_input["url"])
+                # We currently only support AirBnB ical at this time
+                if not re.search("^https://www.airbnb.com/.*ics", user_input["url"]):
+                    errors["base"] = "bad_ics"
             except vol.Invalid as err:
                 _LOGGER.exception(err.msg)
                 errors["base"] = "invalid_url"
