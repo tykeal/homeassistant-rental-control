@@ -14,29 +14,11 @@ from .const import ICON
 _LOGGER = logging.getLogger(__name__)
 
 
-# async def async_setup_entry(hass, config, add_entities, discovery_info=None):
-async def async_setup_platform(hass, config, add_entities, discovery_info=None):
+async def async_setup_platform(
+    hass, config, add_entities, discovery_info=None
+):  # pylint: disable=unused-argument
     """Set up this integration with config flow."""
     return True
-    """Set up the iCal Sensor."""
-    name = config.get(CONF_NAME)
-    max_events = config.get(CONF_MAX_EVENTS)
-
-    rental_control_events = hass.data[DOMAIN][name]
-    _LOGGER.debug(f"Data: {rental_control_events}")
-    await rental_control_events.update()
-
-    if rental_control_events.calendar is None:
-        _LOGGER.error("Unable to fetch iCal")
-        return False
-
-    sensors = []
-    for eventnumber in range(max_events):
-        sensors.append(
-            ICalSensor(hass, rental_control_events, DOMAIN + " " + name, eventnumber)
-        )
-
-    add_entities(sensors)
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -60,7 +42,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     async_add_entities(sensors)
 
 
-# pylint: disable=too-few-public-methods
 class ICalSensor(Entity):
     """
     Implementation of a iCal sensor.
@@ -85,7 +66,6 @@ class ICalSensor(Entity):
             f"{sensor_name} event {self._event_number}",
             hass=self._hass,
         )
-        # self._name = sensor_name + " event " + str(self._event_number)
         self._event_attributes = {
             "summary": None,
             "description": None,
@@ -134,13 +114,11 @@ class ICalSensor(Entity):
         await self.rental_control_events.update()
 
         event_list = self.rental_control_events.calendar
-        # _LOGGER.debug(f"Event List: {event_list}")
         if event_list and (self._event_number < len(event_list)):
             val = event_list[self._event_number]
             name = val.get("summary", "Unknown")
             start = val.get("start")
 
-            # _LOGGER.debug(f"Val: {val}")
             _LOGGER.debug(
                 "Adding event %s - Start %s - End %s - as event %s to calendar %s",
                 val.get("summary", "unknown"),
@@ -162,4 +140,3 @@ class ICalSensor(Entity):
             self._state = f"{name} - {start.strftime('%-d %B %Y')}"
             if not val.get("all_day"):
                 self._state += f" {start.strftime('%H:%M')}"
-            # self._is_available = True
