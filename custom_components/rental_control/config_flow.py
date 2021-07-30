@@ -8,7 +8,6 @@ from typing import Any
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant import core
 from homeassistant import exceptions
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
@@ -60,27 +59,6 @@ def _get_config_schema(input_dict: dict[str, Any] = None) -> vol.Schema:
         },
         extra=vol.REMOVE_EXTRA,
     )
-
-
-async def validate_input(hass: core.HomeAssistant, data):
-    """Validate the user input allows us to connect.
-
-    Data has the keys from DATA_SCHEMA with values provided by the user.
-    """
-
-    try:
-        cv.url(data["url"])
-    except vol.Invalid as bad_url:
-        raise InvalidUrl from bad_url
-
-    try:
-        cv.time(data["checkin"])
-        cv.time(data["checkout"])
-    except vol.Invalid as bad_time:
-        raise BadTime from bad_time
-
-    # Return info that you want to store in the config entry.
-    return {"title": data[CONF_NAME], "url": data[CONF_URL]}
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
