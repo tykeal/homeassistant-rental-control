@@ -19,7 +19,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up the iCal Calendar platform."""
     config = config_entry.data
     _LOGGER.debug("Running setup_platform for calendar")
-    _LOGGER.debug(f"Conf: {config}")
+    _LOGGER.debug("Conf: %s", config)
     name = config.get(CONF_NAME)
 
     entity_id = generate_entity_id(ENTITY_ID_FORMAT, DOMAIN + " " + name, hass=hass)
@@ -34,7 +34,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 class ICalCalendarEventDevice(CalendarEventDevice):
     """A device for getting the next Task from a WebDav Calendar."""
 
-    def __init__(self, hass, name, entity_id, rental_control_events):
+    def __init__(
+        self, hass, name, entity_id, rental_control_events
+    ):  # pylint: disable=unused-argument
         """Create the iCal Calendar Event Device."""
         self.entity_id = entity_id
         self._event = None
