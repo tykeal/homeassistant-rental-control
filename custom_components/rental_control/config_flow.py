@@ -29,8 +29,9 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
-class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Rental Control."""
+@config_entries.HANDLERS.register(DOMAIN)
+class RentalControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle the config flow for Rental Control."""
 
     VERSION = 1
 
