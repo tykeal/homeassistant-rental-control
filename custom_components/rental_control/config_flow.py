@@ -8,7 +8,6 @@ from typing import Optional
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant import exceptions
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
@@ -119,11 +118,3 @@ def _get_schema(
         },
         extra=ALLOW_EXTRA,
     )
-
-
-class BadTime(exceptions.HomeAssistantError):
-    """Error with checkin/out time."""
-
-
-class InvalidUrl(exceptions.HomeAssistantError):
-    """Error indicates a malformed URL."""
