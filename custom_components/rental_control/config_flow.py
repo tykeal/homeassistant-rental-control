@@ -4,6 +4,7 @@ import re
 from typing import Any
 from typing import Dict
 from typing import Optional
+from typing import Union
 
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
@@ -11,6 +12,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
+from homeassistant.core import callback
 from voluptuous.schema_builder import ALLOW_EXTRA
 
 from .const import CONF_CHECKIN
@@ -22,8 +24,6 @@ from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_DAYS
 from .const import DEFAULT_MAX_EVENTS
 from .const import DOMAIN
-
-# from typing import Union
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +51,34 @@ class RentalControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             user_input,
             self.DEFAULTS,
             # entry_id?
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry):
+        """Link the Options Flow."""
+        return RentalControlOptionsFlow(config_entry)
+
+
+class RentalControlOptionsFlow(config_entries.OptionsFlow):
+    """Options flow for Rental Control."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry):
+        """Initialize Options Flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self,
+        user_input: Dict[str, Any] = None,
+    ) -> Dict[str, Any]:
+        """Handle a flow initialized by the user."""
+        return await _start_config_flow(
+            self,
+            "init",
+            # title?
+            user_input,
+            self.config_entry.data,
+            # self.config_entry.entity_id,
         )
 
 
@@ -94,7 +122,7 @@ def _get_schema(
 
 
 async def _start_config_flow(
-    cls: RentalControlFlowHandler,
+    cls: Union[RentalControlFlowHandler, RentalControlOptionsFlow],
     step_id: str,
     # title: str,
     user_input: Dict[str, Any],
