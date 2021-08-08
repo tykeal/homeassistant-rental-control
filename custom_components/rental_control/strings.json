@@ -20,5 +20,26 @@
       }
     }
   },
+  "options": {
+    "error": {
+      "bad_ics": "Only AirBnB iCalendars are supported",
+      "bad_time": "Check-in/out time is invalid. Use 24 hour time",
+      "invalid_url": "Invalid Calendar URL",
+      "unknown": "Unexpected error"
+    },
+    "step": {
+      "init": {
+        "data": {
+          "checkin": "Default Check-in time",
+          "checkout": "Default Check-out time",
+          "days": "Maximum number of days into the future to fetch",
+          "max_events": "Number of event sensors to create",
+          "name": "Calendar name",
+          "url": "Calendar URL",
+          "verify_ssl": "Verify SSL certificates"
+        }
+      }
+    }
+  },
   "title": "Rental Control"
 }
