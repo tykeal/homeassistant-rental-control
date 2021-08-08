@@ -42,43 +42,16 @@ class RentalControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         CONF_VERIFY_SSL: True,
     }
 
-    def __init__(self) -> None:
-        """Initialize config flow."""
-        self._user_schema = None
-
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
-        errors = {}
-        if user_input is not None:
-            # Store current values in case setup fails and user needs to edit
-            # self._user_schema = _get_config_schema(user_input)
-            self._user_schema = _get_schema(user_input, self.DEFAULTS)
-
-            # Validate user input
-            try:
-                cv.url(user_input["url"])
-                # We currently only support AirBnB ical at this time
-                if not re.search("^https://www.airbnb.com/.*ics", user_input["url"]):
-                    errors["base"] = "bad_ics"
-            except vol.Invalid as err:
-                _LOGGER.exception(err.msg)
-                errors["base"] = "invalid_url"
-
-            try:
-                cv.time(user_input["checkin"])
-                cv.time(user_input["checkout"])
-            except vol.Invalid as err:
-                _LOGGER.exception(err.msg)
-                errors["base"] = "bad_time"
-
-            if not errors:
-                return self.async_create_entry(
-                    title=user_input[CONF_NAME], data=user_input
-                )
-
-        # schema = self._user_schema or _get_config_schema()
-        schema = self._user_schema or _get_schema(user_input, self.DEFAULTS)
-        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+        return await _start_config_flow(
+            self,
+            "user",
+            # title?
+            user_input,
+            self.DEFAULTS,
+            # entry_id?
+        )
 
 
 def _get_schema(
@@ -118,3 +91,39 @@ def _get_schema(
         },
         extra=ALLOW_EXTRA,
     )
+
+
+async def _start_config_flow(
+    cls: RentalControlFlowHandler,
+    step_id: str,
+    # title: str,
+    user_input: Dict[str, Any],
+    defaults: Dict[str, Any] = None,
+    # entry_id: str = None,
+):
+    """Start a config flow."""
+    errors = {}
+
+    if user_input is not None:
+        # Validate user input
+        try:
+            cv.url(user_input["url"])
+            # We currently only support AirBnB ical at this time
+            if not re.search("^https://www.airbnb.com/.*ics", user_input["url"]):
+                errors["base"] = "bad_ics"
+        except vol.Invalid as err:
+            _LOGGER.exception(err.msg)
+            errors["base"] = "invalid_url"
+
+        try:
+            cv.time(user_input["checkin"])
+            cv.time(user_input["checkout"])
+        except vol.Invalid as err:
+            _LOGGER.exception(err.msg)
+            errors["base"] = "bad_time"
+
+        if not errors:
+            return cls.async_create_entry(title=user_input[CONF_NAME], data=user_input)
+
+    schema = _get_schema(user_input, defaults)
+    return cls.async_show_form(step_id=step_id, data_schema=schema, errors=errors)
