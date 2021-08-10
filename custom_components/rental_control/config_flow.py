@@ -13,17 +13,22 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import callback
+from homeassistant.core import HomeAssistant
 from voluptuous.schema_builder import ALLOW_EXTRA
 
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_DAYS
+from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
+from .const import CONF_START_SLOT
 from .const import DEFAULT_CHECKIN
 from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_DAYS
 from .const import DEFAULT_MAX_EVENTS
+from .const import DEFAULT_START_SLOT
 from .const import DOMAIN
+from .const import LOCK_MANAGER
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,8 +87,24 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
         )
 
 
+def _available_lock_managers(
+    hass: HomeAssistant,
+    # entry_id: str = None
+) -> list:
+    """Find lock manager configurations to use."""
+
+    data = ["(none)"]
+    if LOCK_MANAGER not in hass.data:
+        return data
+
+    for entry in hass.config_entries.async_entries(LOCK_MANAGER):
+        data.append(entry.title)
+
+    return data
+
+
 def _get_schema(
-    # hass: HomeAssistant,
+    hass: HomeAssistant,
     user_input: Optional[Dict[str, Any]],
     default_dict: Dict[str, Any],
     # entry_id: str = None,
@@ -110,6 +131,13 @@ def _get_schema(
                 CONF_DAYS, default=_get_default(CONF_DAYS, DEFAULT_DAYS)
             ): cv.positive_int,
             vol.Optional(
+                CONF_LOCK_ENTRY, default=_get_default(CONF_LOCK_ENTRY, "(none)")
+            ): vol.In(_available_lock_managers(hass)),
+            vol.Required(
+                CONF_START_SLOT,
+                default=_get_default(CONF_START_SLOT, DEFAULT_START_SLOT),
+            ): cv.positive_int,
+            vol.Required(
                 CONF_MAX_EVENTS,
                 default=_get_default(CONF_MAX_EVENTS, DEFAULT_MAX_EVENTS),
             ): cv.positive_int,
@@ -153,5 +181,5 @@ async def _start_config_flow(
         if not errors:
             return cls.async_create_entry(title=user_input[CONF_NAME], data=user_input)
 
-    schema = _get_schema(user_input, defaults)
+    schema = _get_schema(cls.hass, user_input, defaults)
     return cls.async_show_form(step_id=step_id, data_schema=schema, errors=errors)

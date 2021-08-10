@@ -4,6 +4,7 @@ NAME = "Rental Control"
 DOMAIN = "rental_control"
 DOMAIN_DATA = f"{DOMAIN}_DATA"
 VERSION = "0.0.1"
+LOCK_MANAGER = "keymaster"
 
 ISSUE_URL = "https://github.com/tykeal/homeassistant-rental-control/issues"
 
@@ -19,7 +20,9 @@ PLATFORMS = [CALENDAR, SENSOR]
 CONF_CHECKIN = "checkin"
 CONF_CHECKOUT = "checkout"
 CONF_DAYS = "days"
+CONF_LOCK_ENTRY = "keymaster_entry_id"
 CONF_MAX_EVENTS = "max_events"
+CONF_START_SLOT = "start_slot"
 
 # Defaults
 DEFAULT_CHECKIN = "16:00"
@@ -27,6 +30,7 @@ DEFAULT_CHECKOUT = "11:00"
 DEFAULT_DAYS = 365
 DEFAULT_MAX_EVENTS = 5
 DEFAULT_NAME = DOMAIN
+DEFAULT_START_SLOT = 10
 
 STARTUP_MESSAGE = f"""
 -------------------------------------------------------------------
