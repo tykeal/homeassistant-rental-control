@@ -17,7 +17,7 @@ repos:
       - id: black
 
   - repo: https://github.com/pycqa/flake8
-    rev: 3.9.2
+    rev: 4.0.1
     hooks:
       - id: flake8
 
@@ -33,7 +33,7 @@ repos:
         stages: [commit]
 
   - repo: https://github.com/jorisroovers/gitlint
-    rev: v0.15.1
+    rev: v0.16.0
     hooks:
       - id: gitlint
 
