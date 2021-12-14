@@ -45,8 +45,8 @@ class ICalCalendarEventDevice(CalendarEventDevice):
         self.rental_control_events = rental_control_events
 
     @property
-    def device_state_attributes(self):
-        """Return the device state attributes."""
+    def extra_state_attributes(self):
+        """Return the custom state attributes."""
         return {"offset_reached": self._offset_reached}
 
     @property
