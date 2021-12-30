@@ -103,6 +103,9 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
         options={},
     )
 
+    # Update the calendar config
+    hass.data[DOMAIN][entry.data.get(CONF_NAME)].update_config(new_data)
+
 
 class ICalEvents:
     """Get a list of events."""
@@ -176,6 +179,18 @@ class ICalEvents:
                     )
                     self.event = event
                     found_next_event = True
+
+    def update_config(self, config):
+        """Update config entries."""
+        self.name = config.get(CONF_NAME)
+        self.url = config.get(CONF_URL)
+        # our config flow guarantees that checkin and checkout are valid times
+        # just use cv.time to get the parsed time object
+        self.checkin = cv.time(config.get(CONF_CHECKIN))
+        self.checkout = cv.time(config.get(CONF_CHECKOUT))
+        self.max_events = config.get(CONF_MAX_EVENTS)
+        self.days = config.get(CONF_DAYS)
+        self.verify_ssl = config.get(CONF_VERIFY_SSL)
 
     def _ical_parser(self, calendar, from_date, to_date):
         """Return a sorted list of events from a icalendar object."""
