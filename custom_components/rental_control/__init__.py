@@ -48,7 +48,7 @@ def setup(hass, config):  # pylint: disable=unused-argument
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Rental Control from a config entry."""
     config = entry.data
     _LOGGER.debug(
@@ -64,6 +64,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass.async_create_task(
             hass.config_entries.async_forward_entry_setup(entry, component)
         )
+
+    entry.add_update_listener(update_listener)
 
     return True
 
@@ -84,6 +86,22 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass.data[DOMAIN].pop(config.get(CONF_NAME))
 
     return unload_ok
+
+
+async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Update listener."""
+    # No need to update if the options match the data
+    if not entry.options:
+        return
+
+    new_data = entry.options.copy()
+
+    hass.config_entries.async_update_entry(
+        entry=entry,
+        unique_id=entry.options[CONF_NAME],
+        data=new_data,
+        options={},
+    )
 
 
 class ICalEvents:
