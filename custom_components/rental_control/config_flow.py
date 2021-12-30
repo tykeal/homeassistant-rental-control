@@ -20,12 +20,14 @@ from voluptuous.schema_builder import ALLOW_EXTRA
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_DAYS
+from .const import CONF_EVENT_PREFIX
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
 from .const import CONF_START_SLOT
 from .const import DEFAULT_CHECKIN
 from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_DAYS
+from .const import DEFAULT_EVENT_PREFIX
 from .const import DEFAULT_MAX_EVENTS
 from .const import DEFAULT_START_SLOT
 from .const import DOMAIN
@@ -44,6 +46,7 @@ class RentalControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         CONF_CHECKIN: DEFAULT_CHECKIN,
         CONF_CHECKOUT: DEFAULT_CHECKOUT,
         CONF_DAYS: DEFAULT_DAYS,
+        CONF_EVENT_PREFIX: DEFAULT_EVENT_PREFIX,
         CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
         CONF_VERIFY_SSL: True,
     }
@@ -141,6 +144,10 @@ def _get_schema(
         {
             vol.Required(CONF_NAME, default=_get_default(CONF_NAME)): cv.string,
             vol.Required(CONF_URL, default=_get_default(CONF_URL)): cv.string,
+            vol.Optional(
+                CONF_EVENT_PREFIX,
+                default=_get_default(CONF_EVENT_PREFIX, DEFAULT_EVENT_PREFIX),
+            ): cv.string,
             vol.Required(
                 CONF_CHECKIN, default=_get_default(CONF_CHECKIN, DEFAULT_CHECKIN)
             ): cv.string,

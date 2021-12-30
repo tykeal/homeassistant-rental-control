@@ -31,6 +31,7 @@ from homeassistant.util import Throttle
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_DAYS
+from .const import CONF_EVENT_PREFIX
 from .const import CONF_MAX_EVENTS
 from .const import DOMAIN
 from .const import PLATFORMS
@@ -116,6 +117,7 @@ class ICalEvents:
         """Set up a calendar object."""
         self.hass = hass
         self.name = config.get(CONF_NAME)
+        self.event_prefix = config.get(CONF_EVENT_PREFIX)
         self.url = config.get(CONF_URL)
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
@@ -184,6 +186,7 @@ class ICalEvents:
         """Update config entries."""
         self.name = config.get(CONF_NAME)
         self.url = config.get(CONF_URL)
+        self.event_prefix = config.get(CONF_EVENT_PREFIX)
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
         self.checkin = cv.time(config.get(CONF_CHECKIN))
@@ -240,6 +243,10 @@ class ICalEvents:
                         event["DTEND"].dt, self.checkout, dt.DEFAULT_TIME_ZONE
                     )
                 end = dtend
+
+                # Modify the SUMMARY if we have an event_prefix
+                if self.event_prefix:
+                    event["SUMMARY"] = self.event_prefix + " " + event["SUMMARY"]
 
                 event_dict = self._ical_event_dict(start, end, from_date, event)
                 if event_dict:
