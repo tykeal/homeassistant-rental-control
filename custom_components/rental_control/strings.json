@@ -4,6 +4,7 @@
       "bad_ics": "Only AirBnB iCalendars are supported",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
       "invalid_url": "Invalid Calendar URL",
+      "same_name": "Name already in use",
       "unknown": "Unexpected error"
     },
     "step": {
@@ -27,6 +28,7 @@
       "bad_ics": "Only AirBnB iCalendars are supported",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
       "invalid_url": "Invalid Calendar URL",
+      "same_name": "Name already in use",
       "unknown": "Unexpected error"
     },
     "step": {
