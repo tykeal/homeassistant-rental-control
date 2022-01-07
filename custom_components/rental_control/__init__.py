@@ -31,6 +31,7 @@ from homeassistant.util import Throttle
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_DAYS
+from .const import CONF_EVENT_PREFIX
 from .const import CONF_MAX_EVENTS
 from .const import DOMAIN
 from .const import PLATFORMS
@@ -48,7 +49,7 @@ def setup(hass, config):  # pylint: disable=unused-argument
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Rental Control from a config entry."""
     config = entry.data
     _LOGGER.debug(
@@ -64,6 +65,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass.async_create_task(
             hass.config_entries.async_forward_entry_setup(entry, component)
         )
+
+    entry.add_update_listener(update_listener)
 
     return True
 
@@ -86,6 +89,25 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     return unload_ok
 
 
+async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Update listener."""
+    # No need to update if the options match the data
+    if not entry.options:
+        return
+
+    new_data = entry.options.copy()
+
+    hass.config_entries.async_update_entry(
+        entry=entry,
+        unique_id=entry.options[CONF_NAME],
+        data=new_data,
+        options={},
+    )
+
+    # Update the calendar config
+    hass.data[DOMAIN][entry.data.get(CONF_NAME)].update_config(new_data)
+
+
 class ICalEvents:
     """Get a list of events."""
 
@@ -95,6 +117,7 @@ class ICalEvents:
         """Set up a calendar object."""
         self.hass = hass
         self.name = config.get(CONF_NAME)
+        self.event_prefix = config.get(CONF_EVENT_PREFIX)
         self.url = config.get(CONF_URL)
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
@@ -159,6 +182,19 @@ class ICalEvents:
                     self.event = event
                     found_next_event = True
 
+    def update_config(self, config):
+        """Update config entries."""
+        self.name = config.get(CONF_NAME)
+        self.url = config.get(CONF_URL)
+        self.event_prefix = config.get(CONF_EVENT_PREFIX)
+        # our config flow guarantees that checkin and checkout are valid times
+        # just use cv.time to get the parsed time object
+        self.checkin = cv.time(config.get(CONF_CHECKIN))
+        self.checkout = cv.time(config.get(CONF_CHECKOUT))
+        self.max_events = config.get(CONF_MAX_EVENTS)
+        self.days = config.get(CONF_DAYS)
+        self.verify_ssl = config.get(CONF_VERIFY_SSL)
+
     def _ical_parser(self, calendar, from_date, to_date):
         """Return a sorted list of events from a icalendar object."""
 
@@ -207,6 +243,10 @@ class ICalEvents:
                         event["DTEND"].dt, self.checkout, dt.DEFAULT_TIME_ZONE
                     )
                 end = dtend
+
+                # Modify the SUMMARY if we have an event_prefix
+                if self.event_prefix:
+                    event["SUMMARY"] = self.event_prefix + " " + event["SUMMARY"]
 
                 event_dict = self._ical_event_dict(start, end, from_date, event)
                 if event_dict:

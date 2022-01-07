@@ -3,7 +3,7 @@
   "name": "Rental Control",
   "documentation": "https://github.com/tykeal/rental-control",
   "issue_tracker": "https://github.com/tykeal/rental-control/issues",
-  "dependencies": [],
+  "dependencies": ["keymaster"],
   "config_flow": true,
   "codeowners": ["@tykeal"],
   "requirements": ["icalendar==4.0.7"],

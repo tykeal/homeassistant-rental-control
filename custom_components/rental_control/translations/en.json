@@ -4,6 +4,7 @@
       "bad_ics": "Only AirBnB iCalendars are supported",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
       "invalid_url": "Invalid Calendar URL",
+      "same_name": "Name already in use",
       "unknown": "Unexpected error"
     },
     "step": {
@@ -12,8 +13,11 @@
           "checkin": "Default Check-in time",
           "checkout": "Default Check-out time",
           "days": "Maximum number of days into the future to fetch",
+          "event_prefix": "Prefix for all events (useful if linking more than one rental)",
+          "keymaster_entry_id": "Keymaster configuration to manage",
           "max_events": "Number of event sensors to create",
           "name": "Calendar name",
+          "start_slot": "Starting lock slot for management",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates"
         }
@@ -25,6 +29,7 @@
       "bad_ics": "Only AirBnB iCalendars are supported",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
       "invalid_url": "Invalid Calendar URL",
+      "same_name": "Name already in use",
       "unknown": "Unexpected error"
     },
     "step": {
@@ -33,8 +38,11 @@
           "checkin": "Default Check-in time",
           "checkout": "Default Check-out time",
           "days": "Maximum number of days into the future to fetch",
+          "event_prefix": "Prefix for all events (useful if linking more than one rental)",
+          "keymaster_entry_id": "Keymaster configuration to manage",
           "max_events": "Number of event sensors to create",
           "name": "Calendar name",
+          "start_slot": "Starting lock slot for management",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates"
         }
