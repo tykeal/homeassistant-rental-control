@@ -136,6 +136,11 @@ def _get_schema(
     if user_input is None:
         user_input = {}
 
+    if CONF_LOCK_ENTRY in default_dict.keys() and default_dict[CONF_LOCK_ENTRY] is None:
+        check_dict = default_dict.copy()
+        check_dict.pop(CONF_LOCK_ENTRY, None)
+        default_dict = check_dict
+
     def _get_default(key: str, fallback_default: Any = None) -> None:
         """Gets default value for key."""
         return user_input.get(key, default_dict.get(key, fallback_default))
@@ -207,6 +212,10 @@ async def _start_config_flow(
     description_placeholders = {}
 
     if user_input is not None:
+        # Convert (none) to None
+        if user_input[CONF_LOCK_ENTRY] == "(none)":
+            user_input[CONF_LOCK_ENTRY] = None
+
         # Regular flow has an async function, options flow has a sync function
         # so we need to handle them conditionally
         if asyncio.iscoroutinefunction(cls._get_unique_name_error):
