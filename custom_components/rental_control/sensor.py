@@ -67,7 +67,7 @@ class ICalSensor(Entity):
             hass=self._hass,
         )
         self._event_attributes = {
-            "summary": None,
+            "summary": "No reservation",
             "description": None,
             "location": None,
             "start": None,
@@ -140,3 +140,19 @@ class ICalSensor(Entity):
             self._state = f"{name} - {start.strftime('%-d %B %Y')}"
             if not val.get("all_day"):
                 self._state += f" {start.strftime('%H:%M')}"
+        else:
+            # No reservations
+            _LOGGER.debug(
+                "No events available for sensor %s, removing from calendar %s",
+                str(self._event_number),
+                self.name,
+            )
+            self._event_attributes = {
+                "summary": "No reservation",
+                "description": None,
+                "location": None,
+                "start": None,
+                "end": None,
+                "eta": None,
+            }
+            self._state = "No reservation"
