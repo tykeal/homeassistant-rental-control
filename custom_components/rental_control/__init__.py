@@ -195,10 +195,17 @@ class ICalEvents:
         self.days = config.get(CONF_DAYS)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
 
+        # updated the calendar in case the fetch days has changed
+        self.calendar = self._refresh_event_dict()
+
     def _ical_parser(self, calendar, from_date, to_date):
         """Return a sorted list of events from a icalendar object."""
 
         events = []
+
+        _LOGGER.debug(
+            "In _ical_parser:: from_date: %s; to_date: %s", from_date, to_date
+        )
 
         for event in calendar.walk("VEVENT"):
             # RRULEs should not exist in AirBnB bookings, so log and error and
@@ -213,13 +220,14 @@ class ICalEvents:
                     # Just ignore events that ended a long time ago
                     if "DTEND" in event and event[
                         "DTEND"
-                    ].dt.date() < from_date.date() - timedelta(days=30):
+                    ].dt < from_date.date() - timedelta(days=30):
                         continue
                 except Exception:  # pylint: disable=broad-except
                     pass
+
                 try:
                     # Ignore dates that are too far in the future
-                    if "DSTART" in event and event["DTSTART"].dt <= to_date.date():
+                    if "DTSTART" in event and event["DTSTART"].dt > to_date.date():
                         continue
                 except Exception:  # pylint: disable=broad-except
                     pass
@@ -238,7 +246,7 @@ class ICalEvents:
                 if "DTEND" not in event:
                     dtend = dtstart
                 else:
-                    _LOGGER.debug("DTEND in event")
+                    _LOGGER.debug("DTEND in event: %s", event["DTEND"].dt)
                     dtend = datetime.combine(
                         event["DTEND"].dt, self.checkout, dt.DEFAULT_TIME_ZONE
                     )
@@ -288,3 +296,11 @@ class ICalEvents:
         }
         _LOGGER.debug("Event to add: %s", str(event_dict))
         return event_dict
+
+    def _refresh_event_dict(self):
+        """Ensure that all events in the calendar are start before max days."""
+
+        cal = self.calendar
+        days = dt.start_of_local_day() + timedelta(days=self.days)
+
+        return [x for x in cal if x["start"].date() <= days.date()]
