@@ -7,6 +7,7 @@ from typing import Dict
 from typing import Optional
 from typing import Union
 
+import async_timeout
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
@@ -15,6 +16,7 @@ from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import callback
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from voluptuous.schema_builder import ALLOW_EXTRA
 
 from .const import CONF_CHECKIN
@@ -32,6 +34,7 @@ from .const import DEFAULT_MAX_EVENTS
 from .const import DEFAULT_START_SLOT
 from .const import DOMAIN
 from .const import LOCK_MANAGER
+from .const import REQUEST_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -226,8 +229,22 @@ async def _start_config_flow(
         # Validate user input
         try:
             cv.url(user_input["url"])
-            # We currently only support AirBnB ical at this time
-            if not re.search("^https://www\\.airbnb\\..*ics", user_input["url"]):
+            # We require that the URL be an SSL URL
+            if not re.search("^https://", user_input["url"]):
+                errors["base"] = "invalid_url"
+
+            session = async_get_clientsession(
+                cls.hass, verify_ssl=user_input["verify_ssl"]
+            )
+            with async_timeout.timeout(REQUEST_TIMEOUT):
+                resp = await session.get(user_input["url"])
+            if resp.status != 200:
+                _LOGGER.error(
+                    "%s returned %s - %s", user_input["url"], resp.status, resp.reason
+                )
+                errors["base"] = "unknown"
+            # We require text/calendar in the content-type header
+            if "text/calendar" not in resp.content_type:
                 errors["base"] = "bad_ics"
         except vol.Invalid as err:
             _LOGGER.exception(err.msg)

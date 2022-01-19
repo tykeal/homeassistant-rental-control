@@ -8,6 +8,9 @@ LOCK_MANAGER = "keymaster"
 
 ISSUE_URL = "https://github.com/tykeal/homeassistant-rental-control/issues"
 
+# In seconds; argument to asyncio.timeout
+REQUEST_TIMEOUT = 60
+
 # Icons
 ICON = "mdi:account-key"
 
