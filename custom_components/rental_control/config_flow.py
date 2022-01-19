@@ -227,7 +227,7 @@ async def _start_config_flow(
         try:
             cv.url(user_input["url"])
             # We currently only support AirBnB ical at this time
-            if not re.search("^https://www.airbnb.com/.*ics", user_input["url"]):
+            if not re.search("^https://www\\.airbnb\\..*ics", user_input["url"]):
                 errors["base"] = "bad_ics"
         except vol.Invalid as err:
             _LOGGER.exception(err.msg)
