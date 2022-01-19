@@ -232,8 +232,8 @@ class ICalEvents:
                 except Exception:  # pylint: disable=broad-except
                     pass
 
-                if "Reserved" not in event["SUMMARY"]:
-                    # We don't care about non-reserved events
+                if any(x in event["SUMMARY"] for x in ["Blocked", "Not available"]):
+                    # Skip Blocked or 'Not available' events
                     continue
 
                 _LOGGER.debug("DTSTART in event: %s", event["DTSTART"].dt)
