@@ -16,9 +16,12 @@ And it will create a calendar-entry that can be used in the calendar cards etc.
 
 ## Installation
 
-Make sure that you have installed
+To make full use of this integration, install
 [Keymaster](https://github.com/FutureTense/keymaster) as this integration
 depends upon it.
+
+Making changes to checkin/checkout times of events will not be possible on an
+individual event basis without Keymaster
 
 Copy all files from the "custom_components/rental-control" directory to your
 home-assistant config directory under custom_components/rental-control.
