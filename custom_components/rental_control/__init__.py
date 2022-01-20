@@ -32,6 +32,7 @@ from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
+from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_MAX_EVENTS
 from .const import DOMAIN
 from .const import PLATFORMS
@@ -125,6 +126,13 @@ class ICalEvents:
         self.checkout = cv.time(config.get(CONF_CHECKOUT))
         self.max_events = config.get(CONF_MAX_EVENTS)
         self.days = config.get(CONF_DAYS)
+        # Early versions did not have this variable, as such it may not be
+        # set, this should guard against issues until we're certain
+        # we can remove this guard.
+        try:
+            self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
+        except NameError:
+            self.ignore_non_reserved = None
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
         self.calendar = []
         self.event = None
@@ -193,6 +201,13 @@ class ICalEvents:
         self.checkout = cv.time(config.get(CONF_CHECKOUT))
         self.max_events = config.get(CONF_MAX_EVENTS)
         self.days = config.get(CONF_DAYS)
+        # Early versions did not have this variable, as such it may not be
+        # set, this should guard against issues until we're certain
+        # we can remove this guard.
+        try:
+            self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
+        except NameError:
+            self.ignore_non_reserved = None
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
 
         # updated the calendar in case the fetch days has changed
@@ -232,9 +247,15 @@ class ICalEvents:
                 except Exception:  # pylint: disable=broad-except
                     pass
 
-                if any(x in event["SUMMARY"] for x in ["Blocked", "Not available"]):
-                    # Skip Blocked or 'Not available' events
-                    continue
+                # Ignore Blocked or Not available by default, but if false,
+                # keep the events.
+                if (
+                    isinstance(self.ignore_non_reserved, type(None))
+                    or self.ignore_non_reserved
+                ):
+                    if any(x in event["SUMMARY"] for x in ["Blocked", "Not available"]):
+                        # Skip Blocked or 'Not available' events
+                        continue
 
                 _LOGGER.debug("DTSTART in event: %s", event["DTSTART"].dt)
                 dtstart = datetime.combine(

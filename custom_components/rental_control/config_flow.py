@@ -23,6 +23,7 @@ from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
+from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
 from .const import CONF_START_SLOT
@@ -49,6 +50,7 @@ class RentalControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         CONF_CHECKIN: DEFAULT_CHECKIN,
         CONF_CHECKOUT: DEFAULT_CHECKOUT,
         CONF_DAYS: DEFAULT_DAYS,
+        CONF_IGNORE_NON_RESERVED: True,
         CONF_EVENT_PREFIX: DEFAULT_EVENT_PREFIX,
         CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
         CONF_VERIFY_SSL: True,
@@ -176,6 +178,10 @@ def _get_schema(
                 CONF_MAX_EVENTS,
                 default=_get_default(CONF_MAX_EVENTS, DEFAULT_MAX_EVENTS),
             ): cv.positive_int,
+            vol.Optional(
+                CONF_IGNORE_NON_RESERVED,
+                default=_get_default(CONF_IGNORE_NON_RESERVED, True),
+            ): cv.boolean,
             vol.Optional(
                 CONF_VERIFY_SSL, default=_get_default(CONF_VERIFY_SSL, True)
             ): cv.boolean,
