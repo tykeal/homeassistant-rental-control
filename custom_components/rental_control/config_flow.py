@@ -215,10 +215,6 @@ async def _start_config_flow(
     description_placeholders = {}
 
     if user_input is not None:
-        # Convert (none) to None
-        if user_input[CONF_LOCK_ENTRY] == "(none)":
-            user_input[CONF_LOCK_ENTRY] = None
-
         # Regular flow has an async function, options flow has a sync function
         # so we need to handle them conditionally
         if asyncio.iscoroutinefunction(cls._get_unique_name_error):
@@ -258,6 +254,13 @@ async def _start_config_flow(
             errors["base"] = "bad_time"
 
         if not errors:
+            # Only do this conversion if there are no errors and it needs to be
+            # done. Doing this before the errors check will lead to later
+            # validation issues should the user not reset the lock entry
+            # Convert (none) to None
+            if user_input[CONF_LOCK_ENTRY] == "(none)":
+                user_input[CONF_LOCK_ENTRY] = None
+
             return cls.async_create_entry(title=title, data=user_input)
 
         return _show_config_form(
