@@ -66,15 +66,19 @@ class ICalSensor(Entity):
             f"{sensor_name} event {self._event_number}",
             hass=self._hass,
         )
+        if rental_control_events.event_prefix:
+            summary = f"{rental_control_events.event_prefix} No reservation"
+        else:
+            summary = "No reservation"
         self._event_attributes = {
-            "summary": "No reservation",
+            "summary": summary,
             "description": None,
             "location": None,
             "start": None,
             "end": None,
             "eta": None,
         }
-        self._state = None
+        self._state = summary
         self._is_available = None
 
     @property
@@ -147,12 +151,16 @@ class ICalSensor(Entity):
                 str(self._event_number),
                 self.name,
             )
+            if self.rental_control_events.event_prefix:
+                summary = f"{self.rental_control_events.event_prefix} No reservation"
+            else:
+                summary = "No reservation"
             self._event_attributes = {
-                "summary": "No reservation",
+                "summary": summary,
                 "description": None,
                 "location": None,
                 "start": None,
                 "end": None,
                 "eta": None,
             }
-            self._state = "No reservation"
+            self._state = summary
