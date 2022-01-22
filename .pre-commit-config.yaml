@@ -1,6 +1,7 @@
 ---
 ci:
   autofix_commit_msg: "Chore: pre-commit autofixes"
+  autofix_prs: false
   autoupdate_commit_msg: "Chore: pre-commit autoupdate"
 
 repos:
