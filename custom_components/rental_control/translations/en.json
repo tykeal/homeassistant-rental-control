@@ -19,6 +19,7 @@
           "max_events": "Number of event sensors to create",
           "name": "Calendar name",
           "start_slot": "Starting lock slot for management",
+          "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates"
         }
@@ -45,6 +46,7 @@
           "max_events": "Number of event sensors to create",
           "name": "Calendar name",
           "start_slot": "Starting lock slot for management",
+          "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates"
         }
