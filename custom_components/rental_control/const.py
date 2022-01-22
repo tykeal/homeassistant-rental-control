@@ -28,6 +28,7 @@ CONF_IGNORE_NON_RESERVED = "ignore_non_reserved"
 CONF_LOCK_ENTRY = "keymaster_entry_id"
 CONF_MAX_EVENTS = "max_events"
 CONF_START_SLOT = "start_slot"
+CONF_TIMEZONE = "timezone"
 
 # Defaults
 DEFAULT_CHECKIN = "16:00"

@@ -15,6 +15,7 @@ import asyncio
 import logging
 from datetime import datetime
 from datetime import timedelta
+from zoneinfo import ZoneInfo  # noreorder
 
 import homeassistant.helpers.config_validation as cv
 import icalendar
@@ -34,6 +35,7 @@ from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_MAX_EVENTS
+from .const import CONF_TIMEZONE
 from .const import DOMAIN
 from .const import PLATFORMS
 
@@ -120,6 +122,13 @@ class ICalEvents:
         self.name = config.get(CONF_NAME)
         self.event_prefix = config.get(CONF_EVENT_PREFIX)
         self.url = config.get(CONF_URL)
+        # Early versions did not have this variable, as such it may not be
+        # set, this should guard against issues until we're certain we can
+        # remove this guard.
+        try:
+            self.timezone = ZoneInfo(config.get(CONF_TIMEZONE))
+        except TypeError:
+            self.timezone = dt.DEFAULT_TIME_ZONE
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
         self.checkin = cv.time(config.get(CONF_CHECKIN))
@@ -194,6 +203,13 @@ class ICalEvents:
         """Update config entries."""
         self.name = config.get(CONF_NAME)
         self.url = config.get(CONF_URL)
+        # Early versions did not have this variable, as such it may not be
+        # set, this should guard against issues until we're certain
+        # we can remove this guard.
+        try:
+            self.timezone = ZoneInfo(config.get(CONF_TIMEZONE))
+        except TypeError:
+            self.timezone = dt.DEFAULT_TIME_ZONE
         self.event_prefix = config.get(CONF_EVENT_PREFIX)
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
@@ -259,7 +275,7 @@ class ICalEvents:
 
                 _LOGGER.debug("DTSTART in event: %s", event["DTSTART"].dt)
                 dtstart = datetime.combine(
-                    event["DTSTART"].dt, self.checkin, dt.DEFAULT_TIME_ZONE
+                    event["DTSTART"].dt, self.checkin, self.timezone
                 )
 
                 start = dtstart
@@ -269,7 +285,7 @@ class ICalEvents:
                 else:
                     _LOGGER.debug("DTEND in event: %s", event["DTEND"].dt)
                     dtend = datetime.combine(
-                        event["DTEND"].dt, self.checkout, dt.DEFAULT_TIME_ZONE
+                        event["DTEND"].dt, self.checkout, self.timezone
                     )
                 end = dtend
 
@@ -304,13 +320,13 @@ class ICalEvents:
             "Start: %s Tzinfo: %s Default: %s StartAs %s",
             str(start),
             str(start.tzinfo),
-            dt.DEFAULT_TIME_ZONE,
-            start.astimezone(dt.DEFAULT_TIME_ZONE),
+            self.timezone,
+            start.astimezone(self.timezone),
         )
         event_dict = {
             "summary": event.get("SUMMARY", "Unknown"),
-            "start": start.astimezone(dt.DEFAULT_TIME_ZONE),
-            "end": end.astimezone(dt.DEFAULT_TIME_ZONE),
+            "start": start.astimezone(self.timezone),
+            "end": end.astimezone(self.timezone),
             "location": event.get("LOCATION"),
             "description": event.get("DESCRIPTION"),
             "all_day": self.all_day,

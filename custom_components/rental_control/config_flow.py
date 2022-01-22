@@ -17,6 +17,8 @@ from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import callback
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util import dt
+from pytz import common_timezones
 from voluptuous.schema_builder import ALLOW_EXTRA
 
 from .const import CONF_CHECKIN
@@ -27,6 +29,7 @@ from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
 from .const import CONF_START_SLOT
+from .const import CONF_TIMEZONE
 from .const import DEFAULT_CHECKIN
 from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_DAYS
@@ -38,6 +41,9 @@ from .const import LOCK_MANAGER
 from .const import REQUEST_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
+
+sorted_tz = common_timezones
+sorted_tz.sort()
 
 
 @config_entries.HANDLERS.register(DOMAIN)
@@ -53,6 +59,7 @@ class RentalControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         CONF_IGNORE_NON_RESERVED: True,
         CONF_EVENT_PREFIX: DEFAULT_EVENT_PREFIX,
         CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+        CONF_TIMEZONE: str(dt.DEFAULT_TIME_ZONE),
         CONF_VERIFY_SSL: True,
     }
 
@@ -154,6 +161,10 @@ def _get_schema(
         {
             vol.Required(CONF_NAME, default=_get_default(CONF_NAME)): cv.string,
             vol.Required(CONF_URL, default=_get_default(CONF_URL)): cv.string,
+            vol.Optional(
+                CONF_TIMEZONE,
+                default=_get_default(CONF_TIMEZONE, str(dt.DEFAULT_TIME_ZONE)),
+            ): vol.In(sorted_tz),
             vol.Optional(
                 CONF_EVENT_PREFIX,
                 default=_get_default(CONF_EVENT_PREFIX, DEFAULT_EVENT_PREFIX),
