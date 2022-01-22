@@ -1,0 +1,36 @@
+---
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+change-template: "- $TITLE @$AUTHOR (#$NUMBER)"
+sort-direction: ascending
+categories:
+  - title: ":boom: Breaking Change :boom:"
+    labels:
+      - "breaking-change"
+  - title: ":zap: Enhancments :zap:"
+    labels:
+      - "enhancement"
+  - title: ":sparkles: New Features :sparkles:"
+    labels:
+      - "feature"
+  - title: ":bug: Bug Fixes :bug:"
+    labels:
+      - "fix"
+      - "bugfix"
+      - "bug"
+  - title: ":wrench: Maintenance :wrench:"
+    labels:
+      - "chore"
+      - "repo"
+      - "maintenance"
+  - title: ":mortar_board: Code Quality :mortar_board:"
+    labels:
+      - "code-quality"
+# yamllint disable rule:line-length
+template: |
+  [![Downloads for this release](https://img.shields.io/github/downloads/tykeal/homeassistant-rental-control/v$RESOLVED_VERSION/total.svg)](https://github.com/tykeal/homeassistant-rental-control/releases/v$RESOLVED_VERSION)
+
+  $CHANGES
+
+  ## Links
+  - [Submit bugs/feature requests](https://github.com/tykeal/homeassistant-rental-control/issues)

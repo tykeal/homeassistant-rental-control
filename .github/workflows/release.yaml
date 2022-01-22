@@ -1,0 +1,38 @@
+---
+name: Release
+
+# yamllint disable-line rule:truthy
+on:
+  release:
+    types: [published]
+
+jobs:
+  release_zip_file:
+    name: Prepare release asset
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v1
+      - name: Get Version
+        id: get_version
+        run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\//}
+      - name: Update versions
+        # yamllint disable rule:line-length
+        run: |
+          sed -i '/VERSION = /c\VERSION = "${{ steps.get_version.outputs.VERSION }}"' ${{ github.workspace }}/custom_components/rental_control/const.py
+          sed -i '/version/c\  \"version\": \"${{ steps.get_version.outputs.VERSION }}\"' ${{ github.workspace }}/custom_components/rental_control/manifest.json
+        # yamllint enable
+      # Pack the rental_control dir as a zip and upload to the release
+      - name: ZIP rental_control Dir
+        run: |
+          cd ${{ github.workspace }}/custom_components/rental_control
+          zip rental_control.zip -r ./
+      - name: Upload zip to release
+        uses: svenstaro/upload-release-action@v1-release
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          # yamllint disable-line rule:line-length
+          file: ${{ github.workspace }}/custom_components/rental_control/rental_control.zip
+          asset_name: rental_control.zip
+          tag: ${{ github.ref }}
+          overwrite: true
