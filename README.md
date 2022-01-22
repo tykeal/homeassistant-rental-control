@@ -40,7 +40,7 @@ depends upon it.
 ### MANUAL INSTALLATION
 
 1. Download the
-   [latest release](https://github.com/tykeal/rental_control/releases/latest)
+   [latest release](https://github.com/tykeal/homeassistant-rental-control/releases/latest)
 1. Unpack the release and copy the `custom_components/rental_control` directory
    into the `custom_components` directory of your Home Assistant
    installation
@@ -54,7 +54,7 @@ depends upon it.
     1. Go to HACS -> Integrations
     1. Select the `...` menu in the upper right
     1. Select `Custom Repostiories`
-    1. In the `Repository` box put `https://github.com/tykeal/rental_control`
+    1. In the `Repository` box put `https://github.com/tykeal/homeassistant-rental-control`
     1. In the `Category` box select `Integration`
     1. Press the `Add` button
 1. Search for and install the "Rental Control" integration
