@@ -17,6 +17,7 @@ from datetime import datetime
 from datetime import timedelta
 from zoneinfo import ZoneInfo  # noreorder
 
+import async_timeout
 import homeassistant.helpers.config_validation as cv
 import icalendar
 import voluptuous as vol
@@ -38,6 +39,7 @@ from .const import CONF_MAX_EVENTS
 from .const import CONF_TIMEZONE
 from .const import DOMAIN
 from .const import PLATFORMS
+from .const import REQUEST_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -175,7 +177,13 @@ class ICalEvents:
         _LOGGER.debug("Running ICalEvents update for calendar %s", self.name)
 
         session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
-        async with session.get(self.url) as response:
+        with async_timeout.timeout(REQUEST_TIMEOUT):
+            response = await session.get(self.url)
+        if response.status != 200:
+            _LOGGER.error(
+                "%s returned %s - %s", self.url, response.status, response.reason
+            )
+        else:
             text = await response.text()
             # Some calendars are for some reason filled with NULL-bytes.
             # They break the parsing, so we get rid of them
