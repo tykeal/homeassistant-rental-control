@@ -50,16 +50,15 @@ depends upon it.
 ### INSTALLATION VIA Home Assistant Community Store (HACS)
 
 1. Ensure that [HACS](https://hacs.xyz/) is installed
-1. Add a custom repository to HACS
-    1. Go to HACS -> Integrations
-    1. Select the `...` menu in the upper right
-    1. Select `Custom Repostiories`
-    1. In the `Repository` box put `https://github.com/tykeal/homeassistant-rental-control`
-    1. In the `Category` box select `Integration`
-    1. Press the `Add` button
-1. Search for and install the "Rental Control" integration
+1. Go to `HACS` -> `Integrations`
+1. Search for and install the `Rental Control` integration
 1. Restart Home Assistant
-1. Configure Rental Control
+1. Go to `Configuration` -> `Devices & Services`
+1. Press `+ ADD INTEGRATION`
+1. Add `Rental Control`
+1. Configure the parameters
+1. Adding additional calendars can be done by adding another `Rental Control`
+   integration in `Devices & Services`
 
 ## Setup
 
