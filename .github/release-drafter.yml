@@ -21,8 +21,9 @@ categories:
   - title: ":wrench: Maintenance :wrench:"
     labels:
       - "chore"
-      - "repo"
+      - "documentation"
       - "maintenance"
+      - "repo"
   - title: ":mortar_board: Code Quality :mortar_board:"
     labels:
       - "code-quality"
