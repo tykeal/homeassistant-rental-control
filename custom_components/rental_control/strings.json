@@ -1,9 +1,9 @@
 {
   "config": {
     "error": {
-      "bad_ics": "Only AirBnB iCalendars are supported",
+      "bad_ics": "URL did not provide valid calendar",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
-      "invalid_url": "Invalid Calendar URL",
+      "invalid_url": "Only https URLs are supported",
       "same_name": "Name already in use",
       "unknown": "Unexpected error"
     },
@@ -28,9 +28,9 @@
   },
   "options": {
     "error": {
-      "bad_ics": "Only AirBnB iCalendars are supported",
+      "bad_ics": "URL did not provide valid calendar",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
-      "invalid_url": "Invalid Calendar URL",
+      "invalid_url": "Only https URLs are supported",
       "same_name": "Name already in use",
       "unknown": "Unexpected error"
     },
