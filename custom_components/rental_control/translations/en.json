@@ -5,7 +5,7 @@
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
       "invalid_url": "Only https URLs are supported",
       "same_name": "Name already in use",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error, check logs for more details"
     },
     "step": {
       "user": {
@@ -32,7 +32,7 @@
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
       "invalid_url": "Only https URLs are supported",
       "same_name": "Name already in use",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error, check logs for more details"
     },
     "step": {
       "init": {
