@@ -245,20 +245,24 @@ async def _start_config_flow(
             # We require that the URL be an SSL URL
             if not re.search("^https://", user_input["url"]):
                 errors["base"] = "invalid_url"
-
-            session = async_get_clientsession(
-                cls.hass, verify_ssl=user_input["verify_ssl"]
-            )
-            with async_timeout.timeout(REQUEST_TIMEOUT):
-                resp = await session.get(user_input["url"])
-            if resp.status != 200:
-                _LOGGER.error(
-                    "%s returned %s - %s", user_input["url"], resp.status, resp.reason
+            else:
+                session = async_get_clientsession(
+                    cls.hass, verify_ssl=user_input["verify_ssl"]
                 )
-                errors["base"] = "unknown"
-            # We require text/calendar in the content-type header
-            if "text/calendar" not in resp.content_type:
-                errors["base"] = "bad_ics"
+                with async_timeout.timeout(REQUEST_TIMEOUT):
+                    resp = await session.get(user_input["url"])
+                if resp.status != 200:
+                    _LOGGER.error(
+                        "%s returned %s - %s",
+                        user_input["url"],
+                        resp.status,
+                        resp.reason,
+                    )
+                    errors["base"] = "unknown"
+                else:
+                    # We require text/calendar in the content-type header
+                    if "text/calendar" not in resp.content_type:
+                        errors["base"] = "bad_ics"
         except vol.Invalid as err:
             _LOGGER.exception(err.msg)
             errors["base"] = "invalid_url"
