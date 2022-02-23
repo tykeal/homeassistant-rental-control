@@ -1,7 +1,9 @@
 {
   "name": "Rental Control",
   "hacs": "1.13.2",
-  "domains": ["sensor"],
+  "domains": ["calendar", "sensor"],
   "iot_class": "Cloud Polling",
+  "zip_release": true,
+  "filename": "rental_control.zip",
   "homeassistant": "2021.7.0"
 }
