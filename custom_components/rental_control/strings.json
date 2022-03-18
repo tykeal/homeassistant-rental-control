@@ -2,6 +2,7 @@
   "config": {
     "error": {
       "bad_ics": "URL did not provide valid calendar",
+      "bad_refresh": "Refresh must be between 0 and 1440.",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
       "invalid_url": "Only https URLs are supported",
       "same_name": "Name already in use",
@@ -18,6 +19,7 @@
           "keymaster_entry_id": "Keymaster configuration to manage",
           "max_events": "Number of event sensors to create",
           "name": "Calendar name",
+          "refresh_frequency": "Refresh calendar in minutes. 0 - 1440",
           "start_slot": "Starting lock slot for management",
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
@@ -30,6 +32,7 @@
     "error": {
       "bad_ics": "URL did not provide valid calendar",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
+      "bad_refresh": "Refresh must be between 0 and 1440.",
       "invalid_url": "Only https URLs are supported",
       "same_name": "Name already in use",
       "unknown": "Unexpected error, check logs for more details"
@@ -45,6 +48,7 @@
           "keymaster_entry_id": "Keymaster configuration to manage",
           "max_events": "Number of event sensors to create",
           "name": "Calendar name",
+          "refresh_frequency": "Refresh calendar in minutes. 0 - 1440",
           "start_slot": "Starting lock slot for management",
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",

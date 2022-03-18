@@ -28,7 +28,6 @@ from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt
-from homeassistant.util import Throttle
 
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
@@ -36,7 +35,9 @@ from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_MAX_EVENTS
+from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_TIMEZONE
+from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import PLATFORMS
 from .const import REQUEST_TIMEOUT
@@ -124,26 +125,25 @@ class ICalEvents:
         self.name = config.get(CONF_NAME)
         self.event_prefix = config.get(CONF_EVENT_PREFIX)
         self.url = config.get(CONF_URL)
-        # Early versions did not have this variable, as such it may not be
+        # Early versions did not have these variables, as such it may not be
         # set, this should guard against issues until we're certain we can
         # remove this guard.
         try:
             self.timezone = ZoneInfo(config.get(CONF_TIMEZONE))
         except TypeError:
             self.timezone = dt.DEFAULT_TIME_ZONE
+        self.refresh_frequency = config.get(CONF_REFRESH_FREQUENCY)
+        if self.refresh_frequency is None:
+            self.refresh_frequency = DEFAULT_REFRESH_FREQUENCY
+        # after initial setup our first refresh should happen ASAP
+        self.next_refresh = dt.now()
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
         self.checkin = cv.time(config.get(CONF_CHECKIN))
         self.checkout = cv.time(config.get(CONF_CHECKOUT))
         self.max_events = config.get(CONF_MAX_EVENTS)
         self.days = config.get(CONF_DAYS)
-        # Early versions did not have this variable, as such it may not be
-        # set, this should guard against issues until we're certain
-        # we can remove this guard.
-        try:
-            self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
-        except NameError:
-            self.ignore_non_reserved = None
+        self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
         self.calendar = []
         self.event = None
@@ -171,24 +171,42 @@ class ICalEvents:
                     events.append(event)
         return events
 
-    @Throttle(MIN_TIME_BETWEEN_UPDATES)
     async def update(self):
         """Regularly update the calendar."""
         _LOGGER.debug("Running ICalEvents update for calendar %s", self.name)
 
-        await self._refresh_calendar()
+        now = dt.now()
+        _LOGGER.debug("Refresh frequency is: %d", self.refresh_frequency)
+        _LOGGER.debug("Current time is: %s", now)
+        _LOGGER.debug("Next refresh is: %s", self.next_refresh)
+        if now >= self.next_refresh:
+            # Update the next refresh time before doing the calendar update
+            # If refresh_frequency is 0, then set the refresh for a little in
+            # the future to avoid having multiple calls to the calendar refresh
+            # happen at the same time
+            if self.refresh_frequency == 0:
+                self.next_refresh = now + timedelta(seconds=10)
+            else:
+                self.next_refresh = now + timedelta(minutes=self.refresh_frequency)
+            _LOGGER.debug("Updating next refresh to %s", self.next_refresh)
+            await self._refresh_calendar()
 
     def update_config(self, config):
         """Update config entries."""
         self.name = config.get(CONF_NAME)
         self.url = config.get(CONF_URL)
-        # Early versions did not have this variable, as such it may not be
+        # Early versions did not have these variables, as such it may not be
         # set, this should guard against issues until we're certain
         # we can remove this guard.
         try:
             self.timezone = ZoneInfo(config.get(CONF_TIMEZONE))
         except TypeError:
             self.timezone = dt.DEFAULT_TIME_ZONE
+        self.refresh_frequency = config.get(CONF_REFRESH_FREQUENCY)
+        if self.refresh_frequency is None:
+            self.refresh_frequency = DEFAULT_REFRESH_FREQUENCY
+        # always do a refresh ASAP after a config change
+        self.next_refresh = dt.now()
         self.event_prefix = config.get(CONF_EVENT_PREFIX)
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
