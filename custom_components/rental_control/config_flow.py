@@ -28,6 +28,7 @@ from .const import CONF_EVENT_PREFIX
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
+from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import DEFAULT_CHECKIN
@@ -35,6 +36,7 @@ from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_DAYS
 from .const import DEFAULT_EVENT_PREFIX
 from .const import DEFAULT_MAX_EVENTS
+from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DEFAULT_START_SLOT
 from .const import DOMAIN
 from .const import LOCK_MANAGER
@@ -59,6 +61,7 @@ class RentalControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         CONF_IGNORE_NON_RESERVED: True,
         CONF_EVENT_PREFIX: DEFAULT_EVENT_PREFIX,
         CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+        CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
         CONF_TIMEZONE: str(dt.DEFAULT_TIME_ZONE),
         CONF_VERIFY_SSL: True,
     }
@@ -161,6 +164,10 @@ def _get_schema(
         {
             vol.Required(CONF_NAME, default=_get_default(CONF_NAME)): cv.string,
             vol.Required(CONF_URL, default=_get_default(CONF_URL)): cv.string,
+            vol.Optional(
+                CONF_REFRESH_FREQUENCY,
+                default=_get_default(CONF_REFRESH_FREQUENCY, DEFAULT_REFRESH_FREQUENCY),
+            ): cv.positive_int,
             vol.Optional(
                 CONF_TIMEZONE,
                 default=_get_default(CONF_TIMEZONE, str(dt.DEFAULT_TIME_ZONE)),
@@ -266,6 +273,9 @@ async def _start_config_flow(
         except vol.Invalid as err:
             _LOGGER.exception(err.msg)
             errors["base"] = "invalid_url"
+
+        if user_input[CONF_REFRESH_FREQUENCY] > 1440:
+            errors["base"] = "bad_refresh"
 
         try:
             cv.time(user_input["checkin"])
