@@ -9,6 +9,8 @@ calendars and sensors to go with them related to managing rental properties.
 
 -   Ingests ICS calendars from any HTTPS source as long as it's a text/calendar
     file
+-   Configurable refresh rate from as often as possible to once per day (default
+    every 2 minutes)
 -   Define checkin/checkout times which will be added to all calendar entries
 -   Ability to ignore 'Blocked' and 'Not available' events
 -   Creates a customizable number of event sensors that are the current and
@@ -22,9 +24,10 @@ calendars and sensors to go with them related to managing rental properties.
 -   Calendars can have their own timezone definition that is separate from the
     Home Assitant instance itself. This is useful for managing properties that are
     in a different timezone from where Home Assistant is
-
 -   Events can have a custom prefix added to them to help differentiate between
     entities if more than one calendar is being tracked in an instance
+-   Forcing a calendar refresh is currently possible by submitting a
+    configuration change
 
 ## Planned features
 
@@ -70,6 +73,9 @@ The integration is set up using the GUI.
 -   By default it will set up 5 sensors for the 5 nex upcoming events
     (sensor.rental_control\_\<calendar_name\>\_event_0 ~ 4). You can adjust this
     to add more or fewer sensors
+-   The calendar refresh rate defaults to every 2 minutes but can be set to 0
+    for as often as possible (roughly every 30 seconds) to once per day (1440).
+    This is adjustable in minute increments
 -   The integration will only consider events with a start time 365 days (1 year)
     into the future by default. This can also be adjusted when adding a new
     calendar
