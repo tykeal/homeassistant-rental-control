@@ -173,39 +173,10 @@ class ICalEvents:
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
     async def update(self):
-        """Update list of upcoming events."""
+        """Regularly update the calendar."""
         _LOGGER.debug("Running ICalEvents update for calendar %s", self.name)
 
-        session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
-        with async_timeout.timeout(REQUEST_TIMEOUT):
-            response = await session.get(self.url)
-        if response.status != 200:
-            _LOGGER.error(
-                "%s returned %s - %s", self.url, response.status, response.reason
-            )
-        else:
-            text = await response.text()
-            # Some calendars are for some reason filled with NULL-bytes.
-            # They break the parsing, so we get rid of them
-            event_list = icalendar.Calendar.from_ical(text.replace("\x00", ""))
-            start_of_events = dt.start_of_local_day()
-            end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
-
-            self.calendar = self._ical_parser(
-                event_list, start_of_events, end_of_events
-            )
-
-        if len(self.calendar) > 0:
-            found_next_event = False
-            for event in self.calendar:
-                if event["end"] > dt.now() and not found_next_event:
-                    _LOGGER.debug(
-                        "Event %s it the first event with end in the future: %s",
-                        event["summary"],
-                        event["end"],
-                    )
-                    self.event = event
-                    found_next_event = True
+        await self._refresh_calendar()
 
     def update_config(self, config):
         """Update config entries."""
@@ -349,3 +320,38 @@ class ICalEvents:
         days = dt.start_of_local_day() + timedelta(days=self.days)
 
         return [x for x in cal if x["start"].date() <= days.date()]
+
+    async def _refresh_calendar(self):
+        """Update list of upcoming events."""
+        _LOGGER.debug("Running ICalEvents _refresh_calendar for %s", self.name)
+
+        session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
+        with async_timeout.timeout(REQUEST_TIMEOUT):
+            response = await session.get(self.url)
+        if response.status != 200:
+            _LOGGER.error(
+                "%s returned %s - %s", self.url, response.status, response.reason
+            )
+        else:
+            text = await response.text()
+            # Some calendars are for some reason filled with NULL-bytes.
+            # They break the parsing, so we get rid of them
+            event_list = icalendar.Calendar.from_ical(text.replace("\x00", ""))
+            start_of_events = dt.start_of_local_day()
+            end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
+
+            self.calendar = self._ical_parser(
+                event_list, start_of_events, end_of_events
+            )
+
+        if len(self.calendar) > 0:
+            found_next_event = False
+            for event in self.calendar:
+                if event["end"] > dt.now() and not found_next_event:
+                    _LOGGER.debug(
+                        "Event %s is the first event with end in the future: %s",
+                        event["summary"],
+                        event["end"],
+                    )
+                    self.event = event
+                    found_next_event = True
