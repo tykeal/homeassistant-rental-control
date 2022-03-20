@@ -22,6 +22,7 @@ PLATFORMS = [CALENDAR, SENSOR]
 # Config
 CONF_CHECKIN = "checkin"
 CONF_CHECKOUT = "checkout"
+CONF_CODE_GENERATION = "code_generation"
 CONF_DAYS = "days"
 CONF_EVENT_PREFIX = "event_prefix"
 CONF_IGNORE_NON_RESERVED = "ignore_non_reserved"
@@ -34,12 +35,19 @@ CONF_TIMEZONE = "timezone"
 # Defaults
 DEFAULT_CHECKIN = "16:00"
 DEFAULT_CHECKOUT = "11:00"
+DEFAULT_CODE_GENERATION = "date_based"
 DEFAULT_DAYS = 365
 DEFAULT_EVENT_PREFIX = ""
 DEFAULT_MAX_EVENTS = 5
 DEFAULT_NAME = DOMAIN
 DEFAULT_REFRESH_FREQUENCY = 2
 DEFAULT_START_SLOT = 10
+
+CODE_GENERATORS = [
+    {"type": "date_based", "description": "Start/End Date"},
+    {"type": "static_random", "description": "Static Random"},
+    {"type": "last_four", "description": "Last 4 Phone Digits"},
+]
 
 STARTUP_MESSAGE = f"""
 -------------------------------------------------------------------

@@ -21,8 +21,10 @@ from homeassistant.util import dt
 from pytz import common_timezones
 from voluptuous.schema_builder import ALLOW_EXTRA
 
+from .const import CODE_GENERATORS
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
+from .const import CONF_CODE_GENERATION
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
 from .const import CONF_IGNORE_NON_RESERVED
@@ -33,6 +35,7 @@ from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import DEFAULT_CHECKIN
 from .const import DEFAULT_CHECKOUT
+from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_DAYS
 from .const import DEFAULT_EVENT_PREFIX
 from .const import DEFAULT_MAX_EVENTS
@@ -141,6 +144,30 @@ def _available_lock_managers(
     return data
 
 
+def _code_generators() -> list:
+    """Return list of code genrators available."""
+
+    data = []
+
+    for generator in CODE_GENERATORS:
+        data.append(generator["description"])
+
+    return data
+
+
+def _generator_convert(ident: str, to_type: bool = True) -> str:
+    """Convert between type and description for generators."""
+
+    if to_type:
+        return next(item for item in CODE_GENERATORS if item["description"] == ident)[
+            "type"
+        ]
+    else:
+        return next(item for item in CODE_GENERATORS if item["type"] == ident)[
+            "description"
+        ]
+
+
 def _get_schema(
     hass: HomeAssistant,
     user_input: Optional[Dict[str, Any]],
@@ -196,6 +223,13 @@ def _get_schema(
                 CONF_MAX_EVENTS,
                 default=_get_default(CONF_MAX_EVENTS, DEFAULT_MAX_EVENTS),
             ): cv.positive_int,
+            vol.Optional(
+                CONF_CODE_GENERATION,
+                default=_generator_convert(
+                    ident=_get_default(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION),
+                    to_type=False,
+                ),
+            ): vol.In(_code_generators()),
             vol.Optional(
                 CONF_IGNORE_NON_RESERVED,
                 default=_get_default(CONF_IGNORE_NON_RESERVED, True),
@@ -291,6 +325,11 @@ async def _start_config_flow(
             # Convert (none) to None
             if user_input[CONF_LOCK_ENTRY] == "(none)":
                 user_input[CONF_LOCK_ENTRY] = None
+
+            # Convert code generator to proper type
+            user_input[CONF_CODE_GENERATION] = _generator_convert(
+                ident=user_input[CONF_CODE_GENERATION], to_type=True
+            )
 
             return cls.async_create_entry(title=title, data=user_input)
 

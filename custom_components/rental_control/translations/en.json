@@ -13,6 +13,7 @@
         "data": {
           "checkin": "Default Check-in time",
           "checkout": "Default Check-out time",
+          "code_generation": "Door code generator",
           "days": "Maximum number of days into the future to fetch",
           "event_prefix": "Prefix for all events (useful if linking more than one rental)",
           "ignore_non_reserved": "Ignore events that are not standard reservations",
@@ -42,6 +43,7 @@
         "data": {
           "checkin": "Default Check-in time",
           "checkout": "Default Check-out time",
+          "code_generation": "Door code generator",
           "days": "Maximum number of days into the future to fetch",
           "event_prefix": "Prefix for all events (useful if linking more than one rental)",
           "ignore_non_reserved": "Ignore events that are not standard reservations",
