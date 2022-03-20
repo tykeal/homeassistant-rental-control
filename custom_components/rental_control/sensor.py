@@ -1,5 +1,7 @@
 """Creating sensors for upcoming events."""
 import logging
+import random
+import re
 from datetime import datetime
 from datetime import timedelta
 
@@ -36,7 +38,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     sensors = []
     for eventnumber in range(max_events):
         sensors.append(
-            ICalSensor(hass, rental_control_events, DOMAIN + " " + name, eventnumber)
+            ICalSensor(
+                hass,
+                rental_control_events,
+                DOMAIN + " " + name,
+                eventnumber,
+            )
         )
 
     async_add_entities(sensors)
@@ -77,9 +84,60 @@ class ICalSensor(Entity):
             "start": None,
             "end": None,
             "eta": None,
+            "slot_code": None,
         }
         self._state = summary
         self._is_available = None
+        self._code_generator = rental_control_events.code_generator
+
+    def _generate_door_code(self) -> str:
+        """Generate a door code based upon the selected type."""
+
+        generator = self._code_generator
+
+        # If there is no event description force date_based generation
+        # This is because VRBO does not appear to provide any descriptions in
+        # their calendar entries!
+        # This also gets around Unavailable and Blocked entries that do not
+        # have a description either
+        if self._event_attributes["description"] is None:
+            generator = "date_based"
+
+        # AirBnB provides the last 4 digits of the guest's registered phone
+        #
+        # VRBO does not appear to provide any phone numbers
+        #
+        # Guesty provides last 4 + either a full number or all but last digit
+        # for VRBO listings and doesn't appear to provide anything for AirBnB
+        # listings, or if it does provide them, my example Guesty calendar doesn't
+        # have any new enough to have the data
+        #
+        # TripAdvisor does not appear to provide any phone number data
+
+        ret = None
+
+        if generator == "last_four":
+            p = re.compile("\\(Last 4 Digits\\):\\s+(\\d{4})")
+            last_four = p.findall(self._event_attributes["description"])[0]
+            ret = last_four
+        elif generator == "static_random":
+            # If the description changes this will most likely change the code
+            random.seed(self._event_attributes["description"])
+            ret = str(random.randrange(1, 9999, 4)).zfill(4)
+
+        if ret is None:
+            # Generate code based on checkin/out days
+            #
+            # This generator will have a side effect of changing the code
+            # if the start or end dates shift!
+            #
+            # This is the default and fall back generator if no other
+            # generator produced a code
+            start_day = self._event_attributes["start"].strftime("%d")
+            end_day = self._event_attributes["end"].strftime("%d")
+            return f"{start_day}{end_day}"
+        else:
+            return ret
 
     @property
     def entity_id(self):
@@ -117,6 +175,7 @@ class ICalSensor(Entity):
 
         await self.rental_control_events.update()
 
+        self._code_generator = self.rental_control_events.code_generator
         event_list = self.rental_control_events.calendar
         if event_list and (self._event_number < len(event_list)):
             val = event_list[self._event_number]
@@ -144,6 +203,7 @@ class ICalSensor(Entity):
             self._state = f"{name} - {start.strftime('%-d %B %Y')}"
             if not val.get("all_day"):
                 self._state += f" {start.strftime('%H:%M')}"
+            self._event_attributes["slot_code"] = self._generate_door_code()
         else:
             # No reservations
             _LOGGER.debug(
@@ -162,5 +222,6 @@ class ICalSensor(Entity):
                 "start": None,
                 "end": None,
                 "eta": None,
+                "slot_code": None,
             }
             self._state = summary

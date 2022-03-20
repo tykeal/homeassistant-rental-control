@@ -31,12 +31,14 @@ from homeassistant.util import dt
 
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
+from .const import CONF_CODE_GENERATION
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_MAX_EVENTS
 from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_TIMEZONE
+from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import PLATFORMS
@@ -146,6 +148,7 @@ class ICalEvents:
         self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
         self.calendar = []
+        self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.event = None
         self.all_day = False
 
@@ -214,6 +217,7 @@ class ICalEvents:
         self.checkout = cv.time(config.get(CONF_CHECKOUT))
         self.max_events = config.get(CONF_MAX_EVENTS)
         self.days = config.get(CONF_DAYS)
+        self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         # Early versions did not have this variable, as such it may not be
         # set, this should guard against issues until we're certain
         # we can remove this guard.
