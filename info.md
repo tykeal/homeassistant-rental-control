@@ -32,6 +32,19 @@ calendars and sensors to go with them related to managing rental properties.
     entities if more than one calendar is being tracked in an instance
 -   Forcing a calendar refresh is currently possible by submitting a
     configuration change
+-   3 door code generators are available:
+    -   A check-in/out date based 4 digit code using the check-in day combined
+        with the check-out day (default and fallback in the case another
+        generator fails to produce a code)
+    -   A random 4 digit code based on the event description
+    -   The last 4 digits of the phone number. This only works properly if the
+        event description contains 'Last 4 Digits' followed quickly by a 4 digit
+        number. This is the most stable, but only works if the event
+        descriptions have the needed data. The previous two methods can have the
+        codes change if the event makes changes to length or to the description.
+-   All events will get a code associated with it. In the case that the criteria
+    to create the code are not fulfilled, then the check-in/out date based
+    method will be used as a fallback
 
 ## Planned features
 
@@ -67,7 +80,7 @@ This integration supports reconfiguration after initial setup
 -   Select the calendar and then select `Configure`
 -   Reconfigure as if you were setting it up for the first time
 
-**NOTE:** Changes may not be picked up right away. The update cycle of the
-calendar is to check for updates every 2 minutes and events are refreshed around
-every 30 seconds. If you want to force a full update right away, select the
-`...` menu next to `Configure` and select `Reload`
+**NOTE:** Changes may not be picked up right away. The default update cycle of
+the calendar is to check for updates every 2 minutes and events are refreshed
+around every 30 seconds. If you want to force a full update right away, select
+the `...` menu next to `Configure` and select `Reload`
