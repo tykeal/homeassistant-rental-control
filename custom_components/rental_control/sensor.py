@@ -84,6 +84,7 @@ class ICalSensor(Entity):
             "start": None,
             "end": None,
             "eta": None,
+            "slot_name": None,
             "slot_code": None,
         }
         self._state = summary
@@ -138,6 +139,40 @@ class ICalSensor(Entity):
             return f"{start_day}{end_day}"
         else:
             return ret
+
+    def _get_slot_name(self) -> str:
+        """Determine the name for a door slot."""
+
+        # strip off any prefix if it's being used
+        if self.rental_control_events.event_prefix:
+            p = re.compile(f"{self.rental_control_events.event_prefix} (.*)")
+            summary = p.findall(self._event_attributes["summary"])[0]
+        else:
+            summary = self._event_attributes["summary"]
+
+        # Blocked and Unavailable should not have a slot
+        p = re.compile("Not available|Blocked")
+        if p.search(summary):
+            return None
+
+        # AirBnB & VRBO
+        if re.search("Reserved", summary):
+            # AirBnB
+            if summary == "Reserved":
+                p = re.compile("([A-Z][A-Z0-9]{9})")
+                return p.search(self._event_attributes["description"])[0]
+            else:
+                p = re.compile(" - (.*)$")
+                return p.findall(summary)[0]
+
+        # Tripadvisor
+        if re.search("Tripadvisor", summary):
+            p = re.compile("Tripadvisor.*: (.*)")
+            return p.findall(summary)[0]
+
+        # Guesty
+        p = re.compile("-(.*)-.*-")
+        return p.findall(summary)[0]
 
     @property
     def entity_id(self):
@@ -203,6 +238,7 @@ class ICalSensor(Entity):
             self._state = f"{name} - {start.strftime('%-d %B %Y')}"
             if not val.get("all_day"):
                 self._state += f" {start.strftime('%H:%M')}"
+            self._event_attributes["slot_name"] = self._get_slot_name()
             self._event_attributes["slot_code"] = self._generate_door_code()
         else:
             # No reservations
@@ -222,6 +258,7 @@ class ICalSensor(Entity):
                 "start": None,
                 "end": None,
                 "eta": None,
+                "slot_name": None,
                 "slot_code": None,
             }
             self._state = summary
