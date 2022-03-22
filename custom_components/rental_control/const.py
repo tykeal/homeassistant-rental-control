@@ -31,6 +31,7 @@ CONF_MAX_EVENTS = "max_events"
 CONF_REFRESH_FREQUENCY = "refresh_frequency"
 CONF_START_SLOT = "start_slot"
 CONF_TIMEZONE = "timezone"
+CONF_CREATION_DATETIME = "creation_datetime"
 
 # Defaults
 DEFAULT_CHECKIN = "16:00"

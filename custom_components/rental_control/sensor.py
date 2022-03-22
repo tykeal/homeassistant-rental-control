@@ -29,7 +29,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     name = config.get(CONF_NAME)
     max_events = config.get(CONF_MAX_EVENTS)
 
-    rental_control_events = hass.data[DOMAIN][name]
+    rental_control_events = hass.data[DOMAIN][config_entry.unique_id]
     await rental_control_events.update()
     if rental_control_events.calendar is None:
         _LOGGER.error("Unable to fetch iCal")

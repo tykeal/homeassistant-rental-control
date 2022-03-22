@@ -1,5 +1,4 @@
 """Config flow for Rental Control integration."""
-import asyncio
 import logging
 import re
 from typing import Any
@@ -25,6 +24,7 @@ from .const import CODE_GENERATORS
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_GENERATION
+from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
 from .const import CONF_IGNORE_NON_RESERVED
@@ -44,6 +44,7 @@ from .const import DEFAULT_START_SLOT
 from .const import DOMAIN
 from .const import LOCK_MANAGER
 from .const import REQUEST_TIMEOUT
+from .util import gen_uuid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ sorted_tz.sort()
 class RentalControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the config flow for Rental Control."""
 
-    VERSION = 1
+    VERSION = 2
 
     DEFAULTS = {
         CONF_CHECKIN: DEFAULT_CHECKIN,
@@ -69,11 +70,14 @@ class RentalControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         CONF_VERIFY_SSL: True,
     }
 
-    async def _get_unique_name_error(self, user_input) -> Dict[str, str]:
-        """Check if name is unique, returning dictionary if so."""
-        # Validate that Rental control is unique
+    def __init__(self):
+        """Setup the RentalControlFlowHandler."""
+        self.created = str(dt.now())
+
+    async def _get_unique_id(self, user_input) -> Dict[str, str]:
+        """Generate the unique_id."""
         existing_entry = await self.async_set_unique_id(
-            user_input[CONF_NAME], raise_on_progress=True
+            gen_uuid(self.created), raise_on_progress=True
         )
         if existing_entry:
             return {CONF_NAME: "same_name"}
@@ -102,16 +106,6 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry):
         """Initialize Options Flow."""
         self.config_entry = config_entry
-
-    def _get_unique_name_error(self, user_input) -> Dict[str, str]:
-        """Check if name is unique, returning dictionary if so."""
-        # If name has changed, make sure new name isn't already being used
-        # otherwise show an error
-        if self.config_entry.unique_id != user_input[CONF_NAME]:
-            for entry in self.hass.config_entries.async_entries(DOMAIN):
-                if entry.unique_id == user_input[CONF_NAME]:
-                    return {CONF_NAME: "same_name"}
-        return {}
 
     async def async_step_init(
         self,
@@ -273,12 +267,9 @@ async def _start_config_flow(
     description_placeholders = {}
 
     if user_input is not None:
-        # Regular flow has an async function, options flow has a sync function
-        # so we need to handle them conditionally
-        if asyncio.iscoroutinefunction(cls._get_unique_name_error):
-            errors.update(await cls._get_unique_name_error(user_input))
-        else:
-            errors.update(cls._get_unique_name_error(user_input))
+        # Regular flow has an async function
+        if hasattr(cls, "_get_unique_id"):
+            errors.update(await cls._get_unique_id(user_input))
 
         # Validate user input
         try:
@@ -330,6 +321,9 @@ async def _start_config_flow(
             user_input[CONF_CODE_GENERATION] = _generator_convert(
                 ident=user_input[CONF_CODE_GENERATION], to_type=True
             )
+
+            if hasattr(cls, "created"):
+                user_input[CONF_CREATION_DATETIME] = cls.created
 
             return cls.async_create_entry(title=title, data=user_input)
 

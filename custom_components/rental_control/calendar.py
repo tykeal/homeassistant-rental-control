@@ -24,7 +24,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     entity_id = generate_entity_id(ENTITY_ID_FORMAT, DOMAIN + " " + name, hass=hass)
 
-    rental_control_events = hass.data[DOMAIN][name]
+    rental_control_events = hass.data[DOMAIN][config_entry.unique_id]
 
     calendar = ICalCalendarEventDevice(hass, name, entity_id, rental_control_events)
 
