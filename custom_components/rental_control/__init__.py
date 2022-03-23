@@ -32,6 +32,7 @@ from homeassistant.util import dt
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_GENERATION
+from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
 from .const import CONF_IGNORE_NON_RESERVED
@@ -43,6 +44,7 @@ from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import PLATFORMS
 from .const import REQUEST_TIMEOUT
+from .util import gen_uuid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,7 +69,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # hass.data[DOMAIN][entry.entry_id] = MyApi(...)
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
-    hass.data[DOMAIN][config.get(CONF_NAME)] = ICalEvents(hass=hass, config=config)
+    hass.data[DOMAIN][entry.unique_id] = ICalEvents(hass=hass, config=config)
 
     for component in PLATFORMS:
         hass.async_create_task(
@@ -92,9 +94,31 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         )
     )
     if unload_ok:
-        hass.data[DOMAIN].pop(config.get(CONF_NAME))
+        hass.data[DOMAIN].pop(entry.unique_id)
 
     return unload_ok
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate configuration."""
+
+    version = config_entry.version
+
+    # 1 -> 2: Migrate keys
+    if version == 1:
+        _LOGGER.debug("Migrating from version %s", version)
+        data = config_entry.data.copy()
+
+        data[CONF_CREATION_DATETIME] = str(dt.now())
+        hass.config_entries.async_update_entry(
+            entry=config_entry,
+            unique_id=gen_uuid(data[CONF_CREATION_DATETIME]),
+            data=data,
+        )
+        config_entry.version = 2
+        _LOGGER.debug("Migration of to version %s complete", config_entry.version)
+
+    return True
 
 
 async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -105,15 +129,21 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     new_data = entry.options.copy()
 
+    old_data = hass.data[DOMAIN][entry.unique_id]
+
+    # do not update the creation datetime if it already exists (which it should)
+    new_data[CONF_CREATION_DATETIME] = old_data.created
+
     hass.config_entries.async_update_entry(
         entry=entry,
-        unique_id=entry.options[CONF_NAME],
+        unique_id=entry.unique_id,
         data=new_data,
+        title=new_data[CONF_NAME],
         options={},
     )
 
     # Update the calendar config
-    hass.data[DOMAIN][entry.data.get(CONF_NAME)].update_config(new_data)
+    hass.data[DOMAIN][entry.unique_id].update_config(new_data)
 
 
 class ICalEvents:
@@ -151,6 +181,7 @@ class ICalEvents:
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.event = None
         self.all_day = False
+        self.created = config.get(CONF_CREATION_DATETIME, str(dt.now()))
 
     async def async_get_events(
         self, hass, start_date, end_date
