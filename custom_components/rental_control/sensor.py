@@ -7,11 +7,13 @@ from datetime import timedelta
 
 from homeassistant.const import CONF_NAME
 from homeassistant.helpers.entity import Entity
-from homeassistant.helpers.entity import generate_entity_id
+from homeassistant.helpers.entity import EntityCategory
 
 from .const import CONF_MAX_EVENTS
 from .const import DOMAIN
 from .const import ICON
+from .const import NAME
+from .util import gen_uuid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,7 +43,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             ICalSensor(
                 hass,
                 rental_control_events,
-                DOMAIN + " " + name,
+                f"{NAME} {name}",
                 eventnumber,
             )
         )
@@ -65,18 +67,13 @@ class ICalSensor(Entity):
         sensor_name is typically the name of the calendar.
         eventnumber indicates which upcoming event this is, starting at zero
         """
-        self._event_number = event_number
-        self._hass = hass
         self.rental_control_events = rental_control_events
-        self._entity_id = generate_entity_id(
-            "sensor.{}",
-            f"{sensor_name} event {self._event_number}",
-            hass=self._hass,
-        )
         if rental_control_events.event_prefix:
             summary = f"{rental_control_events.event_prefix} No reservation"
         else:
             summary = "No reservation"
+        self._code_generator = rental_control_events.code_generator
+        self._entity_category = EntityCategory.DIAGNOSTIC
         self._event_attributes = {
             "summary": summary,
             "description": None,
@@ -87,9 +84,14 @@ class ICalSensor(Entity):
             "slot_name": None,
             "slot_code": None,
         }
-        self._state = summary
+        self._event_number = event_number
+        self._hass = hass
         self._is_available = None
-        self._code_generator = rental_control_events.code_generator
+        self._name = f"{sensor_name} Event {self._event_number}"
+        self._state = summary
+        self._unique_id = gen_uuid(
+            f"{self.rental_control_events.unique_id} sensor {self._event_number}"
+        )
 
     def _generate_door_code(self) -> str:
         """Generate a door code based upon the selected type."""
@@ -175,24 +177,19 @@ class ICalSensor(Entity):
         return p.findall(summary)[0]
 
     @property
-    def entity_id(self):
-        """Return the entity_id of the sensor."""
-        return self._entity_id
+    def available(self):
+        """Return True if ZoneMinder is available."""
+        return self._event_attributes["start"] is not None
 
     @property
-    def name(self):
-        """Return the name of the sensor."""
-        return self._event_attributes["summary"]
+    def device_info(self):
+        """Return the device info block."""
+        return self.rental_control_events.device_info
 
     @property
-    def icon(self):
-        """Return the icon for the frontend."""
-        return ICON
-
-    @property
-    def state(self):
-        """Return the date of the next event."""
-        return self._state
+    def entity_category(self):
+        """Return the entity category."""
+        return self._entity_category
 
     @property
     def extra_state_attributes(self):
@@ -200,9 +197,24 @@ class ICalSensor(Entity):
         return self._event_attributes
 
     @property
-    def available(self):
-        """Return True if ZoneMinder is available."""
-        return self._event_attributes["start"] is not None
+    def icon(self):
+        """Return the icon for the frontend."""
+        return ICON
+
+    @property
+    def name(self):
+        """Return the name of the sensor."""
+        return self._name
+
+    @property
+    def state(self):
+        """Return the date of the next event."""
+        return self._state
+
+    @property
+    def unique_id(self):
+        """Return the unique_id."""
+        return self._unique_id
 
     async def async_update(self):
         """Update the sensor."""

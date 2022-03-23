@@ -27,6 +27,7 @@ from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import device_registry as dr
 from homeassistant.util import dt
 
 from .const import CONF_CHECKIN
@@ -44,6 +45,7 @@ from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import PLATFORMS
 from .const import REQUEST_TIMEOUT
+from .const import VERSION
 from .util import gen_uuid
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,7 +71,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # hass.data[DOMAIN][entry.entry_id] = MyApi(...)
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
-    hass.data[DOMAIN][entry.unique_id] = ICalEvents(hass=hass, config=config)
+    hass.data[DOMAIN][entry.unique_id] = ICalEvents(
+        hass=hass, config=config, unique_id=entry.unique_id
+    )
 
     for component in PLATFORMS:
         hass.async_create_task(
@@ -151,10 +155,11 @@ class ICalEvents:
 
     # pylint: disable=too-many-instance-attributes
 
-    def __init__(self, hass, config):
+    def __init__(self, hass, config, unique_id):
         """Set up a calendar object."""
         self.hass = hass
-        self.name = config.get(CONF_NAME)
+        self._name = config.get(CONF_NAME)
+        self._unique_id = unique_id
         self.event_prefix = config.get(CONF_EVENT_PREFIX)
         self.url = config.get(CONF_URL)
         # Early versions did not have these variables, as such it may not be
@@ -182,6 +187,40 @@ class ICalEvents:
         self.event = None
         self.all_day = False
         self.created = config.get(CONF_CREATION_DATETIME, str(dt.now()))
+        self._version = VERSION
+
+        # setup device
+        device_registry = dr.async_get(hass)
+        device_registry.async_get_or_create(
+            config_entry_id=self.unique_id,
+            identifiers={(DOMAIN, self.unique_id)},
+            name=self.name,
+            sw_version=self.version,
+        )
+
+    @property
+    def device_info(self):
+        """Return the device info block."""
+        return {
+            "identifiers": {(DOMAIN, self.unique_id)},
+            "name": self.name,
+            "sw_version": self.version,
+        }
+
+    @property
+    def name(self):
+        """Return the name."""
+        return self._name
+
+    @property
+    def unique_id(self):
+        """Return the unique id."""
+        return self._unique_id
+
+    @property
+    def version(self):
+        """Return the version."""
+        return self._version
 
     async def async_get_events(
         self, hass, start_date, end_date
@@ -227,7 +266,7 @@ class ICalEvents:
 
     def update_config(self, config):
         """Update config entries."""
-        self.name = config.get(CONF_NAME)
+        self._name = config.get(CONF_NAME)
         self.url = config.get(CONF_URL)
         # Early versions did not have these variables, as such it may not be
         # set, this should guard against issues until we're certain
