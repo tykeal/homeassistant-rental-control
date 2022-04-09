@@ -2,9 +2,7 @@
 import copy
 import logging
 
-from homeassistant.components.calendar import calculate_offset
 from homeassistant.components.calendar import CalendarEventDevice
-from homeassistant.components.calendar import is_offset_reached
 from homeassistant.const import CONF_NAME
 from homeassistant.helpers.entity import EntityCategory
 
@@ -40,7 +38,6 @@ class ICalCalendarEventDevice(CalendarEventDevice):
         self._entity_category = EntityCategory.DIAGNOSTIC
         self._event = None
         self._name = name
-        self._offset_reached = False
         self.rental_control_events = rental_control_events
         self._unique_id = gen_uuid(f"{self.rental_control_events.unique_id} calendar")
 
@@ -53,11 +50,6 @@ class ICalCalendarEventDevice(CalendarEventDevice):
     def entity_category(self):
         """Return the category."""
         return self._entity_category
-
-    @property
-    def extra_state_attributes(self):
-        """Return the custom state attributes."""
-        return {"offset_reached": self._offset_reached}
 
     @property
     def event(self):
@@ -89,11 +81,9 @@ class ICalCalendarEventDevice(CalendarEventDevice):
         if event is None:
             self._event = event
             return
-        event = calculate_offset(event, OFFSET)
         self._event = copy.deepcopy(event)
         self._event["start"] = {}
         self._event["end"] = {}
         self._event["start"]["dateTime"] = event["start"].isoformat()
         self._event["end"]["dateTime"] = event["end"].isoformat()
-        self._offset_reached = is_offset_reached(self.event)
         self._event["all_day"] = event["all_day"]
