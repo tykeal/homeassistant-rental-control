@@ -5,5 +5,5 @@
   "iot_class": "Cloud Polling",
   "zip_release": true,
   "filename": "rental_control.zip",
-  "homeassistant": "2021.7.0"
+  "homeassistant": "2022.5.0"
 }

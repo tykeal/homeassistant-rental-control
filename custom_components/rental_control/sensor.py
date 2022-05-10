@@ -225,31 +225,29 @@ class ICalSensor(Entity):
         self._code_generator = self.rental_control_events.code_generator
         event_list = self.rental_control_events.calendar
         if event_list and (self._event_number < len(event_list)):
-            val = event_list[self._event_number]
-            name = val.get("summary", "Unknown")
-            start = val.get("start")
+            event = event_list[self._event_number]
+            name = event.summary
+            start = event.start
 
             _LOGGER.debug(
                 "Adding event %s - Start %s - End %s - as event %s to calendar %s",
-                val.get("summary", "unknown"),
-                val.get("start"),
-                val.get("end"),
+                event.summary,
+                event.start,
+                event.end,
                 str(self._event_number),
                 self.name,
             )
 
-            self._event_attributes["summary"] = val.get("summary", "unknown")
-            self._event_attributes["start"] = val.get("start")
-            self._event_attributes["end"] = val.get("end")
-            self._event_attributes["location"] = val.get("location", "")
-            self._event_attributes["description"] = val.get("description", "")
+            self._event_attributes["summary"] = event.summary
+            self._event_attributes["start"] = event.start
+            self._event_attributes["end"] = event.end
+            self._event_attributes["location"] = event.location
+            self._event_attributes["description"] = event.description
             self._event_attributes["eta"] = (
                 start - datetime.now(start.tzinfo) + timedelta(days=1)
             ).days
-            self._event_attributes["all_day"] = val.get("all_day")
             self._state = f"{name} - {start.strftime('%-d %B %Y')}"
-            if not val.get("all_day"):
-                self._state += f" {start.strftime('%H:%M')}"
+            self._state += f" {start.strftime('%H:%M')}"
             self._event_attributes["slot_name"] = self._get_slot_name()
             self._event_attributes["slot_code"] = self._generate_door_code()
         else:
