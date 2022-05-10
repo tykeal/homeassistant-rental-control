@@ -1,8 +1,10 @@
 """Support for iCal-URLs."""
-import copy
+from __future__ import annotations
+
 import logging
 
-from homeassistant.components.calendar import CalendarEventDevice
+from homeassistant.components.calendar import CalendarEntity
+from homeassistant.components.calendar import CalendarEvent
 from homeassistant.const import CONF_NAME
 from homeassistant.helpers.entity import EntityCategory
 
@@ -23,12 +25,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     rental_control_events = hass.data[DOMAIN][config_entry.unique_id]
 
-    calendar = ICalCalendarEventDevice(hass, f"{NAME} {name}", rental_control_events)
+    calendar = RentalCalendar(hass, f"{NAME} {name}", rental_control_events)
 
     async_add_entities([calendar], True)
 
 
-class ICalCalendarEventDevice(CalendarEventDevice):
+class RentalCalendar(CalendarEntity):
     """A device for getting the next Task from a WebDav Calendar."""
 
     def __init__(
@@ -52,7 +54,7 @@ class ICalCalendarEventDevice(CalendarEventDevice):
         return self._entity_category
 
     @property
-    def event(self):
+    def event(self) -> CalendarEvent | None:
         """Return the next upcoming event."""
         return self._event
 
@@ -66,24 +68,15 @@ class ICalCalendarEventDevice(CalendarEventDevice):
         """Return the unique_id."""
         return self._unique_id
 
-    async def async_get_events(self, hass, start_date, end_date):
+    async def async_get_events(self, hass, start_date, end_date) -> list[CalendarEvent]:
         """Get all events in a specific time frame."""
-        _LOGGER.debug("Running ICalCalendarEventDevice async get events")
+        _LOGGER.debug("Running RentalCalendar async get events")
         return await self.rental_control_events.async_get_events(
             hass, start_date, end_date
         )
 
     async def async_update(self):
         """Update event data."""
-        _LOGGER.debug("Running ICalCalendarEventDevice async update for %s", self.name)
+        _LOGGER.debug("Running RentalCalendar async update for %s", self.name)
         await self.rental_control_events.update()
-        event = copy.deepcopy(self.rental_control_events.event)
-        if event is None:
-            self._event = event
-            return
-        self._event = copy.deepcopy(event)
-        self._event["start"] = {}
-        self._event["end"] = {}
-        self._event["start"]["dateTime"] = event["start"].isoformat()
-        self._event["end"]["dateTime"] = event["end"].isoformat()
-        self._event["all_day"] = event["all_day"]
+        self._event = self.rental_control_events.event

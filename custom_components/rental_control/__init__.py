@@ -11,6 +11,8 @@
 #   Andrew Grimberg - Initial implementation
 ##############################################################################
 """The Rental Control integration."""
+from __future__ import annotations
+
 import asyncio
 import logging
 from datetime import datetime
@@ -21,6 +23,7 @@ import async_timeout
 import homeassistant.helpers.config_validation as cv
 import icalendar
 import voluptuous as vol
+from homeassistant.components.calendar import CalendarEvent
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
@@ -224,7 +227,7 @@ class ICalEvents:
 
     async def async_get_events(
         self, hass, start_date, end_date
-    ):  # pylint: disable=unused-argument
+    ) -> list[CalendarEvent]:  # pylint: disable=unused-argument
         """Get list of upcoming events."""
         _LOGGER.debug("Running ICalEvents async_get_events")
         events = []
@@ -232,14 +235,14 @@ class ICalEvents:
             for event in self.calendar:
                 _LOGGER.debug(
                     "Checking if event %s has start %s and end %s within in the limit: %s and %s",
-                    event["summary"],
-                    event["start"],
-                    event["end"],
+                    event.summary,
+                    event.start,
+                    event.end,
                     start_date,
                     end_date,
                 )
 
-                if event["start"] < end_date and event["end"] > start_date:
+                if event.start < end_date and event.end > start_date:
                     _LOGGER.debug("... and it has")
                     events.append(event)
         return events
@@ -364,16 +367,15 @@ class ICalEvents:
                 if self.event_prefix:
                     event["SUMMARY"] = self.event_prefix + " " + event["SUMMARY"]
 
-                event_dict = self._ical_event_dict(start, end, from_date, event)
-                if event_dict:
-                    events.append(event_dict)
+                cal_event = self._ical_event(start, end, from_date, event)
+                if cal_event:
+                    events.append(cal_event)
 
-        sorted_events = sorted(events, key=lambda k: k["start"])
+        sorted_events = sorted(events, key=lambda k: k.start)
         return sorted_events
 
-    def _ical_event_dict(self, start, end, from_date, event):
+    def _ical_event(self, start, end, from_date, event) -> CalendarEvent | None:
         """Ensure that events are within the start and end."""
-
         # Skip this event if it's in the past
         if end.date() < from_date.date():
             _LOGGER.debug("This event has already ended")
@@ -394,16 +396,15 @@ class ICalEvents:
             self.timezone,
             start.astimezone(self.timezone),
         )
-        event_dict = {
-            "summary": event.get("SUMMARY", "Unknown"),
-            "start": start.astimezone(self.timezone),
-            "end": end.astimezone(self.timezone),
-            "location": event.get("LOCATION"),
-            "description": event.get("DESCRIPTION"),
-            "all_day": self.all_day,
-        }
-        _LOGGER.debug("Event to add: %s", str(event_dict))
-        return event_dict
+        cal_event = CalendarEvent(
+            description=event.get("DESCRIPTION"),
+            end=end.astimezone(self.timezone),
+            location=event.get("LOCATION"),
+            summary=event.get("SUMMARY", "Unknown"),
+            start=start.astimezone(self.timezone),
+        )
+        _LOGGER.debug("Event to add: %s", str(CalendarEvent))
+        return cal_event
 
     def _refresh_event_dict(self):
         """Ensure that all events in the calendar are start before max days."""
@@ -411,7 +412,7 @@ class ICalEvents:
         cal = self.calendar
         days = dt.start_of_local_day() + timedelta(days=self.days)
 
-        return [x for x in cal if x["start"].date() <= days.date()]
+        return [x for x in cal if x.start.date() <= days.date()]
 
     async def _refresh_calendar(self):
         """Update list of upcoming events."""
@@ -439,11 +440,11 @@ class ICalEvents:
         if len(self.calendar) > 0:
             found_next_event = False
             for event in self.calendar:
-                if event["end"] > dt.now() and not found_next_event:
+                if event.end > dt.now() and not found_next_event:
                     _LOGGER.debug(
                         "Event %s is the first event with end in the future: %s",
-                        event["summary"],
-                        event["end"],
+                        event.summary,
+                        event.end,
                     )
                     self.event = event
                     found_next_event = True
