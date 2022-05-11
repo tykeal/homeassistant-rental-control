@@ -41,6 +41,14 @@ calendars and sensors to go with them related to managing rental properties.
 -   All events will get a code associated with it. In the case that the criteria
     to create the code are not fulfilled, then the check-in/out date based
     method will be used as a fallback
+-   Each event has dynamically added attributes which consist of extracted
+    information if available in the event description. The following attributes
+    now get added:
+    -   Last four -- the last 4 digits of the phone number of the booking guest
+    -   Number of guests -- the number of guests in the reservation
+    -   Guest email -- the email of the booking guest
+    -   Phone number -- the phone number of the booking guest
+    -   Reservation url -- the URL to the reservation
 
 ## Planned features
 
