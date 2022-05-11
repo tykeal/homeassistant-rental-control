@@ -1,4 +1,6 @@
 """Creating sensors for upcoming events."""
+from __future__ import annotations
+
 import logging
 import random
 import re
@@ -84,6 +86,7 @@ class ICalSensor(Entity):
             "slot_name": None,
             "slot_code": None,
         }
+        self._parsed_attributes = {}
         self._event_number = event_number
         self._hass = hass
         self._is_available = None
@@ -92,6 +95,61 @@ class ICalSensor(Entity):
         self._unique_id = gen_uuid(
             f"{self.rental_control_events.unique_id} sensor {self._event_number}"
         )
+
+    def _extract_email(self) -> str | None:
+        """Extract guest email from a description"""
+        if self._event_attributes["description"] is None:
+            return None
+        p = re.compile(r"""Email:\s+(\S+@\S+)""")
+        ret = p.findall(self._event_attributes["description"])
+        if ret:
+            return ret[0]
+        else:
+            return None
+
+    def _extract_last_four(self) -> str | None:
+        """Extract the last 4 digits from a description."""
+        if self._event_attributes["description"] is None:
+            return None
+        p = re.compile(r"""\\(Last 4 Digits\\):\\s+(\\d{4})""")
+        ret = p.findall(self._event_attributes["description"])
+        if ret:
+            return ret[0]
+        else:
+            return None
+
+    def _extract_num_guests(self) -> str | None:
+        """Extract the number of guests from a description."""
+        if self._event_attributes["description"] is None:
+            return None
+        p = re.compile(r"""Guests:\s+(\d+)$""", re.M)
+        ret = p.findall(self._event_attributes["description"])
+        if ret:
+            return ret[0]
+        else:
+            return None
+
+    def _extract_phone_number(self) -> str | None:
+        """Extract guest phone number from a description"""
+        if self._event_attributes["description"] is None:
+            return None
+        p = re.compile(r"""Phone Number:\s+(\+?[\d\. \-\(\)]{9,})""")
+        ret = p.findall(self._event_attributes["description"])
+        if ret:
+            return ret[0].strip()
+        else:
+            return None
+
+    def _extract_url(self) -> str | None:
+        """Extract reservation URL."""
+        if self._event_attributes["description"] is None:
+            return None
+        p = re.compile(r"""(https?://.*$)""", re.M)
+        ret = p.findall(self._event_attributes["description"])
+        if ret:
+            return ret[0]
+        else:
+            return None
 
     def _generate_door_code(self) -> str:
         """Generate a door code based upon the selected type."""
@@ -120,9 +178,7 @@ class ICalSensor(Entity):
         ret = None
 
         if generator == "last_four":
-            p = re.compile("\\(Last 4 Digits\\):\\s+(\\d{4})")
-            last_four = p.findall(self._event_attributes["description"])[0]
-            ret = last_four
+            ret = self._extract_last_four()
         elif generator == "static_random":
             # If the description changes this will most likely change the code
             random.seed(self._event_attributes["description"])
@@ -192,9 +248,10 @@ class ICalSensor(Entity):
         return self._entity_category
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> dict:
         """Return the attributes of the event."""
-        return self._event_attributes
+        attrib = {**self._event_attributes, **self._parsed_attributes}
+        return attrib
 
     @property
     def icon(self):
@@ -250,6 +307,31 @@ class ICalSensor(Entity):
             self._state += f" {start.strftime('%H:%M')}"
             self._event_attributes["slot_name"] = self._get_slot_name()
             self._event_attributes["slot_code"] = self._generate_door_code()
+
+            # attributes parsed from description
+            parsed_attributes = {}
+
+            last_four = self._extract_last_four()
+            if last_four is not None:
+                parsed_attributes["last_four"] = last_four
+
+            num_guests = self._extract_num_guests()
+            if num_guests is not None:
+                parsed_attributes["number_of_guests"] = num_guests
+
+            guest_email = self._extract_email()
+            if guest_email is not None:
+                parsed_attributes["guest_email"] = guest_email
+
+            phone_number = self._extract_phone_number()
+            if phone_number is not None:
+                parsed_attributes["phone_number"] = phone_number
+
+            reservation_url = self._extract_url()
+            if reservation_url is not None:
+                parsed_attributes["reservation_url"] = reservation_url
+
+            self._parsed_attributes = parsed_attributes
         else:
             # No reservations
             _LOGGER.debug(
@@ -271,4 +353,5 @@ class ICalSensor(Entity):
                 "slot_name": None,
                 "slot_code": None,
             }
+            self._parsed_attributes = {}
             self._state = summary
