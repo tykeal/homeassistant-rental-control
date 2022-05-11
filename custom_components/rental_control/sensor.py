@@ -111,7 +111,7 @@ class ICalSensor(Entity):
         """Extract the last 4 digits from a description."""
         if self._event_attributes["description"] is None:
             return None
-        p = re.compile(r"""\\(Last 4 Digits\\):\\s+(\\d{4})""")
+        p = re.compile(r"""\(Last 4 Digits\):\s+(\d{4})""")
         ret = p.findall(self._event_attributes["description"])
         if ret:
             return ret[0]
