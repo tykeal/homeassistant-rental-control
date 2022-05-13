@@ -42,7 +42,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     sensors = []
     for eventnumber in range(max_events):
         sensors.append(
-            ICalSensor(
+            RentalControlCalSensor(
                 hass,
                 rental_control_events,
                 f"{NAME} {name}",
@@ -53,7 +53,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     async_add_entities(sensors)
 
 
-class ICalSensor(Entity):
+class RentalControlCalSensor(Entity):
     """
     Implementation of a iCal sensor.
 
@@ -275,7 +275,7 @@ class ICalSensor(Entity):
 
     async def async_update(self):
         """Update the sensor."""
-        _LOGGER.debug("Running ICalSensor async update for %s", self.name)
+        _LOGGER.debug("Running RentalControlCalSensor async update for %s", self.name)
 
         await self.rental_control_events.update()
 
