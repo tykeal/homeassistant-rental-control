@@ -25,12 +25,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     rental_control_events = hass.data[DOMAIN][config_entry.unique_id]
 
-    calendar = RentalCalendar(hass, f"{NAME} {name}", rental_control_events)
+    calendar = RentalControlCalendar(hass, f"{NAME} {name}", rental_control_events)
 
     async_add_entities([calendar], True)
 
 
-class RentalCalendar(CalendarEntity):
+class RentalControlCalendar(CalendarEntity):
     """A device for getting the next Task from a WebDav Calendar."""
 
     def __init__(
@@ -70,13 +70,13 @@ class RentalCalendar(CalendarEntity):
 
     async def async_get_events(self, hass, start_date, end_date) -> list[CalendarEvent]:
         """Get all events in a specific time frame."""
-        _LOGGER.debug("Running RentalCalendar async get events")
+        _LOGGER.debug("Running RentalControlCalendar async get events")
         return await self.rental_control_events.async_get_events(
             hass, start_date, end_date
         )
 
     async def async_update(self):
         """Update event data."""
-        _LOGGER.debug("Running RentalCalendar async update for %s", self.name)
+        _LOGGER.debug("Running RentalControlCalendar async update for %s", self.name)
         await self.rental_control_events.update()
         self._event = self.rental_control_events.event

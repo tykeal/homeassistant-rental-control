@@ -56,8 +56,6 @@ _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
 
-MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=120)
-
 
 def setup(hass, config):  # pylint: disable=unused-argument
     """Set up this integration with config flow."""
@@ -70,11 +68,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug(
         "Running init async_setup_entry for calendar %s", config.get(CONF_NAME)
     )
-    # TODO Store an API object for your platforms to access
-    # hass.data[DOMAIN][entry.entry_id] = MyApi(...)
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
-    hass.data[DOMAIN][entry.unique_id] = ICalEvents(
+    hass.data[DOMAIN][entry.unique_id] = RentalControl(
         hass=hass, config=config, unique_id=entry.unique_id
     )
 
@@ -153,7 +149,7 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     hass.data[DOMAIN][entry.unique_id].update_config(new_data)
 
 
-class ICalEvents:
+class RentalControl:
     """Get a list of events."""
 
     # pylint: disable=too-many-instance-attributes
@@ -229,7 +225,7 @@ class ICalEvents:
         self, hass, start_date, end_date
     ) -> list[CalendarEvent]:  # pylint: disable=unused-argument
         """Get list of upcoming events."""
-        _LOGGER.debug("Running ICalEvents async_get_events")
+        _LOGGER.debug("Running RentalControl async_get_events")
         events = []
         if len(self.calendar) > 0:
             for event in self.calendar:
@@ -249,7 +245,7 @@ class ICalEvents:
 
     async def update(self):
         """Regularly update the calendar."""
-        _LOGGER.debug("Running ICalEvents update for calendar %s", self.name)
+        _LOGGER.debug("Running RentalControl update for calendar %s", self.name)
 
         now = dt.now()
         _LOGGER.debug("Refresh frequency is: %d", self.refresh_frequency)
@@ -416,7 +412,7 @@ class ICalEvents:
 
     async def _refresh_calendar(self):
         """Update list of upcoming events."""
-        _LOGGER.debug("Running ICalEvents _refresh_calendar for %s", self.name)
+        _LOGGER.debug("Running RentalControl _refresh_calendar for %s", self.name)
 
         session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
         with async_timeout.timeout(REQUEST_TIMEOUT):
