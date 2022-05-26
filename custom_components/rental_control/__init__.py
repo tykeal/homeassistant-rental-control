@@ -33,6 +33,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import device_registry as dr
 from homeassistant.util import dt
 
+from .config_flow import _lock_entry_convert as lock_entry_convert
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_GENERATION
@@ -40,6 +41,7 @@ from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
 from .const import CONF_IGNORE_NON_RESERVED
+from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
 from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_TIMEZONE
@@ -119,7 +121,26 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             data=data,
         )
         config_entry.version = 2
-        _LOGGER.debug("Migration of to version %s complete", config_entry.version)
+        _LOGGER.debug("Migration to version %s complete", config_entry.version)
+
+    # 2 -> 3: Migrate l
+    if version == 2:
+        _LOGGER.debug("Migrating from version %s", version)
+        if (
+            CONF_LOCK_ENTRY in config_entry.data
+            and config_entry.data[CONF_LOCK_ENTRY] is not None
+        ):
+            data = config_entry.data.copy()
+            convert = lock_entry_convert(hass, config_entry.data[CONF_LOCK_ENTRY], True)
+            data[CONF_LOCK_ENTRY] = convert
+            hass.config_entries.async_update_entry(
+                entry=config_entry,
+                unique_id=config_entry.unique_id,
+                data=data,
+            )
+
+        config_entry.version = 3
+        _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     return True
 

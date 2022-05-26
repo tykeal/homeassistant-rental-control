@@ -56,7 +56,7 @@ sorted_tz.sort()
 class RentalControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the config flow for Rental Control."""
 
-    VERSION = 2
+    VERSION = 3
 
     DEFAULTS = {
         CONF_CHECKIN: DEFAULT_CHECKIN,
@@ -162,6 +162,30 @@ def _generator_convert(ident: str, to_type: bool = True) -> str:
         ]
 
 
+def _lock_entry_convert(hass: HomeAssistant, entry: str, to_entity: bool = True) -> str:
+    """Convert between name and entity for lock entries."""
+
+    _LOGGER.debug(
+        "In _lock_entry_convert, entry: '%s', to_entity: '%s'", entry, to_entity
+    )
+
+    if to_entity:
+        _LOGGER.debug("to entity")
+        for lock_entry in hass.config_entries.async_entries(LOCK_MANAGER):
+            if entry == lock_entry.title:
+                _LOGGER.debug("'%s' becomes '%s'", entry, lock_entry.data["lockname"])
+                return lock_entry.data["lockname"]
+    else:
+        _LOGGER.debug("from entity")
+        for lock_entry in hass.config_entries.async_entries(LOCK_MANAGER):
+            if entry == lock_entry.data["lockname"]:
+                _LOGGER.debug("'%s' becomes '%s'", entry, lock_entry.title)
+                return lock_entry.title
+
+    _LOGGER.debug("no conversion done")
+    return entry
+
+
 def _get_schema(
     hass: HomeAssistant,
     user_input: Optional[Dict[str, Any]],
@@ -175,6 +199,15 @@ def _get_schema(
     if CONF_LOCK_ENTRY in default_dict.keys() and default_dict[CONF_LOCK_ENTRY] is None:
         check_dict = default_dict.copy()
         check_dict.pop(CONF_LOCK_ENTRY, None)
+        default_dict = check_dict
+
+    if (
+        CONF_LOCK_ENTRY in default_dict.keys()
+        and default_dict[CONF_LOCK_ENTRY] is not None
+    ):
+        check_dict = default_dict.copy()
+        convert = _lock_entry_convert(hass, default_dict[CONF_LOCK_ENTRY], False)
+        check_dict[CONF_LOCK_ENTRY] = convert
         default_dict = check_dict
 
     def _get_default(key: str, fallback_default: Any = None) -> None:
@@ -316,6 +349,11 @@ async def _start_config_flow(
             # Convert (none) to None
             if user_input[CONF_LOCK_ENTRY] == "(none)":
                 user_input[CONF_LOCK_ENTRY] = None
+
+            if user_input[CONF_LOCK_ENTRY] is not None:
+                user_input[CONF_LOCK_ENTRY] = _lock_entry_convert(
+                    cls.hass, user_input[CONF_LOCK_ENTRY], True
+                )
 
             # Convert code generator to proper type
             user_input[CONF_CODE_GENERATION] = _generator_convert(
