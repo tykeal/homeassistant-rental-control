@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 from datetime import timedelta
 from zoneinfo import ZoneInfo  # noreorder
@@ -29,6 +30,7 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
+from homeassistant.core import ServiceCall
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import device_registry as dr
 from homeassistant.util import dt
@@ -44,6 +46,7 @@ from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
 from .const import CONF_REFRESH_FREQUENCY
+from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_REFRESH_FREQUENCY
@@ -51,12 +54,15 @@ from .const import DOMAIN
 from .const import PLATFORMS
 from .const import REQUEST_TIMEOUT
 from .const import VERSION
+from .services import update_code_slot
 from .util import gen_uuid
 
 _LOGGER = logging.getLogger(__name__)
 
 
 CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
+
+SERVICE_UPDATE_CODE_SLOT = "update_code_slot"
 
 
 def setup(hass, config):  # pylint: disable=unused-argument
@@ -82,6 +88,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     entry.add_update_listener(update_listener)
+
+    # Update Code Slot
+    async def _update_code_slot(service: ServiceCall) -> None:
+        """Update code slot with Keymaster information."""
+        _LOGGER.debug("Update Code Slot service: %s", service)
+
+        await update_code_slot(hass, service)
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_UPDATE_CODE_SLOT,
+        _update_code_slot,
+    )
 
     return True
 
@@ -198,11 +217,18 @@ class RentalControl:
         # just use cv.time to get the parsed time object
         self.checkin = cv.time(config.get(CONF_CHECKIN))
         self.checkout = cv.time(config.get(CONF_CHECKOUT))
+        self.start_slot = config.get(CONF_START_SLOT)
+        self.lockname = config.get(CONF_LOCK_ENTRY)
         self.max_events = config.get(CONF_MAX_EVENTS)
         self.days = config.get(CONF_DAYS)
         self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
         self.calendar = []
+        if self.lockname:
+            self.calendar_ready = False
+        else:
+            self.calendar_ready = True
+        self.event_overrides = {}
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.event = None
         self.all_day = False
@@ -305,6 +331,7 @@ class RentalControl:
         # just use cv.time to get the parsed time object
         self.checkin = cv.time(config.get(CONF_CHECKIN))
         self.checkout = cv.time(config.get(CONF_CHECKOUT))
+        self.lockname = config.get(CONF_LOCK_ENTRY)
         self.max_events = config.get(CONF_MAX_EVENTS)
         self.days = config.get(CONF_DAYS)
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
@@ -319,6 +346,61 @@ class RentalControl:
 
         # updated the calendar in case the fetch days has changed
         self.calendar = self._refresh_event_dict()
+
+    async def update_event_overrides(
+        self,
+        slot: int,
+        slot_code: str,
+        slot_name: str,
+        start_time: datetime.datetime,
+        end_time: datetime.datetime,
+    ):
+        """Update the event overrides with the ServiceCall data."""
+        _LOGGER.debug("In update_event_overrides")
+
+        event_overrides = self.event_overrides.copy()
+
+        if slot_name:
+            _LOGGER.debug("Searching by slot_name: '%s'", slot_name)
+            regex = r"^(" + self.event_prefix + " )?(.*)$"
+            matches = re.findall(regex, slot_name)
+            if matches[0][1] not in event_overrides:
+                _LOGGER.debug("Event '%s' not in overrides", matches[0][1])
+                for event in event_overrides.keys():
+                    if slot == event_overrides[event]["slot"]:
+                        _LOGGER.debug("Slot '%d' is in event '%s'", slot, event)
+                        del event_overrides[event]
+                        break
+
+            event_overrides[matches[0][1]] = {
+                "slot": slot,
+                "slot_code": slot_code,
+                "start_time": start_time,
+                "end_time": end_time,
+            }
+        else:
+            _LOGGER.debug("Searching by slot: '%s'", slot)
+            for event in event_overrides.keys():
+                if slot == event_overrides[event]["slot"]:
+                    _LOGGER.debug("Slot '%d' is in event '%s'", slot, event)
+                    del event_overrides[event]
+                    break
+
+            event_overrides["Slot " + str(slot)] = {
+                "slot": slot,
+            }
+
+        self.event_overrides = event_overrides
+
+        _LOGGER.debug("event_overrides: '%s'", self.event_overrides)
+        if len(self.event_overrides) == self.max_events:
+            _LOGGER.debug("max_events reached, flagging as ready")
+            self.calendar_ready = True
+        else:
+            _LOGGER.debug(
+                "max_events not reached yet, calendar_ready is '%s'",
+                self.calendar_ready,
+            )
 
     def _ical_parser(self, calendar, from_date, to_date):
         """Return a sorted list of events from a icalendar object."""
