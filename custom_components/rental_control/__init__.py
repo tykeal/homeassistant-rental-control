@@ -56,6 +56,7 @@ from .const import REQUEST_TIMEOUT
 from .const import VERSION
 from .services import update_code_slot
 from .util import gen_uuid
+from .util import get_slot_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -402,6 +403,9 @@ class RentalControl:
                 self.calendar_ready,
             )
 
+        # Overrides have updated, trigger refresh of calendar
+        self.next_refresh = dt.now()
+
     def _ical_parser(self, calendar, from_date, to_date):
         """Return a sorted list of events from a icalendar object."""
 
@@ -446,10 +450,28 @@ class RentalControl:
                         # Skip Blocked or 'Not available' events
                         continue
 
+                slot_name = get_slot_name(event["SUMMARY"], event["DESCRIPTION"], None)
+
+                override = None
+                if slot_name and slot_name in self.event_overrides:
+                    override = self.event_overrides[slot_name]
+                    _LOGGER.debug("override: '%s'", override)
+                    # If start and stop are the same, then we ignore the override
+                    # This shouldn't happen except when a slot has been cleared
+                    # In that instance we shouldn't find an override
+                    if override["start_time"] == override["end_time"]:
+                        _LOGGER.debug("override is now none")
+                        override = None
+
+                if override:
+                    checkin = dt.parse_datetime(override["start_time"]).time()
+                    checkout = dt.parse_datetime(override["end_time"]).time()
+                else:
+                    checkin = self.checkin
+                    checkout = self.checkout
+
                 _LOGGER.debug("DTSTART in event: %s", event["DTSTART"].dt)
-                dtstart = datetime.combine(
-                    event["DTSTART"].dt, self.checkin, self.timezone
-                )
+                dtstart = datetime.combine(event["DTSTART"].dt, checkin, self.timezone)
 
                 start = dtstart
 
@@ -457,9 +479,7 @@ class RentalControl:
                     dtend = dtstart
                 else:
                     _LOGGER.debug("DTEND in event: %s", event["DTEND"].dt)
-                    dtend = datetime.combine(
-                        event["DTEND"].dt, self.checkout, self.timezone
-                    )
+                    dtend = datetime.combine(event["DTEND"].dt, checkout, self.timezone)
                 end = dtend
 
                 # Modify the SUMMARY if we have an event_prefix
