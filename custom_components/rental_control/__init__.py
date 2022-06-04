@@ -225,10 +225,7 @@ class RentalControl:
         self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
         self.calendar = []
-        if self.lockname:
-            self.calendar_ready = False
-        else:
-            self.calendar_ready = True
+        self.calendar_ready = False
         self.event_overrides = {}
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.event = None
@@ -555,6 +552,9 @@ class RentalControl:
             self.calendar = self._ical_parser(
                 event_list, start_of_events, end_of_events
             )
+
+            if self.lockname is None:
+                self.calendar_ready = True
 
         if len(self.calendar) > 0:
             found_next_event = False

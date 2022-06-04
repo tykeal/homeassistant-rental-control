@@ -90,7 +90,7 @@ class RentalControlCalSensor(Entity):
         self._parsed_attributes = {}
         self._event_number = event_number
         self._hass = hass
-        self._is_available = None
+        self._is_available = False
         self._name = f"{sensor_name} Event {self._event_number}"
         self._state = summary
         self._unique_id = gen_uuid(
@@ -201,8 +201,8 @@ class RentalControlCalSensor(Entity):
 
     @property
     def available(self):
-        """Return True if ZoneMinder is available."""
-        return self._event_attributes["start"] is not None
+        """Return True if calendar is ready."""
+        return self._is_available
 
     @property
     def device_info(self):
@@ -326,3 +326,5 @@ class RentalControlCalSensor(Entity):
             }
             self._parsed_attributes = {}
             self._state = summary
+
+        self._is_available = self.rental_control_events.calendar_ready
