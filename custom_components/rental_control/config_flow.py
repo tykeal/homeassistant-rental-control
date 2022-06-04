@@ -308,39 +308,58 @@ async def _start_config_flow(
         try:
             cv.url(user_input["url"])
             # We require that the URL be an SSL URL
-            if not re.search("^https://", user_input["url"]):
-                errors["base"] = "invalid_url"
+            if not re.search("^https://", user_input[CONF_URL]):
+                errors[CONF_URL] = "invalid_url"
             else:
                 session = async_get_clientsession(
-                    cls.hass, verify_ssl=user_input["verify_ssl"]
+                    cls.hass, verify_ssl=user_input[CONF_VERIFY_SSL]
                 )
                 with async_timeout.timeout(REQUEST_TIMEOUT):
-                    resp = await session.get(user_input["url"])
+                    resp = await session.get(user_input[CONF_URL])
                 if resp.status != 200:
                     _LOGGER.error(
                         "%s returned %s - %s",
-                        user_input["url"],
+                        user_input[CONF_URL],
                         resp.status,
                         resp.reason,
                     )
-                    errors["base"] = "unknown"
+                    errors[CONF_URL] = "unknown"
                 else:
                     # We require text/calendar in the content-type header
                     if "text/calendar" not in resp.content_type:
-                        errors["base"] = "bad_ics"
+                        errors[CONF_URL] = "bad_ics"
         except vol.Invalid as err:
             _LOGGER.exception(err.msg)
-            errors["base"] = "invalid_url"
+            errors[CONF_URL] = "invalid_url"
 
-        if user_input[CONF_REFRESH_FREQUENCY] > 1440:
-            errors["base"] = "bad_refresh"
+        if (
+            user_input[CONF_REFRESH_FREQUENCY] < 0
+            or user_input[CONF_REFRESH_FREQUENCY] > 1440
+        ):
+            errors[CONF_REFRESH_FREQUENCY] = "bad_refresh"
 
         try:
-            cv.time(user_input["checkin"])
-            cv.time(user_input["checkout"])
+            cv.time(user_input[CONF_CHECKIN])
         except vol.Invalid as err:
             _LOGGER.exception(err.msg)
-            errors["base"] = "bad_time"
+            errors[CONF_CHECKIN] = "bad_time"
+
+        try:
+            cv.time(user_input[CONF_CHECKOUT])
+        except vol.Invalid as err:
+            _LOGGER.exception(err.msg)
+            errors[CONF_CHECKOUT] = "bad_time"
+
+        if user_input[CONF_DAYS] < 1:
+            errors[CONF_DAYS] = "bad_minimum"
+
+        if user_input[CONF_MAX_EVENTS] < 1:
+            errors[CONF_MAX_EVENTS] = "bad_minimum"
+
+        # Convert code generator to proper type
+        user_input[CONF_CODE_GENERATION] = _generator_convert(
+            ident=user_input[CONF_CODE_GENERATION], to_type=True
+        )
 
         if not errors:
             # Only do this conversion if there are no errors and it needs to be
@@ -354,11 +373,6 @@ async def _start_config_flow(
                 user_input[CONF_LOCK_ENTRY] = _lock_entry_convert(
                     cls.hass, user_input[CONF_LOCK_ENTRY], True
                 )
-
-            # Convert code generator to proper type
-            user_input[CONF_CODE_GENERATION] = _generator_convert(
-                ident=user_input[CONF_CODE_GENERATION], to_type=True
-            )
 
             if hasattr(cls, "created"):
                 user_input[CONF_CREATION_DATETIME] = cls.created
