@@ -1,0 +1,38 @@
+---
+automation:
+  alias: "{{ NAME }} - Update {{ rc_name }}"
+  description: ""
+  trigger:
+    - platform: state
+      entity_id:
+        {% for n in range(0, config_entry["max_events"]|int) -%}
+        {%- set slot = config_entry["start_slot"]|int + n|int -%}
+        - input_text.{{ config_entry["lockname"] }}_name_{{ slot }}
+        - input_text.{{ config_entry["lockname"] }}_pin_{{ slot }}
+        - input_datetime.start_date_{{ config_entry["lockname"] }}_{{ slot }}
+        - input_datetime.end_date_{{ config_entry["lockname"] }}_{{ slot }}
+        {% endfor %}
+      variables:
+        ei: '{% raw %}{{ trigger.to_state.entity_id }}{% endraw %}'
+        et: '{% raw %}{{ ei.split(".")[0] }}{% endraw %}'
+        e: '{% raw %}{{ ei.split(".")[1] }}{% endraw %}'
+        sl: '{% raw %}{{ e.split("_")[-1] }}{% endraw %}'
+        base: >-
+          {% raw %}{%- if et == "input_text" -%} {{ e.split("_")[:-2] | join("_") }} {%-{% endraw %}
+          {% raw %}else -%} {{ e.split("_")[2:-1] | join("_") }} {%- endif -%}{% endraw %}
+  condition: []
+  action:
+    - delay:
+        hours: 0
+        minutes: 0
+        seconds: 1
+        milliseconds: 0
+    - service: rental_control.update_code_slot
+      data:
+        lockname: '{% raw %}{{ base }}{% endraw %}'
+        slot: '{% raw %}{{ sl }}{% endraw %}'
+        slot_name: '{% raw %}{{ states("input_text." + base + "_name_" + sl|string) }}{% endraw %}'
+        slot_code: '{% raw %}{{ states("input_text." + base + "_pin_" + sl|string) }}{% endraw %}'
+        start_time: '{% raw %}{{ states("input_datetime.start_date_" + base + "_" + sl|string) }}{% endraw %}'
+        end_time: '{% raw %}{{ states("input_datetime.end_date_" + base + "_" + sl|string) }}{% endraw %}'
+  mode: restart

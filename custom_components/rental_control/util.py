@@ -15,12 +15,54 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import uuid
 
+from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_NAME
+from homeassistant.const import SERVICE_RELOAD
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceNotFound
+from homeassistant.util import slugify
+from jinja2 import Environment
+from jinja2 import PackageLoader
+from jinja2 import select_autoescape
+
+from .const import CONF_PATH
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def delete_rc_and_base_folder(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+    """Delete packages folder for RC and base rental_control folder if empty."""
+    base_path = os.path.join(hass.config.path(), config_entry.get(CONF_PATH))
+    rc_name_slug = slugify(config_entry.get(CONF_NAME))
+
+    delete_folder(base_path, rc_name_slug)
+    # It is possible that the path may not exist because of RCs not
+    # being connected to Keymaster configurations
+    if os.path.exists(base_path):
+        if not os.listdir(base_path):
+            os.rmdir(base_path)
+
+
+def delete_folder(absolute_path: str, *relative_paths: str) -> None:
+    """Recursively delete folder and all children files and folders (depth first)."""
+    path = os.path.join(absolute_path, *relative_paths)
+
+    # RC that doesn't manage a lock has no files to purge
+    if not os.path.exists(path):
+        return
+
+    if os.path.isfile(path):
+        os.remove(path)
+    else:
+        for file_or_dir in os.listdir(path):
+            delete_folder(path, file_or_dir)
+        os.rmdir(path)
 
 
 def gen_uuid(created: str) -> str:
@@ -62,3 +104,44 @@ def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
     # Guesty
     p = re.compile("-(.*)-.*-")
     return p.findall(name)[0]
+
+
+def write_template_config(
+    output_path: str, template_name: str, NAME: str, rc_name: str, config_entry
+) -> None:
+    """Render the given template to disk."""
+    _LOGGER.debug("In write_template_config")
+
+    jinja_env = Environment(
+        loader=PackageLoader("custom_components.rental_control"),
+        autoescape=select_autoescape(),
+    )
+
+    template = jinja_env.get_template(template_name + ".yaml.j2")
+    render = template.render(NAME=NAME, rc_name=rc_name, config_entry=config_entry)
+
+    _LOGGER.debug(
+        f"""Rendered Template is:
+    {render}"""
+    )
+
+    filename = slugify(f"{rc_name}_{template_name}") + ".yaml"
+
+    with open(os.path.join(output_path, filename), "w+") as outfile:
+        _LOGGER.debug("Writing %s", filename)
+        outfile.write(render)
+
+    _LOGGER.debug("Completed writing %s", filename)
+
+
+async def async_reload_package_platforms(hass: HomeAssistant) -> bool:
+    """Reload package platforms to pick up any changes to package files."""
+    _LOGGER.debug("In async_reload_package_platforms")
+    for domain in [
+        AUTO_DOMAIN,
+    ]:
+        try:
+            await hass.services.async_call(domain, SERVICE_RELOAD, blocking=True)
+        except ServiceNotFound:
+            return False
+    return True

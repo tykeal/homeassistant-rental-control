@@ -25,6 +25,8 @@ import homeassistant.helpers.config_validation as cv
 import icalendar
 import voluptuous as vol
 from homeassistant.components.calendar import CalendarEvent
+from homeassistant.components.persistent_notification import async_create
+from homeassistant.components.persistent_notification import async_dismiss
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
@@ -36,25 +38,34 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.util import dt
 
 from .config_flow import _lock_entry_convert as lock_entry_convert
+from .const import ATTR_NAME
+from .const import ATTR_NOTIFICATION_SOURCE
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_GENERATION
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
+from .const import CONF_GENERATE
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
+from .const import CONF_PATH
 from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
+from .const import EVENT_RENTAL_CONTROL_REFRESH
+from .const import NAME
 from .const import PLATFORMS
 from .const import REQUEST_TIMEOUT
 from .const import VERSION
+from .services import generate_package_files
 from .services import update_code_slot
+from .util import async_reload_package_platforms
+from .util import delete_rc_and_base_folder
 from .util import gen_uuid
 from .util import get_slot_name
 
@@ -63,6 +74,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
 
+SERVICE_GENERATE_PACKAGE = "generate_package"
 SERVICE_UPDATE_CODE_SLOT = "update_code_slot"
 
 
@@ -77,6 +89,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug(
         "Running init async_setup_entry for calendar %s", config.get(CONF_NAME)
     )
+
+    should_generate_package = config.get(CONF_GENERATE)
+
+    updated_config = config.copy()
+    updated_config.pop(CONF_GENERATE, None)
+    if updated_config != entry.data:
+        hass.config_entries.async_update_entry(entry, data=updated_config)
+
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
     hass.data[DOMAIN][entry.unique_id] = RentalControl(
@@ -89,6 +109,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     entry.add_update_listener(update_listener)
+
+    # Generate package files
+    async def _generate_package(service: ServiceCall) -> None:
+        """Generate the package files."""
+        _LOGGER.debug("In _generate_package: '%s'", service)
+        await generate_package_files(hass, service.data["rental_control_name"])
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GENERATE_PACKAGE,
+        _generate_package,
+    )
 
     # Update Code Slot
     async def _update_code_slot(service: ServiceCall) -> None:
@@ -103,13 +135,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _update_code_slot,
     )
 
+    # generate files if needed
+    if should_generate_package:
+        rc_name = config.get(CONF_NAME)
+        servicedata = {"rental_control_name": rc_name}
+        await hass.services.async_call(
+            DOMAIN, SERVICE_GENERATE_PACKAGE, servicedata, blocking=True
+        )
+
+        _LOGGER.debug("Firing refresh event")
+        # Fire an event for the startup automation to capture
+        hass.bus.fire(
+            EVENT_RENTAL_CONTROL_REFRESH,
+            event_data={
+                ATTR_NOTIFICATION_SOURCE: "event",
+                ATTR_NAME: rc_name,
+            },
+        )
+
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Unload a config entry."""
+    """Handle removal of an entry."""
     config = entry.data
-    _LOGGER.debug("Running async_unload_entry for calendar %s", config.get(CONF_NAME))
+    rc_name = config.get(CONF_NAME)
+    _LOGGER.debug("Running async_unload_entry for rental_control %s", rc_name)
+
+    notification_id = f"{DOMAIN}_{rc_name}_unload"
+    async_create(
+        hass,
+        (
+            f"Removing `{rc_name}` and all of the files that were generated for "
+            "it. This may take some time so don't panic. This message will "
+            "automatically clear when removal is complete."
+        ),
+        title=f"{NAME} - Removing `{rc_name}`",
+        notification_id=notification_id,
+    )
+
     unload_ok = all(
         await asyncio.gather(
             *[
@@ -118,8 +182,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
             ]
         )
     )
+
     if unload_ok:
+        # Remove all package files and the base folder if needed
+        await hass.async_add_executor_job(delete_rc_and_base_folder, hass, config)
+
+        await async_reload_package_platforms(hass)
+
         hass.data[DOMAIN].pop(entry.unique_id)
+
+    async_dismiss(hass, notification_id)
 
     return unload_ok
 
@@ -172,6 +244,7 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
         return
 
     new_data = entry.options.copy()
+    new_data.pop(CONF_GENERATE, None)
 
     old_data = hass.data[DOMAIN][entry.unique_id]
 
@@ -185,6 +258,24 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
         title=new_data[CONF_NAME],
         options={},
     )
+
+    # Update package files
+    if new_data[CONF_LOCK_ENTRY]:
+        rc_name = new_data[CONF_NAME]
+        servicedata = {"rental_control_name": rc_name}
+        await hass.services.async_call(
+            DOMAIN, SERVICE_GENERATE_PACKAGE, servicedata, blocking=True
+        )
+
+        _LOGGER.debug("Firing refresh event")
+        # Fire an event for the startup automation to capture
+        hass.bus.fire(
+            EVENT_RENTAL_CONTROL_REFRESH,
+            event_data={
+                ATTR_NOTIFICATION_SOURCE: "event",
+                ATTR_NAME: rc_name,
+            },
+        )
 
     # Update the calendar config
     hass.data[DOMAIN][entry.unique_id].update_config(new_data)
@@ -232,6 +323,20 @@ class RentalControl:
         self.all_day = False
         self.created = config.get(CONF_CREATION_DATETIME, str(dt.now()))
         self._version = VERSION
+
+        # Alert users if they have a lock defined but no packages path
+        # this would happen if they've upgraded from an older version where
+        # they already had a lock definition defined even though it didn't
+        # do anything
+        self.path = config.get(CONF_PATH, None)
+        if self.path is None and self.lockname is not None:
+            notification_id = f"{DOMAIN}_{self._name}_missing_path"
+            async_create(
+                hass,
+                (f"Please update configuration for {NAME} {self._name}"),
+                title=f"{NAME} - Missing configuration",
+                notification_id=notification_id,
+            )
 
         # setup device
         device_registry = dr.async_get(hass)

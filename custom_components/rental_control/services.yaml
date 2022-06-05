@@ -1,6 +1,18 @@
 ---
 # yamllint disable rule:line-length
 
+generate_package:
+  name: Generate Rental Control files
+  description: (Re-)Generates the package files that are used to provide lock integration with Keymaster via automations
+  fields:
+    rental_control_name:
+      name: Rental Control Name
+      description: The name of the Rental Control device to generate for
+      example: Guest Room
+      required: true
+      selector:
+        text:
+
 update_code_slot:
   name: Update code slot information
   description: Update the data that RentalControl has about a given code slot

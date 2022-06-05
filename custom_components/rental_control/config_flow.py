@@ -1,5 +1,6 @@
 """Config flow for Rental Control integration."""
 import logging
+import os
 import re
 from typing import Any
 from typing import Dict
@@ -27,9 +28,11 @@ from .const import CONF_CODE_GENERATION
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
+from .const import CONF_GENERATE
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
+from .const import CONF_PATH
 from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
@@ -38,7 +41,9 @@ from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_DAYS
 from .const import DEFAULT_EVENT_PREFIX
+from .const import DEFAULT_GENERATE
 from .const import DEFAULT_MAX_EVENTS
+from .const import DEFAULT_PATH
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DEFAULT_START_SLOT
 from .const import DOMAIN
@@ -257,6 +262,9 @@ def _get_schema(
                     to_type=False,
                 ),
             ): vol.In(_code_generators()),
+            vol.Required(
+                CONF_PATH, default=_get_default(CONF_PATH, DEFAULT_PATH)
+            ): cv.string,
             vol.Optional(
                 CONF_IGNORE_NON_RESERVED,
                 default=_get_default(CONF_IGNORE_NON_RESERVED, True),
@@ -361,6 +369,10 @@ async def _start_config_flow(
             ident=user_input[CONF_CODE_GENERATION], to_type=True
         )
 
+        # Validate that path is relative
+        if os.path.isabs(user_input[CONF_PATH]):
+            errors[CONF_PATH] = "invalid_path"
+
         if not errors:
             # Only do this conversion if there are no errors and it needs to be
             # done. Doing this before the errors check will lead to later
@@ -376,6 +388,9 @@ async def _start_config_flow(
 
             if hasattr(cls, "created"):
                 user_input[CONF_CREATION_DATETIME] = cls.created
+
+            if user_input[CONF_LOCK_ENTRY]:
+                user_input[CONF_GENERATE] = DEFAULT_GENERATE
 
             return cls.async_create_entry(title=title, data=user_input)
 
