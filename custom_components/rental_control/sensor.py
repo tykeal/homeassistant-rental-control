@@ -272,12 +272,29 @@ class RentalControlCalSensor(Entity):
             ).days
             self._state = f"{name} - {start.strftime('%-d %B %Y')}"
             self._state += f" {start.strftime('%H:%M')}"
-            self._event_attributes["slot_name"] = get_slot_name(
+            slot_name = get_slot_name(
                 self._event_attributes["summary"],
                 self._event_attributes["description"],
                 self.rental_control_events.event_prefix,
             )
-            self._event_attributes["slot_code"] = self._generate_door_code()
+            self._event_attributes["slot_name"] = slot_name
+
+            override = None
+            if slot_name and slot_name in self.rental_control_events.event_overrides:
+                override = self.rental_control_events.event_overrides[slot_name]
+                _LOGGER.debug("override: '%s'", override)
+                # If start and stop are the same, then we ignore the override
+                # This shouldn't happen except when a slot has been cleared
+                # In that instance we shouldn't find an override
+                if override["start_time"] == override["end_time"]:
+                    _LOGGER.debug("override is now none")
+                    override = None
+
+            if override and override["slot_code"]:
+                slot_code = str(override["slot_code"])
+            else:
+                slot_code = self._generate_door_code()
+            self._event_attributes["slot_code"] = slot_code
 
             # attributes parsed from description
             parsed_attributes = {}
