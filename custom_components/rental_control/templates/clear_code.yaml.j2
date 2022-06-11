@@ -1,0 +1,17 @@
+---
+automation:
+  alias: "{{ NAME }} - Clear code slot {{ rc_name }}"
+  description: ""
+  trigger:
+    - platform: event
+      event_type: rental_control_clear_code
+      event_data:
+        rental_control_name: {{ rc_name }}
+  condition: []
+  action:
+    service: input_boolean.toggle
+    data: {}
+    target:
+      entity_id: input_boolean.reset_codeslot_{{ config_entry["lockname"] }}_{% raw %}{{ trigger.event.data.code_slot }}{% endraw %}
+  mode: queued
+  max: {{ config_entry["max_events"]|int + 2 }}

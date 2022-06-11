@@ -67,7 +67,7 @@ async def generate_package_files(hass: HomeAssistant, rc_name: str) -> None:
 
     _LOGGER.debug("Packages directory is ready for file generation")
 
-    templates = ["startup", "update"]
+    templates = ["startup", "update", "clear_code"]
 
     for t in templates:
         write_template_config(output_path, t, NAME, rc_name, config_entry)
