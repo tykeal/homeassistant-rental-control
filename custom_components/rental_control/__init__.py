@@ -597,12 +597,8 @@ class RentalControl:
 
     def _ical_event(self, start, end, from_date, event) -> CalendarEvent | None:
         """Ensure that events are within the start and end."""
-        # Skip this event if it's in the past
-        if end.date() < from_date.date():
-            _LOGGER.debug("This event has already ended")
-            return None
         # Ignore events that ended this midnight.
-        if (
+        if (end.date() < from_date.date()) or (
             end.date() == from_date.date()
             and end.hour == 0
             and end.minute == 0
