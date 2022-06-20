@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date
-from datetime import datetime
 from pprint import pformat
 
 from homeassistant.components.persistent_notification import create
 from homeassistant.core import HomeAssistant
 from homeassistant.core import ServiceCall
+from homeassistant.util import dt
 from homeassistant.util import slugify
 
 from .const import DOMAIN
@@ -129,16 +128,14 @@ async def update_code_slot(
         slot_name = None
 
     if "start_time" in service.data:
-        start_time = service.data["start_time"]
+        start_time = dt.parse_datetime(service.data["start_time"])
     else:
-        dt = date.today()
-        start_time = datetime.combine(dt, datetime.min.time())
+        start_time = dt.start_of_local_day()
 
     if "end_time" in service.data:
-        end_time = service.data["end_time"]
+        end_time = dt.parse_datetime(service.data["end_time"])
     else:
-        dt = date.today()
-        end_time = datetime.combine(dt, datetime.min.time())
+        end_time = dt.start_of_local_day()
 
     # Return on bad data or nothing to do
     if slot == 0 or not lockname:

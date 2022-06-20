@@ -66,6 +66,7 @@ from .services import generate_package_files
 from .services import update_code_slot
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
+from .util import fire_clear_code
 from .util import gen_uuid
 from .util import get_slot_name
 
@@ -566,8 +567,8 @@ class RentalControl:
                         override = None
 
                 if override:
-                    checkin = dt.parse_datetime(override["start_time"]).time()
-                    checkout = dt.parse_datetime(override["end_time"]).time()
+                    checkin = override["start_time"].time()
+                    checkout = override["end_time"].time()
                 else:
                     checkin = self.checkin
                     checkout = self.checkout
@@ -588,14 +589,16 @@ class RentalControl:
                 if self.event_prefix:
                     event["SUMMARY"] = self.event_prefix + " " + event["SUMMARY"]
 
-                cal_event = self._ical_event(start, end, from_date, event)
+                cal_event = self._ical_event(start, end, from_date, event, override)
                 if cal_event:
                     events.append(cal_event)
 
         sorted_events = sorted(events, key=lambda k: k.start)
         return sorted_events
 
-    def _ical_event(self, start, end, from_date, event) -> CalendarEvent | None:
+    def _ical_event(
+        self, start, end, from_date, event, override
+    ) -> CalendarEvent | None:
         """Ensure that events are within the start and end."""
         # Ignore events that ended this midnight.
         if (end.date() < from_date.date()) or (
@@ -605,6 +608,9 @@ class RentalControl:
             and end.second == 0
         ):
             _LOGGER.debug("This event has already ended")
+            if override:
+                _LOGGER.info("Override exists for event, clearing slot")
+                fire_clear_code(self.hass, override["slot"], self._name)
             return None
         _LOGGER.debug(
             "Start: %s Tzinfo: %s Default: %s StartAs %s",

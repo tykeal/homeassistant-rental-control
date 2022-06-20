@@ -20,12 +20,14 @@ SENSOR = "sensor"
 PLATFORMS = [CALENDAR, SENSOR]
 
 # Events
+EVENT_RENTAL_CONTROL_CLEAR_CODE = "rental_control_clear_code"
 EVENT_RENTAL_CONTROL_REFRESH = "rental_control_refresh"
 
 # Event data constants
 ATTR_NOTIFICATION_SOURCE = "notification_source"
 
 # Attributes
+ATTR_CODE_SLOT = "code_slot"
 ATTR_NAME = "rental_control_name"
 
 # Config

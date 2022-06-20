@@ -35,4 +35,5 @@ automation:
         slot_code: '{% raw %}{{ states("input_text." + base + "_pin_" + sl|string) }}{% endraw %}'
         start_time: '{% raw %}{{ states("input_datetime.start_date_" + base + "_" + sl|string) }}{% endraw %}'
         end_time: '{% raw %}{{ states("input_datetime.end_date_" + base + "_" + sl|string) }}{% endraw %}'
-  mode: restart
+  mode: queued
+  max: {{ config_entry["max_events"]|int + 2 }}

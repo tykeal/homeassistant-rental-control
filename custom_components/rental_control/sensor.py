@@ -15,6 +15,7 @@ from .const import CONF_MAX_EVENTS
 from .const import DOMAIN
 from .const import ICON
 from .const import NAME
+from .util import async_check_overrides
 from .util import gen_uuid
 from .util import get_slot_name
 
@@ -245,6 +246,16 @@ class RentalControlCalSensor(Entity):
         _LOGGER.debug("Running RentalControlCalSensor async update for %s", self.name)
 
         await self.rental_control_events.update()
+
+        # Event 0 is the only event garuanteed to exist, so it gets
+        # the added job of making sure other things are happening
+        if self._event_number == 0:
+            # Check if overrides need clearing, do this non-blocking
+            self.rental_control_events.hass.async_create_task(
+                async_check_overrides(
+                    self.rental_control_events.hass, self.rental_control_events
+                )
+            )
 
         self._code_generator = self.rental_control_events.code_generator
         event_list = self.rental_control_events.calendar

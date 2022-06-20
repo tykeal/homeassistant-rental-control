@@ -25,12 +25,16 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import SERVICE_RELOAD
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceNotFound
+from homeassistant.util import dt
 from homeassistant.util import slugify
 from jinja2 import Environment
 from jinja2 import PackageLoader
 from jinja2 import select_autoescape
 
+from .const import ATTR_CODE_SLOT
+from .const import ATTR_NAME
 from .const import CONF_PATH
+from .const import EVENT_RENTAL_CONTROL_CLEAR_CODE
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
@@ -63,6 +67,38 @@ def delete_folder(absolute_path: str, *relative_paths: str) -> None:
         for file_or_dir in os.listdir(path):
             delete_folder(path, file_or_dir)
         os.rmdir(path)
+
+
+async def async_check_overrides(hass: HomeAssistant, rc):
+    """Check if overrides need to have a clear_code event fired."""
+
+    event_list = rc.calendar
+    overrides = rc.event_overrides.copy()
+
+    for override in overrides:
+        ovr = overrides[override]
+        if ("slot_name" in ovr or "slot_code" in ovr) and (
+            (ovr["end_time"].date() < dt.start_of_local_day().date())
+            or (
+                (event_list and rc.max_events <= len(event_list))
+                and (
+                    ovr["start_time"].date() > event_list[rc.max_events - 1].end.date()
+                )
+            )
+        ):
+            fire_clear_code(hass, overrides[override]["slot"], rc.name)
+
+
+def fire_clear_code(hass: HomeAssistant, slot: int, name: str) -> None:
+    """Fire clear_code event."""
+    _LOGGER.debug("In fire_clear_code - slot: %d, name: %s", slot, name)
+    hass.bus.fire(
+        EVENT_RENTAL_CONTROL_CLEAR_CODE,
+        event_data={
+            ATTR_CODE_SLOT: slot,
+            ATTR_NAME: name,
+        },
+    )
 
 
 def gen_uuid(created: str) -> str:
