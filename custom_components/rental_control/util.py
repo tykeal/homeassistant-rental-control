@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import uuid
+from typing import List
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
 from homeassistant.config_entries import ConfigEntry
@@ -33,8 +34,10 @@ from jinja2 import select_autoescape
 
 from .const import ATTR_CODE_SLOT
 from .const import ATTR_NAME
+from .const import ATTR_SLOT_NAME
 from .const import CONF_PATH
 from .const import EVENT_RENTAL_CONTROL_CLEAR_CODE
+from .const import EVENT_RENTAL_CONTROL_SET_CODE
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
@@ -72,28 +75,24 @@ def delete_folder(absolute_path: str, *relative_paths: str) -> None:
 async def async_check_overrides(rc):
     """Check if overrides need to have a clear_code event fired."""
 
-    _LOGGER.info("In async_check_overrides")
+    _LOGGER.debug("In async_check_overrides")
 
     event_list = rc.calendar
     overrides = rc.event_overrides.copy()
 
-    event_names = [
-        e.extra_state_attributes["slot_name"]
-        for e in rc.event_sensors
-        if e.extra_state_attributes["slot_name"]
-    ]
-    _LOGGER.info("event_names = '%s'", event_names)
-    _LOGGER.info(overrides)
+    event_names = get_event_names(rc)
+    _LOGGER.debug("event_names = '%s'", event_names)
+    _LOGGER.debug(overrides)
 
     for override in overrides:
         clear_code = False
 
         if "Slot " not in override and override not in event_names:
-            _LOGGER.info("%s is not in events, setting clear flag", override)
+            _LOGGER.debug("%s is not in events, setting clear flag", override)
             clear_code = True
 
         ovr = overrides[override]
-        _LOGGER.info("Checking ovr = '%s'", ovr)
+        _LOGGER.debug("Checking ovr = '%s'", ovr)
 
         if ("slot_name" in ovr or "slot_code" in ovr) and (
             (ovr["end_time"].date() < dt.start_of_local_day().date())
@@ -104,7 +103,7 @@ async def async_check_overrides(rc):
                 )
             )
         ):
-            _LOGGER.info("%s is outside time options, setting clear flag", override)
+            _LOGGER.debug("%s is outside time options, setting clear flag", override)
             clear_code = True
 
         if clear_code:
@@ -121,6 +120,31 @@ def fire_clear_code(hass: HomeAssistant, slot: int, name: str) -> None:
             ATTR_NAME: name,
         },
     )
+
+
+def fire_set_code(hass: HomeAssistant, name: str, slot: int, slot_name: str) -> None:
+    """Fire set_code event."""
+    _LOGGER.debug(
+        "In fire_set_code - name: %s, slot: %d, slot_name: %s", name, slot, slot_name
+    )
+    hass.bus.fire(
+        EVENT_RENTAL_CONTROL_SET_CODE,
+        event_data={
+            ATTR_CODE_SLOT: slot,
+            ATTR_NAME: name,
+            ATTR_SLOT_NAME: slot_name,
+        },
+    )
+
+
+def get_event_names(rc) -> List[str]:
+    """Get the current event names."""
+    event_names = [
+        e.extra_state_attributes["slot_name"]
+        for e in rc.event_sensors
+        if e.extra_state_attributes["slot_name"]
+    ]
+    return event_names
 
 
 def gen_uuid(created: str) -> str:

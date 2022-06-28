@@ -9,7 +9,9 @@ from homeassistant.helpers.entity import EntityCategory
 
 from ..const import MAP_ICON
 from ..util import async_check_overrides
+from ..util import fire_set_code
 from ..util import gen_uuid
+from ..util import get_event_names
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,19 +92,19 @@ class RentalControlMappingSensor(Entity):
 
     async def async_update(self):
         """Update the sensor."""
-        _LOGGER.info(
+        _LOGGER.debug(
             "Running RentalControlMappingSensor async_udpate for %s", self.name
         )
 
         # Do nothing if the rc calendar is not ready
         if not self.rental_control.calendar_ready:
-            _LOGGER.info("calendar not ready, skipping mapping update")
+            _LOGGER.debug("calendar not ready, skipping mapping update")
             return
 
         # Do not execute until everything has had a chance to fully stabilize
         # This can take a couple of minutes
         if self._startup_count < 2:
-            _LOGGER.info("Rental Control still starting, skipping mapping update")
+            _LOGGER.debug("Rental Control still starting, skipping mapping update")
             self._startup_count += 1
             return
 
@@ -113,16 +115,28 @@ class RentalControlMappingSensor(Entity):
 
         for override in overrides:
             if override not in self._mapping_attributes["mapping"].values():
-                _LOGGER.info("%s is not in current mapping", override)
+                _LOGGER.debug("%s is not in current mapping", override)
                 if "Slot " not in override:
                     self._mapping_attributes["mapping"][
                         overrides[override]["slot"]
                     ] = override
             else:
-                _LOGGER.info("%s is in current mapping", override)
+                _LOGGER.debug("%s is in current mapping", override)
 
-        _LOGGER.info("Num sensors = %s", len(self.rental_control.event_sensors))
-        for i in self.rental_control.event_sensors:
-            _LOGGER.info(i)
-            # _LOGGER.info(i.extra_state_attributes)
+        slots = filter(lambda k: ("Slot " in k), overrides)
+        for event in get_event_names(self.rental_control):
+            if event not in overrides:
+                try:
+                    slot = next(slots)
+                    _LOGGER.debug(
+                        "%s is not in overrides, setting to slot %s", event, slot
+                    )
+                    fire_set_code(
+                        self.rental_control.hass,
+                        self.rental_control.name,
+                        overrides[slot]["slot"],
+                        event,
+                    )
+                except StopIteration:
+                    pass
         self._is_available = self.rental_control.calendar_ready

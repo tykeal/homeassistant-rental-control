@@ -23,6 +23,7 @@ PLATFORMS = [CALENDAR, SENSOR]
 # Events
 EVENT_RENTAL_CONTROL_CLEAR_CODE = "rental_control_clear_code"
 EVENT_RENTAL_CONTROL_REFRESH = "rental_control_refresh"
+EVENT_RENTAL_CONTROL_SET_CODE = "rental_control_set_code"
 
 # Event data constants
 ATTR_NOTIFICATION_SOURCE = "notification_source"
@@ -30,6 +31,7 @@ ATTR_NOTIFICATION_SOURCE = "notification_source"
 # Attributes
 ATTR_CODE_SLOT = "code_slot"
 ATTR_NAME = "rental_control_name"
+ATTR_SLOT_NAME = "slot_name"
 
 # Config
 CONF_CHECKIN = "checkin"

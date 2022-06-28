@@ -610,7 +610,7 @@ class RentalControl:
         ):
             _LOGGER.debug("This event has already ended")
             if override:
-                _LOGGER.info("Override exists for event, clearing slot")
+                _LOGGER.debug("Override exists for event, clearing slot")
                 fire_clear_code(self.hass, override["slot"], self._name)
             return None
         _LOGGER.debug(
