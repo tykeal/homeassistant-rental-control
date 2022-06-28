@@ -133,7 +133,7 @@ def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
     """Determine the name for a given slot / event."""
 
     # strip off any prefix if it's being used
-    if prefix is not None:
+    if prefix:
         p = re.compile(f"{prefix} (.*)")
         name = p.findall(summary)[0]
     else:
