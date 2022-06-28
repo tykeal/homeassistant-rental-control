@@ -69,14 +69,32 @@ def delete_folder(absolute_path: str, *relative_paths: str) -> None:
         os.rmdir(path)
 
 
-async def async_check_overrides(hass: HomeAssistant, rc):
+async def async_check_overrides(rc):
     """Check if overrides need to have a clear_code event fired."""
+
+    _LOGGER.info("In async_check_overrides")
 
     event_list = rc.calendar
     overrides = rc.event_overrides.copy()
 
+    event_names = [
+        e.extra_state_attributes["slot_name"]
+        for e in rc.event_sensors
+        if e.extra_state_attributes["slot_name"]
+    ]
+    _LOGGER.info("event_names = '%s'", event_names)
+    _LOGGER.info(overrides)
+
     for override in overrides:
+        clear_code = False
+
+        if "Slot " not in override and override not in event_names:
+            _LOGGER.info("%s is not in events, setting clear flag", override)
+            clear_code = True
+
         ovr = overrides[override]
+        _LOGGER.info("Checking ovr = '%s'", ovr)
+
         if ("slot_name" in ovr or "slot_code" in ovr) and (
             (ovr["end_time"].date() < dt.start_of_local_day().date())
             or (
@@ -86,7 +104,11 @@ async def async_check_overrides(hass: HomeAssistant, rc):
                 )
             )
         ):
-            fire_clear_code(hass, overrides[override]["slot"], rc.name)
+            _LOGGER.info("%s is outside time options, setting clear flag", override)
+            clear_code = True
+
+        if clear_code:
+            fire_clear_code(rc.hass, overrides[override]["slot"], rc.name)
 
 
 def fire_clear_code(hass: HomeAssistant, slot: int, name: str) -> None:

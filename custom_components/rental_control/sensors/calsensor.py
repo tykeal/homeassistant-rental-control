@@ -11,7 +11,6 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity import EntityCategory
 
 from ..const import ICON
-from ..util import async_check_overrides
 from ..util import gen_uuid
 from ..util import get_slot_name
 
@@ -35,6 +34,7 @@ class RentalControlCalSensor(Entity):
         eventnumber indicates which upcoming event this is, starting at zero
         """
         self.rental_control_events = rental_control_events
+        self.rental_control_events.event_sensors.append(self)
         if rental_control_events.event_prefix:
             summary = f"{rental_control_events.event_prefix} No reservation"
         else:
@@ -209,16 +209,6 @@ class RentalControlCalSensor(Entity):
         _LOGGER.debug("Running RentalControlCalSensor async update for %s", self.name)
 
         await self.rental_control_events.update()
-
-        # Event 0 is the only event garuanteed to exist, so it gets
-        # the added job of making sure other things are happening
-        if self._event_number == 0:
-            # Check if overrides need clearing, do this non-blocking
-            self.rental_control_events.hass.async_create_task(
-                async_check_overrides(
-                    self.rental_control_events.hass, self.rental_control_events
-                )
-            )
 
         self._code_generator = self.rental_control_events.code_generator
         event_list = self.rental_control_events.calendar

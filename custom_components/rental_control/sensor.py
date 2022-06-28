@@ -9,6 +9,7 @@ from .const import CONF_MAX_EVENTS
 from .const import DOMAIN
 from .const import NAME
 from .sensors.calsensor import RentalControlCalSensor
+from .sensors.mapsensor import RentalControlMappingSensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,6 +41,15 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 rental_control_events,
                 f"{NAME} {name}",
                 eventnumber,
+            )
+        )
+
+    if rental_control_events.lockname:
+        sensors.append(
+            RentalControlMappingSensor(
+                hass,
+                rental_control_events,
+                f"{NAME} {name}",
             )
         )
 

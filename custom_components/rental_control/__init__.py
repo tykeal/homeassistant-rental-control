@@ -319,6 +319,7 @@ class RentalControl:
         self.calendar = []
         self.calendar_ready = False
         self.event_overrides = {}
+        self.event_sensors = []
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.event = None
         self.all_day = False

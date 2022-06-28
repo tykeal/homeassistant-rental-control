@@ -13,6 +13,7 @@ REQUEST_TIMEOUT = 60
 
 # Icons
 ICON = "mdi:account-key"
+MAP_ICON = "mdi:map-search"
 
 # Platforms
 CALENDAR = "calendar"
