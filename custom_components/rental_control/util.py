@@ -176,7 +176,12 @@ def write_template_config(
     )
 
     template = jinja_env.get_template(template_name + ".yaml.j2")
-    render = template.render(NAME=NAME, rc_name=rc_name, config_entry=config_entry)
+    render = template.render(
+        NAME=NAME,
+        rc_name=rc_name,
+        config_entry=config_entry,
+        rc_slug=slugify(rc_name),
+    )
 
     _LOGGER.debug(
         f"""Rendered Template is:
