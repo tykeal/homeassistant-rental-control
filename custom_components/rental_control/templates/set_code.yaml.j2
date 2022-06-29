@@ -49,5 +49,4 @@ automation:
       target:
         entity_id:
           - 'input_boolean.daterange_{{ config_entry["lockname"] }}_{% raw %}{{{% endraw %} code_slot {% raw %}}}{% endraw %}'
-          - 'input_boolean.notify_{{ config_entry["lockname"] }}_{% raw %}{{{% endraw %} code_slot {% raw %}}}{% endraw %}'
           - 'input_boolean.enabled_{{ config_entry["lockname"] }}_{% raw %}{{{% endraw %} code_slot {% raw %}}}{% endraw %}'
