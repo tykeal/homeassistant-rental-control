@@ -40,7 +40,7 @@ automation:
           - 'input_text.{{ config_entry["lockname"] }}_pin_{% raw %}{{{% endraw %} code_slot {% raw %}}}{% endraw %}'
     - service: input_text.set_value
       data:
-        value: '{% raw %}{{{% endraw %} state_attr("sensor.rental_control_{{ rc_slug }}_mapping", "prefix") {% raw %}}} {{{% endraw %} slot_name {% raw %}}}{% endraw %}'
+        value: '{%- if config_entry["event_prefix"] %}{{ config_entry["event_prefix"] }} {% endif %}{% raw %}{{{% endraw %} slot_name {% raw %}}}{% endraw %}'
       target:
         entity_id:
           - 'input_text.{{ config_entry["lockname"] }}_name_{% raw %}{{{% endraw %} code_slot {% raw %}}}{% endraw %}'
