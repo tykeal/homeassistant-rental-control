@@ -53,9 +53,6 @@ calendars and sensors to go with them related to managing rental properties.
     -   Guest email -- the email of the booking guest
     -   Phone number -- the phone number of the booking guest
     -   Reservation url -- the URL to the reservation
-
-## Planned features
-
 -   Integration with [Keymaster](https://github.com/FutureTense/keymaster) to
     control door codes matched to the number of events being tracked
 
@@ -79,6 +76,43 @@ The integration is set up using the GUI.
     times will be added to the calendar events. If the events come in with times
     already attached they _will_ be overwritten (most rental hosting platforms
     only provide day in / day out in the events)
+-   For configuration managing a Keymaster controlled lock, make sure that you
+    have defined the lock during initial setup and that you have the starting
+    slot set correctly for the integration.
+
+    -   It is _very_ important that you have Keymaster fully working before
+        trying to utilize the slot management component of Rental Control. In
+        particular the `packages` directory configuration as Rental Control
+        generates automations using a similar mechanism to Keymaster.
+    -   **NOTE:** It is very important that the Keymaster slots that you are
+        going to manage are either completely clear when you setup the
+        integration _or_ that they follow the following rules:
+
+        -   The slot name == Prefix(if defined) Slot_name(per the event sensor)
+        -   The slot code == the defined slot code matches what is currently in
+            the event sensor
+        -   The start and stop dates and times match what are in the sensor
+
+        Failing to follow these rules may cause your configuration to behave in
+        unexpected way.
+
+    -   The following portions of a Keymaster slot will influence (that is
+        override) data in the calendar or event sensor:
+        -   Checkin/out TIME (not date) will update the calendar event and also
+            the sensor tracked information. **NOTE:** If you are using a
+            timezone that is _not_ the system timezone on your calendar, you
+            will likely run into weird and unexpected issues as that is not
+            presently supported!
+        -   Door code - by default when the slot is updated by the integration
+            the code that is extracted / created by the sensor will be used. If,
+            however, you have a need to override the code you may do so after
+            the slot has been updated. This is useful if you have a non-managed
+            slot that has the same door code (or starting code, typically first
+            4 digits) that is the generated code and thus causing the slot to
+            not function properly
+    -   An additional "mapping" sensor will be generated when setup to manage a
+        lock. This sensor is primarily used for fireing events for the generated
+        automations to pick up.
 
 ## Reconfiguration
 
@@ -92,3 +126,8 @@ This integration supports reconfiguration after initial setup
 the calendar is to check for updates every 2 minutes and events are refreshed
 around every 30 seconds. If you want to force a full update right away, select
 the `...` menu next to `Configure` and select `Reload`
+
+## Known issues
+
+While the integration supports reconfiguration a few things are not presently
+working correctly with this. If you are needing to change
