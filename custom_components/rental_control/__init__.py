@@ -260,6 +260,9 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
         options={},
     )
 
+    # Update the calendar config
+    hass.data[DOMAIN][entry.unique_id].update_config(new_data)
+
     # Update package files
     if new_data[CONF_LOCK_ENTRY]:
         rc_name = new_data[CONF_NAME]
@@ -277,9 +280,6 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 ATTR_NAME: rc_name,
             },
         )
-
-    # Update the calendar config
-    hass.data[DOMAIN][entry.unique_id].update_config(new_data)
 
 
 class RentalControl:
@@ -448,6 +448,19 @@ class RentalControl:
         except NameError:
             self.ignore_non_reserved = None
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
+
+        # make sure we have a path set
+        self.path = config.get(CONF_PATH, None)
+
+        # This should not be possible during this phase!
+        if self.path is None and self.lockname is not None:
+            notification_id = f"{DOMAIN}_{self._name}_missing_path"
+            async_create(
+                self.hass,
+                (f"Please update configuration for {NAME} {self._name}"),
+                title=f"{NAME} - Missing configuration",
+                notification_id=notification_id,
+            )
 
         # updated the calendar in case the fetch days has changed
         self.calendar = self._refresh_event_dict()
