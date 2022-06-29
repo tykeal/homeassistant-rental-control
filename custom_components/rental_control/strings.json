@@ -2,8 +2,10 @@
   "config": {
     "error": {
       "bad_ics": "URL did not provide valid calendar",
+      "bad_minimum": "Value must be 1 or greater",
       "bad_refresh": "Refresh must be between 0 and 1440.",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
+      "invalid_path": "Path must be a relative path, not absolute",
       "invalid_url": "Only https URLs are supported",
       "same_name": "Name already in use",
       "unknown": "Unexpected error, check logs for more details"
@@ -32,8 +34,10 @@
   "options": {
     "error": {
       "bad_ics": "URL did not provide valid calendar",
-      "bad_time": "Check-in/out time is invalid. Use 24 hour time",
+      "bad_minimum": "Value must be 1 or greater",
       "bad_refresh": "Refresh must be between 0 and 1440.",
+      "bad_time": "Check-in/out time is invalid. Use 24 hour time",
+      "invalid_path": "Path must be a relative path, not absolute",
       "invalid_url": "Only https URLs are supported",
       "same_name": "Name already in use",
       "unknown": "Unexpected error, check logs for more details"

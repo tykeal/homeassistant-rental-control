@@ -1,0 +1,52 @@
+---
+automation:
+  alias: {{ NAME }} - Set Code {{ rc_name }}
+  description: ""
+  mode: queued
+  max: {{ config_entry["max_events"]|int + 2 }}
+  trigger:
+    - platform: event
+      event_type: rental_control_set_code
+      event_data:
+        rental_control_name: {{ rc_name }}
+      variables:
+        slot_name: '{% raw %}{{ trigger.event.data.slot_name }}{% endraw %}'
+        code_slot: '{% raw %}{{ trigger.event.data.code_slot }}{% endraw %}'
+        event_num: |-
+          {% raw %}{%- for i in range(0, {% endraw %}{{ config_entry["max_events"] }}{% raw %}) -%}
+            {%- {% endraw %}if state_attr("sensor.rental_control_{{ rc_slug }}_event_" + i|string, "slot_name") == slot_name {% raw %}-%}
+              {{ i }}
+            {%- endif -%}
+          {%- endfor -%}{% endraw %}
+  condition: []
+  action:
+    - service: input_datetime.set_datetime
+      data:
+        datetime: '{% raw %}{{{% endraw %} state_attr("sensor.rental_control_{{ rc_slug }}_event_" + event_num|string, "end") {% raw %}}}{% endraw %}'
+      target:
+        entity_id:
+          - 'input_datetime.end_date_{{ config_entry["lockname"] }}_{% raw %}{{{% endraw %} code_slot {% raw %}}}{% endraw %}'
+    - service: input_datetime.set_datetime
+      data:
+        datetime: '{% raw %}{{{% endraw %} state_attr("sensor.rental_control_{{ rc_slug }}_event_" + event_num|string, "start") {% raw %}}}{% endraw %}'
+      target:
+        entity_id:
+          - 'input_datetime.start_date_{{ config_entry["lockname"] }}_{% raw %}{{{% endraw %} code_slot {% raw %}}}{% endraw %}'
+    - service: input_text.set_value
+      data:
+        value: '{% raw %}{{{% endraw %} state_attr("sensor.rental_control_{{ rc_slug }}_event_" + event_num|string, "slot_code") {% raw %}}}{% endraw %}'
+      target:
+        entity_id:
+          - 'input_text.{{ config_entry["lockname"] }}_pin_{% raw %}{{{% endraw %} code_slot {% raw %}}}{% endraw %}'
+    - service: input_text.set_value
+      data:
+        value: '{%- if config_entry["event_prefix"] %}{{ config_entry["event_prefix"] }} {% endif %}{% raw %}{{{% endraw %} slot_name {% raw %}}}{% endraw %}'
+      target:
+        entity_id:
+          - 'input_text.{{ config_entry["lockname"] }}_name_{% raw %}{{{% endraw %} code_slot {% raw %}}}{% endraw %}'
+    - service: input_boolean.turn_on
+      data: {}
+      target:
+        entity_id:
+          - 'input_boolean.daterange_{{ config_entry["lockname"] }}_{% raw %}{{{% endraw %} code_slot {% raw %}}}{% endraw %}'
+          - 'input_boolean.enabled_{{ config_entry["lockname"] }}_{% raw %}{{{% endraw %} code_slot {% raw %}}}{% endraw %}'
