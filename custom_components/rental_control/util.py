@@ -169,22 +169,27 @@ def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
         return None
 
     # Airbnb and VRBO
-    if re.search("Reserved", name):
+    if "Reserved" in name:
         # Airbnb
         if name == "Reserved":
-            p = re.compile("([A-Z][A-Z0-9]{9})")
+            p = re.compile(r"([A-Z][A-Z0-9]{9})")
             return p.search(description)[0]
         else:
-            p = re.compile(" - (.*)$")
+            p = re.compile(r" - (.*)$")
             return p.findall(name)[0]
 
     # Tripadvisor
-    if re.search("Tripadvisor", name):
-        p = re.compile("Tripadvisor.*: (.*)")
+    if "Tripadvisor" in name:
+        p = re.compile(r"Tripadvisor.*: (.*)")
+        return p.findall(name)[0]
+
+    # Booking.com
+    if "CLOSED" in name:
+        p = re.compile(r"\s*CLOSED - (.*)")
         return p.findall(name)[0]
 
     # Guesty
-    p = re.compile("-(.*)-.*-")
+    p = re.compile(r"-(.*)-.*-")
     return p.findall(name)[0]
 
 

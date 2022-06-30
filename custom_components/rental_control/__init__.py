@@ -567,7 +567,13 @@ class RentalControl:
                         # Skip Blocked or 'Not available' events
                         continue
 
-                slot_name = get_slot_name(event["SUMMARY"], event["DESCRIPTION"], None)
+                if "DESCRIPTION" in event:
+                    slot_name = get_slot_name(
+                        event["SUMMARY"], event["DESCRIPTION"], None
+                    )
+                else:
+                    # VRBO and Booking.com do not have a DESCRIPTION element
+                    slot_name = get_slot_name(event["SUMMARY"], None, None)
 
                 override = None
                 if slot_name and slot_name in self.event_overrides:
@@ -633,13 +639,20 @@ class RentalControl:
             self.timezone,
             start.astimezone(self.timezone),
         )
+        try:
+            description = event.get("DESCRIPTION")
+        except KeyError:
+            # VRBO and Booking.com do not have a DESCRIPTION element
+            description = None
+
         cal_event = CalendarEvent(
-            description=event.get("DESCRIPTION"),
+            description=description,
             end=end.astimezone(self.timezone),
             location=event.get("LOCATION"),
             summary=event.get("SUMMARY", "Unknown"),
             start=start.astimezone(self.timezone),
         )
+
         _LOGGER.debug("Event to add: %s", str(CalendarEvent))
         return cal_event
 
