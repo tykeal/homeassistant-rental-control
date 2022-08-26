@@ -470,8 +470,8 @@ class RentalControl:
         slot: int,
         slot_code: str,
         slot_name: str,
-        start_time: datetime.datetime,
-        end_time: datetime.datetime,
+        start_time: datetime,
+        end_time: datetime,
     ):
         """Update the event overrides with the ServiceCall data."""
         _LOGGER.debug("In update_event_overrides")

@@ -58,7 +58,7 @@ sorted_tz.sort()
 
 
 @config_entries.HANDLERS.register(DOMAIN)
-class RentalControlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
+class RentalControlFlowHandler(config_entries.ConfigFlow):
     """Handle the config flow for Rental Control."""
 
     VERSION = 3
@@ -194,30 +194,37 @@ def _lock_entry_convert(hass: HomeAssistant, entry: str, to_entity: bool = True)
 def _get_schema(
     hass: HomeAssistant,
     user_input: Optional[Dict[str, Any]],
-    default_dict: Dict[str, Any],
+    default_dict: Optional[Dict[str, Any]],
     entry_id: str = None,
 ) -> vol.Schema:
     """Gets a schema using the default_dict as a backup."""
     if user_input is None:
         user_input = {}
 
-    if CONF_LOCK_ENTRY in default_dict.keys() and default_dict[CONF_LOCK_ENTRY] is None:
-        check_dict = default_dict.copy()
-        check_dict.pop(CONF_LOCK_ENTRY, None)
-        default_dict = check_dict
+    if default_dict is not None:
+        if (
+            CONF_LOCK_ENTRY in default_dict.keys()
+            and default_dict[CONF_LOCK_ENTRY] is None
+        ):
+            check_dict = default_dict.copy()
+            check_dict.pop(CONF_LOCK_ENTRY, None)
+            default_dict = check_dict
 
-    if (
-        CONF_LOCK_ENTRY in default_dict.keys()
-        and default_dict[CONF_LOCK_ENTRY] is not None
-    ):
-        check_dict = default_dict.copy()
-        convert = _lock_entry_convert(hass, default_dict[CONF_LOCK_ENTRY], False)
-        check_dict[CONF_LOCK_ENTRY] = convert
-        default_dict = check_dict
+        if (
+            CONF_LOCK_ENTRY in default_dict.keys()
+            and default_dict[CONF_LOCK_ENTRY] is not None
+        ):
+            check_dict = default_dict.copy()
+            convert = _lock_entry_convert(hass, default_dict[CONF_LOCK_ENTRY], False)
+            check_dict[CONF_LOCK_ENTRY] = convert
+            default_dict = check_dict
 
-    def _get_default(key: str, fallback_default: Any = None) -> None:
+    def _get_default(key: str, fallback_default: Any = None) -> Any | None:
         """Gets default value for key."""
-        return user_input.get(key, default_dict.get(key, fallback_default))
+        if default_dict is not None and user_input is not None:
+            return user_input.get(key, default_dict.get(key, fallback_default))
+        else:
+            return None
 
     return vol.Schema(
         {
@@ -258,7 +265,9 @@ def _get_schema(
             vol.Optional(
                 CONF_CODE_GENERATION,
                 default=_generator_convert(
-                    ident=_get_default(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION),
+                    ident=str(
+                        _get_default(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
+                    ),
                     to_type=False,
                 ),
             ): vol.In(_code_generators()),
@@ -280,7 +289,7 @@ def _get_schema(
 def _show_config_form(
     cls: Union[RentalControlFlowHandler, RentalControlOptionsFlow],
     step_id: str,
-    user_input: Dict[str, Any],
+    user_input: Optional[Dict[str, Any]],
     errors: Dict[str, str],
     description_placeholders: Dict[str, str],
     defaults: Dict[str, Any] = None,
@@ -299,13 +308,13 @@ async def _start_config_flow(
     cls: Union[RentalControlFlowHandler, RentalControlOptionsFlow],
     step_id: str,
     title: str,
-    user_input: Dict[str, Any],
+    user_input: Optional[Dict[str, Any]],
     defaults: Dict[str, Any] = None,
     entry_id: str = None,
 ):
     """Start a config flow."""
     errors = {}
-    description_placeholders = {}
+    description_placeholders: Dict[str, str] = {}
 
     if user_input is not None:
         # Regular flow has an async function
