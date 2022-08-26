@@ -173,7 +173,11 @@ def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
         # Airbnb
         if name == "Reserved":
             p = re.compile(r"([A-Z][A-Z0-9]{9})")
-            return p.search(description)[0]
+            ret = p.search(description)
+            if ret is not None:
+                return ret[0]
+            else:
+                return None
         else:
             p = re.compile(r" - (.*)$")
             return p.findall(name)[0]
