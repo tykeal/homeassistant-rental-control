@@ -45,6 +45,7 @@ from .const import ATTR_NOTIFICATION_SOURCE
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_GENERATION
+from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
@@ -57,6 +58,7 @@ from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import DEFAULT_CODE_GENERATION
+from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import EVENT_RENTAL_CONTROL_REFRESH
@@ -218,7 +220,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         config_entry.version = 2
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
-    # 2 -> 3: Migrate l
+    # 2 -> 3: Migrate lock
     if version == 2:
         _LOGGER.debug("Migrating from version %s", version)
         if (
@@ -235,6 +237,21 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             )
 
         config_entry.version = 3
+        _LOGGER.debug("Migration to version %s complete", config_entry.version)
+
+    # 3 -> 4: Migrate code length
+    if version == 3:
+        _LOGGER.debug("Migrating from version %s", version)
+        if CONF_CODE_LENGTH not in config_entry.data:
+            data = config_entry.data.copy()
+            data[CONF_CODE_LENGTH] = DEFAULT_CODE_LENGTH
+            hass.config_entries.async_update_entry(
+                entry=config_entry,
+                unique_id=config_entry.unique_id,
+                data=data,
+            )
+
+        config_entry.version = 4
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     return True
@@ -323,6 +340,7 @@ class RentalControl:
         self.event_overrides = {}
         self.event_sensors = []
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
+        self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.event = None
         self.all_day = False
         self.created = config.get(CONF_CREATION_DATETIME, str(dt.now()))
@@ -442,6 +460,7 @@ class RentalControl:
         self.max_events = config.get(CONF_MAX_EVENTS)
         self.days = config.get(CONF_DAYS)
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
+        self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         # Early versions did not have this variable, as such it may not be
         # set, this should guard against issues until we're certain
         # we can remove this guard.
