@@ -5,7 +5,6 @@ import logging
 import random
 import re
 from datetime import datetime
-from datetime import timedelta
 
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity import EntityCategory
@@ -47,7 +46,9 @@ class RentalControlCalSensor(Entity):
             "location": None,
             "start": None,
             "end": None,
-            "eta": None,
+            "eta_days": None,
+            "eta_hours": None,
+            "eta_minutes": None,
             "slot_name": None,
             "slot_code": None,
         }
@@ -231,9 +232,19 @@ class RentalControlCalSensor(Entity):
             self._event_attributes["end"] = event.end
             self._event_attributes["location"] = event.location
             self._event_attributes["description"] = event.description
-            self._event_attributes["eta"] = (
-                start - datetime.now(start.tzinfo) + timedelta(days=1)
-            ).days
+            # get timedelta for eta
+            td = start - datetime.now(start.tzinfo)
+            eta_days = None
+            eta_hours = None
+            eta_minutes = None
+            if td.total_seconds() >= 0:
+                eta_days = td.days
+                eta_hours = round(td.total_seconds() // 3600)
+                eta_minutes = round(td.total_seconds() // 60)
+
+            self._event_attributes["eta_days"] = eta_days
+            self._event_attributes["eta_hours"] = eta_hours
+            self._event_attributes["eta_minutes"] = eta_minutes
             self._state = f"{name} - {start.strftime('%-d %B %Y')}"
             self._state += f" {start.strftime('%H:%M')}"
             slot_name = get_slot_name(
@@ -301,7 +312,9 @@ class RentalControlCalSensor(Entity):
                 "location": None,
                 "start": None,
                 "end": None,
-                "eta": None,
+                "eta_days": None,
+                "eta_hours": None,
+                "eta_minutes": None,
                 "slot_name": None,
                 "slot_code": None,
             }
