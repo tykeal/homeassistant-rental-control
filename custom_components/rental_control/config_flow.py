@@ -115,7 +115,7 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self,
         user_input: Dict[str, Any] = None,
-    ) -> Dict[str, Any]:
+    ) -> Any:
         """Handle a flow initialized by the user."""
         return await _start_config_flow(
             self,
@@ -179,13 +179,13 @@ def _lock_entry_convert(hass: HomeAssistant, entry: str, to_entity: bool = True)
         for lock_entry in hass.config_entries.async_entries(LOCK_MANAGER):
             if entry == lock_entry.title:
                 _LOGGER.debug("'%s' becomes '%s'", entry, lock_entry.data["lockname"])
-                return lock_entry.data["lockname"]
+                return str(lock_entry.data["lockname"])
     else:
         _LOGGER.debug("from entity")
         for lock_entry in hass.config_entries.async_entries(LOCK_MANAGER):
             if entry == lock_entry.data["lockname"]:
                 _LOGGER.debug("'%s' becomes '%s'", entry, lock_entry.title)
-                return lock_entry.title
+                return str(lock_entry.title)
 
     _LOGGER.debug("no conversion done")
     return entry
@@ -294,7 +294,7 @@ def _show_config_form(
     description_placeholders: Dict[str, str],
     defaults: Dict[str, Any] = None,
     entry_id: str = None,
-) -> Dict[str, Any]:
+) -> Any:
     """Show the configuration form to edit data."""
     return cls.async_show_form(
         step_id=step_id,

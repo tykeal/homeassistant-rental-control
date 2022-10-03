@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.calendar import CalendarEntity
 from homeassistant.components.calendar import CalendarEvent
@@ -68,7 +69,7 @@ class RentalControlCalendar(CalendarEntity):
         """Return the unique_id."""
         return self._unique_id
 
-    async def async_get_events(self, hass, start_date, end_date) -> list[CalendarEvent]:
+    async def async_get_events(self, hass, start_date, end_date) -> Any:
         """Get all events in a specific time frame."""
         _LOGGER.debug("Running RentalControlCalendar async get events")
         return await self.rental_control_events.async_get_events(
