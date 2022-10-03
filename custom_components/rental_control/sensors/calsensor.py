@@ -39,6 +39,7 @@ class RentalControlCalSensor(Entity):
         else:
             summary = "No reservation"
         self._code_generator = rental_control_events.code_generator
+        self._code_length = rental_control_events.code_length
         self._entity_category = EntityCategory.DIAGNOSTIC
         self._event_attributes = {
             "summary": summary,
@@ -121,6 +122,7 @@ class RentalControlCalSensor(Entity):
         """Generate a door code based upon the selected type."""
 
         generator = self._code_generator
+        code_length = self._code_length
 
         # If there is no event description force date_based generation
         # This is because VRBO does not appear to provide any descriptions in
@@ -143,12 +145,19 @@ class RentalControlCalSensor(Entity):
 
         ret = None
 
-        if generator == "last_four":
+        # Last 4 is only valid for code lengths of 4
+        if generator == "last_four" and code_length == 4:
             ret = self._extract_last_four()
         elif generator == "static_random":
             # If the description changes this will most likely change the code
             random.seed(self._event_attributes["description"])
-            ret = str(random.randrange(1, 9999, 4)).zfill(4)
+            max_l = []
+            i = 0
+            while i < code_length:
+                max_l.append("9")
+                i += 1
+            max_range = int("".join(max_l))
+            ret = str(random.randrange(1, max_range, code_length)).zfill(code_length)
 
         if ret is None:
             # Generate code based on checkin/out days
@@ -159,10 +168,22 @@ class RentalControlCalSensor(Entity):
             # This is the default and fall back generator if no other
             # generator produced a code
             start_day = self._event_attributes["start"].strftime("%d")
+            start_month = self._event_attributes["start"].strftime("%m")
+            start_year = self._event_attributes["start"].strftime("%Y")
             end_day = self._event_attributes["end"].strftime("%d")
-            return f"{start_day}{end_day}"
-        else:
-            return ret
+            end_month = self._event_attributes["end"].strftime("%m")
+            end_year = self._event_attributes["end"].strftime("%Y")
+            # This should be longer than anybody ever needs
+            code = f"{start_day}{end_day}{start_month}{end_month}{start_year}{end_year}"
+            # use a zfill in case the code really wasn't long enough for some
+            # weird reason
+            ret = (
+                code[:code_length]
+                if len(code) > code_length
+                else code.zfill(code_length)
+            )
+
+        return ret
 
     @property
     def available(self):
@@ -212,6 +233,7 @@ class RentalControlCalSensor(Entity):
         await self.rental_control_events.update()
 
         self._code_generator = self.rental_control_events.code_generator
+        self._code_length = self.rental_control_events.code_length
         event_list = self.rental_control_events.calendar
         if event_list and (self._event_number < len(event_list)):
             event = event_list[self._event_number]

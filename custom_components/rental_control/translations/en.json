@@ -1,6 +1,7 @@
 {
   "config": {
     "error": {
+      "bad_code_length": "Lock code length must be even and >= 4",
       "bad_ics": "URL did not provide valid calendar",
       "bad_minimum": "Value must be 1 or greater",
       "bad_refresh": "Refresh must be between 0 and 1440.",
@@ -16,6 +17,7 @@
           "checkin": "Default Check-in time",
           "checkout": "Default Check-out time",
           "code_generation": "Door code generator",
+          "code_length": "Door code length (>= 4 and an even number)",
           "days": "Maximum number of days into the future to fetch",
           "event_prefix": "Prefix for all events (useful if linking more than one rental)",
           "ignore_non_reserved": "Ignore events that are not standard reservations",
@@ -33,6 +35,7 @@
   },
   "options": {
     "error": {
+      "bad_code_length": "Lock code length must be even and >= 4",
       "bad_ics": "URL did not provide valid calendar",
       "bad_minimum": "Value must be 1 or greater",
       "bad_refresh": "Refresh must be between 0 and 1440.",
@@ -48,6 +51,7 @@
           "checkin": "Default Check-in time",
           "checkout": "Default Check-out time",
           "code_generation": "Door code generator",
+          "code_length": "Door code length (>= 4 and an even number)",
           "days": "Maximum number of days into the future to fetch",
           "event_prefix": "Prefix for all events (useful if linking more than one rental)",
           "ignore_non_reserved": "Ignore events that are not standard reservations",

@@ -25,6 +25,7 @@ from .const import CODE_GENERATORS
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_GENERATION
+from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
@@ -39,6 +40,7 @@ from .const import CONF_TIMEZONE
 from .const import DEFAULT_CHECKIN
 from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_CODE_GENERATION
+from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_DAYS
 from .const import DEFAULT_EVENT_PREFIX
 from .const import DEFAULT_GENERATE
@@ -262,6 +264,10 @@ def _get_schema(
                 CONF_MAX_EVENTS,
                 default=_get_default(CONF_MAX_EVENTS, DEFAULT_MAX_EVENTS),
             ): cv.positive_int,
+            vol.Required(
+                CONF_CODE_LENGTH,
+                default=_get_default(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH),
+            ): cv.positive_int,
             vol.Optional(
                 CONF_CODE_GENERATION,
                 default=_generator_convert(
@@ -372,6 +378,12 @@ async def _start_config_flow(
 
         if user_input[CONF_MAX_EVENTS] < 1:
             errors[CONF_MAX_EVENTS] = "bad_minimum"
+
+        if (
+            user_input[CONF_CODE_LENGTH] < DEFAULT_CODE_LENGTH
+            or (user_input[CONF_CODE_LENGTH] % 2) != 0
+        ):
+            errors[CONF_CODE_LENGTH] = "bad_code_length"
 
         # Convert code generator to proper type
         user_input[CONF_CODE_GENERATION] = _generator_convert(
