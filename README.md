@@ -28,11 +28,12 @@ calendars and sensors to go with them related to managing rental properties.
     entities if more than one calendar is being tracked in an instance
 -   Forcing a calendar refresh is currently possible by submitting a
     configuration change
+-   Optional code length starting at 4 digits (requires even number of digits)
 -   3 door code generators are available:
-    -   A check-in/out date based 4 digit code using the check-in day combined
-        with the check-out day (default and fallback in the case another
-        generator fails to produce a code)
-    -   A random 4 digit code based on the event description
+    -   A check-in/out date based 4 digit (or greater) code using the check-in
+        day combined with the check-out day (default and fallback in the case
+        another generator fails to produce a code)
+    -   A random 4 digit (or greater) code based on the event description
     -   The last 4 digits of the phone number. This only works properly if the
         event description contains 'Last 4 Digits' followed quickly by a 4 digit
         number. This is the most stable, but only works if the event
