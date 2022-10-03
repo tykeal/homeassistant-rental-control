@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import Entity
@@ -52,7 +53,7 @@ class RentalControlMappingSensor(Entity):
         return self._is_available
 
     @property
-    def device_info(self) -> dict:
+    def device_info(self) -> Any:
         """Return the device info block."""
         return self.rental_control.device_info
 

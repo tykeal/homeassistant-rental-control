@@ -68,7 +68,7 @@ class RentalControlCalSensor(Entity):
         p = re.compile(r"""Email:\s+(\S+@\S+)""")
         ret = p.findall(self._event_attributes["description"])
         if ret:
-            return ret[0]
+            return str(ret[0])
         else:
             return None
 
@@ -79,7 +79,7 @@ class RentalControlCalSensor(Entity):
         p = re.compile(r"""\(Last 4 Digits\):\s+(\d{4})""")
         ret = p.findall(self._event_attributes["description"])
         if ret:
-            return ret[0]
+            return str(ret[0])
         else:
             return None
 
@@ -90,7 +90,7 @@ class RentalControlCalSensor(Entity):
         p = re.compile(r"""Guests:\s+(\d+)$""", re.M)
         ret = p.findall(self._event_attributes["description"])
         if ret:
-            return ret[0]
+            return str(ret[0])
         else:
             return None
 
@@ -101,7 +101,7 @@ class RentalControlCalSensor(Entity):
         p = re.compile(r"""Phone Number:\s+(\+?[\d\. \-\(\)]{9,})""")
         ret = p.findall(self._event_attributes["description"])
         if ret:
-            return ret[0].strip()
+            return str(ret[0]).strip()
         else:
             return None
 
@@ -112,7 +112,7 @@ class RentalControlCalSensor(Entity):
         p = re.compile(r"""(https?://.*$)""", re.M)
         ret = p.findall(self._event_attributes["description"])
         if ret:
-            return ret[0]
+            return str(ret[0])
         else:
             return None
 

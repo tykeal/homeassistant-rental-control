@@ -180,21 +180,21 @@ def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
                 return None
         else:
             p = re.compile(r" - (.*)$")
-            return p.findall(name)[0]
+            return str(p.findall(name)[0])
 
     # Tripadvisor
     if "Tripadvisor" in name:
         p = re.compile(r"Tripadvisor.*: (.*)")
-        return p.findall(name)[0]
+        return str(p.findall(name)[0])
 
     # Booking.com
     if "CLOSED" in name:
         p = re.compile(r"\s*CLOSED - (.*)")
-        return p.findall(name)[0]
+        return str(p.findall(name)[0])
 
     # Guesty
     p = re.compile(r"-(.*)-.*-")
-    return p.findall(name)[0]
+    return str(p.findall(name)[0])
 
 
 def write_template_config(

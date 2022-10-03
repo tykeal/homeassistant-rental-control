@@ -18,6 +18,8 @@ import logging
 import re
 from datetime import datetime
 from datetime import timedelta
+from typing import Any
+from typing import Dict
 from zoneinfo import ZoneInfo  # noreorder
 
 import async_timeout
@@ -350,7 +352,7 @@ class RentalControl:
         )
 
     @property
-    def device_info(self):
+    def device_info(self) -> Dict[str, Any]:
         """Return the device info block."""
         return {
             "identifiers": {(DOMAIN, self.unique_id)},
