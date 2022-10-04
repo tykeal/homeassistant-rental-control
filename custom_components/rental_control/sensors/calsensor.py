@@ -151,12 +151,7 @@ class RentalControlCalSensor(Entity):
         elif generator == "static_random":
             # If the description changes this will most likely change the code
             random.seed(self._event_attributes["description"])
-            max_l = []
-            i = 0
-            while i < code_length:
-                max_l.append("9")
-                i += 1
-            max_range = int("".join(max_l))
+            max_range = int("9999".rjust(code_length, "9"))
             ret = str(random.randrange(1, max_range, code_length)).zfill(code_length)
 
         if ret is None:
