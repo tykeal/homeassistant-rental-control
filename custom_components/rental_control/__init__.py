@@ -337,6 +337,8 @@ class RentalControl:
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
         self.calendar = []
         self.calendar_ready = False
+        self.calendar_loaded = False
+        self.overrides_loaded = False
         self.event_overrides = {}
         self.event_sensors = []
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
@@ -534,7 +536,9 @@ class RentalControl:
         _LOGGER.debug("event_overrides: '%s'", self.event_overrides)
         if len(self.event_overrides) == self.max_events:
             _LOGGER.debug("max_events reached, flagging as ready")
-            self.calendar_ready = True
+            self.overrides_loaded = True
+            if self.calendar_loaded:
+                self.calendar_ready = True
         else:
             _LOGGER.debug(
                 "max_events not reached yet, calendar_ready is '%s'",
@@ -708,7 +712,12 @@ class RentalControl:
                 event_list, start_of_events, end_of_events
             )
 
+            self.calendar_loaded = True
+
             if self.lockname is None:
+                self.overrides_loaded = True
+
+            if self.overrides_loaded:
                 self.calendar_ready = True
 
         if len(self.calendar) > 0:
