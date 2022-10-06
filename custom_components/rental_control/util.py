@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import uuid
+from typing import Any
 from typing import List
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
@@ -173,28 +174,44 @@ def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
         # Airbnb
         if name == "Reserved":
             p = re.compile(r"([A-Z][A-Z0-9]{9})")
-            ret = p.search(description)
-            if ret is not None:
-                return ret[0]
+            if description:
+                ret = p.search(description)  # type: Any
+                if ret is not None:
+                    return str(ret[0])
+                else:
+                    return None
             else:
                 return None
         else:
             p = re.compile(r" - (.*)$")
-            return str(p.findall(name)[0])
+            ret = p.findall(name)
+            if len(ret):
+                return str(ret[0])
 
     # Tripadvisor
     if "Tripadvisor" in name:
         p = re.compile(r"Tripadvisor.*: (.*)")
-        return str(p.findall(name)[0])
+        ret = p.findall(name)
+        if len(ret):
+            return str(ret[0])
 
     # Booking.com
     if "CLOSED" in name:
         p = re.compile(r"\s*CLOSED - (.*)")
-        return str(p.findall(name)[0])
+        ret = p.findall(name)
+        if len(ret):
+            return str(ret[0])
 
     # Guesty
     p = re.compile(r"-(.*)-.*-")
-    return str(p.findall(name)[0])
+    ret = p.findall(name)
+    if len(ret):
+        return str(ret[0])
+
+    # Degenerative case, we can't figure it out at all, we'll just use the
+    # name as is, this could cause duplicate slot names but this is likely
+    # a custom calendar anyway
+    return str(name)
 
 
 def write_template_config(
