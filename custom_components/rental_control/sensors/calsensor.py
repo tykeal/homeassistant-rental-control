@@ -227,6 +227,10 @@ class RentalControlCalSensor(Entity):
 
         await self.rental_control_events.update()
 
+        # Calendar is not ready, no reason to continue processing
+        if not self.rental_control_events.calendar_ready:
+            return
+
         self._code_generator = self.rental_control_events.code_generator
         self._code_length = self.rental_control_events.code_length
         event_list = self.rental_control_events.calendar
