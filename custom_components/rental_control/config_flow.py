@@ -221,7 +221,7 @@ def _get_schema(
             check_dict[CONF_LOCK_ENTRY] = convert
             default_dict = check_dict
 
-    def _get_default(key: str, fallback_default: Any = None) -> Any | None:
+    def _get_default(key: str, fallback_default: Any = None) -> None:
         """Gets default value for key."""
         if default_dict is not None and user_input is not None:
             return user_input.get(key, default_dict.get(key, fallback_default))
