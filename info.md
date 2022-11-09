@@ -39,10 +39,11 @@ calendars and sensors to go with them related to managing rental properties.
         another generator fails to produce a code)
     -   A random 4 digit (or greater) code based on the event description
     -   The last 4 digits of the phone number. This only works properly if the
-        event description contains 'Last 4 Digits' followed quickly by a 4 digit
-        number. This is the most stable, but only works if the event
-        descriptions have the needed data. The previous two methods can have the
-        codes change if the event makes changes to length or to the description.
+        event description contains '(Last 4 Digits): ' or 'Last 4 Digits: '
+        followed quickly by a 4 digit number. This is the most stable, but only
+        works if the event descriptions have the needed data. The previous two
+        methods can have the codes change if the event makes changes to length
+        or to the description.
 -   All events will get a code associated with it. In the case that the criteria
     to create the code are not fulfilled, then the check-in/out date based
     method will be used as a fallback
