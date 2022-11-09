@@ -116,7 +116,7 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(
         self,
-        user_input: Dict[str, Any] = None,
+        user_input: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Handle a flow initialized by the user."""
         return await _start_config_flow(
@@ -197,7 +197,7 @@ def _get_schema(
     hass: HomeAssistant,
     user_input: Optional[Dict[str, Any]],
     default_dict: Optional[Dict[str, Any]],
-    entry_id: str = None,
+    entry_id: Optional[str] = None,
 ) -> vol.Schema:
     """Gets a schema using the default_dict as a backup."""
     if user_input is None:
@@ -298,8 +298,8 @@ def _show_config_form(
     user_input: Optional[Dict[str, Any]],
     errors: Dict[str, str],
     description_placeholders: Dict[str, str],
-    defaults: Dict[str, Any] = None,
-    entry_id: str = None,
+    defaults: Optional[Dict[str, Any]] = None,
+    entry_id: Optional[str] = None,
 ) -> Any:
     """Show the configuration form to edit data."""
     return cls.async_show_form(
@@ -315,8 +315,8 @@ async def _start_config_flow(
     step_id: str,
     title: str,
     user_input: Optional[Dict[str, Any]],
-    defaults: Dict[str, Any] = None,
-    entry_id: str = None,
+    defaults: Optional[Dict[str, Any]] = None,
+    entry_id: Optional[str] = None,
 ):
     """Start a config flow."""
     errors = {}
