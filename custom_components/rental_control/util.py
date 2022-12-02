@@ -18,7 +18,7 @@ import logging
 import os
 import re
 import uuid
-from typing import Any
+from typing import Any  # noqa: F401
 from typing import List
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
