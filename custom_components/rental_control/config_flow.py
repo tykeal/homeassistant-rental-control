@@ -319,7 +319,7 @@ async def _start_config_flow(
     entry_id: Optional[str] = None,
 ):
     """Start a config flow."""
-    errors = {}
+    errors: Dict[str, str] = {}
     description_placeholders: Dict[str, str] = {}
 
     if user_input is not None:
