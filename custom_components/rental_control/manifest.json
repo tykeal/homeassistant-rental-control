@@ -5,9 +5,9 @@
   "codeowners": ["@tykeal"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/tykeal/rental-control",
+  "documentation": "https://github.com/tykeal/homeassistant-rental-control",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/tykeal/rental-control/issues",
+  "issue_tracker": "https://github.com/tykeal/homeassistant-rental-control/issues",
   "requirements": ["icalendar==4.0.7"],
   "version": "v0.0.0"
 }
