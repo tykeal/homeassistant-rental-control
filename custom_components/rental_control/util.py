@@ -177,7 +177,7 @@ def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
             if description:
                 ret = p.search(description)  # type: Any
                 if ret is not None:
-                    return str(ret[0])
+                    return str(ret[0]).strip()
                 else:
                     return None
             else:
@@ -186,32 +186,32 @@ def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
             p = re.compile(r" - (.*)$")
             ret = p.findall(name)
             if len(ret):
-                return str(ret[0])
+                return str(ret[0]).strip()
 
     # Tripadvisor
     if "Tripadvisor" in name:
         p = re.compile(r"Tripadvisor.*: (.*)")
         ret = p.findall(name)
         if len(ret):
-            return str(ret[0])
+            return str(ret[0]).strip()
 
     # Booking.com
     if "CLOSED" in name:
         p = re.compile(r"\s*CLOSED - (.*)")
         ret = p.findall(name)
         if len(ret):
-            return str(ret[0])
+            return str(ret[0]).strip()
 
     # Guesty
     p = re.compile(r"-(.*)-.*-")
     ret = p.findall(name)
     if len(ret):
-        return str(ret[0])
+        return str(ret[0]).strip()
 
     # Degenerative case, we can't figure it out at all, we'll just use the
     # name as is, this could cause duplicate slot names but this is likely
     # a custom calendar anyway
-    return str(name)
+    return str(name).strip()
 
 
 def write_template_config(
