@@ -65,11 +65,7 @@ class RentalControlMappingSensor(Entity):
     @property
     def extra_state_attributes(self) -> dict:
         """Return the mapping attributes."""
-        attrib = {
-            **self._mapping_attributes,
-        }
-
-        return attrib
+        return self._mapping_attributes
 
     @property
     def icon(self) -> str:
@@ -114,15 +110,22 @@ class RentalControlMappingSensor(Entity):
 
         overrides = self.rental_control.event_overrides.copy()
 
+        _LOGGER.debug("Current event_overrides: %s", overrides)
+        _LOGGER.debug(
+            "Current mapping attributes: %s", self._mapping_attributes["mapping"]
+        )
+
         for override in overrides:
-            if override not in self._mapping_attributes["mapping"].values():
-                _LOGGER.debug("%s is not in current mapping", override)
-                if "Slot " not in override:
-                    self._mapping_attributes["mapping"][
-                        overrides[override]["slot"]
-                    ] = override
+            if "Slot " not in override:
+                self._mapping_attributes["mapping"][
+                    overrides[override]["slot"]
+                ] = override
             else:
-                _LOGGER.debug("%s is in current mapping", override)
+                self._mapping_attributes["mapping"][overrides[override]["slot"]] = None
+
+        _LOGGER.debug(
+            "Updated mapping attributes: %s", self._mapping_attributes["mapping"]
+        )
 
         slots = filter(lambda k: ("Slot " in k), overrides)
         for event in get_event_names(self.rental_control):
