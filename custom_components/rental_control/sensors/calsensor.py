@@ -82,8 +82,14 @@ class RentalControlCalSensor(Entity):
         ret = p.findall(self._event_attributes["description"])
         if ret:
             return str(ret[0])
-        else:
-            return None
+        elif "Phone" in self._event_attributes["description"]:
+            phone = self._extract_phone_number()
+            if phone:
+                phone.replace(" ", "")
+                if len(phone) >= 4:
+                    return str(phone)[-4:]
+
+        return None
 
     def _extract_num_guests(self) -> str | None:
         """Extract the number of guests from a description."""
@@ -93,14 +99,28 @@ class RentalControlCalSensor(Entity):
         ret = p.findall(self._event_attributes["description"])
         if ret:
             return str(ret[0])
-        else:
-            return None
+        elif "Adults" in self._event_attributes["description"]:
+            guests = 0
+            p = re.compile(r"""Adults:\s+(\d+)$""", re.M)
+            ret = p.findall(self._event_attributes["description"])
+            if ret:
+                guests = int(ret[0])
+
+            p = re.compile(r"""Children:\s+(\d+)$""", re.M)
+            ret = p.findall(self._event_attributes["description"])
+            if ret:
+                guests += int(ret[0])
+
+            if guests > 0:
+                return str(guests)
+
+        return None
 
     def _extract_phone_number(self) -> str | None:
         """Extract guest phone number from a description"""
         if self._event_attributes["description"] is None:
             return None
-        p = re.compile(r"""Phone Number:\s+(\+?[\d\. \-\(\)]{9,})""")
+        p = re.compile(r"""Phone(?: Number)?:\s+(\+?[\d\. \-\(\)]{9,})""")
         ret = p.findall(self._event_attributes["description"])
         if ret:
             return str(ret[0]).strip()

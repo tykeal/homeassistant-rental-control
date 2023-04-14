@@ -563,6 +563,9 @@ class RentalControl:
             if "RRULE" in event:
                 _LOGGER.error("RRULE in event: %s", str(event["SUMMARY"]))
 
+            elif "Check-in" in event["SUMMARY"] or "Check-out" in event["SUMMARY"]:
+                _LOGGER.debug("Smoobu extra event, ignoring")
+
             else:
                 # Let's use the same magic as for rrules to get this (as) right
                 # (as possible)
