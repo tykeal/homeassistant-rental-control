@@ -17,7 +17,7 @@ repos:
           - --branch=main
 
   - repo: https://github.com/psf/black
-    rev: 23.1.0
+    rev: 23.3.0
     hooks:
       - id: black
 
@@ -38,12 +38,12 @@ repos:
         stages: [commit]
 
   - repo: https://github.com/jorisroovers/gitlint
-    rev: v0.19.0
+    rev: v0.19.1
     hooks:
       - id: gitlint
 
   - repo: https://github.com/adrienverge/yamllint.git
-    rev: v1.29.0
+    rev: v1.30.0
     hooks:
       - id: yamllint
 
@@ -54,7 +54,7 @@ repos:
         args: [-vv, --fail-under=100]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.1.1
+    rev: v1.2.0
     hooks:
       - id: mypy
         additional_dependencies:
