@@ -9,7 +9,7 @@ automation:
     - platform: event
       event_type: rental_control_set_code
       event_data:
-        rental_control_name: {{ rc_name }}
+        rental_control_name: "{{ rc_name }}"
       variables:
         slot_name: '{% raw %}{{ trigger.event.data.slot_name }}{% endraw %}'
         code_slot: '{% raw %}{{ trigger.event.data.code_slot }}{% endraw %}'

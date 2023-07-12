@@ -7,7 +7,7 @@ automation:
     - platform: event
       event_type: rental_control_clear_code
       event_data:
-        rental_control_name: {{ rc_name }}
+        rental_control_name: "{{ rc_name }}"
   condition: []
   action:
     service: input_boolean.toggle
