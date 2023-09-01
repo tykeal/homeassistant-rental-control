@@ -28,7 +28,7 @@ jobs:
           cd ${{ github.workspace }}/custom_components/rental_control
           zip rental_control.zip -r ./
       - name: Upload zip to release
-        uses: svenstaro/upload-release-action@v1-release
+        uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           # yamllint disable-line rule:line-length
