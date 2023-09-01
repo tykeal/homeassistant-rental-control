@@ -22,7 +22,7 @@ repos:
       - id: black
 
   - repo: https://github.com/pycqa/flake8
-    rev: c838a5e98878f17889cfce311e1406d252f87ec5 # frozen: 6.0.0
+    rev: 10f4af6dbcf93456ba7df762278ae61ba3120dc6 # frozen: 6.1.0
     hooks:
       - id: flake8
 
@@ -32,7 +32,7 @@ repos:
       - id: reorder-python-imports
 
   - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: efd8b1e16f05132acf6edcf2827eeab21e0e00db # frozen: v3.0.0
+    rev: fc260393cc4ec09f8fc0a5ba4437f481c8b55dc1 # frozen: v3.0.3
     hooks:
       - id: prettier
         stages: [commit]
@@ -54,7 +54,7 @@ repos:
         args: [-vv, --fail-under=100]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: 6e63c9e9c65e1df04465cdcda0f2490e89291f58 # frozen: v1.4.1
+    rev: 08cbc46b6e135adec84911b20e98e5bc52032152 # frozen: v1.5.1
     hooks:
       - id: mypy
         additional_dependencies:
