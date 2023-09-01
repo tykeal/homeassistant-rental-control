@@ -6,7 +6,7 @@ ci:
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: f71fa2c1f9cf5cb705f73dffe4b21f7c61470ba9 # frozen: v4.4.0
     hooks:
       - id: check-added-large-files
       - id: check-yaml
@@ -17,44 +17,44 @@ repos:
           - --branch=main
 
   - repo: https://github.com/psf/black
-    rev: 23.3.0
+    rev: 193ee766ca496871f93621d6b58d57a6564ff81b # frozen: 23.7.0
     hooks:
       - id: black
 
   - repo: https://github.com/pycqa/flake8
-    rev: 6.0.0
+    rev: 10f4af6dbcf93456ba7df762278ae61ba3120dc6 # frozen: 6.1.0
     hooks:
       - id: flake8
 
   - repo: https://github.com/asottile/reorder_python_imports
-    rev: v3.9.0
+    rev: ba4e0d3cf2eeb6986169966bbc87b0e4eb2be50f # frozen: v3.10.0
     hooks:
       - id: reorder-python-imports
 
   - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v3.0.0-alpha.6
+    rev: fc260393cc4ec09f8fc0a5ba4437f481c8b55dc1 # frozen: v3.0.3
     hooks:
       - id: prettier
         stages: [commit]
 
   - repo: https://github.com/jorisroovers/gitlint
-    rev: v0.19.1
+    rev: acc9d9de6369b76d22cb4167029d2035e8730b98 # frozen: v0.19.1
     hooks:
       - id: gitlint
 
   - repo: https://github.com/adrienverge/yamllint.git
-    rev: v1.30.0
+    rev: b05e028c5881819161d11cb543fd96a30c06cceb # frozen: v1.32.0
     hooks:
       - id: yamllint
 
   - repo: https://github.com/econchick/interrogate
-    rev: 1.5.0
+    rev: e18b9df8debc03a5b76a18d3be693c67b2816378 # frozen: 1.5.0
     hooks:
       - id: interrogate
         args: [-vv, --fail-under=100]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.2.0
+    rev: 08cbc46b6e135adec84911b20e98e5bc52032152 # frozen: v1.5.1
     hooks:
       - id: mypy
         additional_dependencies:
