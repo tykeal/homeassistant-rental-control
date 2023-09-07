@@ -105,7 +105,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
     hass.data[DOMAIN][entry.unique_id] = RentalControl(
-        hass=hass, config=config, unique_id=entry.unique_id
+        hass=hass, config=config, unique_id=entry.unique_id, entry_id=entry.entry_id
     )
 
     for component in PLATFORMS:
@@ -306,11 +306,12 @@ class RentalControl:
 
     # pylint: disable=too-many-instance-attributes
 
-    def __init__(self, hass, config, unique_id):
+    def __init__(self, hass, config, unique_id, entry_id):
         """Set up a calendar object."""
         self.hass = hass
         self._name = config.get(CONF_NAME)
         self._unique_id = unique_id
+        self._entry_id = entry_id
         self.event_prefix = config.get(CONF_EVENT_PREFIX)
         self.url = config.get(CONF_URL)
         # Early versions did not have these variables, as such it may not be
@@ -365,7 +366,7 @@ class RentalControl:
         # setup device
         device_registry = dr.async_get(hass)
         device_registry.async_get_or_create(
-            config_entry_id=self.unique_id,
+            config_entry_id=self._entry_id,
             identifiers={(DOMAIN, self.unique_id)},
             name=self.name,
             sw_version=self.version,
