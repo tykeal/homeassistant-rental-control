@@ -17,7 +17,7 @@ repos:
           - --branch=main
 
   - repo: https://github.com/psf/black
-    rev: 193ee766ca496871f93621d6b58d57a6564ff81b # frozen: 23.7.0
+    rev: e87737140f32d3cd7c44ede75f02dcd58e55820e  # frozen: 23.9.1
     hooks:
       - id: black
 
@@ -26,7 +26,7 @@ repos:
     hooks:
       - id: flake8
 
-  - repo: https://github.com/asottile/reorder_python_imports
+  - repo: https://github.com/asottile/reorder-python-imports
     rev: ba4e0d3cf2eeb6986169966bbc87b0e4eb2be50f # frozen: v3.10.0
     hooks:
       - id: reorder-python-imports
