@@ -8,6 +8,6 @@
   "documentation": "https://github.com/tykeal/homeassistant-rental-control",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/tykeal/homeassistant-rental-control/issues",
-  "requirements": ["icalendar==4.0.7"],
+  "requirements": ["icalendar==5.0.7"],
   "version": "v0.0.0"
 }
