@@ -245,11 +245,11 @@ class RentalControlCalSensor(Entity):
         """Update the sensor."""
         _LOGGER.debug("Running RentalControlCalSensor async update for %s", self.name)
 
-        await self.rental_control_events.update()
-
         # Calendar is not ready, no reason to continue processing
         if not self.rental_control_events.calendar_ready:
             return
+
+        await self.rental_control_events.update()
 
         self._code_generator = self.rental_control_events.code_generator
         self._code_length = self.rental_control_events.code_length

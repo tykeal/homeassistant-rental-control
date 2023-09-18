@@ -422,6 +422,26 @@ class RentalControl:
         """Regularly update the calendar."""
         _LOGGER.debug("Running RentalControl update for calendar %s", self.name)
 
+        # Get slot overrides on startup
+        if not self.calendar_ready and self.lockname:
+            for i in range(self.start_slot, self.start_slot + self.max_events):
+                slot_code = self.hass.states.get(f"input_text.{self.lockname}_pin_{i}")
+                slot_name = self.hass.states.get(f"input_text.{self.lockname}_name_{i}")
+                start_time = self.hass.states.get(
+                    f"input_datetime.start_date_{self.lockname}_{i}"
+                )
+                end_time = self.hass.states.get(
+                    f"input_datetime.end_date_{self.lockname}_{i}"
+                )
+
+                await self.update_event_overrides(
+                    i,
+                    slot_code.as_dict()["state"],
+                    slot_name.as_dict()["state"],
+                    dt.parse_datetime(start_time.as_dict()["state"]),
+                    dt.parse_datetime(end_time.as_dict()["state"]),
+                )
+
         now = dt.now()
         _LOGGER.debug("Refresh frequency is: %d", self.refresh_frequency)
         _LOGGER.debug("Current time is: %s", now)

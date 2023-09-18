@@ -98,13 +98,6 @@ class RentalControlMappingSensor(Entity):
             _LOGGER.debug("calendar not ready, skipping mapping update")
             return
 
-        # Do not execute until everything has had a chance to fully stabilize
-        # This can take a couple of minutes
-        if self._startup_count < 2:
-            _LOGGER.debug("Rental Control still starting, skipping mapping update")
-            self._startup_count += 1
-            return
-
         # Make sure overrides are accurate
         await async_check_overrides(self.rental_control)
 
