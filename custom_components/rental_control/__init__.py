@@ -59,6 +59,7 @@ from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_CODE_LENGTH
+from .const import DEFAULT_GENERATE
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import EVENT_RENTAL_CONTROL_REFRESH
@@ -253,6 +254,21 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
         config_entry.version = 4
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
+
+    # 4 -> 5: Drop startup automation
+    if version == 4:
+        _LOGGER.debug(f"Migrating from version {version}")
+
+        data = config_entry.data.copy()
+        data[CONF_GENERATE] = DEFAULT_GENERATE
+        hass.config_entries.async_update_entry(
+            entry=config_entry,
+            unique_id=config_entry.unique_id,
+            data=data,
+        )
+
+        config_entry.version = 5
+        _LOGGER.debug(f"Migration to version {config_entry.version} complete")
 
     return True
 
