@@ -67,6 +67,7 @@ from .const import NAME
 from .const import PLATFORMS
 from .const import REQUEST_TIMEOUT
 from .const import VERSION
+from .sensors.calsensor import RentalControlCalSensor
 from .services import generate_package_files
 from .services import update_code_slot
 from .util import async_reload_package_platforms
@@ -107,9 +108,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         hass.data[DOMAIN] = {}
     hass.data[DOMAIN][config_entry.unique_id] = RentalControl(
         hass=hass,
-        config=config,
-        unique_id=config_entry.unique_id,
-        entry_id=config_entry.entry_id,
+        config_entry=config_entry,
     )
 
     for component in PLATFORMS:
@@ -325,12 +324,13 @@ class RentalControl:
 
     # pylint: disable=too-many-instance-attributes
 
-    def __init__(self, hass, config, unique_id, entry_id):
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry):
         """Set up a calendar object."""
+        config = config_entry.data
         self.hass = hass
         self._name = config.get(CONF_NAME)
-        self._unique_id = unique_id
-        self._entry_id = entry_id
+        self._unique_id = config_entry.unique_id
+        self._entry_id = config_entry.entry_id
         self.event_prefix = config.get(CONF_EVENT_PREFIX)
         self.url = config.get(CONF_URL)
         # Early versions did not have these variables, as such it may not be
@@ -355,12 +355,12 @@ class RentalControl:
         self.days = config.get(CONF_DAYS)
         self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
-        self.calendar = []
+        self.calendar: list[CalendarEvent] = []
         self.calendar_ready = False
         self.calendar_loaded = False
         self.overrides_loaded = False
-        self.event_overrides = {}
-        self.event_sensors = []
+        self.event_overrides: Dict[Any, Any] = {}
+        self.event_sensors: list[RentalControlCalSensor] = []
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.event = None
