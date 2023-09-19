@@ -89,9 +89,9 @@ def setup(hass, config):  # pylint: disable=unused-argument
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up Rental Control from a config entry."""
-    config = entry.data
+    config = config_entry.data
     _LOGGER.debug(
         "Running init async_setup_entry for calendar %s", config.get(CONF_NAME)
     )
@@ -100,21 +100,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     updated_config = config.copy()
     updated_config.pop(CONF_GENERATE, None)
-    if updated_config != entry.data:
-        hass.config_entries.async_update_entry(entry, data=updated_config)
+    if updated_config != config_entry.data:
+        hass.config_entries.async_update_entry(config_entry, data=updated_config)
 
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
-    hass.data[DOMAIN][entry.unique_id] = RentalControl(
-        hass=hass, config=config, unique_id=entry.unique_id, entry_id=entry.entry_id
+    hass.data[DOMAIN][config_entry.unique_id] = RentalControl(
+        hass=hass,
+        config=config,
+        unique_id=config_entry.unique_id,
+        entry_id=config_entry.entry_id,
     )
 
     for component in PLATFORMS:
         hass.async_create_task(
-            hass.config_entries.async_forward_entry_setup(entry, component)
+            hass.config_entries.async_forward_entry_setup(config_entry, component)
         )
 
-    entry.add_update_listener(update_listener)
+    config_entry.add_update_listener(update_listener)
 
     # Generate package files
     async def _generate_package(service: ServiceCall) -> None:
@@ -162,9 +165,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     """Handle removal of an entry."""
-    config = entry.data
+    config = config_entry.data
     rc_name = config.get(CONF_NAME)
     _LOGGER.debug("Running async_unload_entry for rental_control %s", rc_name)
 
@@ -183,7 +186,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     unload_ok = all(
         await asyncio.gather(
             *[
-                hass.config_entries.async_forward_entry_unload(entry, component)
+                hass.config_entries.async_forward_entry_unload(config_entry, component)
                 for component in PLATFORMS
             ]
         )
@@ -195,7 +198,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         await async_reload_package_platforms(hass)
 
-        hass.data[DOMAIN].pop(entry.unique_id)
+        hass.data[DOMAIN].pop(config_entry.unique_id)
 
     async_dismiss(hass, notification_id)
 
@@ -273,30 +276,30 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     return True
 
 
-async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Update listener."""
     # No need to update if the options match the data
-    if not entry.options:
+    if not config_entry.options:
         return
 
-    new_data = entry.options.copy()
+    new_data = config_entry.options.copy()
     new_data.pop(CONF_GENERATE, None)
 
-    old_data = hass.data[DOMAIN][entry.unique_id]
+    old_data = hass.data[DOMAIN][config_entry.unique_id]
 
     # do not update the creation datetime if it already exists (which it should)
     new_data[CONF_CREATION_DATETIME] = old_data.created
 
     hass.config_entries.async_update_entry(
-        entry=entry,
-        unique_id=entry.unique_id,
+        entry=config_entry,
+        unique_id=config_entry.unique_id,
         data=new_data,
         title=new_data[CONF_NAME],
         options={},
     )
 
     # Update the calendar config
-    hass.data[DOMAIN][entry.unique_id].update_config(new_data)
+    hass.data[DOMAIN][config_entry.unique_id].update_config(new_data)
 
     # Update package files
     if new_data[CONF_LOCK_ENTRY]:
