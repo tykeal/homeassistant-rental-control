@@ -24,8 +24,8 @@ from zoneinfo import ZoneInfo  # noreorder
 
 import async_timeout
 import homeassistant.helpers.config_validation as cv
-import icalendar
 import voluptuous as vol
+from icalendar import Calendar
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.persistent_notification import async_dismiss
@@ -334,7 +334,9 @@ class RentalControl:
         self.event_prefix: str = config.get(CONF_EVENT_PREFIX)
         self.url: str = config.get(CONF_URL)
         self.timezone: dt.tzinfo = ZoneInfo(config.get(CONF_TIMEZONE))
-        self.refresh_frequency: int = config.get(CONF_REFRESH_FREQUENCY)
+        self.refresh_frequency: int = config.get(
+            CONF_REFRESH_FREQUENCY, DEFAULT_REFRESH_FREQUENCY
+        )
         # after initial setup our first refresh should happen ASAP
         self.next_refresh: dt.datetime = dt.now()
         # our config flow guarantees that checkin and checkout are valid times
@@ -430,7 +432,7 @@ class RentalControl:
                     events.append(event)
         return events
 
-    async def update(self):
+    async def update(self) -> None:
         """Regularly update the calendar."""
         _LOGGER.debug("Running RentalControl update for calendar %s", self.name)
 
@@ -470,20 +472,12 @@ class RentalControl:
             _LOGGER.debug("Updating next refresh to %s", self.next_refresh)
             await self._refresh_calendar()
 
-    def update_config(self, config):
+    def update_config(self, config) -> None:
         """Update config entries."""
         self._name = config.get(CONF_NAME)
         self.url = config.get(CONF_URL)
-        # Early versions did not have these variables, as such it may not be
-        # set, this should guard against issues until we're certain
-        # we can remove this guard.
-        try:
-            self.timezone = ZoneInfo(config.get(CONF_TIMEZONE))
-        except TypeError:
-            self.timezone = dt.DEFAULT_TIME_ZONE
+        self.timezone = ZoneInfo(config.get(CONF_TIMEZONE))
         self.refresh_frequency = config.get(CONF_REFRESH_FREQUENCY)
-        if self.refresh_frequency is None:
-            self.refresh_frequency = DEFAULT_REFRESH_FREQUENCY
         # always do a refresh ASAP after a config change
         self.next_refresh = dt.now()
         self.event_prefix = config.get(CONF_EVENT_PREFIX)
@@ -496,13 +490,7 @@ class RentalControl:
         self.days = config.get(CONF_DAYS)
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
-        # Early versions did not have this variable, as such it may not be
-        # set, this should guard against issues until we're certain
-        # we can remove this guard.
-        try:
-            self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
-        except NameError:
-            self.ignore_non_reserved = None
+        self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
 
         # make sure we have a path set
@@ -528,7 +516,7 @@ class RentalControl:
         slot_name: str,
         start_time: datetime,
         end_time: datetime,
-    ):
+    ) -> None:
         """Update the event overrides with the ServiceCall data."""
         _LOGGER.debug("In update_event_overrides")
 
@@ -581,10 +569,12 @@ class RentalControl:
         # Overrides have updated, trigger refresh of calendar
         self.next_refresh = dt.now()
 
-    def _ical_parser(self, calendar, from_date, to_date):
+    def _ical_parser(
+        self, calendar: Calendar, from_date: dt.datetime, to_date: dt.datetime
+    ) -> list[CalendarEvent]:
         """Return a sorted list of events from a icalendar object."""
 
-        events = []
+        events: list[CalendarEvent] = []
 
         _LOGGER.debug(
             "In _ical_parser:: from_date: %s; to_date: %s", from_date, to_date
@@ -630,11 +620,11 @@ class RentalControl:
 
                 if "DESCRIPTION" in event:
                     slot_name = get_slot_name(
-                        event["SUMMARY"], event["DESCRIPTION"], None
+                        event["SUMMARY"], event["DESCRIPTION"], ""
                     )
                 else:
                     # VRBO and Booking.com do not have a DESCRIPTION element
-                    slot_name = get_slot_name(event["SUMMARY"], None, None)
+                    slot_name = get_slot_name(event["SUMMARY"], "", "")
 
                 override = None
                 if slot_name and slot_name in self.event_overrides:
@@ -674,11 +664,16 @@ class RentalControl:
                 if cal_event:
                     events.append(cal_event)
 
-        sorted_events = sorted(events, key=lambda k: k.start)
-        return sorted_events
+        events.sort(key=lambda k: k.start)
+        return events
 
     def _ical_event(
-        self, start, end, from_date, event, override
+        self,
+        start: dt.datetime,
+        end: dt.datetime,
+        from_date: dt.datetime,
+        event: Dict[Any, Any],
+        override: Dict[Any, Any],
     ) -> CalendarEvent | None:
         """Ensure that events are within the start and end."""
         # Ignore events that ended this midnight.
@@ -717,7 +712,7 @@ class RentalControl:
         _LOGGER.debug("Event to add: %s", str(CalendarEvent))
         return cal_event
 
-    def _refresh_event_dict(self):
+    def _refresh_event_dict(self) -> list[CalendarEvent]:
         """Ensure that all events in the calendar are start before max days."""
 
         cal = self.calendar
@@ -725,7 +720,7 @@ class RentalControl:
 
         return [x for x in cal if x.start.date() <= days.date()]
 
-    async def _refresh_calendar(self):
+    async def _refresh_calendar(self) -> None:
         """Update list of upcoming events."""
         _LOGGER.debug("Running RentalControl _refresh_calendar for %s", self.name)
 
@@ -740,7 +735,7 @@ class RentalControl:
             text = await response.text()
             # Some calendars are for some reason filled with NULL-bytes.
             # They break the parsing, so we get rid of them
-            event_list = icalendar.Calendar.from_ical(text.replace("\x00", ""))
+            event_list = Calendar.from_ical(text.replace("\x00", ""))
             start_of_events = dt.start_of_local_day()
             end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
 
