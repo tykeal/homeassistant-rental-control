@@ -327,52 +327,45 @@ class RentalControl:
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry):
         """Set up a calendar object."""
         config = config_entry.data
-        self.hass = hass
-        self._name = config.get(CONF_NAME)
-        self._unique_id = config_entry.unique_id
-        self._entry_id = config_entry.entry_id
-        self.event_prefix = config.get(CONF_EVENT_PREFIX)
-        self.url = config.get(CONF_URL)
-        # Early versions did not have these variables, as such it may not be
-        # set, this should guard against issues until we're certain we can
-        # remove this guard.
-        try:
-            self.timezone = ZoneInfo(config.get(CONF_TIMEZONE))
-        except TypeError:
-            self.timezone = dt.DEFAULT_TIME_ZONE
-        self.refresh_frequency = config.get(CONF_REFRESH_FREQUENCY)
-        if self.refresh_frequency is None:
-            self.refresh_frequency = DEFAULT_REFRESH_FREQUENCY
+        self.hass: HomeAssistant = hass
+        self._name: str = config.get(CONF_NAME)
+        self._unique_id: str = config_entry.unique_id
+        self._entry_id: str = config_entry.entry_id
+        self.event_prefix: str = config.get(CONF_EVENT_PREFIX)
+        self.url: str = config.get(CONF_URL)
+        self.timezone: dt.tzinfo = ZoneInfo(config.get(CONF_TIMEZONE))
+        self.refresh_frequency: int = config.get(CONF_REFRESH_FREQUENCY)
         # after initial setup our first refresh should happen ASAP
-        self.next_refresh = dt.now()
+        self.next_refresh: dt.datetime = dt.now()
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
-        self.checkin = cv.time(config.get(CONF_CHECKIN))
-        self.checkout = cv.time(config.get(CONF_CHECKOUT))
-        self.start_slot = config.get(CONF_START_SLOT)
-        self.lockname = config.get(CONF_LOCK_ENTRY)
-        self.max_events = config.get(CONF_MAX_EVENTS)
-        self.days = config.get(CONF_DAYS)
-        self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
-        self.verify_ssl = config.get(CONF_VERIFY_SSL)
+        self.checkin: str = cv.time(config.get(CONF_CHECKIN))
+        self.checkout: str = cv.time(config.get(CONF_CHECKOUT))
+        self.start_slot: int = config.get(CONF_START_SLOT)
+        self.lockname: str = config.get(CONF_LOCK_ENTRY)
+        self.max_events: int = config.get(CONF_MAX_EVENTS)
+        self.days: int = config.get(CONF_DAYS)
+        self.ignore_non_reserved: bool = config.get(CONF_IGNORE_NON_RESERVED)
+        self.verify_ssl: bool = config.get(CONF_VERIFY_SSL)
         self.calendar: list[CalendarEvent] = []
-        self.calendar_ready = False
-        self.calendar_loaded = False
-        self.overrides_loaded = False
+        self.calendar_ready: bool = False
+        self.calendar_loaded: bool = False
+        self.overrides_loaded: bool = False
         self.event_overrides: Dict[Any, Any] = {}
         self.event_sensors: list[RentalControlCalSensor] = []
-        self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
-        self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
-        self.event = None
-        self.all_day = False
-        self.created = config.get(CONF_CREATION_DATETIME, str(dt.now()))
-        self._version = VERSION
+        self.code_generator: str = config.get(
+            CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION
+        )
+        self.code_length: int = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
+        self.event: CalendarEvent = None
+        self.created: str = config.get(CONF_CREATION_DATETIME, str(dt.now()))
+        self._version: str = VERSION
 
         # Alert users if they have a lock defined but no packages path
         # this would happen if they've upgraded from an older version where
         # they already had a lock definition defined even though it didn't
         # do anything
-        self.path = config.get(CONF_PATH, None)
+        self.path: str = config.get(CONF_PATH, None)
         if self.path is None and self.lockname is not None:
             notification_id = f"{DOMAIN}_{self._name}_missing_path"
             async_create(
@@ -401,17 +394,17 @@ class RentalControl:
         }
 
     @property
-    def name(self):
+    def name(self) -> str:
         """Return the name."""
         return self._name
 
     @property
-    def unique_id(self):
+    def unique_id(self) -> str:
         """Return the unique id."""
         return self._unique_id
 
     @property
-    def version(self):
+    def version(self) -> str:
         """Return the version."""
         return self._version
 
