@@ -57,6 +57,7 @@ from .const import CONF_PATH
 from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
+from .const import COORDINATOR
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_GENERATE
@@ -106,10 +107,15 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
-    hass.data[DOMAIN][config_entry.unique_id] = RentalControl(
+
+    coordinator = RentalControl(
         hass=hass,
         config_entry=config_entry,
     )
+
+    hass.data[DOMAIN][config_entry.unique_id] = {
+        COORDINATOR: coordinator,
+    }
 
     for component in PLATFORMS:
         hass.async_create_task(
@@ -284,10 +290,10 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     new_data = config_entry.options.copy()
     new_data.pop(CONF_GENERATE, None)
 
-    old_data = hass.data[DOMAIN][config_entry.unique_id]
+    coordinator = hass.data[DOMAIN][config_entry.unique_id][COORDINATOR]
 
     # do not update the creation datetime if it already exists (which it should)
-    new_data[CONF_CREATION_DATETIME] = old_data.created
+    new_data[CONF_CREATION_DATETIME] = coordinator.created
 
     hass.config_entries.async_update_entry(
         entry=config_entry,
@@ -298,7 +304,7 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     )
 
     # Update the calendar config
-    hass.data[DOMAIN][config_entry.unique_id].update_config(new_data)
+    coordinator.update_config(new_data)
 
     # Update package files
     if new_data[CONF_LOCK_ENTRY]:

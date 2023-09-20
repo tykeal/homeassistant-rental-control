@@ -9,6 +9,7 @@ from homeassistant.components.calendar import CalendarEvent
 from homeassistant.const import CONF_NAME
 from homeassistant.helpers.entity import EntityCategory
 
+from .const import COORDINATOR
 from .const import DOMAIN
 from .const import NAME
 from .util import gen_uuid
@@ -24,9 +25,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     _LOGGER.debug("Conf: %s", config)
     name = config.get(CONF_NAME)
 
-    rental_control_events = hass.data[DOMAIN][config_entry.unique_id]
+    coordinator = hass.data[DOMAIN][config_entry.unique_id][COORDINATOR]
 
-    calendar = RentalControlCalendar(hass, f"{NAME} {name}", rental_control_events)
+    calendar = RentalControlCalendar(hass, f"{NAME} {name}", coordinator)
 
     async_add_entities([calendar], True)
 
