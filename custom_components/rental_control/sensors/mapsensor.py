@@ -22,30 +22,30 @@ class RentalControlMappingSensor(Entity):
     A sensor that defines the mapping of door code slots to events
     """
 
-    def __init__(self, hass: HomeAssistant, rental_control, sensor_name):
+    def __init__(self, hass: HomeAssistant, coordinator, sensor_name):
         """
         Initialize the sensor.
 
         sensor_name is typically the name of the calendar
         """
-        self.rental_control = rental_control
+        self.coordinator = coordinator
 
         self._entity_category = EntityCategory.DIAGNOSTIC
         self._is_available = False
         self._mapping_attributes = {
-            "prefix": self.rental_control.event_prefix,
+            "prefix": self.coordinator.event_prefix,
             "mapping": {},
         }
         for i in range(
-            self.rental_control.start_slot,
-            self.rental_control.start_slot + self.rental_control.max_events,
+            self.coordinator.start_slot,
+            self.coordinator.start_slot + self.coordinator.max_events,
         ):
             self._mapping_attributes["mapping"][i] = None
 
         self._name = f"{sensor_name} Mapping"
         self._state = "Ready"
         self._startup_count = 0
-        self._unique_id = gen_uuid(f"{self.rental_control.unique_id} mapping sensor")
+        self._unique_id = gen_uuid(f"{self.coordinator.unique_id} mapping sensor")
 
     @property
     def available(self) -> bool:
@@ -55,7 +55,7 @@ class RentalControlMappingSensor(Entity):
     @property
     def device_info(self) -> Any:
         """Return the device info block."""
-        return self.rental_control.device_info
+        return self.coordinator.device_info
 
     @property
     def entity_category(self) -> EntityCategory:
@@ -94,14 +94,14 @@ class RentalControlMappingSensor(Entity):
         )
 
         # Do nothing if the rc calendar is not ready
-        if not self.rental_control.calendar_ready:
+        if not self.coordinator.calendar_ready:
             _LOGGER.debug("calendar not ready, skipping mapping update")
             return
 
         # Make sure overrides are accurate
-        await async_check_overrides(self.rental_control)
+        await async_check_overrides(self.coordinator)
 
-        overrides = self.rental_control.event_overrides.copy()
+        overrides = self.coordinator.event_overrides.copy()
 
         _LOGGER.debug("Current event_overrides: %s", overrides)
         _LOGGER.debug(
@@ -121,7 +121,7 @@ class RentalControlMappingSensor(Entity):
         )
 
         slots = filter(lambda k: ("Slot " in k), overrides)
-        for event in get_event_names(self.rental_control):
+        for event in get_event_names(self.coordinator):
             if event not in overrides:
                 try:
                     slot = next(slots)
@@ -129,11 +129,11 @@ class RentalControlMappingSensor(Entity):
                         "%s is not in overrides, setting to slot %s", event, slot
                     )
                     fire_set_code(
-                        self.rental_control.hass,
-                        self.rental_control.name,
+                        self.coordinator.hass,
+                        self.coordinator.name,
                         overrides[slot]["slot"],
                         event,
                     )
                 except StopIteration:
                     pass
-        self._is_available = self.rental_control.calendar_ready
+        self._is_available = self.coordinator.calendar_ready
