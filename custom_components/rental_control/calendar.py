@@ -25,7 +25,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     _LOGGER.debug("Conf: %s", config)
     name = config.get(CONF_NAME)
 
-    coordinator = hass.data[DOMAIN][config_entry.unique_id][COORDINATOR]
+    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
 
     calendar = RentalControlCalendar(hass, f"{NAME} {name}", coordinator)
 

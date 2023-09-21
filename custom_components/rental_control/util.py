@@ -24,9 +24,11 @@ from typing import List
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
+from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.const import SERVICE_RELOAD
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceNotFound
+from homeassistant.helpers.event import EventStateChangedData
 from homeassistant.util import dt
 from homeassistant.util import slugify
 from jinja2 import Environment
@@ -37,6 +39,8 @@ from .const import ATTR_CODE_SLOT
 from .const import ATTR_NAME
 from .const import ATTR_SLOT_NAME
 from .const import CONF_PATH
+from .const import COORDINATOR
+from .const import DOMAIN
 from .const import EVENT_RENTAL_CONTROL_CLEAR_CODE
 from .const import EVENT_RENTAL_CONTROL_SET_CODE
 from .const import NAME
@@ -212,6 +216,44 @@ def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
     # name as is, this could cause duplicate slot names but this is likely
     # a custom calendar anyway
     return str(name).strip()
+
+
+async def handle_state_change(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    event: EventStateChangedData,
+) -> None:
+    """Listener to track state changes of Keymaster input entities."""
+    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
+    lockname = coordinator.lockname
+
+    _LOGGER.info(coordinator.lockname)
+    _LOGGER.info(event)
+
+    if event.event_type != EVENT_STATE_CHANGED:
+        return
+
+    entity_id = event.data["entity_id"]
+    _LOGGER.info(entity_id)
+
+    slot_num = int(entity_id.split("_")[-1])
+    _LOGGER.info(f"slot_num = {slot_num}")
+
+    slot_code = hass.states.get(f"input_text.{lockname}_pin_{slot_num}")
+    slot_name = hass.states.get(f"input_text.{lockname}_name_{slot_num}")
+    start_time = hass.states.get(f"input_datetime.start_date_{lockname}_{slot_num}")
+    end_time = hass.states.get(f"input_datetime.end_date_{lockname}_{slot_num}")
+
+    _LOGGER.info(coordinator.event_overrides)
+    _LOGGER.info(f"updating overrides for {lockname} slot {slot_num}")
+    await coordinator.update_event_overrides(
+        slot_num,
+        slot_code.as_dict()["state"],
+        slot_name.as_dict()["state"],
+        dt.parse_datetime(start_time.as_dict()["state"]),
+        dt.parse_datetime(end_time.as_dict()["state"]),
+    )
+    _LOGGER.info(coordinator.event_overrides)
 
 
 def write_template_config(

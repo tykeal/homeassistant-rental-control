@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import re
 from datetime import datetime
@@ -36,6 +37,9 @@ from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.core import ServiceCall
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+)
 from homeassistant.helpers import device_registry as dr
 from homeassistant.util import dt
 
@@ -67,6 +71,7 @@ from .const import EVENT_RENTAL_CONTROL_REFRESH
 from .const import NAME
 from .const import PLATFORMS
 from .const import REQUEST_TIMEOUT
+from .const import UNSUB_LISTENERS
 from .const import VERSION
 from .sensors.calsensor import RentalControlCalSensor
 from .services import generate_package_files
@@ -76,6 +81,7 @@ from .util import delete_rc_and_base_folder
 from .util import fire_clear_code
 from .util import gen_uuid
 from .util import get_slot_name
+from .util import handle_state_change
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,9 +119,13 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         config_entry=config_entry,
     )
 
-    hass.data[DOMAIN][config_entry.unique_id] = {
+    hass.data[DOMAIN][config_entry.entry_id] = {
         COORDINATOR: coordinator,
+        UNSUB_LISTENERS: [],
     }
+
+    # Start listeners if needed
+    await async_start_listener(hass, config_entry)
 
     for component in PLATFORMS:
         hass.async_create_task(
@@ -202,6 +212,13 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
         await hass.async_add_executor_job(delete_rc_and_base_folder, hass, config)
 
         await async_reload_package_platforms(hass)
+
+        # Unsubscribe from any listeners
+        for unsub_listener in hass.data[DOMAIN][config_entry.entry_id].get(
+            UNSUB_LISTENERS, []
+        ):
+            unsub_listener()
+        hass.data[DOMAIN][config_entry.entry_id].get(UNSUB_LISTENERS, []).clear()
 
         hass.data[DOMAIN].pop(config_entry.unique_id)
 
@@ -290,7 +307,7 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     new_data = config_entry.options.copy()
     new_data.pop(CONF_GENERATE, None)
 
-    coordinator = hass.data[DOMAIN][config_entry.unique_id][COORDINATOR]
+    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
 
     # do not update the creation datetime if it already exists (which it should)
     new_data[CONF_CREATION_DATETIME] = coordinator.created
@@ -305,6 +322,18 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
 
     # Update the calendar config
     coordinator.update_config(new_data)
+
+    # Unsubscribe to any listeners so we can create new ones
+    for unsub_listener in hass.data[DOMAIN][config_entry.entry_id].get(
+        UNSUB_LISTENERS, []
+    ):
+        unsub_listener()
+    hass.data[DOMAIN][config_entry.entry_id].get(UNSUB_LISTENERS, []).clear()
+
+    if coordinator.lockname:
+        await async_start_listener(hass, config_entry)
+    else:
+        _LOGGER.info("Skipping re-adding listeners")
 
     # Update package files
     if new_data[CONF_LOCK_ENTRY]:
@@ -325,6 +354,35 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
         )
 
 
+async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+    """Start tracking updates to keymaster input entities."""
+    entities: list[str] = []
+
+    _LOGGER.info(f"entry_id = '{config_entry.unique_id}'")
+
+    _LOGGER.info(hass.data[DOMAIN][config_entry.entry_id][COORDINATOR])
+    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
+    lockname = coordinator.lockname
+
+    _LOGGER.info(f"lockname = '{lockname}'")
+
+    for i in range(
+        coordinator.start_slot, coordinator.start_slot + coordinator.max_events
+    ):
+        entities.append(f"input_text.{lockname}_pin_{i}")
+        entities.append(f"input_text.{lockname}_name_{i}")
+        entities.append(f"input_datetime.start_date_{lockname}_{i}")
+        entities.append(f"input_datetime.end_date_{lockname}_{i}")
+
+    hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(
+        async_track_state_change_event(
+            hass,
+            [entity for entity in entities],
+            functools.partial(handle_state_change, hass, config_entry),
+        )
+    )
+
+
 class RentalControl:
     """Get a list of events."""
 
@@ -334,6 +392,7 @@ class RentalControl:
         """Set up a calendar object."""
         config = config_entry.data
         self.hass: HomeAssistant = hass
+        self.config_entry: ConfigEntry = config_entry
         self._name: str = config.get(CONF_NAME)
         self._unique_id: str = config_entry.unique_id
         self._entry_id: str = config_entry.entry_id
@@ -442,6 +501,22 @@ class RentalControl:
         """Regularly update the calendar."""
         _LOGGER.debug("Running RentalControl update for calendar %s", self.name)
 
+        now = dt.now()
+        _LOGGER.debug("Refresh frequency is: %d", self.refresh_frequency)
+        _LOGGER.debug("Current time is: %s", now)
+        _LOGGER.debug("Next refresh is: %s", self.next_refresh)
+        if now >= self.next_refresh:
+            # Update the next refresh time before doing the calendar update
+            # If refresh_frequency is 0, then set the refresh for a little in
+            # the future to avoid having multiple calls to the calendar refresh
+            # happen at the same time
+            if self.refresh_frequency == 0:
+                self.next_refresh = now + timedelta(seconds=10)
+            else:
+                self.next_refresh = now + timedelta(minutes=self.refresh_frequency)
+            _LOGGER.debug("Updating next refresh to %s", self.next_refresh)
+            await self._refresh_calendar()
+
         # Get slot overrides on startup
         if not self.calendar_ready and self.lockname:
             for i in range(self.start_slot, self.start_slot + self.max_events):
@@ -461,22 +536,6 @@ class RentalControl:
                     dt.parse_datetime(start_time.as_dict()["state"]),
                     dt.parse_datetime(end_time.as_dict()["state"]),
                 )
-
-        now = dt.now()
-        _LOGGER.debug("Refresh frequency is: %d", self.refresh_frequency)
-        _LOGGER.debug("Current time is: %s", now)
-        _LOGGER.debug("Next refresh is: %s", self.next_refresh)
-        if now >= self.next_refresh:
-            # Update the next refresh time before doing the calendar update
-            # If refresh_frequency is 0, then set the refresh for a little in
-            # the future to avoid having multiple calls to the calendar refresh
-            # happen at the same time
-            if self.refresh_frequency == 0:
-                self.next_refresh = now + timedelta(seconds=10)
-            else:
-                self.next_refresh = now + timedelta(minutes=self.refresh_frequency)
-            _LOGGER.debug("Updating next refresh to %s", self.next_refresh)
-            await self._refresh_calendar()
 
     def update_config(self, config) -> None:
         """Update config entries."""
@@ -525,6 +584,7 @@ class RentalControl:
     ) -> None:
         """Update the event overrides with the ServiceCall data."""
         _LOGGER.debug("In update_event_overrides")
+        _LOGGER.info("In update_event_overrides")
 
         event_overrides = self.event_overrides.copy()
 

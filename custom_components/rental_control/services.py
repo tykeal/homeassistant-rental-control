@@ -11,6 +11,7 @@ from homeassistant.core import ServiceCall
 from homeassistant.util import dt
 from homeassistant.util import slugify
 
+from .const import COORDINATOR
 from .const import DOMAIN
 from .const import NAME
 from .util import async_reload_package_platforms
@@ -25,15 +26,15 @@ async def generate_package_files(hass: HomeAssistant, rc_name: str) -> None:
     """Generate the package files."""
     _LOGGER.debug("In generate_package_files: '%s'", rc_name)
 
-    config_entry = None
+    coordinator = None
     for entry_id in hass.data[DOMAIN]:
-        if hass.data[DOMAIN][entry_id].name == rc_name:
-            config_entry = hass.data[DOMAIN][entry_id]
+        if hass.data[DOMAIN][entry_id][COORDINATOR].name == rc_name:
+            coordinator = hass.data[DOMAIN][entry_id][COORDINATOR]
             break
 
-    _LOGGER.debug("config_entry is '%s'", config_entry)
-    _LOGGER.debug(pformat(config_entry.__dict__))
-    if not config_entry:
+    _LOGGER.debug("config_entry is '%s'", coordinator)
+    _LOGGER.debug(pformat(coordinator.__dict__))
+    if not coordinator:
         raise ValueError(f"Couldn't find existing Rental Control entry for {rc_name}")
 
     rc_name_slug = slugify(rc_name)
@@ -50,7 +51,7 @@ async def generate_package_files(hass: HomeAssistant, rc_name: str) -> None:
         title=f"{NAME} {rc_name} - Starting file generation",
     )
 
-    output_path = os.path.join(hass.config.path(), config_entry.path, rc_name_slug)
+    output_path = os.path.join(hass.config.path(), coordinator.path, rc_name_slug)
 
     # If packages folder exists, delete it so we can recreate it
     if os.path.isdir(output_path):
@@ -66,10 +67,10 @@ async def generate_package_files(hass: HomeAssistant, rc_name: str) -> None:
 
     _LOGGER.debug("Packages directory is ready for file generation")
 
-    templates = ["set_code", "update", "clear_code"]
+    templates = ["set_code", "clear_code"]
 
     for t in templates:
-        write_template_config(output_path, t, NAME, rc_name, config_entry)
+        write_template_config(output_path, t, NAME, rc_name, coordinator)
 
     platform_reloaded = await async_reload_package_platforms(hass)
 
@@ -144,7 +145,7 @@ async def update_code_slot(
 
     # Search for which device
     for uid in hass.data[DOMAIN]:
-        rc = hass.data[DOMAIN][uid]
+        rc = hass.data[DOMAIN][uid][COORDINATOR]
         _LOGGER.debug(
             """rc.start_slot: '%s'
             rc.max_events: '%s'
