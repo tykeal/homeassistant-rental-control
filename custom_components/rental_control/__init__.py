@@ -74,6 +74,7 @@ from .const import REQUEST_TIMEOUT
 from .const import UNSUB_LISTENERS
 from .const import VERSION
 from .sensors.calsensor import RentalControlCalSensor
+from .sensors.mapsensor import RentalControlMappingSensor
 from .services import generate_package_files
 from .services import update_code_slot
 from .util import async_reload_package_platforms
@@ -420,6 +421,7 @@ class RentalControl:
         self.overrides_loaded: bool = False
         self.event_overrides: Dict[Any, Any] = {}
         self.event_sensors: list[RentalControlCalSensor] = []
+        self.mapping_sensor: RentalControlMappingSensor | None = None
         self.code_generator: str = config.get(
             CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION
         )

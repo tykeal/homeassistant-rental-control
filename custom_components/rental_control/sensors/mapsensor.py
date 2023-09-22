@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from typing import TypedDict
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import Entity
@@ -17,22 +18,30 @@ from ..util import get_event_names
 _LOGGER = logging.getLogger(__name__)
 
 
+class Mapping(TypedDict):
+    """Mapping Dictionary."""
+
+    prefix: str
+    mapping: dict[int, str | None]
+
+
 class RentalControlMappingSensor(Entity):
     """
     A sensor that defines the mapping of door code slots to events
     """
 
-    def __init__(self, hass: HomeAssistant, coordinator, sensor_name):
+    def __init__(self, hass: HomeAssistant, coordinator, sensor_name: str):
         """
         Initialize the sensor.
 
         sensor_name is typically the name of the calendar
         """
         self.coordinator = coordinator
+        coordinator.mapping_sensor = self
 
-        self._entity_category = EntityCategory.DIAGNOSTIC
-        self._is_available = False
-        self._mapping_attributes = {
+        self._entity_category: EntityCategory = EntityCategory.DIAGNOSTIC
+        self._is_available: bool = False
+        self._mapping_attributes: Mapping = {
             "prefix": self.coordinator.event_prefix,
             "mapping": {},
         }
@@ -42,10 +51,10 @@ class RentalControlMappingSensor(Entity):
         ):
             self._mapping_attributes["mapping"][i] = None
 
-        self._name = f"{sensor_name} Mapping"
-        self._state = "Ready"
-        self._startup_count = 0
-        self._unique_id = gen_uuid(f"{self.coordinator.unique_id} mapping sensor")
+        self._name: str = f"{sensor_name} Mapping"
+        self._state: str = "Ready"
+        self._startup_count: int = 0
+        self._unique_id: str = gen_uuid(f"{self.coordinator.unique_id} mapping sensor")
 
     @property
     def available(self) -> bool:
@@ -65,7 +74,7 @@ class RentalControlMappingSensor(Entity):
     @property
     def extra_state_attributes(self) -> dict:
         """Return the mapping attributes."""
-        return self._mapping_attributes
+        return dict(self._mapping_attributes)
 
     @property
     def icon(self) -> str:
@@ -87,7 +96,7 @@ class RentalControlMappingSensor(Entity):
         """Return the unique id."""
         return self._unique_id
 
-    async def async_update(self):
+    async def async_update(self) -> None:
         """Update the sensor."""
         _LOGGER.debug(
             "Running RentalControlMappingSensor async_udpate for %s", self.name

@@ -13,6 +13,7 @@
 """Rental Control utils."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -77,15 +78,15 @@ def delete_folder(absolute_path: str, *relative_paths: str) -> None:
         os.rmdir(path)
 
 
-async def async_check_overrides(rc):
+async def async_check_overrides(coordinator) -> None:
     """Check if overrides need to have a clear_code event fired."""
 
     _LOGGER.debug("In async_check_overrides")
 
-    event_list = rc.calendar
-    overrides = rc.event_overrides.copy()
+    event_list = coordinator.calendar
+    overrides = coordinator.event_overrides.copy()
 
-    event_names = get_event_names(rc)
+    event_names = get_event_names(coordinator)
     _LOGGER.debug("event_names = '%s'", event_names)
     _LOGGER.debug(overrides)
 
@@ -102,9 +103,10 @@ async def async_check_overrides(rc):
         if ("slot_name" in ovr or "slot_code" in ovr) and (
             (ovr["end_time"].date() < dt.start_of_local_day().date())
             or (
-                (event_list and rc.max_events <= len(event_list))
+                (event_list and coordinator.max_events <= len(event_list))
                 and (
-                    ovr["start_time"].date() > event_list[rc.max_events - 1].end.date()
+                    ovr["start_time"].date()
+                    > event_list[coordinator.max_events - 1].end.date()
                 )
             )
         ):
@@ -112,7 +114,9 @@ async def async_check_overrides(rc):
             clear_code = True
 
         if clear_code:
-            fire_clear_code(rc.hass, overrides[override]["slot"], rc.name)
+            fire_clear_code(
+                coordinator.hass, overrides[override]["slot"], coordinator.name
+            )
 
 
 def fire_clear_code(hass: HomeAssistant, slot: int, name: str) -> None:
@@ -227,25 +231,24 @@ async def handle_state_change(
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
     lockname = coordinator.lockname
 
-    _LOGGER.info(coordinator.lockname)
-    _LOGGER.info(event)
-
     if event.event_type != EVENT_STATE_CHANGED:
         return
 
+    # we can get state changed storms when a slot (or multiple slots) clear and
+    # a new code is set, put in a small sleep to let things settle
+    await asyncio.sleep(0.1)
+
     entity_id = event.data["entity_id"]
-    _LOGGER.info(entity_id)
 
     slot_num = int(entity_id.split("_")[-1])
-    _LOGGER.info(f"slot_num = {slot_num}")
 
     slot_code = hass.states.get(f"input_text.{lockname}_pin_{slot_num}")
     slot_name = hass.states.get(f"input_text.{lockname}_name_{slot_num}")
     start_time = hass.states.get(f"input_datetime.start_date_{lockname}_{slot_num}")
     end_time = hass.states.get(f"input_datetime.end_date_{lockname}_{slot_num}")
 
-    _LOGGER.info(coordinator.event_overrides)
-    _LOGGER.info(f"updating overrides for {lockname} slot {slot_num}")
+    _LOGGER.debug(coordinator.event_overrides)
+    _LOGGER.debug(f"updating overrides for {lockname} slot {slot_num}")
     await coordinator.update_event_overrides(
         slot_num,
         slot_code.as_dict()["state"],
@@ -253,7 +256,11 @@ async def handle_state_change(
         dt.parse_datetime(start_time.as_dict()["state"]),
         dt.parse_datetime(end_time.as_dict()["state"]),
     )
-    _LOGGER.info(coordinator.event_overrides)
+    _LOGGER.debug(coordinator.event_overrides)
+
+    _LOGGER.info("Triggering mapping update")
+    if coordinator.mapping_sensor:
+        await coordinator.mapping_sensor.async_update()
 
 
 def write_template_config(
