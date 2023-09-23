@@ -77,9 +77,9 @@ from .sensors.calsensor import RentalControlCalSensor
 from .sensors.mapsensor import RentalControlMappingSensor
 from .services import generate_package_files
 from .services import update_code_slot
+from .util import async_fire_clear_code
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
-from .util import fire_clear_code
 from .util import gen_uuid
 from .util import get_slot_name
 from .util import handle_state_change
@@ -637,7 +637,7 @@ class RentalControl:
         # Overrides have updated, trigger refresh of calendar
         self.next_refresh = dt.now()
 
-    def _ical_parser(
+    async def _ical_parser(
         self, calendar: Calendar, from_date: dt.datetime, to_date: dt.datetime
     ) -> list[CalendarEvent]:
         """Return a sorted list of events from a icalendar object."""
@@ -728,14 +728,16 @@ class RentalControl:
                 if self.event_prefix:
                     event["SUMMARY"] = self.event_prefix + " " + event["SUMMARY"]
 
-                cal_event = self._ical_event(start, end, from_date, event, override)
+                cal_event = await self._ical_event(
+                    start, end, from_date, event, override
+                )
                 if cal_event:
                     events.append(cal_event)
 
         events.sort(key=lambda k: k.start)
         return events
 
-    def _ical_event(
+    async def _ical_event(
         self,
         start: dt.datetime,
         end: dt.datetime,
@@ -754,7 +756,7 @@ class RentalControl:
             _LOGGER.debug("This event has already ended")
             if override:
                 _LOGGER.debug("Override exists for event, clearing slot")
-                fire_clear_code(self.hass, override["slot"], self._name)
+                await async_fire_clear_code(self, override["slot"])
             return None
         _LOGGER.debug(
             "Start: %s Tzinfo: %s Default: %s StartAs %s",
@@ -807,7 +809,7 @@ class RentalControl:
             start_of_events = dt.start_of_local_day()
             end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
 
-            self.calendar = self._ical_parser(
+            self.calendar = await self._ical_parser(
                 event_list, start_of_events, end_of_events
             )
 

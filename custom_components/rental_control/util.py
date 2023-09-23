@@ -23,6 +23,7 @@ from typing import Any  # noqa: F401
 from typing import List
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
+from homeassistant.components.input_boolean import DOMAIN as INPUT_BOOLEAN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.const import EVENT_STATE_CHANGED
@@ -114,9 +115,22 @@ async def async_check_overrides(coordinator) -> None:
             clear_code = True
 
         if clear_code:
-            fire_clear_code(
-                coordinator.hass, overrides[override]["slot"], coordinator.name
-            )
+            await async_fire_clear_code(coordinator, overrides[override]["slot"])
+
+
+async def async_fire_clear_code(coordinator, slot: int) -> None:
+    """Fire a clear_code signal."""
+    _LOGGER.info(f"In async_fire_clear_code - slot: {slot}, name: {coordinator.name}")
+    hass = coordinator.hass
+    reset_entity = f"{INPUT_BOOLEAN}.reset_codeslot_{coordinator.lockname}_{slot}"
+    _LOGGER.info(f"reset_entity='{reset_entity}'")
+    clear = await hass.services.async_call(
+        domain=INPUT_BOOLEAN,
+        service="turn_on",
+        target={"entity_id": reset_entity},
+        blocking=True,
+    )
+    _LOGGER.info(clear)
 
 
 def fire_clear_code(hass: HomeAssistant, slot: int, name: str) -> None:
