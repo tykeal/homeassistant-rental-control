@@ -124,13 +124,20 @@ async def async_fire_clear_code(coordinator, slot: int) -> None:
     hass = coordinator.hass
     reset_entity = f"{INPUT_BOOLEAN}.reset_codeslot_{coordinator.lockname}_{slot}"
     _LOGGER.info(f"reset_entity='{reset_entity}'")
-    clear = await hass.services.async_call(
+
+    # Make sure that the reset is already off before sending a turn on event
+    await hass.services.async_call(
+        domain=INPUT_BOOLEAN,
+        service="turn_off",
+        target={"entity_id": reset_entity},
+        blocking=True,
+    )
+    await hass.services.async_call(
         domain=INPUT_BOOLEAN,
         service="turn_on",
         target={"entity_id": reset_entity},
         blocking=True,
     )
-    _LOGGER.info(clear)
 
 
 def fire_clear_code(hass: HomeAssistant, slot: int, name: str) -> None:
