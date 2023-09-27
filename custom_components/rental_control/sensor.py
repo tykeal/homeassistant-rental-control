@@ -10,7 +10,6 @@ from .const import COORDINATOR
 from .const import DOMAIN
 from .const import NAME
 from .sensors.calsensor import RentalControlCalSensor
-from .sensors.mapsensor import RentalControlMappingSensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,15 +41,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 coordinator,
                 f"{NAME} {name}",
                 eventnumber,
-            )
-        )
-
-    if coordinator.lockname:
-        sensors.append(
-            RentalControlMappingSensor(
-                hass,
-                coordinator,
-                f"{NAME} {name}",
             )
         )
 

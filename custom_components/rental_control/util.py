@@ -283,10 +283,6 @@ async def handle_state_change(
     )
     _LOGGER.debug(coordinator.event_overrides)
 
-    _LOGGER.info("Triggering mapping update")
-    if coordinator.mapping_sensor:
-        await coordinator.mapping_sensor.async_update()
-
 
 def write_template_config(
     output_path: str, template_name: str, NAME: str, rc_name: str, config_entry

@@ -74,7 +74,6 @@ from .const import REQUEST_TIMEOUT
 from .const import UNSUB_LISTENERS
 from .const import VERSION
 from .sensors.calsensor import RentalControlCalSensor
-from .sensors.mapsensor import RentalControlMappingSensor
 from .services import generate_package_files
 from .services import update_code_slot
 from .util import async_fire_clear_code
@@ -222,7 +221,7 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
             unsub_listener()
         hass.data[DOMAIN][config_entry.entry_id].get(UNSUB_LISTENERS, []).clear()
 
-        hass.data[DOMAIN].pop(config_entry.unique_id)
+        hass.data[DOMAIN].pop(config_entry.entry_id)
 
     async_dismiss(hass, notification_id)
 
@@ -426,7 +425,6 @@ class RentalControl:
             self.start_slot, self.max_events
         )
         self.event_sensors: list[RentalControlCalSensor] = []
-        self.mapping_sensor: RentalControlMappingSensor | None = None
         self.code_generator: str = config.get(
             CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION
         )
