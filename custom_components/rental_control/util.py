@@ -84,6 +84,9 @@ async def async_check_overrides(coordinator) -> None:
 
     _LOGGER.debug("In async_check_overrides")
 
+    # temporary
+    await coordinator.new_event_overrides.async_check_overrides(coordinator)
+
     event_list = coordinator.calendar
     overrides = coordinator.event_overrides.copy()
 
@@ -115,7 +118,8 @@ async def async_check_overrides(coordinator) -> None:
             clear_code = True
 
         if clear_code:
-            await async_fire_clear_code(coordinator, overrides[override]["slot"])
+            _LOGGER.info(f"Would fire clear for {overrides[override]['slot']}")
+            # await async_fire_clear_code(coordinator, overrides[override]["slot"])
 
 
 async def async_fire_clear_code(coordinator, slot: int) -> None:

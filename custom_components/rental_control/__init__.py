@@ -21,7 +21,6 @@ from datetime import datetime
 from datetime import timedelta
 from typing import Any
 from typing import Dict
-from typing import TypedDict
 from zoneinfo import ZoneInfo  # noreorder
 
 import async_timeout
@@ -84,6 +83,7 @@ from .util import delete_rc_and_base_folder
 from .util import gen_uuid
 from .util import get_slot_name
 from .util import handle_state_change
+from .event_overrides import EventOverrides
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -385,15 +385,6 @@ async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -
     )
 
 
-class EventOverride(TypedDict):
-    """Event overrides."""
-
-    slot_name: str
-    slot_code: str
-    start_time: datetime
-    end_time: datetime
-
-
 class RentalControl:
     """Get a list of events."""
 
@@ -430,7 +421,10 @@ class RentalControl:
         self.calendar_loaded: bool = False
         self.overrides_loaded: bool = False
         self.event_overrides: Dict[Any, Any] = {}
-        self.new_event_overrides: Dict[int, EventOverride | None] = {}
+        # self.new_event_overrides: Dict[int, EventOverride | None] = {}
+        self.new_event_overrides: EventOverrides = EventOverrides(
+            self.start_slot, self.max_events
+        )
         self.event_sensors: list[RentalControlCalSensor] = []
         self.mapping_sensor: RentalControlMappingSensor | None = None
         self.code_generator: str = config.get(
@@ -587,90 +581,6 @@ class RentalControl:
         # updated the calendar in case the fetch days has changed
         self.calendar = self._refresh_event_dict()
 
-    def get_next_available_slot(self) -> int | None:
-        """
-        Get the next available slot for use.
-
-        This will always return the next greatest slot to use with wrap
-        """
-        _LOGGER.info("In get_next_available_slot")
-
-        overrides = self.new_event_overrides
-
-        if len(overrides) != self.max_events:
-            _LOGGER.info("System starting up")
-            return None
-
-        slots_with_values = sorted(
-            k for k in overrides.keys() if overrides[k] is not None
-        )
-        if len(slots_with_values) == self.max_events:
-            _LOGGER.info("Overrides at max")
-            return None
-
-        if len(slots_with_values):
-            max_slot = slots_with_values[-1]
-        else:
-            max_slot = self.start_slot - 1
-
-        _LOGGER.info(f"slots_with_values = {slots_with_values}, max_slot = {max_slot}")
-
-        # Get all the available slots greater than our current max
-        avail_slots = sorted(
-            k for k in overrides.keys() if overrides[k] is None and k > max_slot
-        )
-        _LOGGER.info(f"avail_slots = {avail_slots}")
-        if len(avail_slots):
-            _LOGGER.info(f"Next slot is {avail_slots[0]}")
-            return avail_slots[0]
-
-        # Slots greater than our current max don't work, so find the first free slot
-        avail_slots = sorted(k for k in overrides.keys() if overrides[k] is None)
-
-        _LOGGER.info(f"avail_slots is {avail_slots}")
-        if len(avail_slots):
-            _LOGGER.info(f"Next slot is {avail_slots[0]}")
-            return avail_slots[0]
-
-        # We should never hit this directly
-        return None
-
-    async def new_update_event_overrides(
-        self,
-        slot: int,
-        slot_code: str,
-        slot_name: str,
-        start_time: datetime,
-        end_time: datetime,
-    ) -> None:
-        """Update new_event_overrides."""
-        _LOGGER.info("In new_update_event_overrides")
-
-        _LOGGER.info(self.new_event_overrides)
-        event_overrides = self.new_event_overrides.copy()
-
-        if slot in event_overrides:
-            _LOGGER.info(f"event_overrides[{slot}] = {event_overrides[slot]}")
-        else:
-            _LOGGER.info(f"{slot} is not in the current event_overrides")
-
-        if slot_name:
-            event_overrides[slot] = {
-                "slot_name": slot_name,
-                "slot_code": slot_code,
-                "start_time": start_time,
-                "end_time": end_time,
-            }
-        else:
-            event_overrides[slot] = None
-
-        _LOGGER.info(event_overrides)
-        self.new_event_overrides = event_overrides
-        _LOGGER.info(self.new_event_overrides)
-
-        _LOGGER.info("Checking next available slot")
-        self.get_next_available_slot()
-
     async def update_event_overrides(
         self,
         slot: int,
@@ -683,8 +593,8 @@ class RentalControl:
         _LOGGER.debug("In update_event_overrides")
 
         # temporary call new_update_event_overrides
-        await self.new_update_event_overrides(
-            slot, slot_code, slot_name, start_time, end_time
+        self.new_event_overrides.update(
+            slot, slot_code, slot_name, start_time, end_time, self.event_prefix
         )
 
         event_overrides = self.event_overrides.copy()
