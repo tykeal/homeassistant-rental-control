@@ -811,6 +811,10 @@ class RentalControl:
             _LOGGER.error(
                 "%s returned %s - %s", self.url, response.status, response.reason
             )
+
+            # Calendar has failed to load for some reason, unflag the calendar
+            # being loaded
+            self.calendar_loaded = False
         else:
             text = await response.text()
             # Some calendars are for some reason filled with NULL-bytes.
@@ -842,3 +846,6 @@ class RentalControl:
                     )
                     self.event = event
                     found_next_event = True
+
+        # signal an update to all the event sensors
+        await asyncio.gather(*[event.async_update() for event in self.event_sensors])
