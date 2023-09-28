@@ -21,6 +21,7 @@ import re
 import uuid
 from typing import Any  # noqa: F401
 from typing import Coroutine
+from typing import Dict
 from typing import List
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
@@ -51,6 +52,27 @@ from .const import EVENT_RENTAL_CONTROL_SET_CODE
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def add_call(
+    hass: HomeAssistant,
+    coro: List[Coroutine],
+    domain: str,
+    service: str,
+    target: str,
+    data: Dict[str, Any],
+) -> List[Coroutine]:
+    """Append a new async_call to the coro list."""
+    coro.append(
+        hass.services.async_call(
+            domain=domain,
+            service=service,
+            target={"entity_id": target},
+            service_data=data,
+            blocking=True,
+        )
+    )
+    return coro
 
 
 def delete_rc_and_base_folder(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
@@ -166,26 +188,11 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     lockname: str = coordinator.lockname
     coro: List[Coroutine] = []
 
-    def add_call(
-        domain,
-        service,
-        target,
-        data,
-    ):
-        """Append an coro call"""
-        coro.append(
-            coordinator.hass.services.async_call(
-                domain=domain,
-                service=service,
-                target={"entity_id": target},
-                service_data=data,
-                blocking=True,
-            )
-        )
-
     # Disable the slot, this should help avoid notices from Keymaster about
     # pin changes
-    add_call(
+    coro = add_call(
+        coordinator.hass,
+        coro,
         INPUT_BOOLEAN,
         "turn_off",
         f"input_boolean.enabled_{lockname}_{slot}",
@@ -196,35 +203,45 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     coro.clear()
 
     # Load the slot data
-    add_call(
+    coro = add_call(
+        coordinator.hass,
+        coro,
         INPUT_DATETIME,
         "set_datetime",
         f"input_datetime.end_date_{lockname}_{slot}",
         {"datetime": event.extra_state_attributes["end"]},
     )
 
-    add_call(
+    coro = add_call(
+        coordinator.hass,
+        coro,
         INPUT_DATETIME,
         "set_datetime",
         f"input_datetime.start_date_{lockname}_{slot}",
         {"datetime": event.extra_state_attributes["start"]},
     )
 
-    add_call(
+    coro = add_call(
+        coordinator.hass,
+        coro,
         INPUT_TEXT,
         "set_value",
         f"input_text.{lockname}_pin_{slot}",
         {"value": event.extra_state_attributes["slot_code"]},
     )
 
-    add_call(
+    coro = add_call(
+        coordinator.hass,
+        coro,
         INPUT_TEXT,
         "set_value",
         f"input_text.{lockname}_name_{slot}",
         {"value": event.extra_state_attributes["slot_name"]},
     )
 
-    add_call(
+    coro = add_call(
+        coordinator.hass,
+        coro,
         INPUT_BOOLEAN,
         "turn_on",
         f"input_boolean.daterange_{lockname}_{slot}",
@@ -232,7 +249,9 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     )
 
     # Make sure the reset bool is turned off
-    add_call(
+    coro = add_call(
+        coordinator.hass,
+        coro,
         INPUT_BOOLEAN,
         "turn_off",
         f"input_boolean.reset_codeslot_{lockname}_{slot}",
@@ -244,7 +263,9 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
 
     # Turn on the slot
     coro.clear()
-    add_call(
+    coro = add_call(
+        coordinator.hass,
+        coro,
         INPUT_BOOLEAN,
         "turn_on",
         f"input_boolean.enabled_{lockname}_{slot}",
