@@ -143,16 +143,15 @@ async def async_check_overrides(coordinator) -> None:
             clear_code = True
 
         if clear_code:
-            _LOGGER.info(f"Would fire clear for {overrides[override]['slot']}")
+            _LOGGER.debug(f"Would fire clear for {overrides[override]['slot']}")
             # await async_fire_clear_code(coordinator, overrides[override]["slot"])
 
 
 async def async_fire_clear_code(coordinator, slot: int) -> None:
     """Fire a clear_code signal."""
-    _LOGGER.info(f"In async_fire_clear_code - slot: {slot}, name: {coordinator.name}")
+    _LOGGER.debug(f"In async_fire_clear_code - slot: {slot}, name: {coordinator.name}")
     hass = coordinator.hass
     reset_entity = f"{INPUT_BOOLEAN}.reset_codeslot_{coordinator.lockname}_{slot}"
-    _LOGGER.info(f"reset_entity='{reset_entity}'")
 
     # Make sure that the reset is already off before sending a turn on event
     await hass.services.async_call(
@@ -183,7 +182,7 @@ def fire_clear_code(hass: HomeAssistant, slot: int, name: str) -> None:
 
 async def async_fire_set_code(coordinator, event, slot: int) -> None:
     """Set codes into a slot."""
-    _LOGGER.info(f"In async_fire_set_code - slot: {slot}")
+    _LOGGER.debug(f"In async_fire_set_code - slot: {slot}")
 
     lockname: str = coordinator.lockname
     coro: List[Coroutine] = []

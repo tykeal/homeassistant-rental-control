@@ -334,7 +334,7 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     if coordinator.lockname:
         await async_start_listener(hass, config_entry)
     else:
-        _LOGGER.info("Skipping re-adding listeners")
+        _LOGGER.debug("Skipping re-adding listeners")
 
     # Update package files
     if new_data[CONF_LOCK_ENTRY]:
@@ -359,13 +359,12 @@ async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -
     """Start tracking updates to keymaster input entities."""
     entities: list[str] = []
 
-    _LOGGER.info(f"entry_id = '{config_entry.unique_id}'")
+    _LOGGER.debug(f"entry_id = '{config_entry.unique_id}'")
 
-    _LOGGER.info(hass.data[DOMAIN][config_entry.entry_id][COORDINATOR])
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
     lockname = coordinator.lockname
 
-    _LOGGER.info(f"lockname = '{lockname}'")
+    _LOGGER.debug(f"lockname = '{lockname}'")
 
     for i in range(
         coordinator.start_slot, coordinator.start_slot + coordinator.max_events
@@ -650,8 +649,7 @@ class RentalControl:
 
         self.event_overrides = event_overrides
 
-        _LOGGER.info(f"event_overrides: {self.event_overrides}")
-        _LOGGER.debug("event_overrides: '%s'", self.event_overrides)
+        _LOGGER.debug(f"event_overrides: {self.event_overrides}")
         if len(self.event_overrides) == self.max_events:
             _LOGGER.debug("max_events reached, flagging as ready")
             self.overrides_loaded = True

@@ -77,15 +77,15 @@ class EventOverrides:
     def __assign_next_slot(self) -> None:
         """Assign the next slot."""
 
-        _LOGGER.info("In EventOverrides.assign_next_slot")
+        _LOGGER.debug("In EventOverrides.assign_next_slot")
 
         if len(self._overrides) != self.max_slots:
-            _LOGGER.info("System starting up")
+            _LOGGER.debug("System starting up")
             return
 
         slots_with_values = self.__get_slots_with_values()
         if len(slots_with_values) == self.max_slots:
-            _LOGGER.info("Overrides at max")
+            _LOGGER.debug("Overrides at max")
             self._next_slot = None
             return
 
@@ -97,7 +97,7 @@ class EventOverrides:
         # Get all the available slots greater than our current max
         avail_slots = self.__get_slots_without_values(max_slot)
         if len(avail_slots):
-            _LOGGER.info(f"Next slot is {avail_slots[0]}")
+            _LOGGER.debug(f"Next slot is {avail_slots[0]}")
             self._next_slot = avail_slots[0]
             return
 
@@ -106,7 +106,7 @@ class EventOverrides:
         avail_slots = self.__get_slots_without_values()
 
         if len(avail_slots):
-            _LOGGER.info(f"Next slot is {avail_slots[0]}")
+            _LOGGER.debug(f"Next slot is {avail_slots[0]}")
             self._next_slot = avail_slots[0]
             return
 
@@ -133,23 +133,23 @@ class EventOverrides:
     async def async_check_overrides(self, coordinator) -> None:
         """Check if overrides need to have a clear_code event fired."""
 
-        _LOGGER.info("In EventOverrides.async_check_overrides")
+        _LOGGER.debug("In EventOverrides.async_check_overrides")
 
         calendar = coordinator.calendar
 
         if not coordinator.calendar_loaded or not coordinator.events_ready:
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Calendar or events not loaded, not checking override validity"
             )
             return
 
         event_names = get_event_names(coordinator)
-        _LOGGER.info(f"event_names = {event_names}")
+        _LOGGER.debug(f"event_names = {event_names}")
 
         assigned_slots = self.__get_slots_with_values()
 
         if not len(assigned_slots):
-            _LOGGER.info("No overrides to check")
+            _LOGGER.debug("No overrides to check")
             return
 
         cur_date_start = dt.start_of_local_day().date()
@@ -158,22 +158,24 @@ class EventOverrides:
             clear_code = False
 
             if self.get_slot_name(slot) not in event_names:
-                _LOGGER.info(f"{self._overrides[slot]} not in current events, clearing")
+                _LOGGER.debug(
+                    f"{self._overrides[slot]} not in current events, clearing"
+                )
                 clear_code = True
 
             start_time = self.get_slot_start_time(slot).date()
             end_time = self.get_slot_end_time(slot).date()
 
             if not len(calendar):
-                _LOGGER.info(f"No events in calendar, clearing {slot}")
+                _LOGGER.debug(f"No events in calendar, clearing {slot}")
                 clear_code = True
 
             if not clear_code and start_time > end_time:
-                _LOGGER.info(f"{slot} start and end times do not make sense, clearing")
+                _LOGGER.debug(f"{slot} start and end times do not make sense, clearing")
                 clear_code = True
 
             if not clear_code and end_time < cur_date_start:
-                _LOGGER.info(f"{slot} end is before today, clearing")
+                _LOGGER.debug(f"{slot} end is before today, clearing")
                 clear_code = True
 
             if not clear_code:
@@ -183,11 +185,11 @@ class EventOverrides:
                     last_end = calendar[-1].end.date()
 
                 if start_time > last_end:
-                    _LOGGER.info(f"{slot} start is after last event ends, clearing")
+                    _LOGGER.debug(f"{slot} start is after last event ends, clearing")
                     clear_code = True
 
             if clear_code:
-                _LOGGER.info(f"Firing clear code for slot {slot}")
+                _LOGGER.debug(f"Firing clear code for slot {slot}")
                 await async_fire_clear_code(coordinator, slot)
 
                 # signal an update to all the event sensors
@@ -271,7 +273,7 @@ class EventOverrides:
     ) -> None:
         """Update overrides."""
 
-        _LOGGER.info("In EventOverrides.update")
+        _LOGGER.debug("In EventOverrides.update")
 
         overrides = self._overrides.copy()
 
@@ -292,6 +294,6 @@ class EventOverrides:
         if len(overrides) == self.max_slots:
             self._ready = True
 
-        _LOGGER.info(f"overrides = {self.overrides}")
-        _LOGGER.info(f"ready = {self.ready}")
-        _LOGGER.info(f"next_slot = {self.next_slot}")
+        _LOGGER.debug(f"overrides = {self.overrides}")
+        _LOGGER.debug(f"ready = {self.ready}")
+        _LOGGER.debug(f"next_slot = {self.next_slot}")
