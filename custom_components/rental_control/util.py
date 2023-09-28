@@ -43,12 +43,10 @@ from jinja2 import select_autoescape
 
 from .const import ATTR_CODE_SLOT
 from .const import ATTR_NAME
-from .const import ATTR_SLOT_NAME
 from .const import CONF_PATH
 from .const import COORDINATOR
 from .const import DOMAIN
 from .const import EVENT_RENTAL_CONTROL_CLEAR_CODE
-from .const import EVENT_RENTAL_CONTROL_SET_CODE
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
@@ -272,21 +270,6 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     )
 
     await asyncio.gather(*coro)
-
-
-def fire_set_code(hass: HomeAssistant, name: str, slot: int, slot_name: str) -> None:
-    """Fire set_code event."""
-    _LOGGER.debug(
-        "In fire_set_code - name: %s, slot: %d, slot_name: %s", name, slot, slot_name
-    )
-    hass.bus.fire(
-        EVENT_RENTAL_CONTROL_SET_CODE,
-        event_data={
-            ATTR_CODE_SLOT: slot,
-            ATTR_NAME: name,
-            ATTR_SLOT_NAME: slot_name,
-        },
-    )
 
 
 async def async_fire_update_times(coordinator, event) -> None:
