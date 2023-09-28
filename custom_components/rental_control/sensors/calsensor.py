@@ -11,6 +11,7 @@ from homeassistant.helpers.entity import EntityCategory
 
 from ..const import ICON
 from ..util import async_fire_set_code
+from ..util import async_fire_update_times
 from ..util import gen_uuid
 from ..util import get_slot_name
 
@@ -352,7 +353,7 @@ class RentalControlCalSensor(Entity):
                 )
 
             if update_times:
-                _LOGGER.info("Update event times")
+                await async_fire_update_times(self.coordinator, self)
 
         else:
             # No reservations

@@ -290,6 +290,39 @@ def fire_set_code(hass: HomeAssistant, name: str, slot: int, slot_name: str) -> 
     )
 
 
+async def async_fire_update_times(coordinator, event) -> None:
+    """Update times on slot."""
+
+    lockname: str = coordinator.lockname
+    coro: List[Coroutine] = []
+    slot_name: str = event.extra_state_attributes["slot_name"]
+    slot = coordinator.new_event_overrides.get_slot_key_by_name(slot_name)
+
+    if not slot:
+        return
+
+    coro = add_call(
+        coordinator.hass,
+        coro,
+        INPUT_DATETIME,
+        "set_datetime",
+        f"input_datetime.end_date_{lockname}_{slot}",
+        {"datetime": event.extra_state_attributes["end"]},
+    )
+
+    coro = add_call(
+        coordinator.hass,
+        coro,
+        INPUT_DATETIME,
+        "set_datetime",
+        f"input_datetime.start_date_{lockname}_{slot}",
+        {"datetime": event.extra_state_attributes["start"]},
+    )
+
+    # Update the slot details
+    await asyncio.gather(*coro)
+
+
 def get_event_names(rc) -> List[str]:
     """Get the current event names."""
     event_names = [

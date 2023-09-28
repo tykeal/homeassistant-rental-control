@@ -218,6 +218,22 @@ class EventOverrides:
 
         return None
 
+    def get_slot_key_by_name(self, slot_name: str) -> int:
+        """
+        Find the override that has slot_name and return the data if
+        available.
+
+        Returns 0 if no slot with name is found
+        """
+
+        slots_with_values = self.__get_slots_with_values()
+        for slot in slots_with_values:
+            override = self.overrides[slot]
+            if override and override["slot_name"] == slot_name:
+                return slot
+
+        return 0
+
     def get_slot_start_time(self, slot: int) -> datetime:
         """Return the start datetime of slot or the start of day if no override."""
 
