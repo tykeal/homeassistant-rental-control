@@ -227,13 +227,20 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         {"value": event.extra_state_attributes["slot_code"]},
     )
 
+    if coordinator.event_prefix:
+        prefix = f"{coordinator.event_prefix} "
+    else:
+        prefix = ""
+
+    slot_name = f"{prefix}{event.extra_state_attributes['slot_name']}"
+
     coro = add_call(
         coordinator.hass,
         coro,
         INPUT_TEXT,
         "set_value",
         f"input_text.{lockname}_name_{slot}",
-        {"value": event.extra_state_attributes["slot_name"]},
+        {"value": slot_name},
     )
 
     coro = add_call(
