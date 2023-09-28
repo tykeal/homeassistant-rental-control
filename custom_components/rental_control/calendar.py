@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from typing import Dict
 
 from homeassistant.components.calendar import CalendarEntity
 from homeassistant.components.calendar import CalendarEvent
-from homeassistant.const import CONF_NAME
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 
+from . import RentalControl
 from .const import COORDINATOR
 from .const import DOMAIN
 from .const import NAME
@@ -18,40 +21,47 @@ _LOGGER = logging.getLogger(__name__)
 OFFSET = "!!"
 
 
-async def async_setup_entry(hass, config_entry, async_add_entities):
+async def async_setup_entry(
+    hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities
+) -> bool:
     """Set up the iCal Calendar platform."""
     config = config_entry.data
     _LOGGER.debug("Running setup_platform for calendar")
     _LOGGER.debug("Conf: %s", config)
-    name = config.get(CONF_NAME)
 
-    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
+    coordinator: RentalControl = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
 
-    calendar = RentalControlCalendar(hass, f"{NAME} {name}", coordinator)
+    calendar = RentalControlCalendar(coordinator)
 
     async_add_entities([calendar], True)
+
+    return True
 
 
 class RentalControlCalendar(CalendarEntity):
     """A device for getting the next Task from a WebDav Calendar."""
 
-    def __init__(
-        self, hass, name, rental_control_events
-    ):  # pylint: disable=unused-argument
+    def __init__(self, coordinator: RentalControl) -> None:
         """Create the iCal Calendar Event Device."""
-        self._entity_category = EntityCategory.DIAGNOSTIC
-        self._event = None
-        self._name = name
-        self.rental_control_events = rental_control_events
-        self._unique_id = gen_uuid(f"{self.rental_control_events.unique_id} calendar")
+        self._available: bool = False
+        self._entity_category: EntityCategory = EntityCategory.DIAGNOSTIC
+        self._event: CalendarEvent | None = None
+        self._name: str = f"{NAME} {coordinator.name}"
+        self.coordinator: RentalControl = coordinator
+        self._unique_id: str = gen_uuid(f"{self.coordinator.unique_id} calendar")
 
     @property
-    def device_info(self):
+    def available(self) -> bool:
+        """Return the calendar availablity."""
+        return self._available
+
+    @property
+    def device_info(self) -> Dict[str, Any]:
         """Return the device info block."""
-        return self.rental_control_events.device_info
+        return self.coordinator.device_info
 
     @property
-    def entity_category(self):
+    def entity_category(self) -> EntityCategory:
         """Return the category."""
         return self._entity_category
 
@@ -61,24 +71,25 @@ class RentalControlCalendar(CalendarEntity):
         return self._event
 
     @property
-    def name(self):
+    def name(self) -> str:
         """Return the name of the entity."""
         return self._name
 
     @property
-    def unique_id(self):
+    def unique_id(self) -> str:
         """Return the unique_id."""
         return self._unique_id
 
     async def async_get_events(self, hass, start_date, end_date) -> Any:
         """Get all events in a specific time frame."""
         _LOGGER.debug("Running RentalControlCalendar async get events")
-        return await self.rental_control_events.async_get_events(
-            hass, start_date, end_date
-        )
+        return await self.coordinator.async_get_events(hass, start_date, end_date)
 
-    async def async_update(self):
+    async def async_update(self) -> None:
         """Update event data."""
         _LOGGER.debug("Running RentalControlCalendar async update for %s", self.name)
-        await self.rental_control_events.update()
-        self._event = self.rental_control_events.event
+        await self.coordinator.update()
+        self._event = self.coordinator.event
+
+        if self.coordinator.calendar_ready:
+            self._available = True
