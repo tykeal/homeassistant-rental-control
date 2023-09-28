@@ -425,6 +425,7 @@ class RentalControl:
             self.start_slot, self.max_events
         )
         self.event_sensors: list[RentalControlCalSensor] = []
+        self._events_ready: bool = False
         self.code_generator: str = config.get(
             CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION
         )
@@ -479,6 +480,23 @@ class RentalControl:
     def version(self) -> str:
         """Return the version."""
         return self._version
+
+    @property
+    def events_ready(self) -> bool:
+        """Return the status of all the event sensors"""
+
+        # Once all events report ready we don't keep checking
+        if self._events_ready:
+            return self._events_ready
+
+        # If all sensors have not yet been created we're still starting
+        if len(self.event_sensors) != self.max_events:
+            return self._events_ready
+
+        sensors_status = [event.available for event in self.event_sensors]
+        self._events_ready = all(sensors_status)
+
+        return self._events_ready
 
     async def async_get_events(
         self, hass, start_date, end_date
@@ -541,6 +559,9 @@ class RentalControl:
                     dt.parse_datetime(start_time.as_dict()["state"]),
                     dt.parse_datetime(end_time.as_dict()["state"]),
                 )
+
+        # always refresh the overrides
+        await self.new_event_overrides.async_check_overrides(self)
 
     def update_config(self, config) -> None:
         """Update config entries."""

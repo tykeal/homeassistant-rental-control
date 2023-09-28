@@ -11,7 +11,7 @@
 #   Andrew Grimberg - Initial implementation
 ##############################################################################
 """Rental Control EventOVerrides."""
-# import asyncio
+import asyncio
 import logging
 import re
 from datetime import datetime
@@ -137,8 +137,10 @@ class EventOverrides:
 
         calendar = coordinator.calendar
 
-        if not coordinator.calendar_loaded:
-            _LOGGER.info("Calendar not loaded, not checking override validity")
+        if not coordinator.calendar_loaded or not coordinator.events_ready:
+            _LOGGER.info(
+                "Calendar or events not loaded, not checking override validity"
+            )
             return
 
         event_names = get_event_names(coordinator)
@@ -188,17 +190,33 @@ class EventOverrides:
                 _LOGGER.info(f"Firing clear code for slot {slot}")
                 await async_fire_clear_code(coordinator, slot)
 
+                # signal an update to all the event sensors
+                await asyncio.gather(
+                    *[event.async_update() for event in coordinator.event_sensors]
+                )
+
     def get_slot_name(self, slot: int) -> str:
         """Return the slot name."""
         override = self._overrides[slot]
 
-        if override:
-            if "slot_name" in override:
-                return override["slot_name"]
-            else:
-                return ""
+        if override and "slot_name" in override:
+            return override["slot_name"]
         else:
             return ""
+
+    def get_slot_with_name(self, slot_name: str) -> EventOverride | None:
+        """
+        Find the override that has slot_name and return the data if
+        available.
+        """
+
+        slots_with_values = self.__get_slots_with_values()
+        for slot in slots_with_values:
+            override = self.overrides[slot]
+            if override and override["slot_name"] == slot_name:
+                return override
+
+        return None
 
     def get_slot_start_time(self, slot: int) -> datetime:
         """Return the start datetime of slot or the start of day if no override."""

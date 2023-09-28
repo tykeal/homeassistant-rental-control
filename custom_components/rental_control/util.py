@@ -20,10 +20,13 @@ import os
 import re
 import uuid
 from typing import Any  # noqa: F401
+from typing import Coroutine
 from typing import List
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
 from homeassistant.components.input_boolean import DOMAIN as INPUT_BOOLEAN
+from homeassistant.components.input_datetime import DOMAIN as INPUT_DATETIME
+from homeassistant.components.input_text import DOMAIN as INPUT_TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.const import EVENT_STATE_CHANGED
@@ -156,6 +159,101 @@ def fire_clear_code(hass: HomeAssistant, slot: int, name: str) -> None:
     )
 
 
+async def async_fire_set_code(coordinator, event, slot: int) -> None:
+    """Set codes into a slot."""
+    _LOGGER.info(f"In async_fire_set_code - slot: {slot}")
+
+    lockname: str = coordinator.lockname
+    coro: List[Coroutine] = []
+
+    def add_call(
+        domain,
+        service,
+        target,
+        data,
+    ):
+        """Append an coro call"""
+        coro.append(
+            coordinator.hass.services.async_call(
+                domain=domain,
+                service=service,
+                target={"entity_id": target},
+                service_data=data,
+                blocking=True,
+            )
+        )
+
+    # Disable the slot, this should help avoid notices from Keymaster about
+    # pin changes
+    add_call(
+        INPUT_BOOLEAN,
+        "turn_off",
+        f"input_boolean.enabled_{lockname}_{slot}",
+        {},
+    )
+    await asyncio.gather(*coro)
+
+    coro.clear()
+
+    # Load the slot data
+    add_call(
+        INPUT_DATETIME,
+        "set_datetime",
+        f"input_datetime.end_date_{lockname}_{slot}",
+        {"datetime": event.extra_state_attributes["end"]},
+    )
+
+    add_call(
+        INPUT_DATETIME,
+        "set_datetime",
+        f"input_datetime.start_date_{lockname}_{slot}",
+        {"datetime": event.extra_state_attributes["start"]},
+    )
+
+    add_call(
+        INPUT_TEXT,
+        "set_value",
+        f"input_text.{lockname}_pin_{slot}",
+        {"value": event.extra_state_attributes["slot_code"]},
+    )
+
+    add_call(
+        INPUT_TEXT,
+        "set_value",
+        f"input_text.{lockname}_name_{slot}",
+        {"value": event.extra_state_attributes["slot_name"]},
+    )
+
+    add_call(
+        INPUT_BOOLEAN,
+        "turn_on",
+        f"input_boolean.daterange_{lockname}_{slot}",
+        {},
+    )
+
+    # Make sure the reset bool is turned off
+    add_call(
+        INPUT_BOOLEAN,
+        "turn_off",
+        f"input_boolean.reset_codeslot_{lockname}_{slot}",
+        {},
+    )
+
+    # Update the slot details
+    await asyncio.gather(*coro)
+
+    # Turn on the slot
+    coro.clear()
+    add_call(
+        INPUT_BOOLEAN,
+        "turn_on",
+        f"input_boolean.enabled_{lockname}_{slot}",
+        {},
+    )
+
+    await asyncio.gather(*coro)
+
+
 def fire_set_code(hass: HomeAssistant, name: str, slot: int, slot_name: str) -> None:
     """Fire set_code event."""
     _LOGGER.debug(
@@ -282,6 +380,9 @@ async def handle_state_change(
         dt.parse_datetime(end_time.as_dict()["state"]),
     )
     _LOGGER.debug(coordinator.event_overrides)
+
+    # validate overrides
+    await coordinator.new_event_overrides.async_check_overrides(coordinator)
 
 
 def write_template_config(

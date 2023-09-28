@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 from pprint import pformat
+from typing import List
 
 from homeassistant.components.persistent_notification import create
 from homeassistant.core import HomeAssistant
@@ -67,7 +68,7 @@ async def generate_package_files(hass: HomeAssistant, rc_name: str) -> None:
 
     _LOGGER.debug("Packages directory is ready for file generation")
 
-    templates = ["set_code"]
+    templates: List[str] = []
 
     for t in templates:
         write_template_config(output_path, t, NAME, rc_name, coordinator)

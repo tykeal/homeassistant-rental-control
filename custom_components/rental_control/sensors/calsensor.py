@@ -10,6 +10,7 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity import EntityCategory
 
 from ..const import ICON
+from ..util import async_fire_set_code
 from ..util import gen_uuid
 from ..util import get_slot_name
 
@@ -25,21 +26,21 @@ class RentalControlCalSensor(Entity):
     upcoming event.
     """
 
-    def __init__(self, hass, rental_control_events, sensor_name, event_number):
+    def __init__(self, hass, coordinator, sensor_name, event_number):
         """
         Initialize the sensor.
 
         sensor_name is typically the name of the calendar.
         eventnumber indicates which upcoming event this is, starting at zero
         """
-        self.rental_control_events = rental_control_events
-        self.rental_control_events.event_sensors.append(self)
-        if rental_control_events.event_prefix:
-            summary = f"{rental_control_events.event_prefix} No reservation"
+        self.coordinator = coordinator
+        self.coordinator.event_sensors.append(self)
+        if coordinator.event_prefix:
+            summary = f"{coordinator.event_prefix} No reservation"
         else:
             summary = "No reservation"
-        self._code_generator = rental_control_events.code_generator
-        self._code_length = rental_control_events.code_length
+        self._code_generator = coordinator.code_generator
+        self._code_length = coordinator.code_length
         self._entity_category = EntityCategory.DIAGNOSTIC
         self._event_attributes = {
             "summary": summary,
@@ -60,7 +61,7 @@ class RentalControlCalSensor(Entity):
         self._name = f"{sensor_name} Event {self._event_number}"
         self._state = summary
         self._unique_id = gen_uuid(
-            f"{self.rental_control_events.unique_id} sensor {self._event_number}"
+            f"{self.coordinator.unique_id} sensor {self._event_number}"
         )
 
     def _extract_email(self) -> str | None:
@@ -208,7 +209,7 @@ class RentalControlCalSensor(Entity):
     @property
     def device_info(self):
         """Return the device info block."""
-        return self.rental_control_events.device_info
+        return self.coordinator.device_info
 
     @property
     def entity_category(self):
@@ -246,12 +247,16 @@ class RentalControlCalSensor(Entity):
         _LOGGER.debug("Running RentalControlCalSensor async update for %s", self.name)
 
         # Calendar is not ready, no reason to continue processing
-        if not self.rental_control_events.calendar_ready:
+        if not self.coordinator.calendar_ready:
             return
 
-        self._code_generator = self.rental_control_events.code_generator
-        self._code_length = self.rental_control_events.code_length
-        event_list = self.rental_control_events.calendar
+        set_code = False
+        update_times = False
+        overrides = self.coordinator.new_event_overrides
+
+        self._code_generator = self.coordinator.code_generator
+        self._code_length = self.coordinator.code_length
+        event_list = self.coordinator.calendar
         if event_list and (self._event_number < len(event_list)):
             event = event_list[self._event_number]
             name = event.summary
@@ -289,20 +294,23 @@ class RentalControlCalSensor(Entity):
             slot_name = get_slot_name(
                 self._event_attributes["summary"],
                 self._event_attributes["description"],
-                self.rental_control_events.event_prefix,
+                self.coordinator.event_prefix,
             )
             self._event_attributes["slot_name"] = slot_name
 
-            override = None
-            if slot_name and slot_name in self.rental_control_events.event_overrides:
-                override = self.rental_control_events.event_overrides[slot_name]
-                _LOGGER.debug("override: '%s'", override)
-                # If start and stop are the same, then we ignore the override
-                # This shouldn't happen except when a slot has been cleared
-                # In that instance we shouldn't find an override
-                if override["start_time"] == override["end_time"]:
-                    _LOGGER.debug("override is now none")
-                    override = None
+            override = overrides.get_slot_with_name(slot_name)
+            if override is None:
+                set_code = True
+
+            if (
+                not set_code
+                and override
+                and (
+                    override["start_time"].date() != event.start.date()
+                    or override["end_time"].date() != event.end.date()
+                )
+            ):
+                update_times = True
 
             if override and override["slot_code"]:
                 slot_code = str(override["slot_code"])
@@ -334,6 +342,18 @@ class RentalControlCalSensor(Entity):
                 parsed_attributes["reservation_url"] = reservation_url
 
             self._parsed_attributes = parsed_attributes
+
+            # fire set_code if not in current overrides
+            if set_code:
+                await async_fire_set_code(
+                    self.coordinator,
+                    self,
+                    self.coordinator.new_event_overrides.next_slot,
+                )
+
+            if update_times:
+                _LOGGER.info("Update event times")
+
         else:
             # No reservations
             _LOGGER.debug(
@@ -341,8 +361,8 @@ class RentalControlCalSensor(Entity):
                 str(self._event_number),
                 self.name,
             )
-            if self.rental_control_events.event_prefix:
-                summary = f"{self.rental_control_events.event_prefix} No reservation"
+            if self.coordinator.event_prefix:
+                summary = f"{self.coordinator.event_prefix} No reservation"
             else:
                 summary = "No reservation"
             self._event_attributes = {
@@ -360,4 +380,4 @@ class RentalControlCalSensor(Entity):
             self._parsed_attributes = {}
             self._state = summary
 
-        self._is_available = self.rental_control_events.calendar_ready
+        self._is_available = self.coordinator.calendar_ready
