@@ -15,6 +15,10 @@ REQUEST_TIMEOUT = 60
 ICON = "mdi:account-key"
 MAP_ICON = "mdi:map-search"
 
+# hass.data attributes
+COORDINATOR = "coordinator"
+UNSUB_LISTENERS = "unsub_listeners"
+
 # Platforms
 CALENDAR = "calendar"
 SENSOR = "sensor"

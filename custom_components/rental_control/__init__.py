@@ -14,9 +14,10 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
-import re
 from datetime import datetime
+from datetime import time
 from datetime import timedelta
 from typing import Any
 from typing import Dict
@@ -24,8 +25,8 @@ from zoneinfo import ZoneInfo  # noreorder
 
 import async_timeout
 import homeassistant.helpers.config_validation as cv
-import icalendar
 import voluptuous as vol
+from icalendar import Calendar
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.persistent_notification import async_dismiss
@@ -34,8 +35,10 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
-from homeassistant.core import ServiceCall
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+)
 from homeassistant.helpers import device_registry as dr
 from homeassistant.util import dt
 
@@ -57,22 +60,25 @@ from .const import CONF_PATH
 from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
+from .const import COORDINATOR
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_CODE_LENGTH
+from .const import DEFAULT_GENERATE
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import EVENT_RENTAL_CONTROL_REFRESH
 from .const import NAME
 from .const import PLATFORMS
 from .const import REQUEST_TIMEOUT
+from .const import UNSUB_LISTENERS
 from .const import VERSION
-from .services import generate_package_files
-from .services import update_code_slot
+from .sensors.calsensor import RentalControlCalSensor
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
-from .util import fire_clear_code
 from .util import gen_uuid
 from .util import get_slot_name
+from .util import handle_state_change
+from .event_overrides import EventOverrides
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,9 +94,9 @@ def setup(hass, config):  # pylint: disable=unused-argument
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up Rental Control from a config entry."""
-    config = entry.data
+    config = config_entry.data
     _LOGGER.debug(
         "Running init async_setup_entry for calendar %s", config.get(CONF_NAME)
     )
@@ -99,71 +105,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     updated_config = config.copy()
     updated_config.pop(CONF_GENERATE, None)
-    if updated_config != entry.data:
-        hass.config_entries.async_update_entry(entry, data=updated_config)
+    if updated_config != config_entry.data:
+        hass.config_entries.async_update_entry(config_entry, data=updated_config)
 
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
-    hass.data[DOMAIN][entry.unique_id] = RentalControl(
-        hass=hass, config=config, unique_id=entry.unique_id, entry_id=entry.entry_id
+
+    coordinator = RentalControl(
+        hass=hass,
+        config_entry=config_entry,
     )
+
+    hass.data[DOMAIN][config_entry.entry_id] = {
+        COORDINATOR: coordinator,
+        UNSUB_LISTENERS: [],
+    }
+
+    # Start listeners if needed
+    await async_start_listener(hass, config_entry)
 
     for component in PLATFORMS:
         hass.async_create_task(
-            hass.config_entries.async_forward_entry_setup(entry, component)
+            hass.config_entries.async_forward_entry_setup(config_entry, component)
         )
 
-    entry.add_update_listener(update_listener)
+    config_entry.add_update_listener(update_listener)
 
-    # Generate package files
-    async def _generate_package(service: ServiceCall) -> None:
-        """Generate the package files."""
-        _LOGGER.debug("In _generate_package: '%s'", service)
-        await generate_package_files(hass, service.data["rental_control_name"])
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GENERATE_PACKAGE,
-        _generate_package,
-    )
-
-    # Update Code Slot
-    async def _update_code_slot(service: ServiceCall) -> None:
-        """Update code slot with Keymaster information."""
-        _LOGGER.debug("Update Code Slot service: %s", service)
-
-        await update_code_slot(hass, service)
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_UPDATE_CODE_SLOT,
-        _update_code_slot,
-    )
-
-    # generate files if needed
+    # remove files if needed
     if should_generate_package:
-        rc_name = config.get(CONF_NAME)
-        servicedata = {"rental_control_name": rc_name}
-        await hass.services.async_call(
-            DOMAIN, SERVICE_GENERATE_PACKAGE, servicedata, blocking=True
-        )
-
-        _LOGGER.debug("Firing refresh event")
-        # Fire an event for the startup automation to capture
-        hass.bus.fire(
-            EVENT_RENTAL_CONTROL_REFRESH,
-            event_data={
-                ATTR_NOTIFICATION_SOURCE: "event",
-                ATTR_NAME: rc_name,
-            },
-        )
+        delete_rc_and_base_folder(hass, config_entry)
 
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     """Handle removal of an entry."""
-    config = entry.data
+    config = config_entry.data
     rc_name = config.get(CONF_NAME)
     _LOGGER.debug("Running async_unload_entry for rental_control %s", rc_name)
 
@@ -182,7 +159,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     unload_ok = all(
         await asyncio.gather(
             *[
-                hass.config_entries.async_forward_entry_unload(entry, component)
+                hass.config_entries.async_forward_entry_unload(config_entry, component)
                 for component in PLATFORMS
             ]
         )
@@ -190,11 +167,18 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     if unload_ok:
         # Remove all package files and the base folder if needed
-        await hass.async_add_executor_job(delete_rc_and_base_folder, hass, config)
+        await hass.async_add_executor_job(delete_rc_and_base_folder, hass, config_entry)
 
         await async_reload_package_platforms(hass)
 
-        hass.data[DOMAIN].pop(entry.unique_id)
+        # Unsubscribe from any listeners
+        for unsub_listener in hass.data[DOMAIN][config_entry.entry_id].get(
+            UNSUB_LISTENERS, []
+        ):
+            unsub_listener()
+        hass.data[DOMAIN][config_entry.entry_id].get(UNSUB_LISTENERS, []).clear()
+
+        hass.data[DOMAIN].pop(config_entry.entry_id)
 
     async_dismiss(hass, notification_id)
 
@@ -218,6 +202,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             data=data,
         )
         config_entry.version = 2
+        version = 2
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     # 2 -> 3: Migrate lock
@@ -237,6 +222,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             )
 
         config_entry.version = 3
+        version = 3
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     # 3 -> 4: Migrate code length
@@ -252,35 +238,78 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             )
 
         config_entry.version = 4
+        version = 4
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
+
+    # 4 -> 5: Drop startup automation
+    if version == 4:
+        _LOGGER.debug(f"Migrating from version {version}")
+
+        data = config_entry.data.copy()
+        data[CONF_GENERATE] = DEFAULT_GENERATE
+        hass.config_entries.async_update_entry(
+            entry=config_entry,
+            unique_id=config_entry.unique_id,
+            data=data,
+        )
+
+        config_entry.version = 5
+        version = 5
+        _LOGGER.debug(f"Migration to version {config_entry.version} complete")
+
+    # 5 -> 6: Drop package_path from configuration
+    if version == 5:
+        _LOGGER.debug(f"Migrating from version {version}")
+
+        data = config_entry.data.copy()
+        data.pop(CONF_PATH, None)
+        hass.config_entries.async_update_entry(
+            entry=config_entry, unique_id=config_entry.unique_id, data=data
+        )
+
+        config_entry.version = 6
+        version = 6
+        _LOGGER.debug(f"Migration to version {config_entry.version} complete")
 
     return True
 
 
-async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Update listener."""
     # No need to update if the options match the data
-    if not entry.options:
+    if not config_entry.options:
         return
 
-    new_data = entry.options.copy()
+    new_data = config_entry.options.copy()
     new_data.pop(CONF_GENERATE, None)
 
-    old_data = hass.data[DOMAIN][entry.unique_id]
+    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
 
     # do not update the creation datetime if it already exists (which it should)
-    new_data[CONF_CREATION_DATETIME] = old_data.created
+    new_data[CONF_CREATION_DATETIME] = coordinator.created
 
     hass.config_entries.async_update_entry(
-        entry=entry,
-        unique_id=entry.unique_id,
+        entry=config_entry,
+        unique_id=config_entry.unique_id,
         data=new_data,
         title=new_data[CONF_NAME],
         options={},
     )
 
     # Update the calendar config
-    hass.data[DOMAIN][entry.unique_id].update_config(new_data)
+    coordinator.update_config(new_data)
+
+    # Unsubscribe to any listeners so we can create new ones
+    for unsub_listener in hass.data[DOMAIN][config_entry.entry_id].get(
+        UNSUB_LISTENERS, []
+    ):
+        unsub_listener()
+    hass.data[DOMAIN][config_entry.entry_id].get(UNSUB_LISTENERS, []).clear()
+
+    if coordinator.lockname:
+        await async_start_listener(hass, config_entry)
+    else:
+        _LOGGER.debug("Skipping re-adding listeners")
 
     # Update package files
     if new_data[CONF_LOCK_ENTRY]:
@@ -301,67 +330,81 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
 
 
+async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+    """Start tracking updates to keymaster input entities."""
+    entities: list[str] = []
+
+    _LOGGER.debug(f"entry_id = '{config_entry.unique_id}'")
+
+    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
+    lockname = coordinator.lockname
+
+    _LOGGER.debug(f"lockname = '{lockname}'")
+
+    for i in range(
+        coordinator.start_slot, coordinator.start_slot + coordinator.max_events
+    ):
+        entities.append(f"input_text.{lockname}_pin_{i}")
+        entities.append(f"input_text.{lockname}_name_{i}")
+        entities.append(f"input_datetime.start_date_{lockname}_{i}")
+        entities.append(f"input_datetime.end_date_{lockname}_{i}")
+
+    hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(
+        async_track_state_change_event(
+            hass,
+            [entity for entity in entities],
+            functools.partial(handle_state_change, hass, config_entry),
+        )
+    )
+
+
 class RentalControl:
     """Get a list of events."""
 
     # pylint: disable=too-many-instance-attributes
 
-    def __init__(self, hass, config, unique_id, entry_id):
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry):
         """Set up a calendar object."""
-        self.hass = hass
-        self._name = config.get(CONF_NAME)
-        self._unique_id = unique_id
-        self._entry_id = entry_id
-        self.event_prefix = config.get(CONF_EVENT_PREFIX)
-        self.url = config.get(CONF_URL)
-        # Early versions did not have these variables, as such it may not be
-        # set, this should guard against issues until we're certain we can
-        # remove this guard.
-        try:
-            self.timezone = ZoneInfo(config.get(CONF_TIMEZONE))
-        except TypeError:
-            self.timezone = dt.DEFAULT_TIME_ZONE
-        self.refresh_frequency = config.get(CONF_REFRESH_FREQUENCY)
-        if self.refresh_frequency is None:
-            self.refresh_frequency = DEFAULT_REFRESH_FREQUENCY
+        config = config_entry.data
+        self.hass: HomeAssistant = hass
+        self.config_entry: ConfigEntry = config_entry
+        self._name: str = config.get(CONF_NAME)
+        self._unique_id: str = config_entry.unique_id
+        self._entry_id: str = config_entry.entry_id
+        self.event_prefix: str = config.get(CONF_EVENT_PREFIX)
+        self.url: str = config.get(CONF_URL)
+        self.timezone: dt.tzinfo = ZoneInfo(config.get(CONF_TIMEZONE))
+        self.refresh_frequency: int = config.get(
+            CONF_REFRESH_FREQUENCY, DEFAULT_REFRESH_FREQUENCY
+        )
         # after initial setup our first refresh should happen ASAP
-        self.next_refresh = dt.now()
+        self.next_refresh: dt.datetime = dt.now()
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
-        self.checkin = cv.time(config.get(CONF_CHECKIN))
-        self.checkout = cv.time(config.get(CONF_CHECKOUT))
-        self.start_slot = config.get(CONF_START_SLOT)
-        self.lockname = config.get(CONF_LOCK_ENTRY)
-        self.max_events = config.get(CONF_MAX_EVENTS)
-        self.days = config.get(CONF_DAYS)
-        self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
-        self.verify_ssl = config.get(CONF_VERIFY_SSL)
-        self.calendar = []
-        self.calendar_ready = False
-        self.calendar_loaded = False
-        self.overrides_loaded = False
-        self.event_overrides = {}
-        self.event_sensors = []
-        self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
-        self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
-        self.event = None
-        self.all_day = False
-        self.created = config.get(CONF_CREATION_DATETIME, str(dt.now()))
-        self._version = VERSION
-
-        # Alert users if they have a lock defined but no packages path
-        # this would happen if they've upgraded from an older version where
-        # they already had a lock definition defined even though it didn't
-        # do anything
-        self.path = config.get(CONF_PATH, None)
-        if self.path is None and self.lockname is not None:
-            notification_id = f"{DOMAIN}_{self._name}_missing_path"
-            async_create(
-                hass,
-                (f"Please update configuration for {NAME} {self._name}"),
-                title=f"{NAME} - Missing configuration",
-                notification_id=notification_id,
-            )
+        self.checkin: time = cv.time(config.get(CONF_CHECKIN))
+        self.checkout: time = cv.time(config.get(CONF_CHECKOUT))
+        self.start_slot: int = config.get(CONF_START_SLOT)
+        self.lockname: str = config.get(CONF_LOCK_ENTRY)
+        self.max_events: int = config.get(CONF_MAX_EVENTS)
+        self.days: int = config.get(CONF_DAYS)
+        self.ignore_non_reserved: bool = config.get(CONF_IGNORE_NON_RESERVED)
+        self.verify_ssl: bool = config.get(CONF_VERIFY_SSL)
+        self.calendar: list[CalendarEvent] = []
+        self.calendar_ready: bool = False
+        self.calendar_loaded: bool = False
+        self.overrides_loaded: bool = False
+        self.event_overrides: EventOverrides = EventOverrides(
+            self.start_slot, self.max_events
+        )
+        self.event_sensors: list[RentalControlCalSensor] = []
+        self._events_ready: bool = False
+        self.code_generator: str = config.get(
+            CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION
+        )
+        self.code_length: int = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
+        self.event: CalendarEvent = None
+        self.created: str = config.get(CONF_CREATION_DATETIME, str(dt.now()))
+        self._version: str = VERSION
 
         # setup device
         device_registry = dr.async_get(hass)
@@ -382,19 +425,36 @@ class RentalControl:
         }
 
     @property
-    def name(self):
+    def name(self) -> str:
         """Return the name."""
         return self._name
 
     @property
-    def unique_id(self):
+    def unique_id(self) -> str:
         """Return the unique id."""
         return self._unique_id
 
     @property
-    def version(self):
+    def version(self) -> str:
         """Return the version."""
         return self._version
+
+    @property
+    def events_ready(self) -> bool:
+        """Return the status of all the event sensors"""
+
+        # Once all events report ready we don't keep checking
+        if self._events_ready:
+            return self._events_ready
+
+        # If all sensors have not yet been created we're still starting
+        if len(self.event_sensors) != self.max_events:
+            return self._events_ready
+
+        sensors_status = [event.available for event in self.event_sensors]
+        self._events_ready = all(sensors_status)
+
+        return self._events_ready
 
     async def async_get_events(
         self, hass, start_date, end_date
@@ -418,7 +478,7 @@ class RentalControl:
                     events.append(event)
         return events
 
-    async def update(self):
+    async def update(self) -> None:
         """Regularly update the calendar."""
         _LOGGER.debug("Running RentalControl update for calendar %s", self.name)
 
@@ -438,20 +498,35 @@ class RentalControl:
             _LOGGER.debug("Updating next refresh to %s", self.next_refresh)
             await self._refresh_calendar()
 
-    def update_config(self, config):
+        # Get slot overrides on startup
+        if not self.calendar_ready and self.lockname:
+            for i in range(self.start_slot, self.start_slot + self.max_events):
+                slot_code = self.hass.states.get(f"input_text.{self.lockname}_pin_{i}")
+                slot_name = self.hass.states.get(f"input_text.{self.lockname}_name_{i}")
+                start_time = self.hass.states.get(
+                    f"input_datetime.start_date_{self.lockname}_{i}"
+                )
+                end_time = self.hass.states.get(
+                    f"input_datetime.end_date_{self.lockname}_{i}"
+                )
+
+                await self.update_event_overrides(
+                    i,
+                    slot_code.as_dict()["state"],
+                    slot_name.as_dict()["state"],
+                    dt.parse_datetime(start_time.as_dict()["state"]),
+                    dt.parse_datetime(end_time.as_dict()["state"]),
+                )
+
+        # always refresh the overrides
+        await self.event_overrides.async_check_overrides(self)
+
+    def update_config(self, config) -> None:
         """Update config entries."""
         self._name = config.get(CONF_NAME)
         self.url = config.get(CONF_URL)
-        # Early versions did not have these variables, as such it may not be
-        # set, this should guard against issues until we're certain
-        # we can remove this guard.
-        try:
-            self.timezone = ZoneInfo(config.get(CONF_TIMEZONE))
-        except TypeError:
-            self.timezone = dt.DEFAULT_TIME_ZONE
+        self.timezone = ZoneInfo(config.get(CONF_TIMEZONE))
         self.refresh_frequency = config.get(CONF_REFRESH_FREQUENCY)
-        if self.refresh_frequency is None:
-            self.refresh_frequency = DEFAULT_REFRESH_FREQUENCY
         # always do a refresh ASAP after a config change
         self.next_refresh = dt.now()
         self.event_prefix = config.get(CONF_EVENT_PREFIX)
@@ -464,27 +539,8 @@ class RentalControl:
         self.days = config.get(CONF_DAYS)
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
-        # Early versions did not have this variable, as such it may not be
-        # set, this should guard against issues until we're certain
-        # we can remove this guard.
-        try:
-            self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
-        except NameError:
-            self.ignore_non_reserved = None
+        self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
-
-        # make sure we have a path set
-        self.path = config.get(CONF_PATH, None)
-
-        # This should not be possible during this phase!
-        if self.path is None and self.lockname is not None:
-            notification_id = f"{DOMAIN}_{self._name}_missing_path"
-            async_create(
-                self.hass,
-                (f"Please update configuration for {NAME} {self._name}"),
-                title=f"{NAME} - Missing configuration",
-                notification_id=notification_id,
-            )
 
         # updated the calendar in case the fetch days has changed
         self.calendar = self._refresh_event_dict()
@@ -496,63 +552,27 @@ class RentalControl:
         slot_name: str,
         start_time: datetime,
         end_time: datetime,
-    ):
+    ) -> None:
         """Update the event overrides with the ServiceCall data."""
         _LOGGER.debug("In update_event_overrides")
 
-        event_overrides = self.event_overrides.copy()
+        # temporary call new_update_event_overrides
+        self.event_overrides.update(
+            slot, slot_code, slot_name, start_time, end_time, self.event_prefix
+        )
 
-        if slot_name:
-            _LOGGER.debug("Searching by slot_name: '%s'", slot_name)
-            regex = r"^(" + self.event_prefix + " )?(.*)$"
-            matches = re.findall(regex, slot_name)
-            if matches[0][1] not in event_overrides:
-                _LOGGER.debug("Event '%s' not in overrides", matches[0][1])
-                for event in event_overrides.keys():
-                    if slot == event_overrides[event]["slot"]:
-                        _LOGGER.debug("Slot '%d' is in event '%s'", slot, event)
-                        del event_overrides[event]
-                        break
-
-            event_overrides[matches[0][1]] = {
-                "slot": slot,
-                "slot_code": slot_code,
-                "start_time": start_time,
-                "end_time": end_time,
-            }
-        else:
-            _LOGGER.debug("Searching by slot: '%s'", slot)
-            for event in event_overrides.keys():
-                if slot == event_overrides[event]["slot"]:
-                    _LOGGER.debug("Slot '%d' is in event '%s'", slot, event)
-                    del event_overrides[event]
-                    break
-
-            event_overrides["Slot " + str(slot)] = {
-                "slot": slot,
-            }
-
-        self.event_overrides = event_overrides
-
-        _LOGGER.debug("event_overrides: '%s'", self.event_overrides)
-        if len(self.event_overrides) == self.max_events:
-            _LOGGER.debug("max_events reached, flagging as ready")
-            self.overrides_loaded = True
-            if self.calendar_loaded:
-                self.calendar_ready = True
-        else:
-            _LOGGER.debug(
-                "max_events not reached yet, calendar_ready is '%s'",
-                self.calendar_ready,
-            )
+        if self.event_overrides.ready and self.calendar_loaded:
+            self.calendar_ready = True
 
         # Overrides have updated, trigger refresh of calendar
         self.next_refresh = dt.now()
 
-    def _ical_parser(self, calendar, from_date, to_date):
+    async def _ical_parser(
+        self, calendar: Calendar, from_date: dt.datetime, to_date: dt.datetime
+    ) -> list[CalendarEvent]:
         """Return a sorted list of events from a icalendar object."""
 
-        events = []
+        events: list[CalendarEvent] = []
 
         _LOGGER.debug(
             "In _ical_parser:: from_date: %s; to_date: %s", from_date, to_date
@@ -598,26 +618,19 @@ class RentalControl:
 
                 if "DESCRIPTION" in event:
                     slot_name = get_slot_name(
-                        event["SUMMARY"], event["DESCRIPTION"], None
+                        event["SUMMARY"], event["DESCRIPTION"], ""
                     )
                 else:
                     # VRBO and Booking.com do not have a DESCRIPTION element
-                    slot_name = get_slot_name(event["SUMMARY"], None, None)
+                    slot_name = get_slot_name(event["SUMMARY"], "", "")
 
                 override = None
-                if slot_name and slot_name in self.event_overrides:
-                    override = self.event_overrides[slot_name]
-                    _LOGGER.debug("override: '%s'", override)
-                    # If start and stop are the same, then we ignore the override
-                    # This shouldn't happen except when a slot has been cleared
-                    # In that instance we shouldn't find an override
-                    if override["start_time"] == override["end_time"]:
-                        _LOGGER.debug("override is now none")
-                        override = None
+                if slot_name:
+                    override = self.event_overrides.get_slot_with_name(slot_name)
 
                 if override:
-                    checkin = override["start_time"].time()
-                    checkout = override["end_time"].time()
+                    checkin: time = override["start_time"].time()
+                    checkout: time = override["end_time"].time()
                 else:
                     checkin = self.checkin
                     checkout = self.checkout
@@ -638,15 +651,19 @@ class RentalControl:
                 if self.event_prefix:
                     event["SUMMARY"] = self.event_prefix + " " + event["SUMMARY"]
 
-                cal_event = self._ical_event(start, end, from_date, event, override)
+                cal_event = await self._ical_event(start, end, from_date, event)
                 if cal_event:
                     events.append(cal_event)
 
-        sorted_events = sorted(events, key=lambda k: k.start)
-        return sorted_events
+        events.sort(key=lambda k: k.start)
+        return events
 
-    def _ical_event(
-        self, start, end, from_date, event, override
+    async def _ical_event(
+        self,
+        start: dt.datetime,
+        end: dt.datetime,
+        from_date: dt.datetime,
+        event: Dict[Any, Any],
     ) -> CalendarEvent | None:
         """Ensure that events are within the start and end."""
         # Ignore events that ended this midnight.
@@ -657,9 +674,6 @@ class RentalControl:
             and end.second == 0
         ):
             _LOGGER.debug("This event has already ended")
-            if override:
-                _LOGGER.debug("Override exists for event, clearing slot")
-                fire_clear_code(self.hass, override["slot"], self._name)
             return None
         _LOGGER.debug(
             "Start: %s Tzinfo: %s Default: %s StartAs %s",
@@ -685,7 +699,7 @@ class RentalControl:
         _LOGGER.debug("Event to add: %s", str(CalendarEvent))
         return cal_event
 
-    def _refresh_event_dict(self):
+    def _refresh_event_dict(self) -> list[CalendarEvent]:
         """Ensure that all events in the calendar are start before max days."""
 
         cal = self.calendar
@@ -693,7 +707,7 @@ class RentalControl:
 
         return [x for x in cal if x.start.date() <= days.date()]
 
-    async def _refresh_calendar(self):
+    async def _refresh_calendar(self) -> None:
         """Update list of upcoming events."""
         _LOGGER.debug("Running RentalControl _refresh_calendar for %s", self.name)
 
@@ -704,15 +718,19 @@ class RentalControl:
             _LOGGER.error(
                 "%s returned %s - %s", self.url, response.status, response.reason
             )
+
+            # Calendar has failed to load for some reason, unflag the calendar
+            # being loaded
+            self.calendar_loaded = False
         else:
             text = await response.text()
             # Some calendars are for some reason filled with NULL-bytes.
             # They break the parsing, so we get rid of them
-            event_list = icalendar.Calendar.from_ical(text.replace("\x00", ""))
+            event_list = Calendar.from_ical(text.replace("\x00", ""))
             start_of_events = dt.start_of_local_day()
             end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
 
-            self.calendar = self._ical_parser(
+            self.calendar = await self._ical_parser(
                 event_list, start_of_events, end_of_events
             )
 
@@ -735,3 +753,6 @@ class RentalControl:
                     )
                     self.event = event
                     found_next_event = True
+
+        # signal an update to all the event sensors
+        await asyncio.gather(*[event.async_update() for event in self.event_sensors])

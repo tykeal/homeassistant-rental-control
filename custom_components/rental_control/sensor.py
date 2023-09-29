@@ -6,10 +6,10 @@ import logging
 from homeassistant.const import CONF_NAME
 
 from .const import CONF_MAX_EVENTS
+from .const import COORDINATOR
 from .const import DOMAIN
 from .const import NAME
 from .sensors.calsensor import RentalControlCalSensor
-from .sensors.mapsensor import RentalControlMappingSensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,9 +27,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     name = config.get(CONF_NAME)
     max_events = config.get(CONF_MAX_EVENTS)
 
-    rental_control_events = hass.data[DOMAIN][config_entry.unique_id]
-    await rental_control_events.update()
-    if rental_control_events.calendar is None:
+    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
+    await coordinator.update()
+    if coordinator.calendar is None:
         _LOGGER.error("Unable to fetch iCal")
         return False
 
@@ -38,18 +38,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         sensors.append(
             RentalControlCalSensor(
                 hass,
-                rental_control_events,
+                coordinator,
                 f"{NAME} {name}",
                 eventnumber,
-            )
-        )
-
-    if rental_control_events.lockname:
-        sensors.append(
-            RentalControlMappingSensor(
-                hass,
-                rental_control_events,
-                f"{NAME} {name}",
             )
         )
 
