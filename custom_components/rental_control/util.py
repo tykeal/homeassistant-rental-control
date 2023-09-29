@@ -224,7 +224,7 @@ async def async_fire_update_times(coordinator, event) -> None:
     lockname: str = coordinator.lockname
     coro: List[Coroutine] = []
     slot_name: str = event.extra_state_attributes["slot_name"]
-    slot = coordinator.new_event_overrides.get_slot_key_by_name(slot_name)
+    slot = coordinator.event_overrides.get_slot_key_by_name(slot_name)
 
     if not slot:
         return
@@ -352,7 +352,6 @@ async def handle_state_change(
     start_time = hass.states.get(f"input_datetime.start_date_{lockname}_{slot_num}")
     end_time = hass.states.get(f"input_datetime.end_date_{lockname}_{slot_num}")
 
-    _LOGGER.debug(coordinator.event_overrides)
     _LOGGER.debug(f"updating overrides for {lockname} slot {slot_num}")
     await coordinator.update_event_overrides(
         slot_num,
@@ -361,10 +360,9 @@ async def handle_state_change(
         dt.parse_datetime(start_time.as_dict()["state"]),
         dt.parse_datetime(end_time.as_dict()["state"]),
     )
-    _LOGGER.debug(coordinator.event_overrides)
 
     # validate overrides
-    await coordinator.new_event_overrides.async_check_overrides(coordinator)
+    await coordinator.event_overrides.async_check_overrides(coordinator)
 
 
 async def async_reload_package_platforms(hass: HomeAssistant) -> bool:

@@ -16,8 +16,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-import re
 from datetime import datetime
+from datetime import time
 from datetime import timedelta
 from typing import Any
 from typing import Dict
@@ -73,7 +73,6 @@ from .const import REQUEST_TIMEOUT
 from .const import UNSUB_LISTENERS
 from .const import VERSION
 from .sensors.calsensor import RentalControlCalSensor
-from .util import async_fire_clear_code
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
 from .util import gen_uuid
@@ -378,8 +377,8 @@ class RentalControl:
         self.next_refresh: dt.datetime = dt.now()
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
-        self.checkin: str = cv.time(config.get(CONF_CHECKIN))
-        self.checkout: str = cv.time(config.get(CONF_CHECKOUT))
+        self.checkin: time = cv.time(config.get(CONF_CHECKIN))
+        self.checkout: time = cv.time(config.get(CONF_CHECKOUT))
         self.start_slot: int = config.get(CONF_START_SLOT)
         self.lockname: str = config.get(CONF_LOCK_ENTRY)
         self.max_events: int = config.get(CONF_MAX_EVENTS)
@@ -390,9 +389,7 @@ class RentalControl:
         self.calendar_ready: bool = False
         self.calendar_loaded: bool = False
         self.overrides_loaded: bool = False
-        self.event_overrides: Dict[Any, Any] = {}
-        # self.new_event_overrides: Dict[int, EventOverride | None] = {}
-        self.new_event_overrides: EventOverrides = EventOverrides(
+        self.event_overrides: EventOverrides = EventOverrides(
             self.start_slot, self.max_events
         )
         self.event_sensors: list[RentalControlCalSensor] = []
@@ -532,7 +529,7 @@ class RentalControl:
                 )
 
         # always refresh the overrides
-        await self.new_event_overrides.async_check_overrides(self)
+        await self.event_overrides.async_check_overrides(self)
 
     def update_config(self, config) -> None:
         """Update config entries."""
@@ -583,55 +580,12 @@ class RentalControl:
         _LOGGER.debug("In update_event_overrides")
 
         # temporary call new_update_event_overrides
-        self.new_event_overrides.update(
+        self.event_overrides.update(
             slot, slot_code, slot_name, start_time, end_time, self.event_prefix
         )
 
-        event_overrides = self.event_overrides.copy()
-
-        if slot_name:
-            _LOGGER.debug("Searching by slot_name: '%s'", slot_name)
-            regex = r"^(" + self.event_prefix + " )?(.*)$"
-            matches = re.findall(regex, slot_name)
-            if matches[0][1] not in event_overrides:
-                _LOGGER.debug("Event '%s' not in overrides", matches[0][1])
-                for event in event_overrides.keys():
-                    if slot == event_overrides[event]["slot"]:
-                        _LOGGER.debug("Slot '%d' is in event '%s'", slot, event)
-                        del event_overrides[event]
-                        break
-
-            event_overrides[matches[0][1]] = {
-                "slot": slot,
-                "slot_code": slot_code,
-                "start_time": start_time,
-                "end_time": end_time,
-            }
-        else:
-            _LOGGER.debug("Searching by slot: '%s'", slot)
-            for event in event_overrides.keys():
-                if slot == event_overrides[event]["slot"]:
-                    _LOGGER.debug("Slot '%d' is in event '%s'", slot, event)
-                    del event_overrides[event]
-                    break
-
-            event_overrides["Slot " + str(slot)] = {
-                "slot": slot,
-            }
-
-        self.event_overrides = event_overrides
-
-        _LOGGER.debug(f"event_overrides: {self.event_overrides}")
-        if len(self.event_overrides) == self.max_events:
-            _LOGGER.debug("max_events reached, flagging as ready")
-            self.overrides_loaded = True
-            if self.calendar_loaded:
-                self.calendar_ready = True
-        else:
-            _LOGGER.debug(
-                "max_events not reached yet, calendar_ready is '%s'",
-                self.calendar_ready,
-            )
+        if self.event_overrides.ready and self.calendar_loaded:
+            self.calendar_ready = True
 
         # Overrides have updated, trigger refresh of calendar
         self.next_refresh = dt.now()
@@ -694,19 +648,12 @@ class RentalControl:
                     slot_name = get_slot_name(event["SUMMARY"], "", "")
 
                 override = None
-                if slot_name and slot_name in self.event_overrides:
-                    override = self.event_overrides[slot_name]
-                    _LOGGER.debug("override: '%s'", override)
-                    # If start and stop are the same, then we ignore the override
-                    # This shouldn't happen except when a slot has been cleared
-                    # In that instance we shouldn't find an override
-                    if override["start_time"] == override["end_time"]:
-                        _LOGGER.debug("override is now none")
-                        override = None
+                if slot_name:
+                    override = self.event_overrides.get_slot_with_name(slot_name)
 
                 if override:
-                    checkin = override["start_time"].time()
-                    checkout = override["end_time"].time()
+                    checkin: time = override["start_time"].time()
+                    checkout: time = override["end_time"].time()
                 else:
                     checkin = self.checkin
                     checkout = self.checkout
@@ -727,9 +674,7 @@ class RentalControl:
                 if self.event_prefix:
                     event["SUMMARY"] = self.event_prefix + " " + event["SUMMARY"]
 
-                cal_event = await self._ical_event(
-                    start, end, from_date, event, override
-                )
+                cal_event = await self._ical_event(start, end, from_date, event)
                 if cal_event:
                     events.append(cal_event)
 
@@ -742,7 +687,6 @@ class RentalControl:
         end: dt.datetime,
         from_date: dt.datetime,
         event: Dict[Any, Any],
-        override: Dict[Any, Any],
     ) -> CalendarEvent | None:
         """Ensure that events are within the start and end."""
         # Ignore events that ended this midnight.
@@ -753,9 +697,6 @@ class RentalControl:
             and end.second == 0
         ):
             _LOGGER.debug("This event has already ended")
-            if override:
-                _LOGGER.debug("Override exists for event, clearing slot")
-                await async_fire_clear_code(self, override["slot"])
             return None
         _LOGGER.debug(
             "Start: %s Tzinfo: %s Default: %s StartAs %s",

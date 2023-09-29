@@ -253,7 +253,7 @@ class RentalControlCalSensor(Entity):
 
         set_code = False
         update_times = False
-        overrides = self.coordinator.new_event_overrides
+        overrides = self.coordinator.event_overrides
 
         self._code_generator = self.coordinator.code_generator
         self._code_length = self.coordinator.code_length
@@ -349,7 +349,7 @@ class RentalControlCalSensor(Entity):
                 await async_fire_set_code(
                     self.coordinator,
                     self,
-                    self.coordinator.new_event_overrides.next_slot,
+                    self.coordinator.event_overrides.next_slot,
                 )
 
             if update_times:
