@@ -57,6 +57,51 @@ calendars and sensors to go with them related to managing rental properties.
     -   Reservation url -- the URL to the reservation
 -   Integration with [Keymaster](https://github.com/FutureTense/keymaster) to
     control door codes matched to the number of events being tracked
+-   Custom calendars are supported as long as they provide a valid ICS file via
+    an HTTPS connection.
+    -   Events on the calendar can be done in multiple ways, but all events will
+        be treated as all day events (which is how all of the rental platforms
+        provide events).
+    -   The event Summary (aka event title) _may_ contiain the word Reserved.
+        This will cause the slot name to be generated in one of two ways:
+        -   The word Reserved is followed by ' - ' and then something else, the
+            something else will be used
+        -   The word Reserved is _not_ followed by ' - ' then the full slot will
+            be used
+        -   The Summary contains nothing else _and_ the Details contain
+            something that matches an Airbnb reservation identifier of
+            `[A-Z][A-Z0-9]{9}` that is a capital alphabet letter followed by 9
+            more characters that are either capital alphabet letters or numbers,
+            then the slot will get this
+        -   If the the Summary is _just_ Reserved and there is no Airbnb code in
+            the Description, then the event will be ignored for purposes of
+            managing a lock code.
+        -   Technically any of the othe supported platform event styles for the
+            Summary can be used and as long as the Summary conforms to it.
+        -   The best Summary on a manual calendar is to use your guest name. The
+            entries do need to be unique over the sensor count worth of events
+            or Rental Control will run into issues.
+    -   Additional information can be provided in the Description of the event
+        and it will fill in the extra details in the sensor.
+        -   Phone numbers for use in generating door codes can be provided in
+            one of two ways
+            -   A line in the Description matching this regular expression:
+                `\(?Last 4 Digits\)?:\s+(\d{4})` -- This line will always take
+                precedence for generating a door code based on last 4 digits.
+            -   A line in the Description matching this regular expression:
+                `Phone(?: Number)?:\s+(\+?[\d\. \-\(\)]{9,})` which will then
+                have the "air" squeezed out of it to extract the last 4 digits
+                in the number
+        -   Number of guests
+            -   A line in the Description that matches: `Guests:\s+(\d+)$`
+            -   Alternatively, the following lines will be added together to get
+                the data:
+                -   `Adults:\s+(\d+)$`
+                -   `Children:\s+(\d+)$`
+        -   Email addresses can be extracted from the Description by matching
+            against: `Email:\s+(\S+@\S+)`
+        -   Reservation URLS will match against the first (and hopefully only)
+            URL in the Description
 
 ## Setup
 
@@ -83,21 +128,11 @@ The integration is set up using the GUI.
     slot set correctly for the integration.
 
     -   It is _very_ important that you have Keymaster fully working before
-        trying to utilize the slot management component of Rental Control. In
-        particular the `packages` directory configuration as Rental Control
-        generates automations using a similar mechanism to Keymaster.
-    -   **NOTE:** It is very important that the Keymaster slots that you are
-        going to manage are either completely clear when you setup the
-        integration _or_ that they follow the following rules:
-
-        -   The slot name == Prefix(if defined) Slot_name(per the event sensor)
-        -   The slot code == the defined slot code matches what is currently in
-            the event sensor
-        -   The start and stop dates and times match what are in the sensor
-
-        Failing to follow these rules may cause your configuration to behave in
-        unexpected way.
-
+        trying to utilize the slot management component of Rental Control.
+    -   **NOTE:** The Keymaster slots that are defined as being managed will be
+        completely taken control of by Rental Control. Any data in the slots
+        will be overwritten by Rental Control when it takes over the slot unless
+        it matches event data for the calendar.
     -   The following portions of a Keymaster slot will influence (that is
         override) data in the calendar or event sensor:
         -   Checkin/out TIME (not date) will update the calendar event and also
@@ -112,9 +147,6 @@ The integration is set up using the GUI.
             slot that has the same door code (or starting code, typically first
             4 digits) that is the generated code and thus causing the slot to
             not function properly
-    -   An additional "mapping" sensor will be generated when setup to manage a
-        lock. This sensor is primarily used for fireing events for the generated
-        automations to pick up.
 
 ## Reconfiguration
 
@@ -131,5 +163,7 @@ the `...` menu next to `Configure` and select `Reload`
 
 ## Known issues
 
-While the integration supports reconfiguration a few things are not presently
-working correctly with this. If you are needing to change
+While the integration supports reconfiguration a few things may not fully update
+after a reconfiguration. If you are having issues with reconfigured options
+not being picked up properly try reloading the particular integration
+installation or restart Home Assistant.
