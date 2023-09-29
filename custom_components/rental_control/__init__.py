@@ -35,7 +35,6 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
-from homeassistant.core import ServiceCall
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -74,7 +73,6 @@ from .const import REQUEST_TIMEOUT
 from .const import UNSUB_LISTENERS
 from .const import VERSION
 from .sensors.calsensor import RentalControlCalSensor
-from .services import update_code_slot
 from .util import async_fire_clear_code
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
@@ -133,19 +131,6 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         )
 
     config_entry.add_update_listener(update_listener)
-
-    # Update Code Slot
-    async def _update_code_slot(service: ServiceCall) -> None:
-        """Update code slot with Keymaster information."""
-        _LOGGER.debug("Update Code Slot service: %s", service)
-
-        await update_code_slot(hass, service)
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_UPDATE_CODE_SLOT,
-        _update_code_slot,
-    )
 
     # generate files if needed
     if should_generate_package:
