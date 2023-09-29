@@ -299,7 +299,9 @@ class RentalControlCalSensor(Entity):
             )
             self._event_attributes["slot_name"] = slot_name
 
-            override = overrides.get_slot_with_name(slot_name)
+            override = None
+            if overrides:
+                override = overrides.get_slot_with_name(slot_name)
             if override is None:
                 set_code = True
 
@@ -345,7 +347,7 @@ class RentalControlCalSensor(Entity):
             self._parsed_attributes = parsed_attributes
 
             # fire set_code if not in current overrides
-            if set_code:
+            if overrides and set_code:
                 await async_fire_set_code(
                     self.coordinator,
                     self,

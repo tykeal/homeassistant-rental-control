@@ -393,8 +393,8 @@ class RentalControl:
         self.calendar_ready: bool = False
         self.calendar_loaded: bool = False
         self.overrides_loaded: bool = False
-        self.event_overrides: EventOverrides = EventOverrides(
-            self.start_slot, self.max_events
+        self.event_overrides: EventOverrides | None = (
+            EventOverrides(self.start_slot, self.max_events) if self.lockname else None
         )
         self.event_sensors: list[RentalControlCalSensor] = []
         self._events_ready: bool = False
@@ -519,7 +519,8 @@ class RentalControl:
                 )
 
         # always refresh the overrides
-        await self.event_overrides.async_check_overrides(self)
+        if self.event_overrides:
+            await self.event_overrides.async_check_overrides(self)
 
     def update_config(self, config) -> None:
         """Update config entries."""
@@ -557,12 +558,16 @@ class RentalControl:
         _LOGGER.debug("In update_event_overrides")
 
         # temporary call new_update_event_overrides
-        self.event_overrides.update(
-            slot, slot_code, slot_name, start_time, end_time, self.event_prefix
-        )
+        if self.event_overrides:
+            self.event_overrides.update(
+                slot, slot_code, slot_name, start_time, end_time, self.event_prefix
+            )
 
-        if self.event_overrides.ready and self.calendar_loaded:
-            self.calendar_ready = True
+            if self.event_overrides.ready and self.calendar_loaded:
+                self.calendar_ready = True
+        else:
+            if self.calendar_loaded:
+                self.calendar_ready = True
 
         # Overrides have updated, trigger refresh of calendar
         self.next_refresh = dt.now()
@@ -625,7 +630,7 @@ class RentalControl:
                     slot_name = get_slot_name(event["SUMMARY"], "", "")
 
                 override = None
-                if slot_name:
+                if slot_name and self.event_overrides:
                     override = self.event_overrides.get_slot_with_name(slot_name)
 
                 if override:

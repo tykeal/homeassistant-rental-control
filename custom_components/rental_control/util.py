@@ -105,6 +105,9 @@ async def async_fire_clear_code(coordinator, slot: int) -> None:
     hass = coordinator.hass
     reset_entity = f"{INPUT_BOOLEAN}.reset_codeslot_{coordinator.lockname}_{slot}"
 
+    if not coordinator.lockname:
+        return
+
     # Make sure that the reset is already off before sending a turn on event
     await hass.services.async_call(
         domain=INPUT_BOOLEAN,
@@ -126,6 +129,9 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
 
     lockname: str = coordinator.lockname
     coro: List[Coroutine] = []
+
+    if not lockname:
+        return
 
     # Disable the slot, this should help avoid notices from Keymaster about
     # pin changes
@@ -229,7 +235,7 @@ async def async_fire_update_times(coordinator, event) -> None:
     slot_name: str = event.extra_state_attributes["slot_name"]
     slot = coordinator.event_overrides.get_slot_key_by_name(slot_name)
 
-    if not slot:
+    if not slot or not lockname:
         return
 
     coro = add_call(
