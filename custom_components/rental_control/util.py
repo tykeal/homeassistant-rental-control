@@ -37,9 +37,6 @@ from homeassistant.exceptions import ServiceNotFound
 from homeassistant.helpers.event import EventStateChangedData
 from homeassistant.util import dt
 from homeassistant.util import slugify
-from jinja2 import Environment
-from jinja2 import PackageLoader
-from jinja2 import select_autoescape
 
 from .const import ATTR_CODE_SLOT
 from .const import ATTR_NAME
@@ -426,39 +423,6 @@ async def handle_state_change(
 
     # validate overrides
     await coordinator.new_event_overrides.async_check_overrides(coordinator)
-
-
-def write_template_config(
-    output_path: str, template_name: str, NAME: str, rc_name: str, config_entry
-) -> None:
-    """Render the given template to disk."""
-    _LOGGER.debug("In write_template_config")
-
-    jinja_env = Environment(
-        loader=PackageLoader("custom_components.rental_control"),
-        autoescape=select_autoescape(),
-    )
-
-    template = jinja_env.get_template(template_name + ".yaml.j2")
-    render = template.render(
-        NAME=NAME,
-        rc_name=rc_name,
-        config_entry=config_entry,
-        rc_slug=slugify(rc_name),
-    )
-
-    _LOGGER.debug(
-        f"""Rendered Template is:
-    {render}"""
-    )
-
-    filename = slugify(f"{rc_name}_{template_name}") + ".yaml"
-
-    with open(os.path.join(output_path, filename), "w+") as outfile:
-        _LOGGER.debug("Writing %s", filename)
-        outfile.write(render)
-
-    _LOGGER.debug("Completed writing %s", filename)
 
 
 async def async_reload_package_platforms(hass: HomeAssistant) -> bool:

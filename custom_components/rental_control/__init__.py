@@ -74,7 +74,6 @@ from .const import REQUEST_TIMEOUT
 from .const import UNSUB_LISTENERS
 from .const import VERSION
 from .sensors.calsensor import RentalControlCalSensor
-from .services import generate_package_files
 from .services import update_code_slot
 from .util import async_fire_clear_code
 from .util import async_reload_package_platforms
@@ -134,18 +133,6 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         )
 
     config_entry.add_update_listener(update_listener)
-
-    # Generate package files
-    async def _generate_package(service: ServiceCall) -> None:
-        """Generate the package files."""
-        _LOGGER.debug("In _generate_package: '%s'", service)
-        await generate_package_files(hass, service.data["rental_control_name"])
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GENERATE_PACKAGE,
-        _generate_package,
-    )
 
     # Update Code Slot
     async def _update_code_slot(service: ServiceCall) -> None:
