@@ -131,23 +131,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     config_entry.add_update_listener(update_listener)
 
-    # generate files if needed
+    # remove files if needed
     if should_generate_package:
-        rc_name = config.get(CONF_NAME)
-        servicedata = {"rental_control_name": rc_name}
-        await hass.services.async_call(
-            DOMAIN, SERVICE_GENERATE_PACKAGE, servicedata, blocking=True
-        )
-
-        _LOGGER.debug("Firing refresh event")
-        # Fire an event for the startup automation to capture
-        hass.bus.fire(
-            EVENT_RENTAL_CONTROL_REFRESH,
-            event_data={
-                ATTR_NOTIFICATION_SOURCE: "event",
-                ATTR_NAME: rc_name,
-            },
-        )
+        delete_rc_and_base_folder(hass, config_entry)
 
     return True
 
@@ -181,7 +167,7 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
     if unload_ok:
         # Remove all package files and the base folder if needed
-        await hass.async_add_executor_job(delete_rc_and_base_folder, hass, config)
+        await hass.async_add_executor_job(delete_rc_and_base_folder, hass, config_entry)
 
         await async_reload_package_platforms(hass)
 
@@ -216,6 +202,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             data=data,
         )
         config_entry.version = 2
+        version = 2
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     # 2 -> 3: Migrate lock
@@ -235,6 +222,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             )
 
         config_entry.version = 3
+        version = 3
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     # 3 -> 4: Migrate code length
@@ -250,6 +238,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             )
 
         config_entry.version = 4
+        version = 4
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     # 4 -> 5: Drop startup automation
@@ -265,6 +254,21 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         )
 
         config_entry.version = 5
+        version = 5
+        _LOGGER.debug(f"Migration to version {config_entry.version} complete")
+
+    # 5 -> 6: Drop package_path from configuration
+    if version == 5:
+        _LOGGER.debug(f"Migrating from version {version}")
+
+        data = config_entry.data.copy()
+        data.pop(CONF_PATH, None)
+        hass.config_entries.async_update_entry(
+            entry=config_entry, unique_id=config_entry.unique_id, data=data
+        )
+
+        config_entry.version = 6
+        version = 6
         _LOGGER.debug(f"Migration to version {config_entry.version} complete")
 
     return True
@@ -402,20 +406,6 @@ class RentalControl:
         self.created: str = config.get(CONF_CREATION_DATETIME, str(dt.now()))
         self._version: str = VERSION
 
-        # Alert users if they have a lock defined but no packages path
-        # this would happen if they've upgraded from an older version where
-        # they already had a lock definition defined even though it didn't
-        # do anything
-        self.path: str = config.get(CONF_PATH, None)
-        if self.path is None and self.lockname is not None:
-            notification_id = f"{DOMAIN}_{self._name}_missing_path"
-            async_create(
-                hass,
-                (f"Please update configuration for {NAME} {self._name}"),
-                title=f"{NAME} - Missing configuration",
-                notification_id=notification_id,
-            )
-
         # setup device
         device_registry = dr.async_get(hass)
         device_registry.async_get_or_create(
@@ -551,19 +541,6 @@ class RentalControl:
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
-
-        # make sure we have a path set
-        self.path = config.get(CONF_PATH, None)
-
-        # This should not be possible during this phase!
-        if self.path is None and self.lockname is not None:
-            notification_id = f"{DOMAIN}_{self._name}_missing_path"
-            async_create(
-                self.hass,
-                (f"Please update configuration for {NAME} {self._name}"),
-                title=f"{NAME} - Missing configuration",
-                notification_id=notification_id,
-            )
 
         # updated the calendar in case the fetch days has changed
         self.calendar = self._refresh_event_dict()

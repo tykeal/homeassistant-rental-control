@@ -40,6 +40,7 @@ from homeassistant.util import slugify
 
 from .const import CONF_PATH
 from .const import COORDINATOR
+from .const import DEFAULT_PATH
 from .const import DOMAIN
 from .const import NAME
 
@@ -69,8 +70,10 @@ def add_call(
 
 def delete_rc_and_base_folder(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Delete packages folder for RC and base rental_control folder if empty."""
-    base_path = os.path.join(hass.config.path(), config_entry.get(CONF_PATH))
-    rc_name_slug = slugify(config_entry.get(CONF_NAME))
+    base_path = os.path.join(
+        hass.config.path(), config_entry.data.get(CONF_PATH, DEFAULT_PATH)
+    )
+    rc_name_slug = slugify(config_entry.data.get(CONF_NAME))
 
     delete_folder(base_path, rc_name_slug)
     # It is possible that the path may not exist because of RCs not
