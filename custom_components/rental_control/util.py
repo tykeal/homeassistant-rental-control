@@ -38,12 +38,9 @@ from homeassistant.helpers.event import EventStateChangedData
 from homeassistant.util import dt
 from homeassistant.util import slugify
 
-from .const import ATTR_CODE_SLOT
-from .const import ATTR_NAME
 from .const import CONF_PATH
 from .const import COORDINATOR
 from .const import DOMAIN
-from .const import EVENT_RENTAL_CONTROL_CLEAR_CODE
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
@@ -99,49 +96,6 @@ def delete_folder(absolute_path: str, *relative_paths: str) -> None:
         os.rmdir(path)
 
 
-async def async_check_overrides(coordinator) -> None:
-    """Check if overrides need to have a clear_code event fired."""
-
-    _LOGGER.debug("In async_check_overrides")
-
-    # temporary
-    await coordinator.new_event_overrides.async_check_overrides(coordinator)
-
-    event_list = coordinator.calendar
-    overrides = coordinator.event_overrides.copy()
-
-    event_names = get_event_names(coordinator)
-    _LOGGER.debug("event_names = '%s'", event_names)
-    _LOGGER.debug(overrides)
-
-    for override in overrides:
-        clear_code = False
-
-        if "Slot " not in override and override not in event_names:
-            _LOGGER.debug("%s is not in events, setting clear flag", override)
-            clear_code = True
-
-        ovr = overrides[override]
-        _LOGGER.debug("Checking ovr = '%s'", ovr)
-
-        if ("slot_name" in ovr or "slot_code" in ovr) and (
-            (ovr["end_time"].date() < dt.start_of_local_day().date())
-            or (
-                (event_list and coordinator.max_events <= len(event_list))
-                and (
-                    ovr["start_time"].date()
-                    > event_list[coordinator.max_events - 1].end.date()
-                )
-            )
-        ):
-            _LOGGER.debug("%s is outside time options, setting clear flag", override)
-            clear_code = True
-
-        if clear_code:
-            _LOGGER.debug(f"Would fire clear for {overrides[override]['slot']}")
-            # await async_fire_clear_code(coordinator, overrides[override]["slot"])
-
-
 async def async_fire_clear_code(coordinator, slot: int) -> None:
     """Fire a clear_code signal."""
     _LOGGER.debug(f"In async_fire_clear_code - slot: {slot}, name: {coordinator.name}")
@@ -160,18 +114,6 @@ async def async_fire_clear_code(coordinator, slot: int) -> None:
         service="turn_on",
         target={"entity_id": reset_entity},
         blocking=True,
-    )
-
-
-def fire_clear_code(hass: HomeAssistant, slot: int, name: str) -> None:
-    """Fire clear_code event."""
-    _LOGGER.debug("In fire_clear_code - slot: %d, name: %s", slot, name)
-    hass.bus.fire(
-        EVENT_RENTAL_CONTROL_CLEAR_CODE,
-        event_data={
-            ATTR_CODE_SLOT: slot,
-            ATTR_NAME: name,
-        },
     )
 
 

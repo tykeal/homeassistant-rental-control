@@ -143,6 +143,7 @@ class EventOverrides:
             )
             return
 
+        _LOGGER.debug(self._overrides)
         event_names = get_event_names(coordinator)
         _LOGGER.debug(f"event_names = {event_names}")
 
