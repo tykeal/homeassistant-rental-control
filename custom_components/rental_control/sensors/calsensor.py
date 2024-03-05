@@ -1,10 +1,11 @@
 """Creating sensors for upcoming events."""
+
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 import random
 import re
-from datetime import datetime
 
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity import EntityCategory

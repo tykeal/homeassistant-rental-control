@@ -18,11 +18,11 @@ import hashlib
 import logging
 import os
 import re
-import uuid
 from typing import Any  # noqa: F401
 from typing import Coroutine
 from typing import Dict
 from typing import List
+import uuid
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
 from homeassistant.components.input_boolean import DOMAIN as INPUT_BOOLEAN

@@ -1,4 +1,5 @@
 """Creating sensors for upcoming events."""
+
 from __future__ import annotations
 
 import logging

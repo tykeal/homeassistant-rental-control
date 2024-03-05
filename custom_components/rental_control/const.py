@@ -1,4 +1,5 @@
 """Constants for Rental Control."""
+
 # Base component constants
 NAME = "Rental Control"
 DOMAIN = "rental_control"
