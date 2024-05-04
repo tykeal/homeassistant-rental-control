@@ -11,6 +11,7 @@
 #   Andrew Grimberg - Initial implementation
 ##############################################################################
 """The Rental Control integration."""
+
 from __future__ import annotations
 
 import asyncio
@@ -454,9 +455,7 @@ class RentalControl:
 
         return self._events_ready
 
-    async def async_get_events(
-        self, hass, start_date, end_date
-    ) -> list[CalendarEvent]:  # pylint: disable=unused-argument
+    async def async_get_events(self, hass, start_date, end_date) -> list[CalendarEvent]:  # pylint: disable=unused-argument
         """Get list of upcoming events."""
         _LOGGER.debug("Running RentalControl async_get_events")
         events = []

@@ -15,9 +15,7 @@ from .sensors.calsensor import RentalControlCalSensor
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_platform(
-    hass, config, add_entities, discovery_info=None
-):  # pylint: disable=unused-argument
+async def async_setup_platform(hass, config, add_entities, discovery_info=None):  # pylint: disable=unused-argument
     """Set up this integration with config flow."""
     return True
 
