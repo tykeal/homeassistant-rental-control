@@ -134,7 +134,9 @@ The integration is set up using the GUI.
 
 -   Go to Configuration -> Integrations and click on the "+"-button.
 -   Search for "Rental Control"
--   Enter a name for the calendar, and the URL
+-   Enter a name for the calendar, and the calendar's `ics` URL (see instructions linked below):
+    - [AirBnB](https://www.airbnb.com/help/article/99)
+    - [VRBO](https://help.vrbo.com/articles/Export-your-reservation-calendar)
 -   By default it will set up 5 sensors for the 5 nex upcoming events
     (sensor.rental_control\_\<calendar_name\>\_event_0 ~ 4). You can adjust this
     to add more or fewer sensors
