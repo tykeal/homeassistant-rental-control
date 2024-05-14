@@ -197,7 +197,10 @@ installation or restart Home Assistant.
 
 ### Why does my calendar events say `Reserved` instead of the guest's name?
 
-AirBnB does not include guest or booking details in the invite. What is included in the `ics` data varies by provider. Calendar `ics` URLs from some 3rd party tools (e.g. Host Tools) do include guest information and will show that rather than `Reserved` in calendar events.
+AirBnB does not include guest or booking details in the invite. What is included
+in the `ics` data varies by provider. Calendar `ics` URLs from some 3rd party
+tools (e.g. Host Tools) do include guest information and will show that rather
+than `Reserved` in calendar events.
 
 ### Where can I find my rental calendar's `ics` URL?
 

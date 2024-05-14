@@ -109,7 +109,7 @@ The integration is set up using the GUI.
 
 -   Go to Configuration -> Integrations and click on the "+"-button.
 -   Search for "Rental Control"
--   Enter a name for the calendar, and the URL
+-   Enter a name for the calendar, and the calendar's `ics` URL (see FAQ)
 -   By default it will set up 5 sensors for the 5 nex upcoming events
     (sensor.rental_control\_\<calendar_name\>\_event_0 ~ 4). You can adjust this
     to add more or fewer sensors
@@ -167,3 +167,20 @@ While the integration supports reconfiguration a few things may not fully update
 after a reconfiguration. If you are having issues with reconfigured options
 not being picked up properly try reloading the particular integration
 installation or restart Home Assistant.
+
+## Frequently Asked Questions
+
+### Why does my calendar events say `Reserved` instead of the guest's name?
+
+AirBnB does not include guest or booking details in the invite. What is included
+in the `ics` data varies by provider. Calendar `ics` URLs from some 3rd party
+tools (e.g. Host Tools) do include guest information and will show that rather
+than `Reserved` in calendar events.
+
+### Where can I find my rental calendar's `ics` URL?
+
+Each provider has slightly different instructions:
+
+-   [AirBnB](https://www.airbnb.com/help/article/99)
+-   [VRBO](https://help.vrbo.com/articles/Export-your-reservation-calendar)
+-   [Host Tools](https://help.hosttools.com/en/articles/5128627-how-do-i-export-an-ical-link-from-host-tools)
