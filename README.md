@@ -5,6 +5,20 @@
 Home Assistant Rental Manager is designed to handle the need for custom
 calendars and sensors to go with them related to managing rental properties.
 
+# Table of Contents
+
+-   [Features](#features)
+-   [Installation](#installation)
+    -   [MANUAL INSTALLATION](#manual-installation)
+    -   [INSTALLATION VIA Home Assistant Community Store (HACS)](#installation-via-home-assistant-community-store-hacs)
+-   [Setup](#setup)
+-   [Reconfiguration](#reconfiguration)
+-   [Known issues](#known-issues)
+-   [Frequently Asked Questions](#frequently-asked-questions)
+    -   [Why does my calendar events say `Reserved` instead of the guest's name?](#why-does-my-calendar-events-say-reserved-instead-of-the-guests-name)
+    -   [Where can I find my rental calendar's `ics` URL?](#where-can-i-find-my-rental-calendars-ics-url)
+    -   [How do I use custom calendars?](#how-do-i-use-custom-calendars)
+
 ## Features
 
 -   Ingests ICS calendars from any HTTPS source as long as it's a text/calendar
@@ -209,3 +223,56 @@ Each provider has slightly different instructions:
 -   [AirBnB](https://www.airbnb.com/help/article/99)
 -   [VRBO](https://help.vrbo.com/articles/Export-your-reservation-calendar)
 -   [Host Tools](https://help.hosttools.com/en/articles/5128627-how-do-i-export-an-ical-link-from-host-tools)
+
+### How do I use custom calendars?
+
+Custom calendars can be used as long as they provide a valid ICS file via an
+HTTPS connection. The events on the calendar can be done in multiple ways.
+
+It is recommended that the event Summary (aka event title) contain the guest's
+name and not the word `Reserved`. It is strongly recommended that any calendar
+entries across the sensor count worth of events be unique. If the entries are not
+unique, Rental Control may run into issues as the event Summary is used in the
+slot management.
+
+Data that will be pulled from the Description of the event (and the match keys):
+
+-   Phone numbers for use in generating door codes can be provided in one of two
+    ways
+    -   A line in the Description matching this regular expression:
+        `\(?Last 4 Digits\)?:\s+(\d{4})` -- This line will always take
+        precedence for generating a door code based on last 4 digits.
+    -   A line in the Description matching this regular expression:
+        `Phone(?: Number)?:\s+(\+?[\d\. \-\(\)]{9,})` which will then have the
+        "air" squeezed out of it to extract the last 4 digits in the number
+-   Number of guests
+    -   A line in the Description that matches: `Guests:\s+(\d+)$`
+    -   Alternatively, the following lines will be added together to get the data:
+        -   `Adults:\s+(\d+)$`
+        -   `Children:\s+(\d+)$`
+-   Email addresses can be extracted from the Description by matching against:
+    `Email:\s+(\S+@\S+)`
+-   Reservation URLS will match against the first (and hopefully only) URL in
+    the Description
+
+And example calendar entry with all of this data might look like this:
+
+```
+Title: John and Jane Doe
+Description:
+    Phone: 555-555-5555
+    Email: jdoe@example.com
+    Guests: 2
+    https://www.example.com/reservation/123456789
+```
+
+The following information would be extracted from this event:
+
+```
+Slot name: John and Jane Doe
+Phone number: 555-555-5555
+Last four: 5555
+Email: jdoe@example.com
+Number of guests: 2
+Reservation URL: https://www.example.com/reservation/123456789
+```
