@@ -11,11 +11,13 @@ jobs:
     name: Prepare release asset
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v1
+      - name: Checkout repository
+        uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.1.4
+
       - name: Get Version
         id: get_version
         run: echo "VERSION=${GITHUB_REF/refs\/tags\//}" >> "$GITHUB_OUTPUT"
+
       - name: Update versions
         # yamllint disable rule:line-length
         run: |
@@ -23,10 +25,12 @@ jobs:
           sed -i '/version/c\  \"version\": \"${{ steps.get_version.outputs.VERSION }}\"' ${{ github.workspace }}/custom_components/rental_control/manifest.json
         # yamllint enable
       # Pack the rental_control dir as a zip and upload to the release
+
       - name: ZIP rental_control Dir
         run: |
           cd ${{ github.workspace }}/custom_components/rental_control
           zip rental_control.zip -r ./
+
       - name: Upload zip to release
         uses: svenstaro/upload-release-action@v2
         with:
