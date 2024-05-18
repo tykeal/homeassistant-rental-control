@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2021 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
 ---
 ci:
   autofix_commit_msg: "Chore: pre-commit autofixes"
@@ -63,6 +66,11 @@ repos:
     hooks:
       - id: prettier
         stages: [commit]
+
+  - repo: https://github.com/fsfe/reuse-tool
+    rev: bafd6d7683dec1189d7a477489f6b8770bffc0dd # frozen: v3.0.2
+    hooks:
+      - id: reuse
 
   - repo: https://github.com/rhysd/actionlint
     rev: f970a14472c1b4d576f8456884a3238aa353a288 # frozen: v1.7.0
