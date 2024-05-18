@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2021 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
 # All these sections are optional, edit this file as you like.
 [general]
 # Ignore certain rules, you can reference them by their id or by their full

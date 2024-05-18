@@ -1,4 +1,7 @@
 ---
+# SPDX-FileCopyrightText: 2021 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
 name: Release Drafter
 
 # yamllint disable-line rule:truthy

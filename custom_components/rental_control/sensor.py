@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2021 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
 """Creating sensors for upcoming events."""
 
 from __future__ import annotations
