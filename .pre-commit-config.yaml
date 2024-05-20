@@ -68,7 +68,7 @@ repos:
         stages: [commit]
 
   - repo: https://github.com/fsfe/reuse-tool
-    rev: bafd6d7683dec1189d7a477489f6b8770bffc0dd # frozen: v3.0.2
+    rev: 7ce4e96e53be4fa775ebcc61a569a701955a2a41  # frozen: v3.0.2
     hooks:
       - id: reuse
 
