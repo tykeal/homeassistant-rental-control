@@ -33,7 +33,7 @@ repos:
       - id: gitlint
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: f8a3f8c471fb698229face5ed7640a64900b781e # frozen: v0.4.4
+    rev: fc609d3ce5e38f1d32423050196bf0ce4ecc59c1 # frozen: v0.4.5
     hooks:
       - id: ruff
         files: ^(scripts|tests|custom_components)/.+\.py$
