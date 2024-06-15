@@ -201,8 +201,8 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             entry=config_entry,
             unique_id=gen_uuid(data[CONF_CREATION_DATETIME]),
             data=data,
+            version=2,
         )
-        config_entry.version = 2
         version = 2
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
@@ -220,9 +220,9 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 entry=config_entry,
                 unique_id=config_entry.unique_id,
                 data=data,
+                version=3,
             )
 
-        config_entry.version = 3
         version = 3
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
@@ -236,9 +236,9 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 entry=config_entry,
                 unique_id=config_entry.unique_id,
                 data=data,
+                version=4,
             )
 
-        config_entry.version = 4
         version = 4
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
@@ -252,9 +252,9 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             entry=config_entry,
             unique_id=config_entry.unique_id,
             data=data,
+            version=5,
         )
 
-        config_entry.version = 5
         version = 5
         _LOGGER.debug(f"Migration to version {config_entry.version} complete")
 
@@ -265,10 +265,12 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         data = config_entry.data.copy()
         data.pop(CONF_PATH, None)
         hass.config_entries.async_update_entry(
-            entry=config_entry, unique_id=config_entry.unique_id, data=data
+            entry=config_entry,
+            unique_id=config_entry.unique_id,
+            data=data,
+            version=6,
         )
 
-        config_entry.version = 6
         version = 6
         _LOGGER.debug(f"Migration to version {config_entry.version} complete")
 
