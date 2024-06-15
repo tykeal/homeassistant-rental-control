@@ -29,6 +29,7 @@ calendars and sensors to go with them related to managing rental properties.
 -   Configurable refresh rate from as often as possible to once per day (default
     every 2 minutes)
 -   Define checkin/checkout times which will be added to all calendar entries
+    that are all day events
 -   Ability to ignore 'Blocked' and 'Not available' events
 -   Creates a customizable number of event sensors that are the current and
     upcoming events
@@ -72,9 +73,9 @@ calendars and sensors to go with them related to managing rental properties.
     control door codes matched to the number of events being tracked
 -   Custom calendars are supported as long as they provide a valid ICS file via
     an HTTPS connection.
-    -   Events on the calendar can be done in multiple ways, but all events will
-        be treated as all day events (which is how all of the rental platforms
-        provide events).
+    -   Rental Events should be created as all day events (which is how all of
+        the rental platforms provide events)
+    -   Maintenance style events should be created with start and end times
     -   The event Summary (aka event title) _may_ contiain the word Reserved.
         This will cause the slot name to be generated in one of two ways:
         -   The word Reserved is followed by ' - ' and then something else, the
