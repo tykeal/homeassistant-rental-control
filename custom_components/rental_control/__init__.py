@@ -41,6 +41,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt
 from icalendar import Calendar
 import voluptuous as vol
+import x_wr_timezone
 
 from .config_flow import _lock_entry_convert as lock_entry_convert
 from .const import ATTR_NAME
@@ -635,8 +636,14 @@ class RentalControl:
                     checkin: time = override["start_time"].time()
                     checkout: time = override["end_time"].time()
                 else:
-                    checkin = self.checkin
-                    checkout = self.checkout
+                    try:
+                        # If the event has a time, use that, otherwise use the
+                        # default checkin/checkout times
+                        checkin = event["DTSTART"].dt.time()
+                        checkout = event["DTEND"].dt.time()
+                    except AttributeError:
+                        checkin = self.checkin
+                        checkout = self.checkout
 
                 _LOGGER.debug("DTSTART in event: %s", event["DTSTART"].dt)
                 dtstart = datetime.combine(event["DTSTART"].dt, checkin, self.timezone)
@@ -730,6 +737,14 @@ class RentalControl:
             # Some calendars are for some reason filled with NULL-bytes.
             # They break the parsing, so we get rid of them
             event_list = Calendar.from_ical(text.replace("\x00", ""))
+
+            # If the calendar is using a non-standard timezone definition,
+            # convert it to a standard one
+            if "X-WR-TIMEZONE" in event_list:
+                event_list = await self.hass.async_add_executor_job(
+                    x_wr_timezone.to_standard, event_list
+                )
+
             start_of_events = dt.start_of_local_day()
             end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
 
