@@ -91,7 +91,7 @@ class RentalControlCalSensor(Entity):
         elif "Phone" in self._event_attributes["description"]:
             phone = self._extract_phone_number()
             if phone:
-                phone.replace(" ", "")
+                phone = phone.replace(" ", "")
                 if len(phone) >= 4:
                     return str(phone)[-4:]
 
