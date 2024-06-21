@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
@@ -371,27 +372,27 @@ class RentalControl:
         config = config_entry.data
         self.hass: HomeAssistant = hass
         self.config_entry: ConfigEntry = config_entry
-        self._name: str = config.get(CONF_NAME)
-        self._unique_id: str = config_entry.unique_id
+        self._name: str = str(config.get(CONF_NAME))
+        self._unique_id: str = str(config_entry.unique_id)
         self._entry_id: str = config_entry.entry_id
-        self.event_prefix: str = config.get(CONF_EVENT_PREFIX)
-        self.url: str = config.get(CONF_URL)
-        self.timezone: dt.tzinfo = ZoneInfo(config.get(CONF_TIMEZONE))
+        self.event_prefix: str | None = config.get(CONF_EVENT_PREFIX)
+        self.url: str = str(config.get(CONF_URL))
+        self.timezone: dt.dt.tzinfo = ZoneInfo(str(config.get(CONF_TIMEZONE)))
         self.refresh_frequency: int = config.get(
             CONF_REFRESH_FREQUENCY, DEFAULT_REFRESH_FREQUENCY
         )
         # after initial setup our first refresh should happen ASAP
-        self.next_refresh: dt.datetime = dt.now()
+        self.next_refresh: dt.dt.datetime = dt.now()
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
         self.checkin: time = cv.time(config.get(CONF_CHECKIN))
         self.checkout: time = cv.time(config.get(CONF_CHECKOUT))
-        self.start_slot: int = config.get(CONF_START_SLOT)
-        self.lockname: str = config.get(CONF_LOCK_ENTRY)
-        self.max_events: int = config.get(CONF_MAX_EVENTS)
-        self.days: int = config.get(CONF_DAYS)
-        self.ignore_non_reserved: bool = config.get(CONF_IGNORE_NON_RESERVED)
-        self.verify_ssl: bool = config.get(CONF_VERIFY_SSL)
+        self.start_slot: int = int(str(config.get(CONF_START_SLOT)))
+        self.lockname: str | None = config.get(CONF_LOCK_ENTRY)
+        self.max_events: int = int(str(config.get(CONF_MAX_EVENTS)))
+        self.days: int = int(str(config.get(CONF_DAYS)))
+        self.ignore_non_reserved: bool = bool(config.get(CONF_IGNORE_NON_RESERVED))
+        self.verify_ssl: bool = bool(config.get(CONF_VERIFY_SSL))
         self.calendar: list[CalendarEvent] = []
         self.calendar_ready: bool = False
         self.calendar_loaded: bool = False
@@ -405,7 +406,7 @@ class RentalControl:
             CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION
         )
         self.code_length: int = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
-        self.event: CalendarEvent = None
+        self.event: CalendarEvent | None = None
         self.created: str = config.get(CONF_CREATION_DATETIME, str(dt.now()))
         self._version: str = VERSION
 
@@ -503,20 +504,37 @@ class RentalControl:
         if not self.calendar_ready and self.lockname:
             for i in range(self.start_slot, self.start_slot + self.max_events):
                 slot_code = self.hass.states.get(f"input_text.{self.lockname}_pin_{i}")
+                if slot_code is None:
+                    continue
+
                 slot_name = self.hass.states.get(f"input_text.{self.lockname}_name_{i}")
-                start_time = self.hass.states.get(
+                if slot_name is None:
+                    continue
+
+                start_time_state = self.hass.states.get(
                     f"input_datetime.start_date_{self.lockname}_{i}"
                 )
-                end_time = self.hass.states.get(
+                if start_time_state is None:
+                    continue
+                start_time = dt.parse_datetime(start_time_state.state)
+                if start_time is None:
+                    continue
+
+                end_time_state = self.hass.states.get(
                     f"input_datetime.end_date_{self.lockname}_{i}"
                 )
+                if end_time_state is None:
+                    continue
+                end_time = dt.parse_datetime(end_time_state.state)
+                if end_time is None:
+                    continue
 
                 await self.update_event_overrides(
                     i,
-                    slot_code.as_dict()["state"],
-                    slot_name.as_dict()["state"],
-                    dt.parse_datetime(start_time.as_dict()["state"]),
-                    dt.parse_datetime(end_time.as_dict()["state"]),
+                    slot_code.state,
+                    slot_name.state,
+                    start_time,
+                    end_time,
                 )
 
         # always refresh the overrides
@@ -574,7 +592,7 @@ class RentalControl:
         self.next_refresh = dt.now()
 
     async def _ical_parser(
-        self, calendar: Calendar, from_date: dt.datetime, to_date: dt.datetime
+        self, calendar: Calendar, from_date: dt.dt.datetime, to_date: dt.dt.datetime
     ) -> list[CalendarEvent]:
         """Return a sorted list of events from a icalendar object."""
 
@@ -672,9 +690,9 @@ class RentalControl:
 
     async def _ical_event(
         self,
-        start: dt.datetime,
-        end: dt.datetime,
-        from_date: dt.datetime,
+        start: dt.dt.datetime,
+        end: dt.dt.datetime,
+        from_date: dt.dt.datetime,
         event: Dict[Any, Any],
     ) -> CalendarEvent | None:
         """Ensure that events are within the start and end."""
@@ -714,10 +732,20 @@ class RentalControl:
     def _refresh_event_dict(self) -> list[CalendarEvent]:
         """Ensure that all events in the calendar are start before max days."""
 
+        def _get_date(day: date | datetime) -> date:
+            """Return the date from a datetime or date object."""
+
+            _LOGGER.debug("In _get_date: %s", day)
+            if isinstance(day, date):
+                _LOGGER.debug("Returning date: %s", day)
+                return day
+            _LOGGER.debug("Returning date: %s", day.date())
+            return day.date()
+
         cal = self.calendar
         days = dt.start_of_local_day() + timedelta(days=self.days)
 
-        return [x for x in cal if x.start.date() <= days.date()]
+        return [x for x in cal if _get_date(x.start) <= days.date()]
 
     async def _refresh_calendar(self) -> None:
         """Update list of upcoming events."""

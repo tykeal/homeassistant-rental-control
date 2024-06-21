@@ -120,12 +120,15 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
         user_input: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Handle a flow initialized by the user."""
+        flow_data: Dict[str, Any] | None = None
+        if self.config_entry.data:
+            flow_data = dict(self.config_entry.data)
         return await _start_config_flow(
             self,
             "init",
             "",
             user_input,
-            self.config_entry.data,
+            flow_data,
             self.config_entry.entry_id,
         )
 
