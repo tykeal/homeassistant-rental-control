@@ -271,13 +271,16 @@ class EventOverrides:
         slot_name: str,
         start_time: datetime,
         end_time: datetime,
-        prefix: str,
+        prefix: str | None = None,
     ) -> None:
         """Update overrides."""
 
         _LOGGER.debug("In EventOverrides.update")
 
         overrides = self._overrides.copy()
+
+        if prefix is None:
+            prefix = ""
 
         if slot_name:
             regex = r"^(" + prefix + " )?(.*)$"

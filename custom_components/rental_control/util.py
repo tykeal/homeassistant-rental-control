@@ -32,11 +32,11 @@ from homeassistant.components.input_datetime import DOMAIN as INPUT_DATETIME
 from homeassistant.components.input_text import DOMAIN as INPUT_TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
-from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.const import SERVICE_RELOAD
+from homeassistant.core import Event
+from homeassistant.core import EventStateChangedData
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceNotFound
-from homeassistant.helpers.event import EventStateChangedData
 from homeassistant.util import dt
 from homeassistant.util import slugify
 
@@ -341,14 +341,11 @@ def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
 async def handle_state_change(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
-    event: EventStateChangedData,
+    event: Event[EventStateChangedData],
 ) -> None:
     """Listener to track state changes of Keymaster input entities."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
     lockname = coordinator.lockname
-
-    if event.event_type != EVENT_STATE_CHANGED:
-        return
 
     # we can get state changed storms when a slot (or multiple slots) clear and
     # a new code is set, put in a small sleep to let things settle
@@ -359,17 +356,28 @@ async def handle_state_change(
     slot_num = int(entity_id.split("_")[-1])
 
     slot_code = hass.states.get(f"input_text.{lockname}_pin_{slot_num}")
+    if slot_code is None:
+        return
+
     slot_name = hass.states.get(f"input_text.{lockname}_name_{slot_num}")
+    if slot_name is None:
+        return
+
     start_time = hass.states.get(f"input_datetime.start_date_{lockname}_{slot_num}")
+    if start_time is None:
+        return
+
     end_time = hass.states.get(f"input_datetime.end_date_{lockname}_{slot_num}")
+    if end_time is None:
+        return
 
     _LOGGER.debug(f"updating overrides for {lockname} slot {slot_num}")
     await coordinator.update_event_overrides(
         slot_num,
-        slot_code.as_dict()["state"],
-        slot_name.as_dict()["state"],
-        dt.parse_datetime(start_time.as_dict()["state"]),
-        dt.parse_datetime(end_time.as_dict()["state"]),
+        slot_code.state,
+        slot_name.state,
+        dt.parse_datetime(start_time.state),
+        dt.parse_datetime(end_time.state),
     )
 
     # validate overrides
