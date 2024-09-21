@@ -1,0 +1,70 @@
+{
+  "config": {
+    "error": {
+      "bad_code_length": "O comprimento do código de bloqueio deve ser par e >= 4.",
+      "bad_ics": "A URL não forneceu um calendário válido.",
+      "bad_minimum": "O valor deve ser 1 ou maior.",
+      "bad_refresh": "A atualização deve estar entre 0 e 1440.",
+      "bad_time": "O horário de check-in/check-out é inválido. Use o formato de 24 horas.",
+      "invalid_path": "O caminho deve ser um caminho relativo, não absoluto.",
+      "invalid_url": "Apenas URLs https são suportadas.",
+      "same_name": "Nome já em uso.",
+      "unknown": "Erro inesperado, verifique os logs para mais detalhes."
+    },
+    "step": {
+      "user": {
+        "data": {
+          "checkin": "Horário padrão de check-in",
+          "checkout": "Horário padrão de check-out",
+          "code_generation": "Gerador de código de porta",
+          "code_length": "Comprimento do código da porta (>= 4 e um número par)",
+          "days": "Número máximo de dias no futuro para buscar",
+          "event_prefix": "Prefixo para todos os eventos (útil se vincular mais de um aluguel)",
+          "ignore_non_reserved": "Ignorar eventos que não sejam reservas padrão",
+          "keymaster_entry_id": "Configuração do Keymaster para gerenciar",
+          "max_events": "Número de sensores de eventos a serem criados",
+          "name": "Nome do calendário",
+          "refresh_frequency": "Frequência de atualização do calendário em minutos. 0 - 1440",
+          "start_slot": "Slot inicial de bloqueio para gerenciamento",
+          "timezone": "Fuso horário do calendário",
+          "url": "URL do calendário",
+          "verify_ssl": "Verificar certificados SSL"
+        }
+      }
+    }
+  },
+  "options": {
+    "error": {
+      "bad_code_length": "O comprimento do código de bloqueio deve ser par e >= 4.",
+      "bad_ics": "A URL não forneceu um calendário válido.",
+      "bad_minimum": "O valor deve ser 1 ou maior.",
+      "bad_refresh": "A atualização deve estar entre 0 e 1440.",
+      "bad_time": "O horário de check-in/check-out é inválido. Use o formato de 24 horas.",
+      "invalid_path": "O caminho deve ser um caminho relativo, não absoluto.",
+      "invalid_url": "Apenas URLs https são suportadas.",
+      "same_name": "Nome já em uso.",
+      "unknown": "Erro inesperado, verifique os logs para mais detalhes."
+    },
+    "step": {
+      "init": {
+        "data": {
+          "checkin": "Horário padrão de check-in",
+          "checkout": "Horário padrão de check-out",
+          "code_generation": "Gerador de código de porta",
+          "code_length": "Comprimento do código da porta (>= 4 e um número par)",
+          "days": "Número máximo de dias no futuro para buscar",
+          "event_prefix": "Prefixo para todos os eventos (útil se vincular mais de um aluguel)",
+          "ignore_non_reserved": "Ignorar eventos que não sejam reservas padrão",
+          "keymaster_entry_id": "Configuração do Keymaster para gerenciar",
+          "max_events": "Número de sensores de eventos a serem criados",
+          "name": "Nome do calendário",
+          "refresh_frequency": "Frequência de atualização do calendário em minutos. 0 - 1440",
+          "start_slot": "Slot inicial de bloqueio para gerenciamento",
+          "timezone": "Fuso horário do calendário",
+          "url": "URL do calendário",
+          "verify_ssl": "Verificar certificados SSL"
+        }
+      }
+    }
+  }
+}
