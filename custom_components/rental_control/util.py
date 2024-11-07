@@ -231,7 +231,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
 async def async_fire_update_slot_code(coordinator, event) -> None:
     """Update the code for the slot """
 
-    lockname = str = coordinator.lockname
+    lockname: str = coordinator.lockname
     coro: List[Coroutine] = []
     slot_name: str = event.extra_state_attributes["slot_name"]
     slot = coordinator.event_overrides.get_slot_key_by_name(slot_name)
