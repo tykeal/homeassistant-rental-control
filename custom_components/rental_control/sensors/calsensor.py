@@ -287,14 +287,19 @@ class RentalControlCalSensor(Entity):
             # 4. The code type is date_based
             should_update_code = (
                 event.start > datetime.now(event.start.tzinfo)
-                and (self._event_attributes["start"] != event.start
-                or self._event_attributes["end"] != event.end)
+                and self._event_attributes["start"] != event.start
+                or self._event_attributes["end"] != event.end
                 and self.coordinator.should_update_code
                 and self._code_generator == "date_based"
             )
 
             if should_update_code:
-                await async_fire_clear_code(self.coordinator, self.coordinator.event_overrides.get_slot_key_by_name(self._event_attributes["slot_name"]))
+                await async_fire_clear_code(
+                    self.coordinator,
+                    self.coordinator.event_overrides.get_slot_key_by_name(
+                        self._event_attributes["slot_name"]
+                    ),
+                )
 
             self._event_attributes["start"] = event.start
             self._event_attributes["end"] = event.end
