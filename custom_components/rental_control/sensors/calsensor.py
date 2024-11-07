@@ -16,7 +16,7 @@ from homeassistant.helpers.entity import EntityCategory
 from ..const import ICON
 from ..util import async_fire_set_code
 from ..util import async_fire_update_times
-from ..util import async_fire_update_slot_code
+from ..util import async_fire_clear_code
 from ..util import gen_uuid
 from ..util import get_slot_name
 
@@ -284,12 +284,17 @@ class RentalControlCalSensor(Entity):
             #    therefore, we should check the event.start to make sure it is after now
             # 2. Either the start or end time need to have changed
             # 3. We need to have toggled this on in the config
+            # 4. The code type is date_based
             should_update_code = (
                 event.start > datetime.now()
                 and self._event_attributes["start"] != event.start
                 or self._event_attributes["end"] != event.end
                 and self.coordinator.should_update_code
+                and self._code_generator == "date_based"
             )
+            
+            if should_update_code:
+                await async_fire_clear_code
 
             self._event_attributes["start"] = event.start
             self._event_attributes["end"] = event.end
@@ -376,9 +381,6 @@ class RentalControlCalSensor(Entity):
 
             if update_times:
                 await async_fire_update_times(self.coordinator, self)
-
-            if should_update_code:
-                await async_fire_update_slot_code(self.coordinator, self)
 
         else:
             # No reservations

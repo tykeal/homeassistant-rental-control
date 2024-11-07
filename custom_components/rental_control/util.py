@@ -229,30 +229,6 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     await asyncio.gather(*coro)
 
 
-async def async_fire_update_slot_code(coordinator, event) -> None:
-    """Update the code for the slot"""
-
-    lockname: str = coordinator.lockname
-    coro: List[Coroutine] = []
-    slot_name: str = event.extra_state_attributes["slot_name"]
-    slot = coordinator.event_overrides.get_slot_key_by_name(slot_name)
-
-    if not slot or not lockname:
-        return
-
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        INPUT_TEXT,
-        "set_value",
-        f"input_text.{lockname}_pin_{slot}",
-        {"value": event.extra_state_attributes["slot_code"]},
-    )
-
-    # Update the slot details
-    await asyncio.gather(*coro)
-
-
 async def async_fire_update_times(coordinator, event) -> None:
     """Update times on slot."""
 
