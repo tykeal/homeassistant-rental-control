@@ -50,6 +50,7 @@ from .const import ATTR_NOTIFICATION_SOURCE
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_GENERATION
+from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
@@ -64,6 +65,7 @@ from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import COORDINATOR
 from .const import DEFAULT_CODE_GENERATION
+from .const import DEFAULT_SHOULD_UPDATE_CODE
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_GENERATE
 from .const import DEFAULT_REFRESH_FREQUENCY
@@ -402,6 +404,9 @@ class RentalControl:
         self.code_generator: str = config.get(
             CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION
         )
+         self.should_update_code: bool = config.get(
+            CONF_SHOULD_UPDATE_CODE, DEFAULT_SHOULD_UPDATE_CODE
+        )
         self.code_length: int = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.event: CalendarEvent | None = None
         self.created: str = config.get(CONF_CREATION_DATETIME, str(dt.now()))
@@ -555,6 +560,9 @@ class RentalControl:
         self.max_events = config.get(CONF_MAX_EVENTS)
         self.days = config.get(CONF_DAYS)
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
+        self.should_update_code = config.get(
+            CONF_SHOULD_UPDATE_CODE, DEFAULT_SHOULD_UPDATE_CODE
+        )
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
