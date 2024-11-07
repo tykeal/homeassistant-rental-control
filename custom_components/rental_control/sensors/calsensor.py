@@ -279,7 +279,16 @@ class RentalControlCalSensor(Entity):
 
             self._event_attributes["summary"] = event.summary
 
-            time_changed = self._event_attributes["start"] != event.start or self._event_attributes["end"] != event.end
+            # Three conditions for update:
+            # 1. I think we can assume that rental sites will not let a guest change the start date of their reservation if they have checked in already
+            #    therefore, we should check the event.start to make sure it is after now
+            # 2. Either the start or end time need to have changed
+            # 3. We need to have toggled this on in the config
+            should_update_code = (
+                event.start > datetime.now() and
+                self._event_attributes["start"] != event.start or self._event_attributes["end"] != event.end
+                and self.coordinator.should_update_code
+            )
 
             self._event_attributes["start"] = event.start
             self._event_attributes["end"] = event.end
@@ -323,7 +332,7 @@ class RentalControlCalSensor(Entity):
             ):
                 update_times = True
 
-            if time_changed and self.coordinator.should_update_code:
+            if should_update_code: # This takes priority
                 slot_code = self._generate_door_code();
             elif override and override["slot_code"]:
                 slot_code = str(override["slot_code"])
@@ -367,7 +376,7 @@ class RentalControlCalSensor(Entity):
             if update_times:
                 await async_fire_update_times(self.coordinator, self)
 
-            if time_changed and self.coordinator.should_update_code:
+            if should_update_code:
                 await async_fire_update_slot_code(
                     self.coordinator,
                     self
