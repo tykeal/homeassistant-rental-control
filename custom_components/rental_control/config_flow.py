@@ -28,6 +28,7 @@ from .const import CODE_GENERATORS
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_GENERATION
+from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
@@ -42,6 +43,7 @@ from .const import CONF_TIMEZONE
 from .const import DEFAULT_CHECKIN
 from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_CODE_GENERATION
+from .const import DEFAULT_SHOULD_UPDATE_CODE
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_DAYS
 from .const import DEFAULT_EVENT_PREFIX
@@ -281,6 +283,12 @@ def _get_schema(
                     to_type=False,
                 ),
             ): vol.In(_code_generators()),
+            vol.Optional(
+                CONF_SHOULD_UPDATE_CODE,
+                default=_get_default(
+                    CONF_SHOULD_UPDATE_CODE, DEFAULT_SHOULD_UPDATE_CODE
+                ),
+            ): cv.boolean,
             vol.Optional(
                 CONF_IGNORE_NON_RESERVED,
                 default=_get_default(CONF_IGNORE_NON_RESERVED, True),
