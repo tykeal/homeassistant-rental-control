@@ -284,7 +284,10 @@ def _get_schema(
                 ),
             ): vol.In(_code_generators()),
             vol.Optional(
-                CONF_SHOULD_UPDATE_CODE, default=_get_default(CONF_SHOULD_UPDATE_CODE, DEFAULT_SHOULD_UPDATE_CODE)
+                CONF_SHOULD_UPDATE_CODE,
+                default=_get_default(
+                    CONF_SHOULD_UPDATE_CODE, DEFAULT_SHOULD_UPDATE_CODE
+                ),
             ): cv.boolean,
             vol.Optional(
                 CONF_IGNORE_NON_RESERVED,

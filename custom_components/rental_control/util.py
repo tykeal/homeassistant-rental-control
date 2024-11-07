@@ -228,8 +228,9 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
 
     await asyncio.gather(*coro)
 
+
 async def async_fire_update_slot_code(coordinator, event) -> None:
-    """Update the code for the slot """
+    """Update the code for the slot"""
 
     lockname: str = coordinator.lockname
     coro: List[Coroutine] = []
@@ -250,6 +251,7 @@ async def async_fire_update_slot_code(coordinator, event) -> None:
 
     # Update the slot details
     await asyncio.gather(*coro)
+
 
 async def async_fire_update_times(coordinator, event) -> None:
     """Update times on slot."""

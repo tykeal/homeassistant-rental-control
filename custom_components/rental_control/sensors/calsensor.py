@@ -285,8 +285,9 @@ class RentalControlCalSensor(Entity):
             # 2. Either the start or end time need to have changed
             # 3. We need to have toggled this on in the config
             should_update_code = (
-                event.start > datetime.now() and
-                self._event_attributes["start"] != event.start or self._event_attributes["end"] != event.end
+                event.start > datetime.now()
+                and self._event_attributes["start"] != event.start
+                or self._event_attributes["end"] != event.end
                 and self.coordinator.should_update_code
             )
 
@@ -332,8 +333,8 @@ class RentalControlCalSensor(Entity):
             ):
                 update_times = True
 
-            if should_update_code: # This takes priority
-                slot_code = self._generate_door_code();
+            if should_update_code:  # This takes priority
+                slot_code = self._generate_door_code()
             elif override and override["slot_code"]:
                 slot_code = str(override["slot_code"])
             else:
@@ -377,10 +378,7 @@ class RentalControlCalSensor(Entity):
                 await async_fire_update_times(self.coordinator, self)
 
             if should_update_code:
-                await async_fire_update_slot_code(
-                    self.coordinator,
-                    self
-                )
+                await async_fire_update_slot_code(self.coordinator, self)
 
         else:
             # No reservations

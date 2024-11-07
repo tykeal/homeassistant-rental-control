@@ -560,7 +560,9 @@ class RentalControl:
         self.max_events = config.get(CONF_MAX_EVENTS)
         self.days = config.get(CONF_DAYS)
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
-        self.should_update_code = config.get(CONF_SHOULD_UPDATE_CODE, DEFAULT_SHOULD_UPDATE_CODE)
+        self.should_update_code = config.get(
+            CONF_SHOULD_UPDATE_CODE, DEFAULT_SHOULD_UPDATE_CODE
+        )
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)
