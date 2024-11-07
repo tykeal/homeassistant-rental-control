@@ -292,7 +292,7 @@ class RentalControlCalSensor(Entity):
                 and self.coordinator.should_update_code
                 and self._code_generator == "date_based"
             )
-            
+
             if should_update_code:
                 await async_fire_clear_code(self.coordinator, self.coordinator.event_overrides.get_slot_key_by_name(self._event_attributes["slot_name"]))
 
