@@ -9,7 +9,7 @@ ci:
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: 2c9f875913ee60ca25ce70243dc24d5b6415598c # frozen: v4.6.0
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b # frozen: v5.0.0
     hooks:
       - id: check-added-large-files
       - id: check-ast
@@ -33,7 +33,7 @@ repos:
       - id: gitlint
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: 1dc9eb131c2ea4816c708e4d85820d2cc8542683 # frozen: v0.5.0
+    rev: 6a19e69c83fd6e3a3ffdd5e32a40e35c37b02218 # frozen: v0.7.3
     hooks:
       - id: ruff
         files: ^(scripts|tests|custom_components)/.+\.py$
@@ -55,7 +55,7 @@ repos:
           - setuptools
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: 6f546f30c2b142ad5b3edcf20e3d27cf1789b932 # frozen: v1.10.1
+    rev: f56614daa94d5cd733d3b7004c5df9caad267b4a # frozen: v1.13.0
     hooks:
       - id: mypy
         additional_dependencies:
@@ -68,11 +68,11 @@ repos:
         stages: [commit]
 
   - repo: https://github.com/fsfe/reuse-tool
-    rev: dedabab03c34f0f4ee77be8baf0a684714bdb6e9 # frozen: v4.0.2
+    rev: 4906d887c29f724e91a710c988cc786bd5b695b3 # frozen: v4.0.3
     hooks:
       - id: reuse
 
   - repo: https://github.com/rhysd/actionlint
-    rev: 62dc61a45fc95efe8c800af7a557ab0b9165d63b # frozen: v1.7.1
+    rev: 5db9d9cde2f3deb5035dea3e45f0a9fff2f29448 # frozen: v1.7.4
     hooks:
       - id: actionlint
