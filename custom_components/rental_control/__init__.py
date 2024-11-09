@@ -60,6 +60,7 @@ from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
 from .const import CONF_PATH
 from .const import CONF_REFRESH_FREQUENCY
+from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import COORDINATOR
@@ -272,6 +273,24 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         version = 6
         _LOGGER.debug(f"Migration to version {config_entry.version} complete")
 
+    # 6 -> 7: Add should_update_code to configuration
+    if version == 6:
+        _LOGGER.debug(f"Migrating from version {version}")
+
+        data = config_entry.data.copy()
+        # Default to False since prior versions didn't have this
+        # new setups will default to True
+        data[CONF_SHOULD_UPDATE_CODE] = False
+        hass.config_entries.async_update_entry(
+            entry=config_entry,
+            unique_id=config_entry.unique_id,
+            data=data,
+            version=7,
+        )
+
+        version = 7
+        _LOGGER.debug(f"Migration to version {config_entry.version} complete")
+
     return True
 
 
@@ -402,6 +421,7 @@ class RentalControl:
         self.code_generator: str = config.get(
             CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION
         )
+        self.should_update_code: bool = config.get(CONF_SHOULD_UPDATE_CODE)
         self.code_length: int = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.event: CalendarEvent | None = None
         self.created: str = config.get(CONF_CREATION_DATETIME, str(dt.now()))
@@ -555,6 +575,7 @@ class RentalControl:
         self.max_events = config.get(CONF_MAX_EVENTS)
         self.days = config.get(CONF_DAYS)
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
+        self.should_update_code = config.get(CONF_SHOULD_UPDATE_CODE)
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
         self.verify_ssl = config.get(CONF_VERIFY_SSL)

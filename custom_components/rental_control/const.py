@@ -55,6 +55,7 @@ CONF_LOCK_ENTRY = "keymaster_entry_id"
 CONF_MAX_EVENTS = "max_events"
 CONF_PATH = "packages_path"
 CONF_REFRESH_FREQUENCY = "refresh_frequency"
+CONF_SHOULD_UPDATE_CODE = "should_update_code"
 CONF_START_SLOT = "start_slot"
 CONF_TIMEZONE = "timezone"
 
@@ -70,6 +71,7 @@ DEFAULT_MAX_EVENTS = 5
 DEFAULT_NAME = DOMAIN
 DEFAULT_PATH = "packages/rental_control"
 DEFAULT_REFRESH_FREQUENCY = 2
+DEFAULT_SHOULD_UPDATE_CODE = True
 DEFAULT_START_SLOT = 10
 
 CODE_GENERATORS = [
