@@ -51,6 +51,8 @@ calendars and sensors to go with them related to managing rental properties.
     -   A check-in/out date based 4 digit (or greater) code using the check-in
         day combined with the check-out day (default and fallback in the case
         another generator fails to produce a code)
+        -   Codes can can optionally be regenerated if the reservation start or
+            end dates are at least 1 day in future
     -   A random 4 digit (or greater) code based on the event description
     -   The last 4 digits of the phone number. This only works properly if the
         event description contains '(Last 4 Digits): ' or 'Last 4 Digits: '

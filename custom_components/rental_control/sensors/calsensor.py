@@ -14,6 +14,7 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity import EntityCategory
 
 from ..const import ICON
+from ..util import async_fire_clear_code
 from ..util import async_fire_set_code
 from ..util import async_fire_update_times
 from ..util import gen_uuid
@@ -358,8 +359,27 @@ class RentalControlCalSensor(Entity):
                     self.coordinator.event_overrides.next_slot,
                 )
 
+            # Update the event times, if they have changed
+            # If the code generator is date_based, and the start day is in the
+            # future then clear slot instead
             if update_times:
-                await async_fire_update_times(self.coordinator, self)
+                if (
+                    self.coordinator.code_generator == "date_based"
+                    and self.coordinator.should_update_code
+                    and eta_days
+                    and eta_days > 0
+                ):
+                    slot_code = self.coordinator.event_overrides.get_slot_key_by_name(
+                        slot_name
+                    )
+                    _LOGGER.debug(
+                        "Clearing slot %s for sensor %s due to date shift",
+                        slot_code,
+                        self.name,
+                    )
+                    await async_fire_clear_code(self.coordinator, slot_code)
+                else:
+                    await async_fire_update_times(self.coordinator, self)
 
         else:
             # No reservations

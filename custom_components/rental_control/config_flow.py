@@ -37,6 +37,7 @@ from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
 from .const import CONF_REFRESH_FREQUENCY
+from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import DEFAULT_CHECKIN
@@ -48,6 +49,7 @@ from .const import DEFAULT_EVENT_PREFIX
 from .const import DEFAULT_GENERATE
 from .const import DEFAULT_MAX_EVENTS
 from .const import DEFAULT_REFRESH_FREQUENCY
+from .const import DEFAULT_SHOULD_UPDATE_CODE
 from .const import DEFAULT_START_SLOT
 from .const import DOMAIN
 from .const import LOCK_MANAGER
@@ -64,7 +66,7 @@ sorted_tz.sort()
 class RentalControlFlowHandler(config_entries.ConfigFlow):
     """Handle the config flow for Rental Control."""
 
-    VERSION = 6
+    VERSION = 7
 
     DEFAULTS = {
         CONF_CHECKIN: DEFAULT_CHECKIN,
@@ -74,6 +76,7 @@ class RentalControlFlowHandler(config_entries.ConfigFlow):
         CONF_EVENT_PREFIX: DEFAULT_EVENT_PREFIX,
         CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
         CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+        CONF_SHOULD_UPDATE_CODE: DEFAULT_SHOULD_UPDATE_CODE,
         CONF_TIMEZONE: str(dt.DEFAULT_TIME_ZONE),
         CONF_VERIFY_SSL: True,
     }
@@ -281,6 +284,12 @@ def _get_schema(
                     to_type=False,
                 ),
             ): vol.In(_code_generators()),
+            vol.Optional(
+                CONF_SHOULD_UPDATE_CODE,
+                default=_get_default(
+                    CONF_SHOULD_UPDATE_CODE, DEFAULT_SHOULD_UPDATE_CODE
+                ),
+            ): cv.boolean,
             vol.Optional(
                 CONF_IGNORE_NON_RESERVED,
                 default=_get_default(CONF_IGNORE_NON_RESERVED, True),

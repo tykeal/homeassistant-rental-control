@@ -26,6 +26,7 @@
           "name": "Nom du calendrier",
           "refresh_frequency": "Rafraîchir le calendrier en minutes. 0 - 1440",
           "start_slot": "Slot de départ pour la gestion",
+          "should_update_code": "Pour les codes basés sur la date, mettez à jour le code si les événements futurs changent les dates de début ou de fin",
           "timezone": "Fuseau horaire du calendrier",
           "url": "URL du calendrier",
           "verify_ssl": "Vérifier les certificats SSL"
@@ -60,6 +61,7 @@
           "name": "Nom du calendrier",
           "refresh_frequency": "Rafraîchir le calendrier en minutes. 0 - 1440",
           "start_slot": "Slot de départ pour la gestion",
+          "should_update_code": "Pour les codes basés sur la date, mettez à jour le code si les événements futurs changent les dates de début ou de fin",
           "timezone": "Fuseau horaire du calendrier",
           "url": "URL du calendrier",
           "verify_ssl": "Vérifier les certificats SSL"
