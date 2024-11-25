@@ -33,7 +33,7 @@ repos:
       - id: gitlint
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: 6a19e69c83fd6e3a3ffdd5e32a40e35c37b02218 # frozen: v0.7.3
+    rev: 0710b94280408eef12748cde4782972942370ad2  # frozen: v0.8.0
     hooks:
       - id: ruff
         files: ^(scripts|tests|custom_components)/.+\.py$
@@ -65,10 +65,10 @@ repos:
     rev: f12edd9c7be1c20cfa42420fd0e6df71e42b51ea # frozen: v4.0.0-alpha.8
     hooks:
       - id: prettier
-        stages: [commit]
+        stages: [pre-commit]
 
   - repo: https://github.com/fsfe/reuse-tool
-    rev: 4906d887c29f724e91a710c988cc786bd5b695b3 # frozen: v4.0.3
+    rev: 60dfc6b2ad9e1f3eabfbcf3a0dc202ee89dc5a00  # frozen: v5.0.2
     hooks:
       - id: reuse
 
