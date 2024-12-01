@@ -1,0 +1,19 @@
+version = 1
+
+[[annotations]]
+path = "node_modules/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2021 Andrew Grimberg <tykeal@bardicgrove.org>"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tests/.mypy**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2021 Andrew Grimberg <tykeal@bardicgrove.org>"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tests/__pycache__/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2021 Andrew Grimberg <tykeal@bardicgrove.org>"
+SPDX-License-Identifier = "Apache-2.0"
