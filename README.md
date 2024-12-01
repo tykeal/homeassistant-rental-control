@@ -21,6 +21,7 @@ calendars and sensors to go with them related to managing rental properties.
     -   [Why does my calendar events say `Reserved` instead of the guest's name?](#why-does-my-calendar-events-say-reserved-instead-of-the-guests-name)
     -   [Where can I find my rental calendar's `ics` URL?](#where-can-i-find-my-rental-calendars-ics-url)
     -   [How do I use custom calendars?](#how-do-i-use-custom-calendars)
+    -   [Automation Examples](#automation-examples)
 
 ## Features
 
@@ -283,3 +284,76 @@ Email: jdoe@example.com
 Number of guests: 2
 Reservation URL: https://www.example.com/reservation/123456789
 ```
+
+### Automation Examples
+
+Here are some examples of automations that can be done with Rental Control
+
+-   Manage thermostat for guests and between guests
+    ```yaml
+    alias: Manage Thermostat for Guests
+    mode: single
+    triggers:
+      - entity_id:
+          - sensor.rental_control_my_calendar_event_0
+        attribute: description
+        trigger: state
+        to: 'No reserved'
+        for:
+          hours: 1
+          minutes: 0
+          seconds: 0
+        id: No Reservations
+      - entity_id:
+          - sensor.rental_control_my_calendar_event_0
+          attribute: eta_days
+          for:
+            hours: 1
+            minutes: 0
+            seconds: 0
+          above: 1
+          id: Between Guests
+          trigger: numeric_state
+      - entity_id:
+          - sensor.rental_control_my_calendar_event_0
+        attribute: eta_minutes
+        below: 180
+        id: Guests
+        trigger: numeric_state
+      - entity_id:
+          - sensor.rental_control_my_calendar_event_1
+        attribute: eta_minutes
+        below: 180
+        id: Guests
+        trigger: numeric_state
+      - entity_id:
+          - calendar.rental_control_my_calendar
+          to: 'on'
+          id: Guests
+          trigger: state
+    conditions: []
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                  id: No Reservations
+              sequence:
+              - service: climate.set_temperature
+                  target:
+                  entity_id: climate.thermostat
+                  data:
+                  temperature: 65
+          - conditions:
+              - condition: or
+                  conditions:
+                    - condition: trigger
+                        id: Between Guests
+                    - condition: trigger
+                        id: Guests
+              sequence:
+              - service: climate.set_temperature
+                  target:
+                  entity_id: climate.thermostat
+                  data:
+                  temperature: 72
+    ```
