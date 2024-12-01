@@ -27,6 +27,8 @@ categories:
       - "documentation"
       - "maintenance"
       - "repo"
+      - "dependencies"
+      - "github_actions"
   - title: ":mortar_board: Code Quality :mortar_board:"
     labels:
       - "code-quality"
