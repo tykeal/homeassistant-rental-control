@@ -22,6 +22,7 @@ calendars and sensors to go with them related to managing rental properties.
     -   [Why does my calendar events say `Reserved` instead of the guest's name?](#why-does-my-calendar-events-say-reserved-instead-of-the-guests-name)
     -   [Where can I find my rental calendar's `ics` URL?](#where-can-i-find-my-rental-calendars-ics-url)
     -   [How do I use custom calendars?](#how-do-i-use-custom-calendars)
+    -   [Automation Examples](#automation-examples)
 
 ## Features
 
@@ -124,8 +125,11 @@ calendars and sensors to go with them related to managing rental properties.
 
 The integration is set up using the GUI.
 
--   Go to Configuration -> Integrations and click on the "+"-button.
--   Search for "Rental Control"
+-   Press the following button to install the `Rental Control` integration
+    [![Open your Home Assistant instance and start setting up a new
+integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=rental_control)
+-   Follow the prompts and then press `OK` on the question about installing
+    `Rental Control`
 -   Enter a name for the calendar, and the calendar's `ics` URL (see FAQ)
 -   By default it will set up 5 sensors for the 5 nex upcoming events
     (sensor.rental_control\_\<calendar_name\>\_event_0 ~ 4). You can adjust this
@@ -169,7 +173,7 @@ The integration is set up using the GUI.
 
 This integration supports reconfiguration after initial setup
 
--   Go to Configuration -> Integrations and find the calendar you wish to modify
+-   Press this button [![Open your Home Assistant instance and show an integration.](https://my.home-assistant.io/badges/integration.svg)](https://my.home-assistant.io/redirect/integration/?domain=rental_control)
 -   Select the calendar and then select `Configure`
 -   Reconfigure as if you were setting it up for the first time
 
@@ -191,8 +195,8 @@ installation or restart Home Assistant.
 
 AirBnB does not include guest or booking details in the invite. What is included
 in the `ics` data varies by provider. Calendar `ics` URLs from some 3rd party
-tools (e.g. Host Tools) do include guest information and will show that rather
-than `Reserved` in calendar events.
+tools (e.g. Host Tools, and Guesty) do include guest information and will show
+that rather than `Reserved` in calendar events.
 
 ### Where can I find my rental calendar's `ics` URL?
 
@@ -233,7 +237,7 @@ Data that will be pulled from the Description of the event (and the match keys):
 -   Reservation URLS will match against the first (and hopefully only) URL in
     the Description
 
-And example calendar entry with all of this data might look like this:
+An example calendar entry with all of this data might look like this:
 
 ```
 Title: John and Jane Doe
@@ -254,3 +258,76 @@ Email: jdoe@example.com
 Number of guests: 2
 Reservation URL: https://www.example.com/reservation/123456789
 ```
+
+### Automation Examples
+
+Here are some examples of automations that can be done with Rental Control
+
+-   Manage thermostat for guests and between guests
+    ```yaml
+    alias: Manage Thermostat for Guests
+    mode: single
+    triggers:
+      - entity_id:
+          - sensor.rental_control_my_calendar_event_0
+        attribute: description
+        trigger: state
+        to: 'No reserved'
+        for:
+          hours: 1
+          minutes: 0
+          seconds: 0
+        id: No Reservations
+      - entity_id:
+          - sensor.rental_control_my_calendar_event_0
+          attribute: eta_days
+          for:
+            hours: 1
+            minutes: 0
+            seconds: 0
+          above: 1
+          id: Between Guests
+          trigger: numeric_state
+      - entity_id:
+          - sensor.rental_control_my_calendar_event_0
+        attribute: eta_minutes
+        below: 180
+        id: Guests
+        trigger: numeric_state
+      - entity_id:
+          - sensor.rental_control_my_calendar_event_1
+        attribute: eta_minutes
+        below: 180
+        id: Guests
+        trigger: numeric_state
+      - entity_id:
+          - calendar.rental_control_my_calendar
+          to: 'on'
+          id: Guests
+          trigger: state
+    conditions: []
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                  id: No Reservations
+              sequence:
+              - service: climate.set_temperature
+                  target:
+                  entity_id: climate.thermostat
+                  data:
+                  temperature: 65
+          - conditions:
+              - condition: or
+                  conditions:
+                    - condition: trigger
+                        id: Between Guests
+                    - condition: trigger
+                        id: Guests
+              sequence:
+              - service: climate.set_temperature
+                  target:
+                  entity_id: climate.thermostat
+                  data:
+                  temperature: 72
+    ```
