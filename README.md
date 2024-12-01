@@ -133,27 +133,27 @@ depends upon it.
    into the `custom_components` directory of your Home Assistant
    installation
 1. Restart Home Assistant
-1. Configure the Rental Control
+1. Follow the instructions in the setup section to finish the configuration
 
 ### INSTALLATION VIA Home Assistant Community Store (HACS)
 
 1. Ensure that [HACS](https://hacs.xyz/) is installed
-1. Go to `HACS` -> `Integrations`
-1. Search for and install the `Rental Control` integration
+1. Then press the following button [![Open your Home Assistant instance and open
+a repository inside the Home Assistant Community
+Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tykeal&repository=homeassistant-rental-control&category=Integration)
+1. Install the `Rental Control` integration
 1. Restart Home Assistant
-1. Go to `Configuration` -> `Devices & Services`
-1. Press `+ ADD INTEGRATION`
-1. Add `Rental Control`
-1. Configure the parameters
-1. Adding additional calendars can be done by adding another `Rental Control`
-   integration in `Devices & Services`
+1. Follow the instructions in the setup section to finish the configuration
 
 ## Setup
 
 The integration is set up using the GUI.
 
--   Go to Configuration -> Integrations and click on the "+"-button.
--   Search for "Rental Control"
+-   Press the following button to install the `Rental Control` integration
+    [![Open your Home Assistant instance and start setting up a new
+integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=rental_control)
+-   Follow the prompts and then press `OK` on the question about installing
+    `Rental Control`
 -   Enter a name for the calendar, and the calendar's `ics` URL (see FAQ)
 -   By default it will set up 5 sensors for the 5 nex upcoming events
     (sensor.rental_control\_\<calendar_name\>\_event_0 ~ 4). You can adjust this
@@ -197,7 +197,8 @@ The integration is set up using the GUI.
 
 This integration supports reconfiguration after initial setup
 
--   Go to Configuration -> Integrations and find the calendar you wish to modify
+-   Press this button [![Open your Home Assistant instance and show an
+integration.](https://my.home-assistant.io/badges/integration.svg)](https://my.home-assistant.io/redirect/integration/?domain=rental_control)
 -   Select the calendar and then select `Configure`
 -   Reconfigure as if you were setting it up for the first time
 
@@ -219,8 +220,8 @@ installation or restart Home Assistant.
 
 AirBnB does not include guest or booking details in the invite. What is included
 in the `ics` data varies by provider. Calendar `ics` URLs from some 3rd party
-tools (e.g. Host Tools) do include guest information and will show that rather
-than `Reserved` in calendar events.
+tools (e.g. Host Tools and Guesty) do include guest information and will show
+that rather than `Reserved` in calendar events.
 
 ### Where can I find my rental calendar's `ics` URL?
 
@@ -261,7 +262,7 @@ Data that will be pulled from the Description of the event (and the match keys):
 -   Reservation URLS will match against the first (and hopefully only) URL in
     the Description
 
-And example calendar entry with all of this data might look like this:
+An example calendar entry with all of this data might look like this:
 
 ```
 Title: John and Jane Doe
