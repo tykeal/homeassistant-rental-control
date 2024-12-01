@@ -29,10 +29,37 @@ categories:
       - "repo"
       - "dependencies"
       - "github_actions"
+      - "refactor"
   - title: ":mortar_board: Code Quality :mortar_board:"
     labels:
       - "code-quality"
       - "CI"
+      - "test"
+autolabeler:
+  - label: "breaking-change"
+    title:
+      - "/!:/i"
+  - label: "feature"
+    title:
+      - "/feat:/i"
+  - label: "bug"
+    title:
+      - "/fix:/i"
+  - label: "refactor"
+    title:
+      - "/refactor:/i"
+  - label: "code-quality"
+    title:
+      - "/test:/i"
+  - label: "CI"
+    title:
+      - "/ci:/i"
+  - label: "chore"
+    title:
+      - "/chore:/i"
+  - label: "documentation"
+    title:
+      - "/docs:/i"
 # yamllint disable rule:line-length
 template: |
   [![Downloads for this release](https://img.shields.io/github/downloads/tykeal/homeassistant-rental-control/v$RESOLVED_VERSION/total.svg)](https://github.com/tykeal/homeassistant-rental-control/releases/v$RESOLVED_VERSION)

@@ -9,9 +9,26 @@ on:
   push:
     branches:
       - main
+  # pull_request is required for autolabeler
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  # pull_request_target is required for autolabeler on PRs from forks
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 jobs:
   update_release_draft:
+    permissions:
+      # write permission is required to create releases
+      contents: write
+      # write permission is required for autolabeler
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       # yamllint disable-line rule:line-length
