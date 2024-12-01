@@ -272,7 +272,7 @@ Here are some examples of automations that can be done with Rental Control
           - sensor.rental_control_my_calendar_event_0
         attribute: description
         trigger: state
-        to: 'No reserved'
+        to: 'No reservation'
         for:
           hours: 1
           minutes: 0
