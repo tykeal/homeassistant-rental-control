@@ -347,7 +347,7 @@ async def _start_config_flow(
                 session = async_get_clientsession(
                     cls.hass, verify_ssl=user_input[CONF_VERIFY_SSL]
                 )
-                with async_timeout.timeout(REQUEST_TIMEOUT):
+                async with async_timeout.timeout(REQUEST_TIMEOUT):
                     resp = await session.get(user_input[CONF_URL])
                 if resp.status != 200:
                     _LOGGER.error(
