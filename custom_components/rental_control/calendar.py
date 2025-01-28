@@ -7,15 +7,15 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from typing import Dict
 
 from homeassistant.components.calendar import CalendarEntity
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 
-from . import RentalControl
+from .coordinator import RentalControl
 from .const import COORDINATOR
 from .const import DOMAIN
 from .const import NAME
@@ -60,7 +60,7 @@ class RentalControlCalendar(CalendarEntity):
         return self._available
 
     @property
-    def device_info(self) -> Dict[str, Any]:
+    def device_info(self) -> DeviceInfo:
         """Return the device info block."""
         return self.coordinator.device_info
 
