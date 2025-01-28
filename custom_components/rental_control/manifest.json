@@ -9,6 +9,6 @@
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/tykeal/homeassistant-rental-control/issues",
-  "requirements": ["icalendar==5.0.7", "x-wr-timezone==0.0.7"],
+  "requirements": ["icalendar", "x-wr-timezone"],
   "version": "v0.0.0"
 }
