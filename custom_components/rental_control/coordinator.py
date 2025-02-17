@@ -66,7 +66,7 @@ from .util import get_slot_name
 _LOGGER = logging.getLogger(__name__)
 
 
-class RentalControl:
+class RentalControlCoordinator:
     """Get a list of events."""
 
     # pylint: disable=too-many-instance-attributes

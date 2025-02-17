@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 
-from .coordinator import RentalControl
+from .coordinator import RentalControlCoordinator
 from .const import COORDINATOR
 from .const import DOMAIN
 from .const import NAME
@@ -33,7 +33,9 @@ async def async_setup_entry(
     _LOGGER.debug("Running setup_platform for calendar")
     _LOGGER.debug("Conf: %s", config)
 
-    coordinator: RentalControl = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
+    coordinator: RentalControlCoordinator = hass.data[DOMAIN][config_entry.entry_id][
+        COORDINATOR
+    ]
 
     calendar = RentalControlCalendar(coordinator)
 
@@ -45,13 +47,13 @@ async def async_setup_entry(
 class RentalControlCalendar(CalendarEntity):
     """A device for getting the next Task from a WebDav Calendar."""
 
-    def __init__(self, coordinator: RentalControl) -> None:
+    def __init__(self, coordinator: RentalControlCoordinator) -> None:
         """Create the iCal Calendar Event Device."""
         self._available: bool = False
         self._entity_category: EntityCategory = EntityCategory.DIAGNOSTIC
         self._event: CalendarEvent | None = None
         self._name: str = f"{NAME} {coordinator.name}"
-        self.coordinator: RentalControl = coordinator
+        self.coordinator: RentalControlCoordinator = coordinator
         self._unique_id: str = gen_uuid(f"{self.coordinator.unique_id} calendar")
 
     @property

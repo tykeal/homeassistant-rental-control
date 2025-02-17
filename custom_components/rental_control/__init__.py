@@ -45,7 +45,7 @@ from .const import EVENT_RENTAL_CONTROL_REFRESH
 from .const import NAME
 from .const import PLATFORMS
 from .const import UNSUB_LISTENERS
-from .coordinator import RentalControl
+from .coordinator import RentalControlCoordinator
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
 from .util import gen_uuid
@@ -82,7 +82,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
 
-    coordinator = RentalControl(
+    coordinator = RentalControlCoordinator(
         hass=hass,
         config_entry=config_entry,
     )
