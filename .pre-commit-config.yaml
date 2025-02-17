@@ -33,7 +33,7 @@ repos:
       - id: gitlint
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: 36b36942c52d8ce8ae6314461f2d86b1fda158e3 # frozen: v0.9.3
+    rev: 895ebb389825c29bd4e0addcf7579d6c69d199cc  # frozen: v0.9.6
     hooks:
       - id: ruff
         files: ^(scripts|tests|custom_components)/.+\.py$
@@ -55,17 +55,11 @@ repos:
           - setuptools
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: bbc3dc1f890007061f18f17e2334f216ea9e5df7 # frozen: v1.14.1
+    rev: f40886d54c729f533f864ed6ce584e920feb0af7  # frozen: v1.15.0
     hooks:
       - id: mypy
         additional_dependencies:
           - types-pytz
-
-  - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: f12edd9c7be1c20cfa42420fd0e6df71e42b51ea # frozen: v4.0.0-alpha.8
-    hooks:
-      - id: prettier
-        stages: [pre-commit]
 
   - repo: https://github.com/fsfe/reuse-tool
     rev: 60dfc6b2ad9e1f3eabfbcf3a0dc202ee89dc5a00 # frozen: v5.0.2
