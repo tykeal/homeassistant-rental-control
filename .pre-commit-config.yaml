@@ -40,7 +40,7 @@ repos:
       - id: gitlint
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: efa716b1aab63601b256afc0cda469f0f7606759  # frozen: v0.9.7
+    rev: d119aaff6891558b6eaf52518386871d1d267131  # frozen: v0.11.6
     hooks:
       - id: ruff
         files: ^(scripts|tests|custom_components)/.+\.py$
@@ -49,7 +49,7 @@ repos:
         files: ^(scripts|tests|custom_components)/.+\.py$
 
   - repo: https://github.com/adrienverge/yamllint.git
-    rev: 81e9f98ffd059efe8aa9c1b1a42e5cce61b640c6 # frozen: v1.35.1
+    rev: be92e15345b32661abee2e675d765ae79686eb4c  # frozen: v1.37.0
     hooks:
       - id: yamllint
 
