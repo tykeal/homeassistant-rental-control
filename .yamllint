@@ -11,3 +11,5 @@ rules:
     # prettier forces 1 space comment separator
     min-spaces-from-content: 1
     level: error
+  line-length:
+    max: 120
