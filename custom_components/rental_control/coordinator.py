@@ -464,10 +464,7 @@ class RentalControlCoordinator:
             _LOGGER.error(
                 "%s returned %s - %s", self.url, response.status, response.reason
             )
-
-            # Calendar has failed to load for some reason, unflag the calendar
-            # being loaded
-            self.calendar_loaded = False
+            return
         else:
             text = await response.text()
             # Some calendars are for some reason filled with NULL-bytes.
@@ -484,9 +481,22 @@ class RentalControlCoordinator:
             start_of_events = dt.start_of_local_day()
             end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
 
-            self.calendar = await self._ical_parser(
+            new_calendar: list[CalendarEvent] = await self._ical_parser(
                 event_list, start_of_events, end_of_events
             )
+
+            if len(self.calendar) > 1 and len(new_calendar) == 0:
+                _LOGGER.error(
+                    "No events found in calendar %s, but there are %d events in the old calendar",
+                    self.name,
+                    len(self.calendar),
+                )
+                return
+            else:
+                _LOGGER.debug(
+                    "Found %d events in calendar %s", len(new_calendar), self.name
+                )
+                self.calendar = new_calendar
 
             self.calendar_loaded = True
 
