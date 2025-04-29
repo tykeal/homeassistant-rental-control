@@ -10,11 +10,9 @@ categories:
   - title: ":boom: Breaking Change :boom:"
     labels:
       - "breaking-change"
-  - title: ":zap: Enhancments :zap:"
+  - title: ":sparkles: New Features and Enhancements :sparkles:"
     labels:
       - "enhancement"
-  - title: ":sparkles: New Features :sparkles:"
-    labels:
       - "feature"
   - title: ":bug: Bug Fixes :bug:"
     labels:
@@ -39,7 +37,7 @@ autolabeler:
   - label: "breaking-change"
     title:
       - "/!:/i"
-  - label: "feature"
+  - label: "enhancement"
     title:
       - "/feat:/i"
   - label: "bug"
