@@ -29,8 +29,6 @@ from homeassistant.util import dt
 import voluptuous as vol
 
 from .config_flow import _lock_entry_convert as lock_entry_convert
-from .const import ATTR_NAME
-from .const import ATTR_NOTIFICATION_SOURCE
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_GENERATE
@@ -41,7 +39,6 @@ from .const import COORDINATOR
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_GENERATE
 from .const import DOMAIN
-from .const import EVENT_RENTAL_CONTROL_REFRESH
 from .const import NAME
 from .const import PLATFORMS
 from .const import UNSUB_LISTENERS
@@ -55,9 +52,6 @@ _LOGGER = logging.getLogger(__name__)
 
 
 CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
-
-SERVICE_GENERATE_PACKAGE = "generate_package"
-SERVICE_UPDATE_CODE_SLOT = "update_code_slot"
 
 
 def setup(hass, config):  # pylint: disable=unused-argument
@@ -298,24 +292,6 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
         await async_start_listener(hass, config_entry)
     else:
         _LOGGER.debug("Skipping re-adding listeners")
-
-    # Update package files
-    if new_data[CONF_LOCK_ENTRY]:
-        rc_name = new_data[CONF_NAME]
-        servicedata = {"rental_control_name": rc_name}
-        await hass.services.async_call(
-            DOMAIN, SERVICE_GENERATE_PACKAGE, servicedata, blocking=True
-        )
-
-        _LOGGER.debug("Firing refresh event")
-        # Fire an event for the startup automation to capture
-        hass.bus.fire(
-            EVENT_RENTAL_CONTROL_REFRESH,
-            event_data={
-                ATTR_NOTIFICATION_SOURCE: "event",
-                ATTR_NAME: rc_name,
-            },
-        )
 
 
 async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:

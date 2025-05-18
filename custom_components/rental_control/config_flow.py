@@ -108,15 +108,11 @@ class RentalControlFlowHandler(config_entries.ConfigFlow):
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
         """Link the Options Flow."""
-        return RentalControlOptionsFlow(config_entry)
+        return RentalControlOptionsFlow()
 
 
 class RentalControlOptionsFlow(config_entries.OptionsFlow):
     """Options flow for Rental Control."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry):
-        """Initialize Options Flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self,
