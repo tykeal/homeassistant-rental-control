@@ -40,7 +40,7 @@ repos:
       - id: gitlint
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: 3d44372123ca5e8617fdb65d9f11facd159b9e95  # frozen: v0.12.3
+    rev: 73b0f6d59bbfcb75e17a4653d581c9dfaca13969  # frozen: v0.12.5
     hooks:
       - id: ruff
         files: ^(scripts|tests|custom_components)/.+\.py$
@@ -62,7 +62,7 @@ repos:
           - setuptools
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: 0f86793af5ef5f6dc63c8d04a3cabfa3ea8f9c6a  # frozen: v1.16.1
+    rev: 850d8bf806620ef89a99381c5cf5ea2c1ea826dd  # frozen: v1.17.0
     hooks:
       - id: mypy
         additional_dependencies:
