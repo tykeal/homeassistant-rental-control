@@ -19,6 +19,10 @@ import asyncio
 import functools
 import logging
 
+from homeassistant.components.button import DOMAIN as BUTTON
+from homeassistant.components.datetime import DOMAIN as DATETIME
+from homeassistant.components.text import DOMAIN as TEXT
+from homeassistant.components.switch import DOMAIN as SWITCH
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.persistent_notification import async_dismiss
 from homeassistant.config_entries import ConfigEntry
@@ -295,7 +299,7 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
 
 
 async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
-    """Start tracking updates to keymaster input entities."""
+    """Start tracking updates to entities."""
     entities: list[str] = []
 
     _LOGGER.debug(f"entry_id = '{config_entry.unique_id}'")
@@ -308,10 +312,12 @@ async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -
     for i in range(
         coordinator.start_slot, coordinator.start_slot + coordinator.max_events
     ):
-        entities.append(f"input_text.{lockname}_pin_{i}")
-        entities.append(f"input_text.{lockname}_name_{i}")
-        entities.append(f"input_datetime.start_date_{lockname}_{i}")
-        entities.append(f"input_datetime.end_date_{lockname}_{i}")
+        entities.append(f"{SWITCH}.{lockname}_code_slot_{i}_enabled")
+        entities.append(f"{TEXT}.{lockname}_code_slot_{i}_pin")
+        entities.append(f"{TEXT}.{lockname}_code_slot_{i}_name")
+        entities.append(f"{DATETIME}.{lockname}_code_slot_{i}_date_range_start")
+        entities.append(f"{DATETIME}.{lockname}_code_slot_{i}_date_range_end")
+        entities.append(f"{BUTTON}.{lockname}_code_slot_{i}_reset")
 
     hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(
         async_track_state_change_event(

@@ -26,13 +26,19 @@ from typing import Dict
 from zoneinfo import ZoneInfo  # noreorder
 
 import async_timeout
+from homeassistant.components.button import DOMAIN as BUTTON
+from homeassistant.components.datetime import DOMAIN as DATETIME
+from homeassistant.components.text import DOMAIN as TEXT
+from homeassistant.components.switch import DOMAIN as SWITCH
 from homeassistant.components.calendar import CalendarEvent
+from homeassistant.components.persistent_notification import async_create
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.util import dt
@@ -58,6 +64,7 @@ from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import REQUEST_TIMEOUT
+from .const import REQUIRED_KEYMASTER_MIN_VERSION
 from .const import VERSION
 from .event_overrides import EventOverrides
 from .sensors.calsensor import RentalControlCalSensor
@@ -123,6 +130,24 @@ class RentalControlCoordinator:
             name=self.name,
             sw_version=self.version,
         )
+
+        entity_registry = er.async_get(hass)
+        if self.lockname:
+            reset_entity = (
+                f"{BUTTON}.{self.lockname.lower()}_code_slot_{self.start_slot}_reset"
+            )
+            has_reset = entity_registry.async_get(reset_entity)
+            if has_reset is None:
+                error_msg = f"""
+The version of Keymaster is incompatible with this version of Rental Control.
+Please update Keymaster to at least {REQUIRED_KEYMASTER_MIN_VERSION}
+"""
+                _LOGGER.error(error_msg)
+                async_create(
+                    hass,
+                    error_msg,
+                    title="Keymaster Incompatible Version",
+                )
 
     @property
     def device_info(self) -> dr.DeviceInfo:
@@ -208,32 +233,65 @@ class RentalControlCoordinator:
         # Get slot overrides on startup
         if not self.calendar_ready and self.lockname:
             for i in range(self.start_slot, self.start_slot + self.max_events):
-                slot_code = self.hass.states.get(f"input_text.{self.lockname}_pin_{i}")
+                slot_code = self.hass.states.get(
+                    f"{TEXT}.{self.lockname}_code_slot_{i}_pin"
+                )
+                _LOGGER.debug("Slot code: '%s'", slot_code)
                 if slot_code is None:
                     continue
+                if slot_code.state == "unknown" or slot_code.state == "unavailable":
+                    slot_code.state = ""
 
-                slot_name = self.hass.states.get(f"input_text.{self.lockname}_name_{i}")
+                slot_name = self.hass.states.get(
+                    f"{TEXT}.{self.lockname}_code_slot_{i}_name"
+                )
+                _LOGGER.debug("Slot name: '%s'", slot_name)
                 if slot_name is None:
                     continue
+                if slot_name.state == "unknown" or slot_name.state == "unavailable":
+                    slot_name.state = ""
 
-                start_time_state = self.hass.states.get(
-                    f"input_datetime.start_date_{self.lockname}_{i}"
+                use_date_range = self.hass.states.get(
+                    f"{SWITCH}.{self.lockname}_code_slot_{i}_use_date_range_limits"
                 )
-                if start_time_state is None:
-                    continue
-                start_time = dt.parse_datetime(start_time_state.state)
-                if start_time is None:
-                    continue
+                if use_date_range and use_date_range.state == "on":
+                    start_time_state = self.hass.states.get(
+                        f"{DATETIME}.{self.lockname}_code_slot_{i}_date_range_start"
+                    )
+                    _LOGGER.debug("Start time: '%s'", start_time_state)
+                    if start_time_state is None:
+                        continue
+                    start_datetime = dt.parse_datetime(start_time_state.state)
+                    _LOGGER.debug("Start time: '%s'", start_datetime)
+                    if start_datetime is None:
+                        continue
+                    start_time = start_datetime
 
-                end_time_state = self.hass.states.get(
-                    f"input_datetime.end_date_{self.lockname}_{i}"
+                    end_time_state = self.hass.states.get(
+                        f"{DATETIME}.{self.lockname}_code_slot_{i}_date_range_end"
+                    )
+                    _LOGGER.debug("End time: '%s'", end_time_state)
+                    if end_time_state is None:
+                        continue
+                    end_datetime = dt.parse_datetime(end_time_state.state)
+                    _LOGGER.debug("End time: '%s'", end_datetime)
+                    if end_datetime is None:
+                        continue
+                    else:
+                        end_time = end_datetime
+                else:
+                    start_time = dt.start_of_local_day()
+                    end_time = dt.start_of_local_day() + timedelta(days=1)
+
+                _LOGGER.debug(
+                    "Slot %d: %s, %s, %s, %s",
+                    i,
+                    slot_code.state,
+                    slot_name.state,
+                    start_time,
+                    end_time,
                 )
-                if end_time_state is None:
-                    continue
-                end_time = dt.parse_datetime(end_time_state.state)
-                if end_time is None:
-                    continue
-
+                _LOGGER.debug("Updating event overrides")
                 await self.update_event_overrides(
                     i,
                     slot_code.state,
@@ -285,7 +343,12 @@ class RentalControlCoordinator:
         # temporary call new_update_event_overrides
         if self.event_overrides:
             self.event_overrides.update(
-                slot, slot_code, slot_name, start_time, end_time, self.event_prefix
+                slot,
+                slot_code,
+                slot_name,
+                start_time,
+                end_time,
+                self.event_prefix,
             )
 
             if self.event_overrides.ready and self.calendar_loaded:
@@ -361,6 +424,7 @@ class RentalControlCoordinator:
                 if override:
                     checkin: time = override["start_time"].time()
                     checkout: time = override["end_time"].time()
+                    _LOGGER.debug("Checkin: %s, Checkout: %s", checkin, checkout)
                 else:
                     try:
                         # If the event has a time, use that, otherwise use the
@@ -371,6 +435,7 @@ class RentalControlCoordinator:
                         checkin = self.checkin
                         checkout = self.checkout
 
+                _LOGGER.debug("Checkin: %s, Checkout: %s", checkin, checkout)
                 _LOGGER.debug("DTSTART in event: %s", event["DTSTART"].dt)
                 dtstart = datetime.combine(event["DTSTART"].dt, checkin, self.timezone)
 
