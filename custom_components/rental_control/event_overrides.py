@@ -15,6 +15,8 @@
 
 import asyncio
 from datetime import datetime
+from datetime import date
+from datetime import time
 import logging
 import re
 from typing import Dict
@@ -165,18 +167,18 @@ class EventOverrides:
                 )
                 clear_code = True
 
-            start_time = self.get_slot_start_time(slot).date()
-            end_time = self.get_slot_end_time(slot).date()
+            start_date = self.get_slot_start_date(slot)
+            end_date = self.get_slot_end_date(slot)
 
             if not len(calendar):
                 _LOGGER.debug(f"No events in calendar, clearing {slot}")
                 clear_code = True
 
-            if not clear_code and start_time > end_time:
+            if not clear_code and start_date > end_date:
                 _LOGGER.debug(f"{slot} start and end times do not make sense, clearing")
                 clear_code = True
 
-            if not clear_code and end_time < cur_date_start:
+            if not clear_code and end_date < cur_date_start:
                 _LOGGER.debug(f"{slot} end is before today, clearing")
                 clear_code = True
 
@@ -186,13 +188,21 @@ class EventOverrides:
                 else:
                     last_end = calendar[-1].end.date()
 
-                if start_time > last_end:
+                if start_date > last_end:
                     _LOGGER.debug(f"{slot} start is after last event ends, clearing")
                     clear_code = True
 
             if clear_code:
                 _LOGGER.debug(f"Firing clear code for slot {slot}")
                 await async_fire_clear_code(coordinator, slot)
+
+                self.update(
+                    slot,
+                    "",
+                    "",
+                    dt.start_of_local_day(),
+                    dt.start_of_local_day(),
+                )
 
                 # signal an update to all the event sensors
                 await asyncio.gather(
@@ -238,31 +248,49 @@ class EventOverrides:
 
         return 0
 
-    def get_slot_start_time(self, slot: int) -> datetime:
-        """Return the start datetime of slot or the start of day if no override."""
+    def get_slot_start_date(self, slot: int) -> date:
+        """Return the start date of slot or today if no override."""
 
         override = self._overrides[slot]
+        date_return: date = dt.start_of_local_day().date()
 
         if override:
             if "start_time" in override:
-                return override["start_time"]
-        else:
-            # because HA doesn't ship type hints we have to ignore this
-            # particular type validation
-            return dt.start_of_local_day()  # type: ignore
+                date_return = override["start_time"].date()
+        return date_return
 
-    def get_slot_end_time(self, slot: int) -> datetime:
-        """Return the end datetime of slot or the start of day if no override."""
+    def get_slot_start_time(self, slot: int) -> time:
+        """Return the start time of slot or the start of day if no override."""
 
         override = self._overrides[slot]
+        time_return: time = time()
+
+        if override:
+            if "start_time" in override:
+                time_return = override["start_time"].time()
+        return time_return
+
+    def get_slot_end_date(self, slot: int) -> date:
+        """Return the end date of slot or today if no override."""
+
+        override = self._overrides[slot]
+        date_return: date = dt.start_of_local_day().date()
 
         if override:
             if "end_time" in override:
-                return override["end_time"]
-        else:
-            # because HA doesn't ship type hints we have to ignore this
-            # particular type validation
-            return dt.start_of_local_day()  # type: ignore
+                date_return = override["end_time"].date()
+        return date_return
+
+    def get_slot_end_time(self, slot: int) -> time:
+        """Return the end time of slot or the start of day if no override."""
+
+        override = self._overrides[slot]
+        time_return: time = time()
+
+        if override:
+            if "end_time" in override:
+                time_return = override["end_time"].time()
+        return time_return
 
     def update(
         self,
@@ -285,12 +313,14 @@ class EventOverrides:
         if slot_name:
             regex = r"^(" + prefix + " )?(.*)$"
             matches = re.findall(regex, slot_name)
-            overrides[slot] = {
-                "slot_name": matches[0][1],
+            slot_name = matches[0][1] if matches else slot_name
+            override: EventOverride = {
+                "slot_name": slot_name,
                 "slot_code": slot_code,
                 "start_time": start_time,
                 "end_time": end_time,
             }
+            overrides[slot] = override
         else:
             overrides[slot] = None
 

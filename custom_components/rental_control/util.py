@@ -27,9 +27,10 @@ from typing import List
 import uuid
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
-from homeassistant.components.input_boolean import DOMAIN as INPUT_BOOLEAN
-from homeassistant.components.input_datetime import DOMAIN as INPUT_DATETIME
-from homeassistant.components.input_text import DOMAIN as INPUT_TEXT
+from homeassistant.components.button import DOMAIN as BUTTON
+from homeassistant.components.datetime import DOMAIN as DATETIME
+from homeassistant.components.switch import DOMAIN as SWITCH
+from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.const import SERVICE_RELOAD
@@ -105,21 +106,15 @@ async def async_fire_clear_code(coordinator, slot: int) -> None:
     """Fire a clear_code signal."""
     _LOGGER.debug(f"In async_fire_clear_code - slot: {slot}, name: {coordinator.name}")
     hass = coordinator.hass
-    reset_entity = f"{INPUT_BOOLEAN}.reset_codeslot_{coordinator.lockname}_{slot}"
+    reset_entity = f"{BUTTON}.{coordinator.lockname}_code_slot_{slot}_reset"
 
     if not coordinator.lockname:
         return
 
-    # Make sure that the reset is already off before sending a turn on event
+    # Reset the slot
     await hass.services.async_call(
-        domain=INPUT_BOOLEAN,
-        service="turn_off",
-        target={"entity_id": reset_entity},
-        blocking=True,
-    )
-    await hass.services.async_call(
-        domain=INPUT_BOOLEAN,
-        service="turn_on",
+        domain=BUTTON,
+        service="press",
         target={"entity_id": reset_entity},
         blocking=True,
     )
@@ -128,54 +123,14 @@ async def async_fire_clear_code(coordinator, slot: int) -> None:
 async def async_fire_set_code(coordinator, event, slot: int) -> None:
     """Set codes into a slot."""
     _LOGGER.debug(f"In async_fire_set_code - slot: {slot}")
+    _LOGGER.debug(f"Event: {event}")
+    _LOGGER.debug(f"Slot: {slot}")
 
     lockname: str = coordinator.lockname
     coro: List[Coroutine] = []
 
     if not lockname:
         return
-
-    # Disable the slot, this should help avoid notices from Keymaster about
-    # pin changes
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        INPUT_BOOLEAN,
-        "turn_off",
-        f"input_boolean.enabled_{lockname}_{slot}",
-        {},
-    )
-    await asyncio.gather(*coro)
-
-    coro.clear()
-
-    # Load the slot data
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        INPUT_DATETIME,
-        "set_datetime",
-        f"input_datetime.end_date_{lockname}_{slot}",
-        {"datetime": event.extra_state_attributes["end"]},
-    )
-
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        INPUT_DATETIME,
-        "set_datetime",
-        f"input_datetime.start_date_{lockname}_{slot}",
-        {"datetime": event.extra_state_attributes["start"]},
-    )
-
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        INPUT_TEXT,
-        "set_value",
-        f"input_text.{lockname}_pin_{slot}",
-        {"value": event.extra_state_attributes["slot_code"]},
-    )
 
     if coordinator.event_prefix:
         prefix = f"{coordinator.event_prefix} "
@@ -184,34 +139,67 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
 
     slot_name = f"{prefix}{event.extra_state_attributes['slot_name']}"
 
+    # Disable the slot, this should help avoid notices from Keymaster about
+    # pin changes
     coro = add_call(
         coordinator.hass,
         coro,
-        INPUT_TEXT,
+        SWITCH,
+        "turn_off",
+        f"{SWITCH}.{lockname}_code_slot_{slot}_enabled",
+        {},
+    )
+    await asyncio.gather(*coro)
+
+    coro.clear()
+
+    # Load the slot data
+    # The new Keymaster requires that we enable date before we can set
+    # anything
+    await coordinator.hass.services.async_call(
+        domain=SWITCH,
+        service="turn_on",
+        target={
+            "entity_id": f"{SWITCH}.{lockname}_code_slot_{slot}_use_date_range_limits"
+        },
+        blocking=True,
+    )
+
+    coro = add_call(
+        coordinator.hass,
+        coro,
+        DATETIME,
         "set_value",
-        f"input_text.{lockname}_name_{slot}",
+        f"{DATETIME}.{lockname}_code_slot_{slot}_date_range_end",
+        {"datetime": event.extra_state_attributes["end"]},
+    )
+
+    coro = add_call(
+        coordinator.hass,
+        coro,
+        DATETIME,
+        "set_value",
+        f"{DATETIME}.{lockname}_code_slot_{slot}_date_range_start",
+        {"datetime": event.extra_state_attributes["start"]},
+    )
+
+    coro = add_call(
+        coordinator.hass,
+        coro,
+        TEXT,
+        "set_value",
+        f"{TEXT}.{lockname}_code_slot_{slot}_pin",
+        {"value": event.extra_state_attributes["slot_code"]},
+    )
+
+    coro = add_call(
+        coordinator.hass,
+        coro,
+        TEXT,
+        "set_value",
+        f"{TEXT}.{lockname}_code_slot_{slot}_name",
         {"value": slot_name},
     )
-
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        INPUT_BOOLEAN,
-        "turn_on",
-        f"input_boolean.daterange_{lockname}_{slot}",
-        {},
-    )
-
-    # Make sure the reset bool is turned off
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        INPUT_BOOLEAN,
-        "turn_off",
-        f"input_boolean.reset_codeslot_{lockname}_{slot}",
-        {},
-    )
-
     # Update the slot details
     await asyncio.gather(*coro)
 
@@ -220,9 +208,9 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     coro = add_call(
         coordinator.hass,
         coro,
-        INPUT_BOOLEAN,
+        SWITCH,
         "turn_on",
-        f"input_boolean.enabled_{lockname}_{slot}",
+        f"{SWITCH}.{lockname}_code_slot_{slot}_enabled",
         {},
     )
 
@@ -243,21 +231,20 @@ async def async_fire_update_times(coordinator, event) -> None:
     coro = add_call(
         coordinator.hass,
         coro,
-        INPUT_DATETIME,
-        "set_datetime",
-        f"input_datetime.end_date_{lockname}_{slot}",
+        DATETIME,
+        "set_value",
+        f"datetime.{lockname}_code_slot_{slot}_date_range_end",
         {"datetime": event.extra_state_attributes["end"]},
     )
 
     coro = add_call(
         coordinator.hass,
         coro,
-        INPUT_DATETIME,
-        "set_datetime",
-        f"input_datetime.start_date_{lockname}_{slot}",
+        DATETIME,
+        "set_value",
+        f"datetime.{lockname}_code_slot_{slot}_date_range_start",
         {"datetime": event.extra_state_attributes["start"]},
     )
-
     # Update the slot details
     await asyncio.gather(*coro)
 
@@ -353,31 +340,82 @@ async def handle_state_change(
 
     entity_id = event.data["entity_id"]
 
-    slot_num = int(entity_id.split("_")[-1])
+    _LOGGER.debug(
+        f"Handling state change for {entity_id} in {lockname} with event: {event}"
+    )
 
-    slot_code = hass.states.get(f"input_text.{lockname}_pin_{slot_num}")
+    slot_num = int([int(s) for s in entity_id.split("_") if s.isdigit()][0])
+
+    if "_reset" in entity_id:
+        _LOGGER.debug(f"Resetting overrides {slot_num} for {lockname}.")
+        coordinator.event_overrides.update(
+            slot_num, "", "", dt.start_of_local_day(), dt.start_of_local_day()
+        )
+        return
+
+    slot_state = hass.states.get(f"switch.{lockname}_code_slot_{slot_num}_enabled")
+    _LOGGER.debug(f"Slot {slot_num} state: {slot_state}")
+    if slot_state is None:
+        return
+
+    if slot_state.state != "on":
+        _LOGGER.debug(
+            f"Slot {slot_num} is not enabled, skipping update for {lockname}."
+        )
+        return
+
+    slot_code = hass.states.get(f"text.{lockname}_code_slot_{slot_num}_pin")
+    slot_name = hass.states.get(f"text.{lockname}_code_slot_{slot_num}_name")
+
+    use_date_range = hass.states.get(
+        f"switch.{lockname}_code_slot_{slot_num}_use_date_range_limits"
+    )
+    _LOGGER.debug(f"Use Date Range: {use_date_range}")
+    if use_date_range and use_date_range.state == "on":
+        g_start_time = hass.states.get(
+            f"datetime.{lockname}_code_slot_{slot_num}_date_range_start"
+        )
+        g_end_time = hass.states.get(
+            f"datetime.{lockname}_code_slot_{slot_num}_date_range_end"
+        )
+    else:
+        g_start_time = None
+        g_end_time = None
+
     if slot_code is None:
         return
-
-    slot_name = hass.states.get(f"input_text.{lockname}_name_{slot_num}")
+    if slot_code.state == "unknown" or slot_code.state == "unavailable":
+        slot_code.state = ""
     if slot_name is None:
         return
+    if slot_name.state == "unknown" or slot_name.state == "unavailable":
+        slot_name.state = ""
 
-    start_time = hass.states.get(f"input_datetime.start_date_{lockname}_{slot_num}")
-    if start_time is None:
-        return
+    if g_start_time is None:
+        start_time = dt.start_of_local_day()
+    else:
+        p_start_time = dt.parse_datetime(g_start_time.state)
+        if p_start_time:
+            start_time = p_start_time
 
-    end_time = hass.states.get(f"input_datetime.end_date_{lockname}_{slot_num}")
-    if end_time is None:
-        return
+    if g_end_time is None:
+        end_time = dt.start_of_local_day()
+    else:
+        p_end_time = dt.parse_datetime(g_end_time.state)
+        if p_end_time:
+            end_time = p_end_time
 
-    _LOGGER.debug(f"updating overrides for {lockname} slot {slot_num}")
+    _LOGGER.debug(
+        f"updating overrides for {lockname} slot {slot_num}. ",
+        f"slot_name: '{slot_name}', slot_code: '{slot_code}', ",
+        f"start_time: '{start_time}', end_time: '{end_time}'",
+    )
     await coordinator.update_event_overrides(
         slot_num,
         slot_code.state,
         slot_name.state,
-        dt.parse_datetime(start_time.state),
-        dt.parse_datetime(end_time.state),
+        start_time,
+        end_time,
     )
 
     # validate overrides

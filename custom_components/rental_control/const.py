@@ -10,6 +10,8 @@ DOMAIN_DATA = f"{DOMAIN}_DATA"
 VERSION = "0.0.1"
 LOCK_MANAGER = "keymaster"
 
+REQUIRED_KEYMASTER_MIN_VERSION = "v0.1.0-b0"
+
 ISSUE_URL = "https://github.com/tykeal/homeassistant-rental-control/issues"
 
 # In seconds; argument to asyncio.timeout
