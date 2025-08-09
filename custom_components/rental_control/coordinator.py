@@ -361,7 +361,7 @@ Please update Keymaster to at least {REQUIRED_KEYMASTER_MIN_VERSION}
         self.next_refresh = dt.now()
 
     async def _ical_parser(
-        self, calendar: Calendar, from_date: dt.dt.datetime, to_date: dt.dt.datetime
+        self, calendar: Calendar, from_date: datetime, to_date: datetime
     ) -> list[CalendarEvent]:
         """Return a sorted list of events from a icalendar object."""
 
@@ -422,13 +422,22 @@ Please update Keymaster to at least {REQUIRED_KEYMASTER_MIN_VERSION}
                     override = self.event_overrides.get_slot_with_name(slot_name)
 
                 if override:
-                    checkin: time = override["start_time"].time()
-                    checkout: time = override["end_time"].time()
+                    # Get start & end overrides in the correct timezone
+                    # Overrides are stored in UTC since Keymaster's time
+                    # start end end configurations values are in UTC
+                    start_time: datetime = override["start_time"].astimezone(
+                        self.timezone
+                    )
+                    end_time: datetime = override["end_time"].astimezone(self.timezone)
+                    checkin: time = start_time.time()
+                    checkout: time = end_time.time()
                     _LOGGER.debug("Checkin: %s, Checkout: %s", checkin, checkout)
                 else:
                     try:
                         # If the event has a time, use that, otherwise use the
                         # default checkin/checkout times
+                        # No need to do tz conversion here, as the
+                        # DTSTART and DTEND are already in the correct timezone
                         checkin = event["DTSTART"].dt.time()
                         checkout = event["DTEND"].dt.time()
                     except AttributeError:
@@ -437,22 +446,30 @@ Please update Keymaster to at least {REQUIRED_KEYMASTER_MIN_VERSION}
 
                 _LOGGER.debug("Checkin: %s, Checkout: %s", checkin, checkout)
                 _LOGGER.debug("DTSTART in event: %s", event["DTSTART"].dt)
-                dtstart = datetime.combine(event["DTSTART"].dt, checkin, self.timezone)
+                dtstart: datetime = datetime.combine(
+                    event["DTSTART"].dt, checkin, self.timezone
+                )
+                # convert dtstart to UTC
+                dtstart = dt.as_utc(dtstart)
 
-                start = dtstart
+                start: datetime = dtstart
 
                 if "DTEND" not in event:
-                    dtend = dtstart
+                    dtend: datetime = dtstart
                 else:
                     _LOGGER.debug("DTEND in event: %s", event["DTEND"].dt)
                     dtend = datetime.combine(event["DTEND"].dt, checkout, self.timezone)
+                # convert dtend to UTC
+                dtend = dt.as_utc(dtend)
                 end = dtend
 
                 # Modify the SUMMARY if we have an event_prefix
                 if self.event_prefix:
                     event["SUMMARY"] = self.event_prefix + " " + event["SUMMARY"]
 
-                cal_event = await self._ical_event(start, end, from_date, event)
+                cal_event: CalendarEvent | None = await self._ical_event(
+                    start, end, from_date, event
+                )
                 if cal_event:
                     events.append(cal_event)
 
@@ -467,9 +484,14 @@ Please update Keymaster to at least {REQUIRED_KEYMASTER_MIN_VERSION}
         event: Dict[Any, Any],
     ) -> CalendarEvent | None:
         """Ensure that events are within the start and end."""
+        _LOGGER.debug(
+            "Running _ical_event for %s", str(event.get("SUMMARY", "Unknown"))
+        )
+        _LOGGER.debug("Start: %s, End: %s", start, end)
+        _LOGGER.debug("From: %s", from_date)
         # Ignore events that ended this midnight.
-        if (end.date() < from_date.date()) or (
-            end.date() == from_date.date()
+        if (dt.as_utc(end).date() < dt.as_utc(from_date).date()) or (
+            dt.as_utc(end).date() == dt.as_utc(from_date).date()
             and end.hour == 0
             and end.minute == 0
             and end.second == 0

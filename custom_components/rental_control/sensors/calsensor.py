@@ -12,6 +12,7 @@ import re
 
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.util import dt as dt
 
 from ..const import ICON
 from ..util import async_fire_clear_code
@@ -314,8 +315,10 @@ class RentalControlCalSensor(Entity):
                 not set_code
                 and override
                 and (
-                    override["start_time"].date() != event.start.date()
-                    or override["end_time"].date() != event.end.date()
+                    dt.as_utc(override["start_time"]).date()
+                    != dt.as_utc(event.start).date()
+                    or dt.as_utc(override["end_time"]).date()
+                    != dt.as_utc(event.end).date()
                 )
             ):
                 update_times = True
