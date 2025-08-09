@@ -64,7 +64,6 @@ from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import REQUEST_TIMEOUT
-from .const import REQUIRED_KEYMASTER_MIN_VERSION
 from .const import VERSION
 from .event_overrides import EventOverrides
 from .sensors.calsensor import RentalControlCalSensor
@@ -138,9 +137,9 @@ class RentalControlCoordinator:
             )
             has_reset = entity_registry.async_get(reset_entity)
             if has_reset is None:
-                error_msg = f"""
+                error_msg = """
 The version of Keymaster is incompatible with this version of Rental Control.
-Please update Keymaster to at least {REQUIRED_KEYMASTER_MIN_VERSION}
+Please update Keymaster to at least v0.1.0-b0
 """
                 _LOGGER.error(error_msg)
                 async_create(
