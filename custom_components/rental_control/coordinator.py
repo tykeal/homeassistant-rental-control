@@ -489,7 +489,7 @@ Please update Keymaster to at least v0.1.0-b0
         _LOGGER.debug("Start: %s, End: %s", start, end)
         _LOGGER.debug("From: %s", from_date)
         # Ignore events that ended this midnight.
-        if (dt.as_utc(end).date() < dt.as_utc(from_date).date()) or (
+        if (dt.as_utc(end) < dt.as_utc(from_date)) or (
             dt.as_utc(end).date() == dt.as_utc(from_date).date()
             and end.hour == 0
             and end.minute == 0
