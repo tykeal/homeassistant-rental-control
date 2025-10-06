@@ -40,7 +40,7 @@ repos:
       - id: gitlint
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: f298305809c552671cc47e0fec0ba43e96c146a2  # frozen: v0.13.2
+    rev: 9c89adb347f6b973f4905a4be0051eb2ecf85dea  # frozen: v0.13.3
     hooks:
       - id: ruff
         files: ^(scripts|tests|custom_components)/.+\.py$
@@ -69,7 +69,7 @@ repos:
           - types-pytz
 
   - repo: https://github.com/fsfe/reuse-tool
-    rev: 8b8bbd873b2af6b2a2521ab2b1ff07b2ab624840  # frozen: v5.1.1
+    rev: 3b1a1a25613abcbe1afa2e0226a39b7cf1017d88  # frozen: v6.0.0
     hooks:
       - id: reuse
 
