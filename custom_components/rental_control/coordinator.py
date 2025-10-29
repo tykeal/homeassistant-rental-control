@@ -55,12 +55,14 @@ from .const import CONF_EVENT_PREFIX
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
+from .const import CONF_MAX_MISSES
 from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_CODE_LENGTH
+from .const import DEFAULT_MAX_MISSES
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import REQUEST_TIMEOUT
@@ -100,6 +102,8 @@ class RentalControlCoordinator:
         self.start_slot: int = int(str(config.get(CONF_START_SLOT)))
         self.lockname: str | None = config.get(CONF_LOCK_ENTRY)
         self.max_events: int = int(str(config.get(CONF_MAX_EVENTS)))
+        self.max_misses: int = int(str(config.get(CONF_MAX_MISSES, DEFAULT_MAX_MISSES)))
+        self.num_misses: int = 0
         self.days: int = int(str(config.get(CONF_DAYS)))
         self.ignore_non_reserved: bool = bool(config.get(CONF_IGNORE_NON_RESERVED))
         self.verify_ssl: bool = bool(config.get(CONF_VERIFY_SSL))
@@ -571,17 +575,31 @@ Please update Keymaster to at least v0.1.0-b0
                 event_list, start_of_events, end_of_events
             )
 
-            if len(self.calendar) > 1 and len(new_calendar) == 0:
+            if len(self.calendar) >= 1 and len(new_calendar) == 0:
                 _LOGGER.error(
                     "No events found in calendar %s, but there are %d events in the old calendar",
                     self.name,
                     len(self.calendar),
                 )
                 return
+            elif (
+                len(self.calendar) == 1
+                and len(new_calendar) == 0
+                and self.num_misses < self.max_misses
+            ):
+                self.num_misses += 1
+                _LOGGER.warning(
+                    "No events found in calendar %s. Miss %d of %d",
+                    self.name,
+                    self.num_misses,
+                    self.max_misses,
+                )
+                return
             else:
                 _LOGGER.debug(
                     "Found %d events in calendar %s", len(new_calendar), self.name
                 )
+                self.num_misses = 0
                 self.calendar = new_calendar
 
             self.calendar_loaded = True
