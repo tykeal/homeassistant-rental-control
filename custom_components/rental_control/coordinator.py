@@ -575,7 +575,7 @@ Please update Keymaster to at least v0.1.0-b0
                 event_list, start_of_events, end_of_events
             )
 
-            if len(self.calendar) >= 1 and len(new_calendar) == 0:
+            if len(self.calendar) > 1 and len(new_calendar) == 0:
                 _LOGGER.error(
                     "No events found in calendar %s, but there are %d events in the old calendar",
                     self.name,
