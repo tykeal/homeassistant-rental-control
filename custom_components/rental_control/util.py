@@ -313,6 +313,12 @@ def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
         if len(ret):
             return str(ret[0]).strip()
 
+    # Guesty API
+    p = re.compile(r"^Reservation (.*)")
+    ret = p.findall(name)
+    if len(ret):
+        return str(ret[0]).strip()
+
     # Guesty
     p = re.compile(r"-(.*)-.*-")
     ret = p.findall(name)
