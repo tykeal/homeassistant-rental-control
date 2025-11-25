@@ -96,10 +96,10 @@ SPDX-License-Identifier: Apache-2.0
 - [X] T037 [US1] Add test_async_unload_entry to verify integration cleanup and entity removal in tests/unit/test_init.py
 - [X] T038 [US1] Add test_platform_loading to verify sensor and calendar platforms are loaded in tests/unit/test_init.py
 - [X] T039 [US1] Add test_config_entry_reload to verify entry reload updates coordinator config in tests/unit/test_init.py
-- [ ] T039a [US1] Add test_service_registration to verify service calls are registered correctly (FR-018) in tests/unit/test_init.py
-- [ ] T039b [US1] Add test_platform_reload to verify platform reloading functionality works (FR-018) in tests/unit/test_init.py
-- [ ] T039c [US1] Add test_state_change_listeners to verify state change listeners are registered (FR-019) in tests/unit/test_coordinator.py
-- [ ] T039d [US1] Add test_event_handling to verify event handling callbacks work correctly (FR-019) in tests/unit/test_coordinator.py
+- [X] T039a [US1] Add test_service_registration to verify service calls are registered correctly (FR-018) in tests/unit/test_init.py
+- [X] T039b [US1] Add test_platform_reload to verify platform reloading functionality works (FR-018) in tests/unit/test_init.py
+- [X] T039c [US1] Add test_state_change_listeners to verify state change listeners are registered (FR-019) in tests/unit/test_coordinator.py
+- [X] T039d [US1] Add test_event_handling to verify event handling callbacks work correctly (FR-019) in tests/unit/test_coordinator.py
 
 **Note on FR-017 (Keymaster Integration)**: The current codebase review indicates no Keymaster-specific features are implemented. If Keymaster integration is added in the future, tasks should be added to test lock code synchronization and state management. For now, this requirement is marked as not applicable to current implementation scope.
 
