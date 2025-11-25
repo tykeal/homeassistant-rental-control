@@ -27,11 +27,11 @@ SPDX-License-Identifier: Apache-2.0
 
 **Purpose**: Project initialization and test infrastructure setup
 
-- [ ] T001 Verify test dependencies are installed per requirements_test.txt
-- [ ] T002 Create tests/__init__.py with SPDX header and module docstring
-- [ ] T003 [P] Create tests/fixtures/__init__.py with SPDX header and module docstring
-- [ ] T004 [P] Create tests/unit/__init__.py with SPDX header and module docstring
-- [ ] T005 [P] Create tests/integration/__init__.py with SPDX header and module docstring
+- [X] T001 Verify test dependencies are installed per requirements_test.txt
+- [X] T002 Create tests/__init__.py with SPDX header and module docstring
+- [X] T003 [P] Create tests/fixtures/__init__.py with SPDX header and module docstring
+- [X] T004 [P] Create tests/unit/__init__.py with SPDX header and module docstring
+- [X] T005 [P] Create tests/integration/__init__.py with SPDX header and module docstring
 
 ---
 
@@ -41,13 +41,13 @@ SPDX-License-Identifier: Apache-2.0
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T006 Create tests/conftest.py with basic pytest configuration and hass fixture imports
-- [ ] T007 [P] Create tests/fixtures/calendar_data.py with ICS calendar string fixtures for Airbnb, VRBO, and generic formats
-- [ ] T008 [P] Create tests/fixtures/config_entries.py with mock configuration entry fixtures (minimal, complete, invalid scenarios)
-- [ ] T009 [P] Create tests/fixtures/event_data.py with event description fixtures containing various guest info patterns
-- [ ] T010 Add pytest fixtures to tests/conftest.py for valid_ics_calendar, mock_calendar_url using aioresponses, and mock_config_entry
-- [ ] T011 Add helper fixtures to tests/conftest.py for setup_integration and entity state assertion utilities
-- [ ] T012 Configure pytest coverage settings in pyproject.toml to set fail_under=80 as initial target
+- [X] T006 Create tests/conftest.py with basic pytest configuration and hass fixture imports
+- [X] T007 [P] Create tests/fixtures/calendar_data.py with ICS calendar string fixtures for Airbnb, VRBO, and generic formats
+- [X] T008 [P] Create tests/fixtures/config_entries.py with mock configuration entry fixtures (minimal, complete, invalid scenarios)
+- [X] T009 [P] Create tests/fixtures/event_data.py with event description fixtures containing various guest info patterns
+- [X] T010 Add pytest fixtures to tests/conftest.py for valid_ics_calendar, mock_calendar_url using aioresponses, and mock_config_entry
+- [X] T011 Add helper fixtures to tests/conftest.py for setup_integration and entity state assertion utilities
+- [X] T012 Configure pytest coverage settings in pyproject.toml to set fail_under=80 as initial target
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -63,9 +63,9 @@ SPDX-License-Identifier: Apache-2.0
 
 #### Coordinator Tests (coordinator.py)
 
-- [ ] T013 [P] [US1] Create tests/unit/test_coordinator.py with SPDX header and module docstring
-- [ ] T014 [US1] Add test_coordinator_initialization to verify RentalControlCoordinator initializes with correct config in tests/unit/test_coordinator.py
-- [ ] T015 [US1] Add test_coordinator_first_refresh to verify async_config_entry_first_refresh fetches calendar data in tests/unit/test_coordinator.py
+- [X] T013 [P] [US1] Create tests/unit/test_coordinator.py with SPDX header and module docstring
+- [X] T014 [US1] Add test_coordinator_initialization to verify RentalControlCoordinator initializes with correct config in tests/unit/test_coordinator.py
+- [X] T015 [US1] Add test_coordinator_first_refresh to verify async_config_entry_first_refresh fetches calendar data in tests/unit/test_coordinator.py
 - [ ] T016 [US1] Add test_coordinator_scheduled_refresh to verify coordinator updates on interval using async_fire_time_changed in tests/unit/test_coordinator.py
 - [ ] T017 [US1] Add test_coordinator_refresh_success to verify successful calendar fetch and event parsing in tests/unit/test_coordinator.py
 - [ ] T018 [US1] Add test_coordinator_refresh_network_error to verify error handling for HTTP failures in tests/unit/test_coordinator.py
@@ -75,7 +75,7 @@ SPDX-License-Identifier: Apache-2.0
 
 #### Config Flow Tests (config_flow.py)
 
-- [ ] T022 [P] [US1] Create tests/unit/test_config_flow.py with SPDX header and module docstring
+- [X] T022 [P] [US1] Create tests/unit/test_config_flow.py with SPDX header and module docstring
 - [ ] T023 [US1] Add test_config_flow_user_init to verify initial config flow presents form with required fields in tests/unit/test_config_flow.py
 - [ ] T024 [US1] Add test_config_flow_user_submit_valid to verify successful submission with minimal required fields in tests/unit/test_config_flow.py
 - [ ] T025 [US1] Add test_config_flow_user_submit_complete to verify submission with all optional fields in tests/unit/test_config_flow.py
@@ -90,7 +90,7 @@ SPDX-License-Identifier: Apache-2.0
 
 #### Initialization Tests (__init__.py)
 
-- [ ] T034 [P] [US1] Create tests/unit/test_init.py with SPDX header and module docstring
+- [X] T034 [P] [US1] Create tests/unit/test_init.py with SPDX header and module docstring
 - [ ] T035 [US1] Add test_async_setup_entry to verify integration setup creates coordinator and loads platforms in tests/unit/test_init.py
 - [ ] T036 [US1] Add test_async_setup_entry_failure to verify setup handles coordinator initialization errors in tests/unit/test_init.py
 - [ ] T037 [US1] Add test_async_unload_entry to verify integration cleanup and entity removal in tests/unit/test_init.py
