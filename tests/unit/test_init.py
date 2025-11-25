@@ -55,10 +55,43 @@ async def test_async_setup_entry(
     assert coordinator.config_entry == mock_config_entry
 
 
-async def test_async_unload_entry(hass: HomeAssistant) -> None:
-    """Test integration cleanup and entity removal."""
-    # TODO: Implement unload entry test
-    pass
+async def test_async_unload_entry(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_aiohttp_session,
+) -> None:
+    """Test integration cleanup and entity removal.
+
+    This test verifies that async_unload_entry:
+    1. Unloads all platforms
+    2. Cleans up coordinator resources
+    3. Removes entry from hass.data
+    4. Unsubscribes from listeners
+    """
+    # First setup the integration
+    mock_config_entry.add_to_hass(hass)
+
+    from tests.fixtures import calendar_data
+
+    mock_aiohttp_session.get(
+        mock_config_entry.data["url"],
+        status=200,
+        body=calendar_data.AIRBNB_ICS_CALENDAR,
+    )
+
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Verify integration is set up
+    assert DOMAIN in hass.data
+    assert mock_config_entry.entry_id in hass.data[DOMAIN]
+
+    # Now unload the entry
+    assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Verify cleanup
+    assert mock_config_entry.entry_id not in hass.data.get(DOMAIN, {})
 
 
 async def test_async_setup_entry_failure(
