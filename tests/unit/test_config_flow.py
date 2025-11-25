@@ -229,3 +229,41 @@ async def test_config_flow_validation_missing_url(hass: HomeAssistant) -> None:
     # Check if it's marked as Required by checking the key type
     url_key = [k for k in schema.keys() if str(k.schema) == CONF_URL][0]
     assert url_key.__class__.__name__ == "Required"
+
+
+async def test_config_flow_validation_invalid_url(hass: HomeAssistant) -> None:
+    """Test validation error for malformed URL.
+
+    Verifies that:
+    - Config flow rejects non-HTTPS URLs
+    - Error message indicates only HTTPS is supported
+    - Form is re-displayed with error details
+
+    Per config_flow.py line 340: "We require that the URL be an SSL URL"
+    """
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+        data={
+            CONF_NAME: "Test Rental",
+            CONF_URL: "http://example.com/calendar.ics",  # HTTP instead of HTTPS
+            "verify_ssl": True,
+            "ignore_non_reserved": True,
+            "keymaster_entry_id": "(none)",
+            CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+            "timezone": "UTC",
+            "event_prefix": "",
+            CONF_CHECKIN: DEFAULT_CHECKIN,
+            CONF_CHECKOUT: DEFAULT_CHECKOUT,
+            CONF_DAYS: DEFAULT_DAYS,
+            CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+            CONF_START_SLOT: DEFAULT_START_SLOT,
+            CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+            CONF_CODE_GENERATION: "Start/End Date",
+            "should_update_code": True,
+        },
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {CONF_URL: "invalid_url"}
