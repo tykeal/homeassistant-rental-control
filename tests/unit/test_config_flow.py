@@ -198,3 +198,34 @@ async def test_config_flow_validation_missing_name(hass: HomeAssistant) -> None:
     # Check if it's marked as Required by checking the key type
     name_key = [k for k in schema.keys() if str(k.schema) == CONF_NAME][0]
     assert name_key.__class__.__name__ == "Required"
+
+
+async def test_config_flow_validation_missing_url(hass: HomeAssistant) -> None:
+    """Test validation error when URL is missing.
+
+    Verifies that:
+    - Config flow requires url field (voluptuous validation)
+    - Empty or missing URL field is rejected
+    - Form includes URL as required field
+
+    Note: In Home Assistant config flows, the schema validation with vol.Required
+    prevents truly missing required fields. This test documents that the schema
+    requires a URL field exists.
+    """
+    # Test that the initial form includes url as a required field
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "user"
+
+    # Verify schema has url as required field
+    schema = result["data_schema"].schema
+    schema_keys = {str(key.schema): key for key in schema.keys()}
+
+    # CONF_URL should be in schema
+    assert CONF_URL in schema_keys
+    # Check if it's marked as Required by checking the key type
+    url_key = [k for k in schema.keys() if str(k.schema) == CONF_URL][0]
+    assert url_key.__class__.__name__ == "Required"
