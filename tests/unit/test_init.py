@@ -94,6 +94,37 @@ async def test_async_unload_entry(
     assert mock_config_entry.entry_id not in hass.data.get(DOMAIN, {})
 
 
+async def test_platform_loading(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_aiohttp_session,
+) -> None:
+    """Test sensor and calendar platforms are loaded.
+
+    This test verifies that the integration correctly forwards
+    setup to both sensor and calendar platforms during initialization.
+    """
+    mock_config_entry.add_to_hass(hass)
+
+    from tests.fixtures import calendar_data
+
+    mock_aiohttp_session.get(
+        mock_config_entry.data["url"],
+        status=200,
+        body=calendar_data.AIRBNB_ICS_CALENDAR,
+    )
+
+    # Setup the integration
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Verify platforms are registered
+    # Check that sensor platform was loaded
+    assert f"{DOMAIN}.sensor" in hass.config.components
+    # Check that calendar platform was loaded
+    assert f"{DOMAIN}.calendar" in hass.config.components
+
+
 async def test_async_setup_entry_failure(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
