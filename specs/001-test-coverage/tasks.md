@@ -80,7 +80,7 @@ SPDX-License-Identifier: Apache-2.0
 - [X] T024 [US1] Add test_config_flow_user_submit_valid to verify successful submission with minimal required fields in tests/unit/test_config_flow.py
 - [X] T025 [US1] Add test_config_flow_user_submit_complete to verify submission with all optional fields in tests/unit/test_config_flow.py
 - [X] T026 [US1] Add test_config_flow_validation_missing_name to verify validation error when name is missing in tests/unit/test_config_flow.py
-- [ ] T027 [US1] Add test_config_flow_validation_missing_url to verify validation error when url is missing in tests/unit/test_config_flow.py
+- [X] T027 [US1] Add test_config_flow_validation_missing_url to verify validation error when url is missing in tests/unit/test_config_flow.py
 - [ ] T028 [US1] Add test_config_flow_validation_invalid_url to verify validation error for malformed URL in tests/unit/test_config_flow.py
 - [ ] T029 [US1] Add test_config_flow_validation_invalid_refresh to verify validation error for out-of-range refresh_frequency in tests/unit/test_config_flow.py
 - [ ] T030 [US1] Add test_config_flow_validation_invalid_max_events to verify validation error for invalid max_events value in tests/unit/test_config_flow.py
