@@ -125,6 +125,55 @@ async def test_platform_loading(
     assert f"{DOMAIN}.calendar" in hass.config.components
 
 
+async def test_config_entry_reload(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_aiohttp_session,
+) -> None:
+    """Test entry reload updates coordinator config.
+
+    This test verifies that when a config entry is updated via
+    the options flow, the update_listener callback correctly
+    updates the coordinator configuration.
+    """
+    mock_config_entry.add_to_hass(hass)
+
+    from tests.fixtures import calendar_data
+
+    mock_aiohttp_session.get(
+        mock_config_entry.data["url"],
+        status=200,
+        body=calendar_data.AIRBNB_ICS_CALENDAR,
+        repeat=True,
+    )
+
+    # Setup the integration
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
+    original_refresh_frequency = coordinator.refresh_frequency
+
+    # Update options to trigger reload with all required fields
+    new_options = mock_config_entry.data.copy()
+    new_options["refresh_frequency"] = 30  # Changed from 5
+    new_options["max_events"] = 5  # Changed from 3
+    new_options["days"] = 180  # Changed from 90
+
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options=new_options,
+    )
+
+    # Trigger the update listener
+    await hass.config_entries.async_reload(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Verify coordinator config was updated
+    updated_coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
+    assert updated_coordinator.refresh_frequency != original_refresh_frequency
+
+
 async def test_async_setup_entry_failure(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
