@@ -95,7 +95,7 @@ SPDX-License-Identifier: Apache-2.0
 - [X] T036 [US1] Add test_async_setup_entry_failure to verify setup handles coordinator initialization errors in tests/unit/test_init.py
 - [X] T037 [US1] Add test_async_unload_entry to verify integration cleanup and entity removal in tests/unit/test_init.py
 - [X] T038 [US1] Add test_platform_loading to verify sensor and calendar platforms are loaded in tests/unit/test_init.py
-- [ ] T039 [US1] Add test_config_entry_reload to verify entry reload updates coordinator config in tests/unit/test_init.py
+- [X] T039 [US1] Add test_config_entry_reload to verify entry reload updates coordinator config in tests/unit/test_init.py
 - [ ] T039a [US1] Add test_service_registration to verify service calls are registered correctly (FR-018) in tests/unit/test_init.py
 - [ ] T039b [US1] Add test_platform_reload to verify platform reloading functionality works (FR-018) in tests/unit/test_init.py
 - [ ] T039c [US1] Add test_state_change_listeners to verify state change listeners are registered (FR-019) in tests/unit/test_coordinator.py
