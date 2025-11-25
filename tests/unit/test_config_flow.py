@@ -267,3 +267,50 @@ async def test_config_flow_validation_invalid_url(hass: HomeAssistant) -> None:
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {CONF_URL: "invalid_url"}
+
+
+async def test_config_flow_validation_invalid_refresh(hass: HomeAssistant) -> None:
+    """Test validation error for out-of-range refresh_frequency.
+
+    Verifies that:
+    - Config flow rejects refresh_frequency < 0 or > 1440
+    - Error message indicates valid range is 0-1440 minutes
+    - Form is re-displayed with error details
+
+    Per config_flow.py lines 365-368: refresh must be between 0 and 1440
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                "verify_ssl": True,
+                "ignore_non_reserved": True,
+                "keymaster_entry_id": "(none)",
+                CONF_REFRESH_FREQUENCY: 2000,  # Out of range (max is 1440)
+                "timezone": "UTC",
+                "event_prefix": "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                "should_update_code": True,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {CONF_REFRESH_FREQUENCY: "bad_refresh"}
