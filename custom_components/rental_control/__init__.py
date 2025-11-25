@@ -21,10 +21,10 @@ import logging
 
 from homeassistant.components.button import DOMAIN as BUTTON
 from homeassistant.components.datetime import DOMAIN as DATETIME
-from homeassistant.components.text import DOMAIN as TEXT
-from homeassistant.components.switch import DOMAIN as SWITCH
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.persistent_notification import async_dismiss
+from homeassistant.components.switch import DOMAIN as SWITCH
+from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
@@ -322,7 +322,7 @@ async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -
     hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(
         async_track_state_change_event(
             hass,
-            [entity for entity in entities],
+            list(entities),
             functools.partial(handle_state_change, hass, config_entry),
         )
     )

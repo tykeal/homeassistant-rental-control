@@ -27,11 +27,11 @@ from zoneinfo import ZoneInfo  # noreorder
 
 import async_timeout
 from homeassistant.components.button import DOMAIN as BUTTON
-from homeassistant.components.datetime import DOMAIN as DATETIME
-from homeassistant.components.text import DOMAIN as TEXT
-from homeassistant.components.switch import DOMAIN as SWITCH
 from homeassistant.components.calendar import CalendarEvent
+from homeassistant.components.datetime import DOMAIN as DATETIME
 from homeassistant.components.persistent_notification import async_create
+from homeassistant.components.switch import DOMAIN as SWITCH
+from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL

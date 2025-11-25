@@ -15,10 +15,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 
-from .coordinator import RentalControlCoordinator
 from .const import COORDINATOR
 from .const import DOMAIN
 from .const import NAME
+from .coordinator import RentalControlCoordinator
 from .util import gen_uuid
 
 _LOGGER = logging.getLogger(__name__)
