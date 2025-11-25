@@ -109,9 +109,53 @@ async def test_coordinator_scheduled_refresh(
 async def test_coordinator_refresh_success(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
-    """Test successful calendar fetch and event parsing."""
-    # TODO: Implement successful refresh test
-    pass
+    """Test successful calendar fetch and event parsing.
+
+    Verifies that coordinator successfully fetches ICS data from URL,
+    parses events, and updates internal calendar state.
+    """
+    from datetime import datetime
+    from datetime import timedelta
+
+    mock_config_entry.add_to_hass(hass)
+
+    # Create ICS with future events
+    future_start = (datetime.now() + timedelta(days=5)).strftime("%Y%m%d")
+    future_end = (datetime.now() + timedelta(days=10)).strftime("%Y%m%d")
+
+    future_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test Calendar//EN
+BEGIN:VEVENT
+DTSTART:{future_start}T140000Z
+DTEND:{future_end}T110000Z
+UID:test-event@example.com
+SUMMARY:Reserved: Test Guest
+DESCRIPTION:Email: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+    with aioresponses() as mock_session:
+        mock_session.get(
+            "https://example.com/calendar.ics",
+            status=200,
+            body=future_ics,
+        )
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        # Trigger refresh
+        await coordinator.update()
+        await hass.async_block_till_done()
+
+        # Verify calendar was loaded successfully
+        assert coordinator.calendar_loaded is True
+        assert len(coordinator.calendar) > 0
+
+        # Verify events were parsed from the ICS data
+        assert coordinator.calendar[0].summary == "Reserved: Test Guest"
 
 
 async def test_coordinator_refresh_network_error(
