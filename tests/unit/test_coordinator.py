@@ -161,9 +161,45 @@ END:VCALENDAR
 async def test_coordinator_refresh_network_error(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
-    """Test error handling for HTTP failures."""
-    # TODO: Implement network error test
-    pass
+    """Test error handling for HTTP failures.
+
+    Verifies that coordinator handles HTTP error responses gracefully
+    and doesn't crash when calendar URL returns HTTP errors.
+    """
+    mock_config_entry.add_to_hass(hass)
+
+    with aioresponses() as mock_session:
+        # Mock a 404 Not Found error
+        mock_session.get(
+            "https://example.com/calendar.ics",
+            status=404,
+        )
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        # Trigger refresh - should not raise exception
+        await coordinator.update()
+        await hass.async_block_till_done()
+
+        # Calendar should not be loaded on HTTP error
+        assert coordinator.calendar_loaded is False
+        assert len(coordinator.calendar) == 0
+
+    # Test with 500 Internal Server Error
+    with aioresponses() as mock_session:
+        mock_session.get(
+            "https://example.com/calendar.ics",
+            status=500,
+        )
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        # Trigger refresh - should handle error gracefully
+        await coordinator.update()
+        await hass.async_block_till_done()
+
+        # Calendar should remain unloaded
+        assert coordinator.calendar_loaded is False
 
 
 async def test_coordinator_refresh_invalid_ics(
