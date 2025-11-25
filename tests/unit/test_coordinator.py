@@ -58,13 +58,52 @@ async def test_coordinator_first_refresh(
         assert coordinator is not None
 
 
-# Additional test stubs - to be implemented
 async def test_coordinator_scheduled_refresh(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
-    """Test coordinator updates on scheduled interval."""
-    # TODO: Implement scheduled refresh test using async_fire_time_changed
-    pass
+    """Test coordinator updates on scheduled interval.
+
+    Verifies that the coordinator automatically refreshes calendar data
+    when the scheduled interval elapses using async_fire_time_changed.
+    """
+    from datetime import timedelta
+
+    from homeassistant.util import dt
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    mock_config_entry.add_to_hass(hass)
+
+    with aioresponses() as mock_session:
+        # Mock the calendar URL to return data
+        mock_session.get(
+            "https://example.com/calendar.ics",
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            repeat=True,  # Allow multiple calls
+        )
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        # Record initial next_refresh time
+        initial_next_refresh = coordinator.next_refresh
+
+        # Trigger initial update
+        await coordinator.update()
+        await hass.async_block_till_done()
+
+        # Verify next_refresh was updated
+        assert coordinator.next_refresh > initial_next_refresh
+
+        # Advance time past the refresh interval
+        future_time = dt.now() + timedelta(minutes=coordinator.refresh_frequency + 1)
+        async_fire_time_changed(hass, future_time)
+
+        # Trigger scheduled update
+        await coordinator.update()
+        await hass.async_block_till_done()
+
+        # Verify calendar was loaded
+        assert coordinator.calendar_loaded is True
 
 
 async def test_coordinator_refresh_success(
