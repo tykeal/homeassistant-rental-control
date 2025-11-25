@@ -3,11 +3,6 @@ SPDX-FileCopyrightText: 2025 Andrew Grimberg <tykeal@bardicgrove.org>
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<!--
-SPDX-FileCopyrightText: 2025 Andrew Grimberg <tykeal@bardicgrove.org>
-SPDX-License-Identifier: Apache-2.0
--->
-
 # Test Fixture Contracts
 
 **Feature**: 001-test-coverage
