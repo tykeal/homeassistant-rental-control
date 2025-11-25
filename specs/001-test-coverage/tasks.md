@@ -91,7 +91,7 @@ SPDX-License-Identifier: Apache-2.0
 #### Initialization Tests (__init__.py)
 
 - [X] T034 [P] [US1] Create tests/unit/test_init.py with SPDX header and module docstring
-- [ ] T035 [US1] Add test_async_setup_entry to verify integration setup creates coordinator and loads platforms in tests/unit/test_init.py
+- [X] T035 [US1] Add test_async_setup_entry to verify integration setup creates coordinator and loads platforms in tests/unit/test_init.py
 - [ ] T036 [US1] Add test_async_setup_entry_failure to verify setup handles coordinator initialization errors in tests/unit/test_init.py
 - [ ] T037 [US1] Add test_async_unload_entry to verify integration cleanup and entity removal in tests/unit/test_init.py
 - [ ] T038 [US1] Add test_platform_loading to verify sensor and calendar platforms are loaded in tests/unit/test_init.py
