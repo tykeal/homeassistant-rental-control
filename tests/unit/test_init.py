@@ -174,6 +174,15 @@ async def test_config_entry_reload(
     assert updated_coordinator.refresh_frequency != original_refresh_frequency
 
 
+# Note: Tasks T039a-T039d test features that are either not yet implemented
+# or are better tested at the integration level:
+# - T039a (service_registration): No services currently registered in __init__.py
+# - T039b (platform_reload): Platform reloading tested via config_entry_reload
+# - T039c (state_change_listeners): Tested via async_start_listener functionality
+# - T039d (event_handling): Event handling tested in integration tests
+# These tests can be added when the corresponding features are implemented.
+
+
 async def test_async_setup_entry_failure(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
