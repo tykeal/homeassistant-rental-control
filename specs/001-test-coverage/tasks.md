@@ -67,7 +67,7 @@ SPDX-License-Identifier: Apache-2.0
 - [X] T014 [US1] Add test_coordinator_initialization to verify RentalControlCoordinator initializes with correct config in tests/unit/test_coordinator.py
 - [X] T015 [US1] Add test_coordinator_first_refresh to verify async_config_entry_first_refresh fetches calendar data in tests/unit/test_coordinator.py
 - [X] T016 [US1] Add test_coordinator_scheduled_refresh to verify coordinator updates on interval using async_fire_time_changed in tests/unit/test_coordinator.py
-- [ ] T017 [US1] Add test_coordinator_refresh_success to verify successful calendar fetch and event parsing in tests/unit/test_coordinator.py
+- [X] T017 [US1] Add test_coordinator_refresh_success to verify successful calendar fetch and event parsing in tests/unit/test_coordinator.py
 - [ ] T018 [US1] Add test_coordinator_refresh_network_error to verify error handling for HTTP failures in tests/unit/test_coordinator.py
 - [ ] T019 [US1] Add test_coordinator_refresh_invalid_ics to verify error handling for malformed ICS content in tests/unit/test_coordinator.py
 - [ ] T020 [US1] Add test_coordinator_state_management to verify coordinator data property maintains event state in tests/unit/test_coordinator.py
