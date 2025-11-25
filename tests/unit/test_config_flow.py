@@ -314,3 +314,50 @@ async def test_config_flow_validation_invalid_refresh(hass: HomeAssistant) -> No
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {CONF_REFRESH_FREQUENCY: "bad_refresh"}
+
+
+async def test_config_flow_validation_invalid_max_events(hass: HomeAssistant) -> None:
+    """Test validation error for invalid max_events value.
+
+    Verifies that:
+    - Config flow rejects max_events < 1
+    - Error message indicates value must be >= 1
+    - Form is re-displayed with error details
+
+    Per config_flow.py lines 385-386: max_events must be >= 1
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                "verify_ssl": True,
+                "ignore_non_reserved": True,
+                "keymaster_entry_id": "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                "timezone": "UTC",
+                "event_prefix": "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: 0,  # Invalid: must be >= 1
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                "should_update_code": True,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {CONF_MAX_EVENTS: "bad_minimum"}
