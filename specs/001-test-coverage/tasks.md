@@ -96,6 +96,12 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] T037 [US1] Add test_async_unload_entry to verify integration cleanup and entity removal in tests/unit/test_init.py
 - [ ] T038 [US1] Add test_platform_loading to verify sensor and calendar platforms are loaded in tests/unit/test_init.py
 - [ ] T039 [US1] Add test_config_entry_reload to verify entry reload updates coordinator config in tests/unit/test_init.py
+- [ ] T039a [US1] Add test_service_registration to verify service calls are registered correctly (FR-018) in tests/unit/test_init.py
+- [ ] T039b [US1] Add test_platform_reload to verify platform reloading functionality works (FR-018) in tests/unit/test_init.py
+- [ ] T039c [US1] Add test_state_change_listeners to verify state change listeners are registered (FR-019) in tests/unit/test_coordinator.py
+- [ ] T039d [US1] Add test_event_handling to verify event handling callbacks work correctly (FR-019) in tests/unit/test_coordinator.py
+
+**Note on FR-017 (Keymaster Integration)**: The current codebase review indicates no Keymaster-specific features are implemented. If Keymaster integration is added in the future, tasks should be added to test lock code synchronization and state management. For now, this requirement is marked as not applicable to current implementation scope.
 
 **Checkpoint**: At this point, User Story 1 should be fully functional and testable independently. Core components have comprehensive test coverage.
 
@@ -119,9 +125,9 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] T045 [US2] Add test_parse_ics_empty_calendar to verify handling calendar with no events in tests/unit/test_calendar.py
 - [ ] T046 [US2] Add test_parse_ics_malformed to verify error handling for malformed ICS syntax in tests/unit/test_calendar.py
 - [ ] T047 [US2] Add test_parse_ics_missing_required_fields to verify handling events with missing DTSTART/DTEND in tests/unit/test_calendar.py
-- [ ] T048 [US2] Add test_timezone_handling_utc to verify parsing UTC times correctly in tests/unit/test_calendar.py
-- [ ] T049 [US2] Add test_timezone_handling_named to verify parsing events with named timezones in tests/unit/test_calendar.py
-- [ ] T050 [US2] Add test_timezone_handling_x_wr_timezone to verify handling X-WR-TIMEZONE property in tests/unit/test_calendar.py
+- [ ] T048 [US2] Add test_timezone_handling_utc to verify parsing UTC times correctly (FR-016) in tests/unit/test_calendar.py
+- [ ] T049 [US2] Add test_timezone_handling_named to verify parsing events with named timezones (FR-016) in tests/unit/test_calendar.py
+- [ ] T050 [US2] Add test_timezone_handling_x_wr_timezone to verify handling X-WR-TIMEZONE property (FR-016) in tests/unit/test_calendar.py
 - [ ] T051 [US2] Add test_event_filtering_reserved to verify reserved events are included in tests/unit/test_calendar.py
 - [ ] T052 [US2] Add test_event_filtering_blocked to verify blocked events are filtered when ignore_non_reserved is True in tests/unit/test_calendar.py
 - [ ] T053 [US2] Add test_event_filtering_not_available to verify not available events are filtered appropriately in tests/unit/test_calendar.py
@@ -174,6 +180,8 @@ SPDX-License-Identifier: Apache-2.0
 ### Implementation for User Story 3
 
 #### Sensor Tests (sensor.py and sensors/calsensor.py)
+
+**Note on FR-005 Coverage**: Tasks T083-T102 provide comprehensive coverage for sensor entity creation, state updates, and attribute mapping as required by FR-005. Tests verify sensor creation (T085, T088), state updates on coordinator changes (T086-T090, T098), and all attribute mappings (T091-T097).
 
 - [ ] T083 [P] [US3] Create tests/unit/test_sensors.py with SPDX header and module docstring
 - [ ] T084 [US3] Add test_sensor_platform_setup to verify sensor platform initializes with coordinator in tests/unit/test_sensors.py
