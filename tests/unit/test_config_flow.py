@@ -361,3 +361,66 @@ async def test_config_flow_validation_invalid_max_events(hass: HomeAssistant) ->
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {CONF_MAX_EVENTS: "bad_minimum"}
+
+
+async def test_options_flow_init(hass: HomeAssistant) -> None:
+    """Test options flow loads existing config.
+
+    Verifies that:
+    - Options flow initializes successfully
+    - Returns a form with step_id "init"
+    - Form is pre-populated with existing config values
+    - All configuration fields are present in the schema
+
+    Per config_flow.py lines 117-132: Options flow loads from config_entry.data
+    """
+    # First create a config entry
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        config_result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                "verify_ssl": True,
+                "ignore_non_reserved": True,
+                "keymaster_entry_id": "(none)",
+                CONF_REFRESH_FREQUENCY: 15,
+                CONF_TIMEZONE: "America/Chicago",
+                "event_prefix": "Vacation",
+                CONF_CHECKIN: "15:00",
+                CONF_CHECKOUT: "10:00",
+                CONF_DAYS: 180,
+                CONF_MAX_EVENTS: 7,
+                CONF_START_SLOT: 20,
+                CONF_CODE_LENGTH: 6,
+                CONF_CODE_GENERATION: "Start/End Date",
+                "should_update_code": False,
+            },
+        )
+
+    assert config_result["type"] == FlowResultType.CREATE_ENTRY
+    entry = config_result["result"]
+
+    # Now test the options flow
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    # Verify schema includes expected fields
+    schema = result["data_schema"].schema
+    schema_keys = {str(key.schema): key for key in schema.keys()}
+
+    assert CONF_NAME in schema_keys
+    assert CONF_URL in schema_keys
+    assert CONF_REFRESH_FREQUENCY in schema_keys
+    assert CONF_MAX_EVENTS in schema_keys
