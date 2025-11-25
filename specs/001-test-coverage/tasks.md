@@ -85,7 +85,7 @@ SPDX-License-Identifier: Apache-2.0
 - [X] T029 [US1] Add test_config_flow_validation_invalid_refresh to verify validation error for out-of-range refresh_frequency in tests/unit/test_config_flow.py
 - [X] T030 [US1] Add test_config_flow_validation_invalid_max_events to verify validation error for invalid max_events value in tests/unit/test_config_flow.py
 - [X] T031 [US1] Add test_options_flow_init to verify options flow loads existing config in tests/unit/test_config_flow.py
-- [ ] T032 [US1] Add test_options_flow_update to verify options flow updates configuration successfully in tests/unit/test_config_flow.py
+- [X] T032 [US1] Add test_options_flow_update to verify options flow updates configuration successfully in tests/unit/test_config_flow.py
 - [ ] T033 [US1] Add test_config_flow_duplicate_detection to verify handling of duplicate calendar names in tests/unit/test_config_flow.py
 
 #### Initialization Tests (__init__.py)
