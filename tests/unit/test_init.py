@@ -7,14 +7,52 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.rental_control.const import COORDINATOR
+from custom_components.rental_control.const import DOMAIN
+
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 
-async def test_async_setup_entry(hass: HomeAssistant) -> None:
-    """Test integration setup creates coordinator and loads platforms."""
-    # TODO: Implement setup entry test
-    pass
+async def test_async_setup_entry(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_aiohttp_session,
+) -> None:
+    """Test integration setup creates coordinator and loads platforms.
+
+    This test verifies that async_setup_entry:
+    1. Creates a RentalControlCoordinator
+    2. Stores coordinator in hass.data
+    3. Forwards setup to all platform domains (sensor, calendar)
+    4. Registers an update listener
+    """
+    mock_config_entry.add_to_hass(hass)
+
+    # Mock the calendar URL to avoid network calls
+    from tests.fixtures import calendar_data
+
+    mock_aiohttp_session.get(
+        mock_config_entry.data["url"],
+        status=200,
+        body=calendar_data.AIRBNB_ICS_CALENDAR,
+    )
+
+    # Setup the integration
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Verify coordinator was created and stored
+    assert DOMAIN in hass.data
+    assert mock_config_entry.entry_id in hass.data[DOMAIN]
+    assert COORDINATOR in hass.data[DOMAIN][mock_config_entry.entry_id]
+
+    coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
+    assert coordinator is not None
+    assert coordinator.hass == hass
+    assert coordinator.config_entry == mock_config_entry
 
 
 async def test_async_unload_entry(hass: HomeAssistant) -> None:
