@@ -233,9 +233,66 @@ async def test_coordinator_refresh_invalid_ics(
 async def test_coordinator_state_management(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
-    """Test coordinator data property maintains event state."""
-    # TODO: Implement state management test
-    pass
+    """Test coordinator data property maintains event state.
+
+    Verifies that coordinator properly maintains calendar state,
+    tracks events, and updates next event reference.
+    """
+    from datetime import datetime
+    from datetime import timedelta
+
+    mock_config_entry.add_to_hass(hass)
+
+    # Create ICS with multiple future events
+    now = datetime.now()
+    event1_start = (now + timedelta(days=2)).strftime("%Y%m%d")
+    event1_end = (now + timedelta(days=5)).strftime("%Y%m%d")
+    event2_start = (now + timedelta(days=7)).strftime("%Y%m%d")
+    event2_end = (now + timedelta(days=10)).strftime("%Y%m%d")
+
+    multi_event_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART:{event1_start}T140000Z
+DTEND:{event1_end}T110000Z
+UID:event1@example.com
+SUMMARY:Reserved: First Guest
+STATUS:CONFIRMED
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:{event2_start}T140000Z
+DTEND:{event2_end}T110000Z
+UID:event2@example.com
+SUMMARY:Reserved: Second Guest
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+    with aioresponses() as mock_session:
+        mock_session.get(
+            "https://example.com/calendar.ics",
+            status=200,
+            body=multi_event_ics,
+        )
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        # Trigger refresh
+        await coordinator.update()
+        await hass.async_block_till_done()
+
+        # Verify state management
+        assert coordinator.calendar_loaded is True
+        assert len(coordinator.calendar) == 2
+
+        # Verify calendar maintains sorted event list
+        assert coordinator.calendar[0].start < coordinator.calendar[1].start
+
+        # Verify next event is set (first event with end in future)
+        assert coordinator.event is not None
+        assert coordinator.event.summary == "Reserved: First Guest"
 
 
 async def test_coordinator_update_interval_change(
