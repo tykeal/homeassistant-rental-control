@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from aioresponses import aioresponses
 
+from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
 from custom_components.rental_control.coordinator import RentalControlCoordinator
 
 from tests.fixtures import calendar_data
@@ -298,6 +299,30 @@ END:VCALENDAR
 async def test_coordinator_update_interval_change(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
-    """Test coordinator respects interval changes."""
-    # TODO: Implement interval change test
-    pass
+    """Test coordinator respects interval changes.
+
+    Verifies that coordinator updates refresh interval when
+    configuration is changed via update_config.
+    """
+    mock_config_entry.add_to_hass(hass)
+
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+    # Verify initial refresh frequency (default is 2 minutes)
+    initial_frequency = coordinator.refresh_frequency
+    assert initial_frequency == 2
+
+    # Update configuration with new refresh frequency
+    new_config = dict(mock_config_entry.data)
+    new_config[CONF_REFRESH_FREQUENCY] = 30
+
+    coordinator.update_config(new_config)
+
+    # Verify refresh frequency was updated
+    assert coordinator.refresh_frequency == 30
+    assert coordinator.refresh_frequency != initial_frequency
+
+    # Verify next refresh was reset to trigger immediate update
+    from homeassistant.util import dt
+
+    assert coordinator.next_refresh <= dt.now()
