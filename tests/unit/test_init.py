@@ -59,3 +59,34 @@ async def test_async_unload_entry(hass: HomeAssistant) -> None:
     """Test integration cleanup and entity removal."""
     # TODO: Implement unload entry test
     pass
+
+
+async def test_async_setup_entry_failure(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_aiohttp_session,
+) -> None:
+    """Test setup handles coordinator initialization errors.
+
+    This test verifies that async_setup_entry properly handles
+    errors during coordinator initialization, specifically when
+    the coordinator creation fails or encounters an error.
+    """
+    mock_config_entry.add_to_hass(hass)
+
+    # Mock the calendar URL to return an error
+    mock_aiohttp_session.get(
+        mock_config_entry.data["url"],
+        status=500,
+        body="Internal Server Error",
+    )
+
+    # Setup should still succeed even if initial calendar fetch fails
+    # The coordinator will handle the error gracefully
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Verify coordinator was still created (error handling is graceful)
+    assert DOMAIN in hass.data
+    assert mock_config_entry.entry_id in hass.data[DOMAIN]
+    assert COORDINATOR in hass.data[DOMAIN][mock_config_entry.entry_id]
