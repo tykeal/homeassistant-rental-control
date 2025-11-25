@@ -19,6 +19,20 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 
+# Enable custom components for testing
+pytest_plugins = ("pytest_homeassistant_custom_component",)
+
+
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(enable_custom_integrations):
+    """Enable custom integrations for all tests automatically.
+
+    This fixture uses pytest-homeassistant-custom-component's
+    enable_custom_integrations fixture and applies it to all tests.
+    """
+    yield
+
+
 @pytest.fixture
 def mock_config_entry() -> MockConfigEntry:
     """Return a mock config entry with minimal configuration.
