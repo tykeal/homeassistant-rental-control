@@ -424,3 +424,91 @@ async def test_options_flow_init(hass: HomeAssistant) -> None:
     assert CONF_URL in schema_keys
     assert CONF_REFRESH_FREQUENCY in schema_keys
     assert CONF_MAX_EVENTS in schema_keys
+
+
+async def test_options_flow_update(hass: HomeAssistant) -> None:
+    """Test options flow updates configuration successfully.
+
+    Verifies that:
+    - Options flow accepts updated configuration values
+    - Config entry is updated with new values
+    - Updated configuration is persisted correctly
+
+    Per config_flow.py: Options flow uses same validation as initial flow
+    """
+    # First create a config entry
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        config_result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                "verify_ssl": True,
+                "ignore_non_reserved": True,
+                "keymaster_entry_id": "(none)",
+                CONF_REFRESH_FREQUENCY: 15,
+                CONF_TIMEZONE: "UTC",
+                "event_prefix": "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                "should_update_code": True,
+            },
+        )
+
+    assert config_result["type"] == FlowResultType.CREATE_ENTRY
+    entry = config_result["result"]
+
+    # Now update via options flow
+    with aioresponses() as mock_aiohttp:
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_NAME: "Updated Rental",
+                CONF_URL: test_url,
+                "verify_ssl": True,
+                "ignore_non_reserved": True,
+                "keymaster_entry_id": "(none)",
+                CONF_REFRESH_FREQUENCY: 30,  # Changed from 15
+                CONF_TIMEZONE: "America/Chicago",  # Changed from UTC
+                "event_prefix": "Vacation",  # Changed from empty
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: 10,  # Changed from 5
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                "should_update_code": True,
+            },
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    # Verify the entry was updated
+    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated_entry.title == "Updated Rental"
+    assert updated_entry.data[CONF_REFRESH_FREQUENCY] == 30
+    assert updated_entry.data[CONF_TIMEZONE] == "America/Chicago"
+    assert updated_entry.data["event_prefix"] == "Vacation"
+    assert updated_entry.data[CONF_MAX_EVENTS] == 10
