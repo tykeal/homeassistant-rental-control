@@ -153,8 +153,8 @@ async def test_config_entry_reload(
     original_refresh_frequency = coordinator.refresh_frequency
 
     # Update data directly to simulate config change (reload reads from data)
-    # Setting options to {} causes update_listener to return early (line 266-267
-    # in __init__.py checks "if not config_entry.options: return")
+    # Setting options to {} causes update_listener to return early since it
+    # checks for empty options before processing
     new_data = dict(mock_config_entry.data)
     new_data["refresh_frequency"] = 30  # New value different from default
 
