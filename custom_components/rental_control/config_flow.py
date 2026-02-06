@@ -335,15 +335,12 @@ async def _start_config_flow(
         # Validate user input
         try:
             cv.url(user_input[CONF_URL])
-            # Only allow http:// or https:// schemes
+            # cv.url() only accepts http:// and https:// schemes
+            # Check if HTTP is used when SSL verification is enabled
             url_lower = user_input[CONF_URL].lower()
             is_https = url_lower.startswith("https://")
-            is_http = url_lower.startswith("http://")
 
-            if not (is_http or is_https):
-                # Reject non-HTTP(S) schemes (e.g., ftp://, file://)
-                errors[CONF_URL] = "invalid_url"
-            elif is_http and user_input[CONF_VERIFY_SSL]:
+            if not is_https and user_input[CONF_VERIFY_SSL]:
                 # HTTP only allowed when SSL verification is disabled
                 errors[CONF_URL] = "https_required"
             else:
