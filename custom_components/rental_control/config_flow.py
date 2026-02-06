@@ -4,7 +4,6 @@
 """Config flow for Rental Control integration."""
 
 import logging
-import re
 from typing import Any
 from typing import Dict
 from typing import Optional
@@ -335,10 +334,15 @@ async def _start_config_flow(
 
         # Validate user input
         try:
-            cv.url(user_input["url"])
-            # We require that the URL be an SSL URL
-            if not re.search("^https://", user_input[CONF_URL]):
-                errors[CONF_URL] = "invalid_url"
+            cv.url(user_input[CONF_URL])
+            # cv.url() only accepts http:// and https:// schemes
+            # Check if HTTP is used when SSL verification is enabled
+            url_lower = user_input[CONF_URL].lower()
+            is_https = url_lower.startswith("https://")
+
+            if not is_https and user_input[CONF_VERIFY_SSL]:
+                # HTTP only allowed when SSL verification is disabled
+                errors[CONF_URL] = "https_required"
             else:
                 session = async_get_clientsession(
                     cls.hass, verify_ssl=user_input[CONF_VERIFY_SSL]

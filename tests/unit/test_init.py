@@ -153,12 +153,15 @@ async def test_config_entry_reload(
     original_refresh_frequency = coordinator.refresh_frequency
 
     # Update data directly to simulate config change (reload reads from data)
+    # Setting options to {} causes update_listener to return early since it
+    # checks for empty options before processing
     new_data = dict(mock_config_entry.data)
     new_data["refresh_frequency"] = 30  # New value different from default
 
     hass.config_entries.async_update_entry(
         mock_config_entry,
         data=new_data,
+        options={},  # Empty options causes update_listener to exit early
     )
 
     # Trigger reload - this reinitializes coordinator from config_entry.data

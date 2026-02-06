@@ -11,6 +11,7 @@ from aioresponses import aioresponses
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
+from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
 import voluptuous as vol
 
@@ -19,8 +20,12 @@ from custom_components.rental_control.const import CONF_CHECKOUT
 from custom_components.rental_control.const import CONF_CODE_GENERATION
 from custom_components.rental_control.const import CONF_CODE_LENGTH
 from custom_components.rental_control.const import CONF_DAYS
+from custom_components.rental_control.const import CONF_EVENT_PREFIX
+from custom_components.rental_control.const import CONF_IGNORE_NON_RESERVED
+from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import CONF_MAX_EVENTS
 from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
+from custom_components.rental_control.const import CONF_SHOULD_UPDATE_CODE
 from custom_components.rental_control.const import CONF_START_SLOT
 from custom_components.rental_control.const import CONF_TIMEZONE
 from custom_components.rental_control.const import DEFAULT_CHECKIN
@@ -88,12 +93,12 @@ async def test_config_flow_user_submit_valid(hass: HomeAssistant) -> None:
             data={
                 CONF_NAME: "Test Rental",
                 CONF_URL: test_url,
-                "verify_ssl": True,
-                "ignore_non_reserved": True,
-                "keymaster_entry_id": "(none)",
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
                 CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
-                "timezone": "UTC",
-                "event_prefix": "",
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
                 CONF_CHECKIN: DEFAULT_CHECKIN,
                 CONF_CHECKOUT: DEFAULT_CHECKOUT,
                 CONF_DAYS: DEFAULT_DAYS,
@@ -101,7 +106,7 @@ async def test_config_flow_user_submit_valid(hass: HomeAssistant) -> None:
                 CONF_START_SLOT: DEFAULT_START_SLOT,
                 CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
                 CONF_CODE_GENERATION: "Start/End Date",
-                "should_update_code": True,
+                CONF_SHOULD_UPDATE_CODE: True,
             },
         )
 
@@ -132,12 +137,12 @@ async def test_config_flow_user_submit_complete(hass: HomeAssistant) -> None:
         complete_config = {
             CONF_NAME: "Complete Rental",
             CONF_URL: test_url,
-            "verify_ssl": True,
-            "ignore_non_reserved": True,
-            "keymaster_entry_id": "(none)",
+            CONF_VERIFY_SSL: True,
+            CONF_IGNORE_NON_RESERVED: True,
+            CONF_LOCK_ENTRY: "(none)",
             CONF_REFRESH_FREQUENCY: 15,
             CONF_TIMEZONE: "America/Chicago",
-            "event_prefix": "Vacation",
+            CONF_EVENT_PREFIX: "Vacation",
             CONF_CHECKIN: "15:00",
             CONF_CHECKOUT: "10:00",
             CONF_DAYS: 180,
@@ -145,7 +150,7 @@ async def test_config_flow_user_submit_complete(hass: HomeAssistant) -> None:
             CONF_START_SLOT: 20,
             CONF_CODE_LENGTH: 6,
             CONF_CODE_GENERATION: "Static Random",
-            "should_update_code": False,
+            CONF_SHOULD_UPDATE_CODE: False,
         }
 
         result = await hass.config_entries.flow.async_init(
@@ -160,7 +165,7 @@ async def test_config_flow_user_submit_complete(hass: HomeAssistant) -> None:
     assert result["data"][CONF_URL] == test_url
     assert result["data"][CONF_REFRESH_FREQUENCY] == 15
     assert result["data"][CONF_TIMEZONE] == "America/Chicago"
-    assert result["data"]["event_prefix"] == "Vacation"
+    assert result["data"][CONF_EVENT_PREFIX] == "Vacation"
     assert result["data"][CONF_CHECKIN] == "15:00"
     assert result["data"][CONF_CHECKOUT] == "10:00"
     assert result["data"][CONF_DAYS] == 180
@@ -232,15 +237,15 @@ async def test_config_flow_validation_missing_url(hass: HomeAssistant) -> None:
     assert isinstance(url_key, vol.Required)
 
 
-async def test_config_flow_validation_invalid_url(hass: HomeAssistant) -> None:
-    """Test validation error for malformed URL.
+async def test_config_flow_rejects_http_when_ssl_enabled(hass: HomeAssistant) -> None:
+    """Test validation error for HTTP URL when verify_ssl is enabled.
 
     Verifies that:
-    - Config flow rejects non-HTTPS URLs
-    - Error message indicates only HTTPS is supported
+    - Config flow rejects non-HTTPS URLs when verify_ssl is True
+    - Error message indicates HTTPS is required when SSL verification is enabled
     - Form is re-displayed with error details
 
-    Per config_flow.py _check_url(): "We require that the URL be an SSL URL"
+    Validated in _start_config_flow(): HTTPS required when SSL verification enabled
     """
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
@@ -248,12 +253,12 @@ async def test_config_flow_validation_invalid_url(hass: HomeAssistant) -> None:
         data={
             CONF_NAME: "Test Rental",
             CONF_URL: "http://example.com/calendar.ics",  # HTTP instead of HTTPS
-            "verify_ssl": True,
-            "ignore_non_reserved": True,
-            "keymaster_entry_id": "(none)",
+            CONF_VERIFY_SSL: True,  # SSL verification enabled requires HTTPS
+            CONF_IGNORE_NON_RESERVED: True,
+            CONF_LOCK_ENTRY: "(none)",
             CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
-            "timezone": "UTC",
-            "event_prefix": "",
+            CONF_TIMEZONE: "UTC",
+            CONF_EVENT_PREFIX: "",
             CONF_CHECKIN: DEFAULT_CHECKIN,
             CONF_CHECKOUT: DEFAULT_CHECKOUT,
             CONF_DAYS: DEFAULT_DAYS,
@@ -261,7 +266,132 @@ async def test_config_flow_validation_invalid_url(hass: HomeAssistant) -> None:
             CONF_START_SLOT: DEFAULT_START_SLOT,
             CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
             CONF_CODE_GENERATION: "Start/End Date",
-            "should_update_code": True,
+            CONF_SHOULD_UPDATE_CODE: True,
+        },
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {CONF_URL: "https_required"}
+
+
+async def test_config_flow_http_allowed_when_ssl_disabled(hass: HomeAssistant) -> None:
+    """Test HTTP URLs are allowed when verify_ssl is disabled.
+
+    Verifies that:
+    - Config flow accepts HTTP URLs when verify_ssl is False
+    - This enables local/development calendar servers without SSL
+    - Entry is created successfully with HTTP URL
+
+    Validated in _start_config_flow(): HTTP allowed when SSL verification disabled
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "http://local-server/calendar.ics"  # HTTP URL
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.GENERIC_ICS_CALENDAR,
+            headers={"Content-Type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Local Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: False,  # SSL verification disabled allows HTTP
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+            },
+        )
+
+        # Entry should be created successfully
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["title"] == "Local Rental"
+        assert result["data"][CONF_URL] == test_url
+
+
+async def test_config_flow_rejects_unsupported_scheme(hass: HomeAssistant) -> None:
+    """Test validation error for unsupported URL schemes.
+
+    Verifies that:
+    - Config flow rejects non-HTTP(S) schemes like ftp://, file://
+    - cv.url() validates schemes and returns invalid_url for non-HTTP(S)
+    - Form is re-displayed with error details
+
+    Validated in _start_config_flow(): cv.url() rejects non-HTTP(S) schemes
+    """
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+        data={
+            CONF_NAME: "Test Rental",
+            CONF_URL: "ftp://example.com/calendar.ics",  # Unsupported scheme
+            CONF_VERIFY_SSL: True,
+            CONF_IGNORE_NON_RESERVED: True,
+            CONF_LOCK_ENTRY: "(none)",
+            CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+            CONF_TIMEZONE: "UTC",
+            CONF_EVENT_PREFIX: "",
+            CONF_CHECKIN: DEFAULT_CHECKIN,
+            CONF_CHECKOUT: DEFAULT_CHECKOUT,
+            CONF_DAYS: DEFAULT_DAYS,
+            CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+            CONF_START_SLOT: DEFAULT_START_SLOT,
+            CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+            CONF_CODE_GENERATION: "Start/End Date",
+            CONF_SHOULD_UPDATE_CODE: True,
+        },
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "user"
+    # cv.url() rejects non-HTTP(S) schemes with invalid_url
+    assert result["errors"] == {CONF_URL: "invalid_url"}
+
+
+async def test_config_flow_rejects_malformed_url(hass: HomeAssistant) -> None:
+    """Test validation error for malformed URLs.
+
+    Verifies that:
+    - Config flow rejects URLs that fail cv.url() validation
+    - Error message indicates URL is malformed
+    - Form is re-displayed with error details
+
+    Validated in _start_config_flow(): cv.url() raises vol.Invalid for bad URLs
+    """
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+        data={
+            CONF_NAME: "Test Rental",
+            CONF_URL: "not-a-valid-url",  # Malformed URL
+            CONF_VERIFY_SSL: True,
+            CONF_IGNORE_NON_RESERVED: True,
+            CONF_LOCK_ENTRY: "(none)",
+            CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+            CONF_TIMEZONE: "UTC",
+            CONF_EVENT_PREFIX: "",
+            CONF_CHECKIN: DEFAULT_CHECKIN,
+            CONF_CHECKOUT: DEFAULT_CHECKOUT,
+            CONF_DAYS: DEFAULT_DAYS,
+            CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+            CONF_START_SLOT: DEFAULT_START_SLOT,
+            CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+            CONF_CODE_GENERATION: "Start/End Date",
+            CONF_SHOULD_UPDATE_CODE: True,
         },
     )
 
@@ -295,12 +425,12 @@ async def test_config_flow_validation_invalid_refresh(hass: HomeAssistant) -> No
             data={
                 CONF_NAME: "Test Rental",
                 CONF_URL: test_url,
-                "verify_ssl": True,
-                "ignore_non_reserved": True,
-                "keymaster_entry_id": "(none)",
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
                 CONF_REFRESH_FREQUENCY: 2000,  # Out of range (max is 1440)
-                "timezone": "UTC",
-                "event_prefix": "",
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
                 CONF_CHECKIN: DEFAULT_CHECKIN,
                 CONF_CHECKOUT: DEFAULT_CHECKOUT,
                 CONF_DAYS: DEFAULT_DAYS,
@@ -308,7 +438,7 @@ async def test_config_flow_validation_invalid_refresh(hass: HomeAssistant) -> No
                 CONF_START_SLOT: DEFAULT_START_SLOT,
                 CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
                 CONF_CODE_GENERATION: "Start/End Date",
-                "should_update_code": True,
+                CONF_SHOULD_UPDATE_CODE: True,
             },
         )
 
@@ -342,12 +472,12 @@ async def test_config_flow_validation_invalid_max_events(hass: HomeAssistant) ->
             data={
                 CONF_NAME: "Test Rental",
                 CONF_URL: test_url,
-                "verify_ssl": True,
-                "ignore_non_reserved": True,
-                "keymaster_entry_id": "(none)",
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
                 CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
-                "timezone": "UTC",
-                "event_prefix": "",
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
                 CONF_CHECKIN: DEFAULT_CHECKIN,
                 CONF_CHECKOUT: DEFAULT_CHECKOUT,
                 CONF_DAYS: DEFAULT_DAYS,
@@ -355,7 +485,7 @@ async def test_config_flow_validation_invalid_max_events(hass: HomeAssistant) ->
                 CONF_START_SLOT: DEFAULT_START_SLOT,
                 CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
                 CONF_CODE_GENERATION: "Start/End Date",
-                "should_update_code": True,
+                CONF_SHOULD_UPDATE_CODE: True,
             },
         )
 
@@ -391,12 +521,12 @@ async def test_options_flow_init(hass: HomeAssistant) -> None:
             data={
                 CONF_NAME: "Test Rental",
                 CONF_URL: test_url,
-                "verify_ssl": True,
-                "ignore_non_reserved": True,
-                "keymaster_entry_id": "(none)",
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
                 CONF_REFRESH_FREQUENCY: 15,
                 CONF_TIMEZONE: "America/Chicago",
-                "event_prefix": "Vacation",
+                CONF_EVENT_PREFIX: "Vacation",
                 CONF_CHECKIN: "15:00",
                 CONF_CHECKOUT: "10:00",
                 CONF_DAYS: 180,
@@ -404,7 +534,7 @@ async def test_options_flow_init(hass: HomeAssistant) -> None:
                 CONF_START_SLOT: 20,
                 CONF_CODE_LENGTH: 6,
                 CONF_CODE_GENERATION: "Start/End Date",
-                "should_update_code": False,
+                CONF_SHOULD_UPDATE_CODE: False,
             },
         )
 
@@ -453,12 +583,12 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
             data={
                 CONF_NAME: "Test Rental",
                 CONF_URL: test_url,
-                "verify_ssl": True,
-                "ignore_non_reserved": True,
-                "keymaster_entry_id": "(none)",
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
                 CONF_REFRESH_FREQUENCY: 15,
                 CONF_TIMEZONE: "UTC",
-                "event_prefix": "",
+                CONF_EVENT_PREFIX: "",
                 CONF_CHECKIN: DEFAULT_CHECKIN,
                 CONF_CHECKOUT: DEFAULT_CHECKOUT,
                 CONF_DAYS: DEFAULT_DAYS,
@@ -466,7 +596,7 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
                 CONF_START_SLOT: DEFAULT_START_SLOT,
                 CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
                 CONF_CODE_GENERATION: "Start/End Date",
-                "should_update_code": True,
+                CONF_SHOULD_UPDATE_CODE: True,
             },
         )
 
@@ -488,12 +618,12 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
             user_input={
                 CONF_NAME: "Updated Rental",
                 CONF_URL: test_url,
-                "verify_ssl": True,
-                "ignore_non_reserved": True,
-                "keymaster_entry_id": "(none)",
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
                 CONF_REFRESH_FREQUENCY: 30,  # Changed from 15
                 CONF_TIMEZONE: "America/Chicago",  # Changed from UTC
-                "event_prefix": "Vacation",  # Changed from empty
+                CONF_EVENT_PREFIX: "Vacation",  # Changed from empty
                 CONF_CHECKIN: DEFAULT_CHECKIN,
                 CONF_CHECKOUT: DEFAULT_CHECKOUT,
                 CONF_DAYS: DEFAULT_DAYS,
@@ -501,7 +631,7 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
                 CONF_START_SLOT: DEFAULT_START_SLOT,
                 CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
                 CONF_CODE_GENERATION: "Start/End Date",
-                "should_update_code": True,
+                CONF_SHOULD_UPDATE_CODE: True,
             },
         )
 
@@ -511,7 +641,7 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
     assert updated_entry.title == "Updated Rental"
     assert updated_entry.data[CONF_REFRESH_FREQUENCY] == 30
     assert updated_entry.data[CONF_TIMEZONE] == "America/Chicago"
-    assert updated_entry.data["event_prefix"] == "Vacation"
+    assert updated_entry.data[CONF_EVENT_PREFIX] == "Vacation"
     assert updated_entry.data[CONF_MAX_EVENTS] == 10
 
 
@@ -552,12 +682,12 @@ async def test_config_flow_duplicate_detection(hass: HomeAssistant) -> None:
             data={
                 CONF_NAME: "Test Rental",
                 CONF_URL: test_url,
-                "verify_ssl": True,
-                "ignore_non_reserved": True,
-                "keymaster_entry_id": "(none)",
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
                 CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
-                "timezone": "UTC",
-                "event_prefix": "",
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
                 CONF_CHECKIN: DEFAULT_CHECKIN,
                 CONF_CHECKOUT: DEFAULT_CHECKOUT,
                 CONF_DAYS: DEFAULT_DAYS,
@@ -565,7 +695,7 @@ async def test_config_flow_duplicate_detection(hass: HomeAssistant) -> None:
                 CONF_START_SLOT: DEFAULT_START_SLOT,
                 CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
                 CONF_CODE_GENERATION: "Start/End Date",
-                "should_update_code": True,
+                CONF_SHOULD_UPDATE_CODE: True,
             },
         )
 
@@ -593,12 +723,12 @@ async def test_config_flow_duplicate_detection(hass: HomeAssistant) -> None:
             data={
                 CONF_NAME: "Test Rental 2",
                 CONF_URL: test_url2,
-                "verify_ssl": True,
-                "ignore_non_reserved": True,
-                "keymaster_entry_id": "(none)",
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
                 CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
-                "timezone": "UTC",
-                "event_prefix": "",
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
                 CONF_CHECKIN: DEFAULT_CHECKIN,
                 CONF_CHECKOUT: DEFAULT_CHECKOUT,
                 CONF_DAYS: DEFAULT_DAYS,
@@ -606,7 +736,7 @@ async def test_config_flow_duplicate_detection(hass: HomeAssistant) -> None:
                 CONF_START_SLOT: DEFAULT_START_SLOT,
                 CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
                 CONF_CODE_GENERATION: "Start/End Date",
-                "should_update_code": True,
+                CONF_SHOULD_UPDATE_CODE: True,
             },
         )
 
