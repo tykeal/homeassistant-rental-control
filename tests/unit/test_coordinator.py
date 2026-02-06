@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from aioresponses import aioresponses
 
 from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
+from custom_components.rental_control.const import DEFAULT_REFRESH_FREQUENCY
 from custom_components.rental_control.coordinator import RentalControlCoordinator
 
 from tests.fixtures import calendar_data
@@ -333,10 +334,10 @@ async def test_coordinator_update_interval_change(
 
     coordinator = RentalControlCoordinator(hass, mock_config_entry)
 
-    # Verify initial refresh frequency - uses DEFAULT_REFRESH_FREQUENCY (2 minutes)
-    # since mock_config_entry.data does not include refresh_frequency
+    # Verify initial refresh frequency uses default since mock_config_entry.data
+    # does not include refresh_frequency
     initial_frequency = coordinator.refresh_frequency
-    assert initial_frequency == 2  # DEFAULT_REFRESH_FREQUENCY in minutes
+    assert initial_frequency == DEFAULT_REFRESH_FREQUENCY
 
     # Update configuration with new refresh frequency
     new_config = dict(mock_config_entry.data)
