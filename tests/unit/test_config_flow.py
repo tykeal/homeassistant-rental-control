@@ -323,6 +323,83 @@ async def test_config_flow_http_allowed_when_ssl_disabled(hass: HomeAssistant) -
         assert result["data"][CONF_URL] == test_url
 
 
+async def test_config_flow_rejects_unsupported_scheme(hass: HomeAssistant) -> None:
+    """Test validation error for unsupported URL schemes.
+
+    Verifies that:
+    - Config flow rejects non-HTTP(S) schemes like ftp://, file://
+    - cv.url() validates schemes and returns invalid_url for non-HTTP(S)
+    - Form is re-displayed with error details
+
+    Validated in _start_config_flow(): cv.url() rejects non-HTTP(S) schemes
+    """
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+        data={
+            CONF_NAME: "Test Rental",
+            CONF_URL: "ftp://example.com/calendar.ics",  # Unsupported scheme
+            CONF_VERIFY_SSL: True,
+            CONF_IGNORE_NON_RESERVED: True,
+            CONF_LOCK_ENTRY: "(none)",
+            CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+            CONF_TIMEZONE: "UTC",
+            CONF_EVENT_PREFIX: "",
+            CONF_CHECKIN: DEFAULT_CHECKIN,
+            CONF_CHECKOUT: DEFAULT_CHECKOUT,
+            CONF_DAYS: DEFAULT_DAYS,
+            CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+            CONF_START_SLOT: DEFAULT_START_SLOT,
+            CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+            CONF_CODE_GENERATION: "Start/End Date",
+            CONF_SHOULD_UPDATE_CODE: True,
+        },
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "user"
+    # cv.url() rejects non-HTTP(S) schemes with invalid_url
+    assert result["errors"] == {CONF_URL: "invalid_url"}
+
+
+async def test_config_flow_rejects_malformed_url(hass: HomeAssistant) -> None:
+    """Test validation error for malformed URLs.
+
+    Verifies that:
+    - Config flow rejects URLs that fail cv.url() validation
+    - Error message indicates URL is malformed
+    - Form is re-displayed with error details
+
+    Validated in _start_config_flow(): cv.url() raises vol.Invalid for bad URLs
+    """
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+        data={
+            CONF_NAME: "Test Rental",
+            CONF_URL: "not-a-valid-url",  # Malformed URL
+            CONF_VERIFY_SSL: True,
+            CONF_IGNORE_NON_RESERVED: True,
+            CONF_LOCK_ENTRY: "(none)",
+            CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+            CONF_TIMEZONE: "UTC",
+            CONF_EVENT_PREFIX: "",
+            CONF_CHECKIN: DEFAULT_CHECKIN,
+            CONF_CHECKOUT: DEFAULT_CHECKOUT,
+            CONF_DAYS: DEFAULT_DAYS,
+            CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+            CONF_START_SLOT: DEFAULT_START_SLOT,
+            CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+            CONF_CODE_GENERATION: "Start/End Date",
+            CONF_SHOULD_UPDATE_CODE: True,
+        },
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {CONF_URL: "invalid_url"}
+
+
 async def test_config_flow_validation_invalid_refresh(hass: HomeAssistant) -> None:
     """Test validation error for out-of-range refresh_frequency.
 
