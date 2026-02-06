@@ -240,7 +240,7 @@ async def test_config_flow_validation_invalid_url(hass: HomeAssistant) -> None:
     - Error message indicates only HTTPS is supported
     - Form is re-displayed with error details
 
-    Per config_flow.py line 340: "We require that the URL be an SSL URL"
+    Per config_flow.py _check_url(): "We require that the URL be an SSL URL"
     """
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
@@ -278,7 +278,7 @@ async def test_config_flow_validation_invalid_refresh(hass: HomeAssistant) -> No
     - Error message indicates valid range is 0-1440 minutes
     - Form is re-displayed with error details
 
-    Per config_flow.py lines 365-368: refresh must be between 0 and 1440
+    Per config_flow.py _check_refresh(): refresh must be between 0 and 1440
     """
     with aioresponses() as mock_aiohttp:
         test_url = "https://example.com/calendar.ics"
@@ -325,7 +325,7 @@ async def test_config_flow_validation_invalid_max_events(hass: HomeAssistant) ->
     - Error message indicates value must be >= 1
     - Form is re-displayed with error details
 
-    Per config_flow.py lines 385-386: max_events must be >= 1
+    Per config_flow.py _check_max_events(): max_events must be >= 1
     """
     with aioresponses() as mock_aiohttp:
         test_url = "https://example.com/calendar.ics"
@@ -373,7 +373,7 @@ async def test_options_flow_init(hass: HomeAssistant) -> None:
     - Form is pre-populated with existing config values
     - All configuration fields are present in the schema
 
-    Per config_flow.py lines 117-132: Options flow loads from config_entry.data
+    Per config_flow.py OptionsFlowHandler.async_step_init(): Options flow loads from config_entry.data
     """
     # First create a config entry
     with aioresponses() as mock_aiohttp:
@@ -523,7 +523,7 @@ async def test_config_flow_duplicate_detection(hass: HomeAssistant) -> None:
     - Returns error when attempting to create duplicate entry
     - Error message indicates name conflict
 
-    Per config_flow.py lines 88-95: unique_id generation checks for duplicates.
+    Per config_flow.py async_step_user(): unique_id generation checks for duplicates.
     We mock gen_uuid to return the same value twice to trigger duplicate detection.
     """
     from unittest.mock import patch
