@@ -44,9 +44,21 @@ async def test_coordinator_first_refresh(
     Verifies that async_config_entry_first_refresh properly fetches
     and processes calendar data on initial load.
     """
+    from datetime import datetime
+    from unittest.mock import patch
+
+    import homeassistant.util.dt as dt_util
+
     mock_config_entry.add_to_hass(hass)
 
-    with aioresponses() as mock_session:
+    # Freeze time to a date before the fixture events (Jan 2025)
+    frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+
+    with (
+        aioresponses() as mock_session,
+        patch.object(dt_util, "now", return_value=frozen_time),
+        patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+    ):
         mock_session.get(
             "https://example.com/calendar.ics",
             status=200,
@@ -54,9 +66,21 @@ async def test_coordinator_first_refresh(
         )
 
         coordinator = RentalControlCoordinator(hass, mock_config_entry)
-        # Note: Actual refresh testing requires examining the production code more
-        # This is a stub demonstrating the pattern
-        assert coordinator is not None
+
+        # Verify initial state before refresh
+        assert coordinator.calendar == []
+        assert coordinator.calendar_ready is False
+        assert coordinator.calendar_loaded is False
+
+        # Call update to trigger first refresh
+        await coordinator.update()
+        await hass.async_block_till_done()
+
+        # Verify calendar data was loaded
+        assert coordinator.calendar_loaded is True
+        assert len(coordinator.calendar) > 0
+        # First event should be from the Airbnb ICS fixture
+        assert coordinator.calendar[0].summary is not None
 
 
 async def test_coordinator_scheduled_refresh(
