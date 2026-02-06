@@ -336,8 +336,9 @@ async def _start_config_flow(
         # Validate user input
         try:
             cv.url(user_input["url"])
-            # We require that the URL be an SSL URL
-            if not re.search("^https://", user_input[CONF_URL]):
+            # Require HTTPS unless verify_ssl is disabled (allows HTTP for local/dev use)
+            is_https = re.search("^https://", user_input[CONF_URL])
+            if not is_https and user_input[CONF_VERIFY_SSL]:
                 errors[CONF_URL] = "invalid_url"
             else:
                 session = async_get_clientsession(

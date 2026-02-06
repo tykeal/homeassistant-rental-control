@@ -7,7 +7,7 @@
       "bad_refresh": "Le rafraîchissement doit être compris entre 0 et 1440.",
       "bad_time": "L'heure d'arrivée/départ est invalide. Utilisez le format 24 heures",
       "invalid_path": "Le chemin doit être un chemin relatif, non absolu",
-      "invalid_url": "Seules les URLs en https sont prises en charge",
+      "invalid_url": "HTTPS requis lorsque la vérification SSL est activée",
       "same_name": "Nom déjà utilisé",
       "unknown": "Erreur inattendue, vérifiez les journaux pour plus de détails"
     },
@@ -42,7 +42,7 @@
       "bad_refresh": "Le rafraîchissement doit être compris entre 0 et 1440.",
       "bad_time": "L'heure d'arrivée/départ est invalide. Utilisez le format 24 heures",
       "invalid_path": "Le chemin doit être un chemin relatif, non absolu",
-      "invalid_url": "Seules les URLs en https sont prises en charge",
+      "invalid_url": "HTTPS requis lorsque la vérification SSL est activée",
       "same_name": "Nom déjà utilisé",
       "unknown": "Erreur inattendue, vérifiez les journaux pour plus de détails"
     },

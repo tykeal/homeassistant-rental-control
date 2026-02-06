@@ -7,7 +7,7 @@
       "bad_refresh": "Refresh must be between 0 and 1440.",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
       "invalid_path": "Path must be a relative path, not absolute",
-      "invalid_url": "Only https URLs are supported",
+      "invalid_url": "HTTPS required when SSL verification is enabled",
       "same_name": "Name already in use",
       "unknown": "Unexpected error, check logs for more details"
     },
@@ -42,7 +42,7 @@
       "bad_refresh": "Refresh must be between 0 and 1440.",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
       "invalid_path": "Path must be a relative path, not absolute",
-      "invalid_url": "Only https URLs are supported",
+      "invalid_url": "HTTPS required when SSL verification is enabled",
       "same_name": "Name already in use",
       "unknown": "Unexpected error, check logs for more details"
     },
