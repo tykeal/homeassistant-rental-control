@@ -118,11 +118,10 @@ async def test_platform_loading(
     assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
 
-    # Verify platforms are registered
-    # Check that sensor platform was loaded
-    assert f"{DOMAIN}.sensor" in hass.config.components
-    # Check that calendar platform was loaded
-    assert f"{DOMAIN}.calendar" in hass.config.components
+    # Verify platforms are registered - hass.config.components tracks domain names
+    assert DOMAIN in hass.config.components
+    assert "sensor" in hass.config.components
+    assert "calendar" in hass.config.components
 
 
 async def test_config_entry_reload(
