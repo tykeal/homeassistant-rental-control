@@ -8,3 +8,9 @@ pythonenv*
 .coverage
 venv
 .venv
+htmlcov/
+.pytest_cache/
+*.pyc
+*.pyo
+.tox/
+*.log

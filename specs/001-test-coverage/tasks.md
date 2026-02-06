@@ -27,11 +27,11 @@ SPDX-License-Identifier: Apache-2.0
 
 **Purpose**: Project initialization and test infrastructure setup
 
-- [ ] T001 Verify test dependencies are installed per requirements_test.txt
-- [ ] T002 Create tests/__init__.py with SPDX header and module docstring
-- [ ] T003 [P] Create tests/fixtures/__init__.py with SPDX header and module docstring
-- [ ] T004 [P] Create tests/unit/__init__.py with SPDX header and module docstring
-- [ ] T005 [P] Create tests/integration/__init__.py with SPDX header and module docstring
+- [X] T001 Verify test dependencies are installed per requirements_test.txt
+- [X] T002 Create tests/__init__.py with SPDX header and module docstring
+- [X] T003 [P] Create tests/fixtures/__init__.py with SPDX header and module docstring
+- [X] T004 [P] Create tests/unit/__init__.py with SPDX header and module docstring
+- [X] T005 [P] Create tests/integration/__init__.py with SPDX header and module docstring
 
 ---
 
@@ -41,13 +41,13 @@ SPDX-License-Identifier: Apache-2.0
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T006 Create tests/conftest.py with basic pytest configuration and hass fixture imports
-- [ ] T007 [P] Create tests/fixtures/calendar_data.py with ICS calendar string fixtures for Airbnb, VRBO, and generic formats
-- [ ] T008 [P] Create tests/fixtures/config_entries.py with mock configuration entry fixtures (minimal, complete, invalid scenarios)
-- [ ] T009 [P] Create tests/fixtures/event_data.py with event description fixtures containing various guest info patterns
-- [ ] T010 Add pytest fixtures to tests/conftest.py for valid_ics_calendar, mock_calendar_url using aioresponses, and mock_config_entry
-- [ ] T011 Add helper fixtures to tests/conftest.py for setup_integration and entity state assertion utilities
-- [ ] T012 Configure pytest coverage settings in pyproject.toml to set fail_under=80 as initial target
+- [X] T006 Create tests/conftest.py with basic pytest configuration and hass fixture imports
+- [X] T007 [P] Create tests/fixtures/calendar_data.py with ICS calendar string fixtures for Airbnb, VRBO, and generic formats
+- [X] T008 [P] Create tests/fixtures/config_entries.py with mock configuration entry fixtures (minimal, complete, invalid scenarios)
+- [X] T009 [P] Create tests/fixtures/event_data.py with event description fixtures containing various guest info patterns
+- [X] T010 Add pytest fixtures to tests/conftest.py for valid_ics_calendar, mock_calendar_url using aioresponses, and mock_config_entry
+- [X] T011 Add helper fixtures to tests/conftest.py for setup_integration and entity state assertion utilities
+- [X] T012 Configure pytest coverage settings in pyproject.toml to set fail_under=80 as initial target
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -63,43 +63,43 @@ SPDX-License-Identifier: Apache-2.0
 
 #### Coordinator Tests (coordinator.py)
 
-- [ ] T013 [P] [US1] Create tests/unit/test_coordinator.py with SPDX header and module docstring
-- [ ] T014 [US1] Add test_coordinator_initialization to verify RentalControlCoordinator initializes with correct config in tests/unit/test_coordinator.py
-- [ ] T015 [US1] Add test_coordinator_first_refresh to verify async_config_entry_first_refresh fetches calendar data in tests/unit/test_coordinator.py
-- [ ] T016 [US1] Add test_coordinator_scheduled_refresh to verify coordinator updates on interval using async_fire_time_changed in tests/unit/test_coordinator.py
-- [ ] T017 [US1] Add test_coordinator_refresh_success to verify successful calendar fetch and event parsing in tests/unit/test_coordinator.py
-- [ ] T018 [US1] Add test_coordinator_refresh_network_error to verify error handling for HTTP failures in tests/unit/test_coordinator.py
-- [ ] T019 [US1] Add test_coordinator_refresh_invalid_ics to verify error handling for malformed ICS content in tests/unit/test_coordinator.py
-- [ ] T020 [US1] Add test_coordinator_state_management to verify coordinator data property maintains event state in tests/unit/test_coordinator.py
-- [ ] T021 [US1] Add test_coordinator_update_interval_change to verify coordinator respects interval changes in tests/unit/test_coordinator.py
+- [X] T013 [P] [US1] Create tests/unit/test_coordinator.py with SPDX header and module docstring
+- [X] T014 [US1] Add test_coordinator_initialization to verify RentalControlCoordinator initializes with correct config in tests/unit/test_coordinator.py
+- [X] T015 [US1] Add test_coordinator_first_refresh to verify async_config_entry_first_refresh fetches calendar data in tests/unit/test_coordinator.py
+- [X] T016 [US1] Add test_coordinator_scheduled_refresh to verify coordinator updates on interval using async_fire_time_changed in tests/unit/test_coordinator.py
+- [X] T017 [US1] Add test_coordinator_refresh_success to verify successful calendar fetch and event parsing in tests/unit/test_coordinator.py
+- [X] T018 [US1] Add test_coordinator_refresh_network_error to verify error handling for HTTP failures in tests/unit/test_coordinator.py
+- [X] T019 [US1] Add test_coordinator_refresh_invalid_ics to verify error handling for malformed ICS content in tests/unit/test_coordinator.py
+- [X] T020 [US1] Add test_coordinator_state_management to verify coordinator data property maintains event state in tests/unit/test_coordinator.py
+- [X] T021 [US1] Add test_coordinator_update_interval_change to verify coordinator respects interval changes in tests/unit/test_coordinator.py
 
 #### Config Flow Tests (config_flow.py)
 
-- [ ] T022 [P] [US1] Create tests/unit/test_config_flow.py with SPDX header and module docstring
-- [ ] T023 [US1] Add test_config_flow_user_init to verify initial config flow presents form with required fields in tests/unit/test_config_flow.py
-- [ ] T024 [US1] Add test_config_flow_user_submit_valid to verify successful submission with minimal required fields in tests/unit/test_config_flow.py
-- [ ] T025 [US1] Add test_config_flow_user_submit_complete to verify submission with all optional fields in tests/unit/test_config_flow.py
-- [ ] T026 [US1] Add test_config_flow_validation_missing_name to verify validation error when name is missing in tests/unit/test_config_flow.py
-- [ ] T027 [US1] Add test_config_flow_validation_missing_url to verify validation error when url is missing in tests/unit/test_config_flow.py
-- [ ] T028 [US1] Add test_config_flow_validation_invalid_url to verify validation error for malformed URL in tests/unit/test_config_flow.py
-- [ ] T029 [US1] Add test_config_flow_validation_invalid_refresh to verify validation error for out-of-range refresh_frequency in tests/unit/test_config_flow.py
-- [ ] T030 [US1] Add test_config_flow_validation_invalid_max_events to verify validation error for invalid max_events value in tests/unit/test_config_flow.py
-- [ ] T031 [US1] Add test_options_flow_init to verify options flow loads existing config in tests/unit/test_config_flow.py
-- [ ] T032 [US1] Add test_options_flow_update to verify options flow updates configuration successfully in tests/unit/test_config_flow.py
-- [ ] T033 [US1] Add test_config_flow_duplicate_detection to verify handling of duplicate calendar names in tests/unit/test_config_flow.py
+- [X] T022 [P] [US1] Create tests/unit/test_config_flow.py with SPDX header and module docstring
+- [X] T023 [US1] Add test_config_flow_user_init to verify initial config flow presents form with required fields in tests/unit/test_config_flow.py
+- [X] T024 [US1] Add test_config_flow_user_submit_valid to verify successful submission with minimal required fields in tests/unit/test_config_flow.py
+- [X] T025 [US1] Add test_config_flow_user_submit_complete to verify submission with all optional fields in tests/unit/test_config_flow.py
+- [X] T026 [US1] Add test_config_flow_validation_missing_name to verify validation error when name is missing in tests/unit/test_config_flow.py
+- [X] T027 [US1] Add test_config_flow_validation_missing_url to verify validation error when url is missing in tests/unit/test_config_flow.py
+- [X] T028 [US1] Add test_config_flow_validation_invalid_url to verify validation error for malformed URL in tests/unit/test_config_flow.py
+- [X] T029 [US1] Add test_config_flow_validation_invalid_refresh to verify validation error for out-of-range refresh_frequency in tests/unit/test_config_flow.py
+- [X] T030 [US1] Add test_config_flow_validation_invalid_max_events to verify validation error for invalid max_events value in tests/unit/test_config_flow.py
+- [X] T031 [US1] Add test_options_flow_init to verify options flow loads existing config in tests/unit/test_config_flow.py
+- [X] T032 [US1] Add test_options_flow_update to verify options flow updates configuration successfully in tests/unit/test_config_flow.py
+- [X] T033 [US1] Add test_config_flow_duplicate_detection to verify handling of duplicate calendar names in tests/unit/test_config_flow.py
 
 #### Initialization Tests (__init__.py)
 
-- [ ] T034 [P] [US1] Create tests/unit/test_init.py with SPDX header and module docstring
-- [ ] T035 [US1] Add test_async_setup_entry to verify integration setup creates coordinator and loads platforms in tests/unit/test_init.py
-- [ ] T036 [US1] Add test_async_setup_entry_failure to verify setup handles coordinator initialization errors in tests/unit/test_init.py
-- [ ] T037 [US1] Add test_async_unload_entry to verify integration cleanup and entity removal in tests/unit/test_init.py
-- [ ] T038 [US1] Add test_platform_loading to verify sensor and calendar platforms are loaded in tests/unit/test_init.py
-- [ ] T039 [US1] Add test_config_entry_reload to verify entry reload updates coordinator config in tests/unit/test_init.py
-- [ ] T039a [US1] Add test_service_registration to verify service calls are registered correctly (FR-018) in tests/unit/test_init.py
-- [ ] T039b [US1] Add test_platform_reload to verify platform reloading functionality works (FR-018) in tests/unit/test_init.py
-- [ ] T039c [US1] Add test_state_change_listeners to verify state change listeners are registered (FR-019) in tests/unit/test_coordinator.py
-- [ ] T039d [US1] Add test_event_handling to verify event handling callbacks work correctly (FR-019) in tests/unit/test_coordinator.py
+- [X] T034 [P] [US1] Create tests/unit/test_init.py with SPDX header and module docstring
+- [X] T035 [US1] Add test_async_setup_entry to verify integration setup creates coordinator and loads platforms in tests/unit/test_init.py
+- [X] T036 [US1] Add test_async_setup_entry_failure to verify setup handles coordinator initialization errors in tests/unit/test_init.py
+- [X] T037 [US1] Add test_async_unload_entry to verify integration cleanup and entity removal in tests/unit/test_init.py
+- [X] T038 [US1] Add test_platform_loading to verify sensor and calendar platforms are loaded in tests/unit/test_init.py
+- [X] T039 [US1] Add test_config_entry_reload to verify entry reload updates coordinator config in tests/unit/test_init.py
+- [ ] T039a [US1] **DEFERRED** - Add test_service_registration (FR-018): No services currently registered in __init__.py. Implement when services are added.
+- [ ] T039b [US1] **DEFERRED** - Add test_platform_reload (FR-018): Platform reloading covered by T039 (config_entry_reload). Add dedicated test if separate reload logic is added.
+- [ ] T039c [US1] **DEFERRED** - Add test_state_change_listeners (FR-019): State change listeners exist but require Keymaster integration to test. Add when Keymaster testing is in scope.
+- [ ] T039d [US1] **DEFERRED** - Add test_event_handling (FR-019): Event handling callbacks tied to Keymaster. Add when Keymaster testing is in scope.
 
 **Note on FR-017 (Keymaster Integration)**: The current codebase review indicates no Keymaster-specific features are implemented. If Keymaster integration is added in the future, tasks should be added to test lock code synchronization and state management. For now, this requirement is marked as not applicable to current implementation scope.
 
