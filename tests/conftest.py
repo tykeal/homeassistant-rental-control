@@ -57,8 +57,6 @@ def mock_config_entry() -> MockConfigEntry:
         },
         options={
             "refresh_frequency": 5,
-            "max_events": 3,
-            "days": 90,
         },
         entry_id="test_entry_id",
     )
