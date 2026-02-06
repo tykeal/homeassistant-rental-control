@@ -231,10 +231,12 @@ async def test_coordinator_refresh_network_error(
 async def test_coordinator_refresh_invalid_ics(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
-    """Test error handling for malformed ICS content.
+    """Test coordinator behavior with malformed ICS content.
 
-    Verifies that coordinator handles invalid ICS data gracefully
-    without crashing the integration.
+    Note: Currently the coordinator does not have try/except around
+    Calendar.from_ical(), so malformed ICS raises ValueError.
+    This test documents current behavior. Future enhancement could
+    add graceful error handling to log and continue without crashing.
     """
     import pytest
 
@@ -250,7 +252,9 @@ async def test_coordinator_refresh_invalid_ics(
 
         coordinator = RentalControlCoordinator(hass, mock_config_entry)
 
-        # Trigger refresh - should raise exception from icalendar parser
+        # Current behavior: malformed ICS raises ValueError from icalendar parser
+        # TODO: Consider adding try/except in coordinator._refresh_calendar()
+        # to handle gracefully (log error, keep calendar_loaded=False)
         with pytest.raises(ValueError):
             await coordinator.update()
 
