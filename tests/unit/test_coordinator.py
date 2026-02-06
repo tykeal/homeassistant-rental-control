@@ -252,7 +252,8 @@ async def test_coordinator_refresh_invalid_ics(
         # Trigger refresh - should raise exception from icalendar parser
         with pytest.raises(ValueError):
             await coordinator.update()
-            await hass.async_block_till_done()
+
+        await hass.async_block_till_done()
 
 
 async def test_coordinator_state_management(
