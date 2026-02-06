@@ -232,7 +232,7 @@ async def test_config_flow_validation_missing_url(hass: HomeAssistant) -> None:
     assert isinstance(url_key, vol.Required)
 
 
-async def test_config_flow_validation_invalid_url(hass: HomeAssistant) -> None:
+async def test_config_flow_rejects_http_when_ssl_enabled(hass: HomeAssistant) -> None:
     """Test validation error for HTTP URL when verify_ssl is enabled.
 
     Verifies that:
