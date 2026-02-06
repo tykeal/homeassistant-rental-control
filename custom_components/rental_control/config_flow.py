@@ -335,9 +335,16 @@ async def _start_config_flow(
         # Validate user input
         try:
             cv.url(user_input[CONF_URL])
-            # Require HTTPS unless verify_ssl is disabled (allows HTTP for local/dev use)
-            is_https = user_input[CONF_URL].lower().startswith("https://")
-            if not is_https and user_input[CONF_VERIFY_SSL]:
+            # Only allow http:// or https:// schemes
+            url_lower = user_input[CONF_URL].lower()
+            is_https = url_lower.startswith("https://")
+            is_http = url_lower.startswith("http://")
+
+            if not (is_http or is_https):
+                # Reject non-HTTP(S) schemes (e.g., ftp://, file://)
+                errors[CONF_URL] = "invalid_url"
+            elif is_http and user_input[CONF_VERIFY_SSL]:
+                # HTTP only allowed when SSL verification is disabled
                 errors[CONF_URL] = "https_required"
             else:
                 session = async_get_clientsession(
