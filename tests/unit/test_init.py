@@ -156,9 +156,9 @@ async def test_config_entry_reload(
 
     # Update options to trigger reload with all required fields
     new_options = mock_config_entry.data.copy()
-    new_options["refresh_frequency"] = 30  # Changed from 5
-    new_options["max_events"] = 5  # Changed from 3
-    new_options["days"] = 180  # Changed from 90
+    new_options["refresh_frequency"] = 30  # New value (data has no refresh_frequency)
+    new_options["max_events"] = 5  # Changed from data["max_events"] = 3
+    new_options["days"] = 180  # Changed from data["days"] = 90
 
     hass.config_entries.async_update_entry(
         mock_config_entry,
