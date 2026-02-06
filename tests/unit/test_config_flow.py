@@ -240,7 +240,7 @@ async def test_config_flow_rejects_http_when_ssl_enabled(hass: HomeAssistant) ->
     - Error message indicates HTTPS is required when SSL verification is enabled
     - Form is re-displayed with error details
 
-    Per config_flow.py _check_url(): HTTPS required when SSL verification enabled
+    Validated in _start_config_flow(): HTTPS required when SSL verification enabled
     """
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
@@ -278,7 +278,7 @@ async def test_config_flow_http_allowed_when_ssl_disabled(hass: HomeAssistant) -
     - This enables local/development calendar servers without SSL
     - Entry is created successfully with HTTP URL
 
-    Per config_flow.py _check_url(): HTTP allowed when SSL verification disabled
+    Validated in _start_config_flow(): HTTP allowed when SSL verification disabled
     """
     with aioresponses() as mock_aiohttp:
         test_url = "http://local-server/calendar.ics"  # HTTP URL
