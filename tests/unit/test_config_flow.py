@@ -522,12 +522,21 @@ async def test_config_flow_duplicate_detection(hass: HomeAssistant) -> None:
     - Returns error when attempting to create duplicate entry
     - Error message indicates name conflict
 
-    Per config_flow.py lines 88-95: unique_id generation checks for duplicates
-    Note: The actual duplicate detection is based on unique_id (UUID) generation,
-    not the calendar name itself. This test verifies the error handling path.
+    Per config_flow.py lines 88-95: unique_id generation checks for duplicates.
+    We mock gen_uuid to return the same value twice to trigger duplicate detection.
     """
-    # First create a config entry
-    with aioresponses() as mock_aiohttp:
+    from unittest.mock import patch
+
+    fixed_uuid = "test-fixed-uuid-12345"
+
+    # First create a config entry with mocked UUID
+    with (
+        aioresponses() as mock_aiohttp,
+        patch(
+            "custom_components.rental_control.config_flow.gen_uuid",
+            return_value=fixed_uuid,
+        ),
+    ):
         test_url = "https://example.com/calendar.ics"
         mock_aiohttp.get(
             test_url,
@@ -561,9 +570,45 @@ async def test_config_flow_duplicate_detection(hass: HomeAssistant) -> None:
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
-    # The duplicate detection in the actual code is based on unique_id
-    # which uses a UUID generated from creation timestamp. In normal usage,
-    # two flows with different timestamps will have different UUIDs.
-    # This test documents that the duplicate detection mechanism exists,
-    # even though it's difficult to trigger in a test environment without
-    # mocking the UUID generation to return the same value twice.
+    # Now attempt to create a second entry with the same UUID (mocked)
+    with (
+        aioresponses() as mock_aiohttp,
+        patch(
+            "custom_components.rental_control.config_flow.gen_uuid",
+            return_value=fixed_uuid,
+        ),
+    ):
+        test_url2 = "https://example.com/calendar2.ics"
+        mock_aiohttp.get(
+            test_url2,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result2 = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental 2",
+                CONF_URL: test_url2,
+                "verify_ssl": True,
+                "ignore_non_reserved": True,
+                "keymaster_entry_id": "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                "timezone": "UTC",
+                "event_prefix": "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                "should_update_code": True,
+            },
+        )
+
+    # Duplicate unique_id should result in form with error
+    assert result2["type"] == FlowResultType.FORM
+    assert result2["errors"] == {CONF_NAME: "same_name"}
