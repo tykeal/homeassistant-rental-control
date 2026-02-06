@@ -12,6 +12,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.data_entry_flow import FlowResultType
+import voluptuous as vol
 
 from custom_components.rental_control.const import CONF_CHECKIN
 from custom_components.rental_control.const import CONF_CHECKOUT
@@ -195,9 +196,9 @@ async def test_config_flow_validation_missing_name(hass: HomeAssistant) -> None:
 
     # CONF_NAME should be in schema
     assert CONF_NAME in schema_keys
-    # Check if it's marked as Required by checking the key type
+    # Check if it's marked as Required using isinstance for robustness
     name_key = [k for k in schema.keys() if str(k.schema) == CONF_NAME][0]
-    assert name_key.__class__.__name__ == "Required"
+    assert isinstance(name_key, vol.Required)
 
 
 async def test_config_flow_validation_missing_url(hass: HomeAssistant) -> None:
@@ -226,9 +227,9 @@ async def test_config_flow_validation_missing_url(hass: HomeAssistant) -> None:
 
     # CONF_URL should be in schema
     assert CONF_URL in schema_keys
-    # Check if it's marked as Required by checking the key type
+    # Check if it's marked as Required using isinstance for robustness
     url_key = [k for k in schema.keys() if str(k.schema) == CONF_URL][0]
-    assert url_key.__class__.__name__ == "Required"
+    assert isinstance(url_key, vol.Required)
 
 
 async def test_config_flow_validation_invalid_url(hass: HomeAssistant) -> None:
