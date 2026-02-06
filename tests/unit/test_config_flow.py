@@ -233,14 +233,14 @@ async def test_config_flow_validation_missing_url(hass: HomeAssistant) -> None:
 
 
 async def test_config_flow_validation_invalid_url(hass: HomeAssistant) -> None:
-    """Test validation error for malformed URL.
+    """Test validation error for HTTP URL when verify_ssl is enabled.
 
     Verifies that:
-    - Config flow rejects non-HTTPS URLs
-    - Error message indicates only HTTPS is supported
+    - Config flow rejects non-HTTPS URLs when verify_ssl is True
+    - Error message indicates HTTPS is required when SSL verification is enabled
     - Form is re-displayed with error details
 
-    Per config_flow.py _check_url(): "We require that the URL be an SSL URL"
+    Per config_flow.py _check_url(): HTTPS required when SSL verification enabled
     """
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
@@ -248,7 +248,7 @@ async def test_config_flow_validation_invalid_url(hass: HomeAssistant) -> None:
         data={
             CONF_NAME: "Test Rental",
             CONF_URL: "http://example.com/calendar.ics",  # HTTP instead of HTTPS
-            "verify_ssl": True,
+            "verify_ssl": True,  # SSL verification enabled requires HTTPS
             "ignore_non_reserved": True,
             "keymaster_entry_id": "(none)",
             CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
@@ -268,6 +268,54 @@ async def test_config_flow_validation_invalid_url(hass: HomeAssistant) -> None:
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {CONF_URL: "invalid_url"}
+
+
+async def test_config_flow_http_allowed_when_ssl_disabled(hass: HomeAssistant) -> None:
+    """Test HTTP URLs are allowed when verify_ssl is disabled.
+
+    Verifies that:
+    - Config flow accepts HTTP URLs when verify_ssl is False
+    - This enables local/development calendar servers without SSL
+    - Entry is created successfully with HTTP URL
+
+    Per config_flow.py _check_url(): HTTP allowed when SSL verification disabled
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "http://local-server/calendar.ics"  # HTTP URL
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.GENERIC_ICS_CALENDAR,
+            headers={"Content-Type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Local Rental",
+                CONF_URL: test_url,
+                "verify_ssl": False,  # SSL verification disabled allows HTTP
+                "ignore_non_reserved": True,
+                "keymaster_entry_id": "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                "timezone": "UTC",
+                "event_prefix": "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                "should_update_code": True,
+            },
+        )
+
+        # Entry should be created successfully
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["title"] == "Local Rental"
+        assert result["data"][CONF_URL] == test_url
 
 
 async def test_config_flow_validation_invalid_refresh(hass: HomeAssistant) -> None:
