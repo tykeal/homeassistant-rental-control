@@ -6,7 +6,7 @@ name = "homeassistant-rental-control"
 version = "0.0.0"
 description = "Home Assistant integration for managing rental properties with calendar and door code management"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13.2"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Andrew Grimberg", email = "tykeal@bardicgrove.org"}
@@ -31,11 +31,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "homeassistant",
+    "homeassistant>=2025.8.0",
 ]
 
 test = [
-    "homeassistant",
+    "homeassistant>=2025.8.0",
     "pytest-homeassistant-custom-component",
 ]
 
@@ -54,7 +54,7 @@ packages = ["custom_components"]
 
 [dependency-groups]
 dev = [
-    "homeassistant",
+    "homeassistant>=2025.8.0",
 ]
 
 [tool.pytest.ini_options]
