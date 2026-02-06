@@ -142,12 +142,18 @@ async def test_coordinator_refresh_success(
     """
     from datetime import datetime
     from datetime import timedelta
+    from unittest.mock import patch
+
+    import homeassistant.util.dt as dt_util
 
     mock_config_entry.add_to_hass(hass)
 
-    # Create ICS with future events
-    future_start = (datetime.now() + timedelta(days=5)).strftime("%Y%m%d")
-    future_end = (datetime.now() + timedelta(days=10)).strftime("%Y%m%d")
+    # Use frozen time for deterministic test behavior
+    frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+
+    # Create ICS with future events relative to frozen time
+    future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+    future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
 
     future_ics = f"""BEGIN:VCALENDAR
 VERSION:2.0
@@ -163,7 +169,11 @@ END:VEVENT
 END:VCALENDAR
 """
 
-    with aioresponses() as mock_session:
+    with (
+        aioresponses() as mock_session,
+        patch.object(dt_util, "now", return_value=frozen_time),
+        patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+    ):
         mock_session.get(
             "https://example.com/calendar.ics",
             status=200,
@@ -271,15 +281,20 @@ async def test_coordinator_state_management(
     """
     from datetime import datetime
     from datetime import timedelta
+    from unittest.mock import patch
+
+    import homeassistant.util.dt as dt_util
 
     mock_config_entry.add_to_hass(hass)
 
-    # Create ICS with multiple future events
-    now = datetime.now()
-    event1_start = (now + timedelta(days=2)).strftime("%Y%m%d")
-    event1_end = (now + timedelta(days=5)).strftime("%Y%m%d")
-    event2_start = (now + timedelta(days=7)).strftime("%Y%m%d")
-    event2_end = (now + timedelta(days=10)).strftime("%Y%m%d")
+    # Use frozen time for deterministic test behavior
+    frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+
+    # Create ICS with multiple future events relative to frozen time
+    event1_start = (frozen_time + timedelta(days=2)).strftime("%Y%m%d")
+    event1_end = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+    event2_start = (frozen_time + timedelta(days=7)).strftime("%Y%m%d")
+    event2_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
 
     multi_event_ics = f"""BEGIN:VCALENDAR
 VERSION:2.0
@@ -301,7 +316,11 @@ END:VEVENT
 END:VCALENDAR
 """
 
-    with aioresponses() as mock_session:
+    with (
+        aioresponses() as mock_session,
+        patch.object(dt_util, "now", return_value=frozen_time),
+        patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+    ):
         mock_session.get(
             "https://example.com/calendar.ics",
             status=200,
