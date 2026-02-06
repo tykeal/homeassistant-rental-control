@@ -131,9 +131,8 @@ async def test_config_entry_reload(
 ) -> None:
     """Test entry reload updates coordinator config.
 
-    This test verifies that when a config entry is updated via
-    the options flow, the update_listener callback correctly
-    updates the coordinator configuration.
+    This test verifies that when a config entry is reloaded with
+    updated data, the coordinator configuration is updated accordingly.
     """
     mock_config_entry.add_to_hass(hass)
 
@@ -153,23 +152,22 @@ async def test_config_entry_reload(
     coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
     original_refresh_frequency = coordinator.refresh_frequency
 
-    # Update options to trigger reload with all required fields
-    new_options = mock_config_entry.data.copy()
-    new_options["refresh_frequency"] = 30  # New value (data has no refresh_frequency)
-    new_options["max_events"] = 5  # Changed from data["max_events"] = 3
-    new_options["days"] = 180  # Changed from data["days"] = 90
+    # Update data directly to simulate config change (reload reads from data)
+    new_data = dict(mock_config_entry.data)
+    new_data["refresh_frequency"] = 30  # New value different from default
 
     hass.config_entries.async_update_entry(
         mock_config_entry,
-        options=new_options,
+        data=new_data,
     )
 
-    # Trigger the update listener
+    # Trigger reload - this reinitializes coordinator from config_entry.data
     await hass.config_entries.async_reload(mock_config_entry.entry_id)
     await hass.async_block_till_done()
 
     # Verify coordinator config was updated
     updated_coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
+    assert updated_coordinator.refresh_frequency == 30
     assert updated_coordinator.refresh_frequency != original_refresh_frequency
 
 
