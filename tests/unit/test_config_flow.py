@@ -267,7 +267,7 @@ async def test_config_flow_rejects_http_when_ssl_enabled(hass: HomeAssistant) ->
 
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "user"
-    assert result["errors"] == {CONF_URL: "invalid_url"}
+    assert result["errors"] == {CONF_URL: "https_required"}
 
 
 async def test_config_flow_http_allowed_when_ssl_disabled(hass: HomeAssistant) -> None:
