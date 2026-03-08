@@ -142,8 +142,8 @@ class TestGetSlotNameAirbnbExactReserved:
 # ---------------------------------------------------------------------------
 
 
-class TestGetSlotNameAirbnbReservedWithName:
-    """Tests for get_slot_name with 'Reserved - Name' format."""
+class TestGetSlotNameAirbnbVrboReservedWithName:
+    """Tests for get_slot_name with 'Reserved - Name' format (Airbnb and VRBO)."""
 
     def test_reserved_dash_name(self) -> None:
         """Verify guest name is extracted from 'Reserved - Name' format."""
