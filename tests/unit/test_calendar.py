@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from datetime import timezone
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
@@ -20,9 +19,6 @@ from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import NAME
 from custom_components.rental_control.util import gen_uuid
-
-if TYPE_CHECKING:
-    pass
 
 
 def _mock_coordinator(

@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
 from homeassistant.const import CONF_NAME
 from homeassistant.exceptions import ServiceNotFound
+import pytest
 
 from custom_components.rental_control.const import DEFAULT_PATH
 from custom_components.rental_control.const import NAME
@@ -21,10 +21,6 @@ from custom_components.rental_control.util import delete_rc_and_base_folder
 from custom_components.rental_control.util import gen_uuid
 from custom_components.rental_control.util import get_event_names
 from custom_components.rental_control.util import get_slot_name
-
-if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
-
 
 # ---------------------------------------------------------------------------
 # gen_uuid tests
@@ -281,8 +277,6 @@ class TestGetSlotNameFallback:
         non-empty prefix is supplied but does not appear in the summary,
         the regex returns an empty list and accessing index 0 crashes.
         """
-        import pytest
-
         with pytest.raises(IndexError):
             get_slot_name("Guest Q", "", "Vacation")
 
@@ -473,16 +467,14 @@ class TestDeleteRcAndBaseFolder:
 class TestAsyncReloadPackagePlatforms:
     """Tests for the async_reload_package_platforms function."""
 
-    async def test_returns_true_on_success(self, hass: HomeAssistant) -> None:
+    async def test_returns_true_on_success(self) -> None:
         """Verify True is returned when reload succeeds."""
         mock_hass = MagicMock()
         mock_hass.services.async_call = AsyncMock()
         result = await async_reload_package_platforms(mock_hass)
         assert result is True
 
-    async def test_returns_false_on_service_not_found(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_returns_false_on_service_not_found(self) -> None:
         """Verify False is returned when ServiceNotFound is raised."""
         mock_hass = MagicMock()
         mock_hass.services.async_call = AsyncMock(
@@ -491,7 +483,7 @@ class TestAsyncReloadPackagePlatforms:
         result = await async_reload_package_platforms(mock_hass)
         assert result is False
 
-    async def test_calls_automation_reload(self, hass: HomeAssistant) -> None:
+    async def test_calls_automation_reload(self) -> None:
         """Verify the automation domain reload service is called."""
         mock_hass = MagicMock()
         mock_hass.services.async_call = AsyncMock()

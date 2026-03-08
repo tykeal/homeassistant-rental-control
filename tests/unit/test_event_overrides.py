@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -18,10 +17,6 @@ import pytest
 
 from custom_components.rental_control.event_overrides import EventOverride
 from custom_components.rental_control.event_overrides import EventOverrides
-
-if TYPE_CHECKING:
-    pass
-
 
 # ---------------------------------------------------------------------------
 # Helpers / Fixtures
