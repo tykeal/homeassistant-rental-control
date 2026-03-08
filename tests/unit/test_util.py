@@ -121,7 +121,7 @@ class TestGetSlotNameAirbnbExactReserved:
         assert get_slot_name("Reserved", "just some random text", "") is None
 
     def test_reserved_description_lowercase_code(self) -> None:
-        """Verify lowercase codes are not matched (must start uppercase)."""
+        """Verify lowercase codes are not matched (all characters must be uppercase letters or digits)."""
         assert get_slot_name("Reserved", "hmabcdef12", "") is None
 
     def test_reserved_with_prefix(self) -> None:
