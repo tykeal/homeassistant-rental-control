@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from datetime import timezone
+import random
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -504,6 +505,14 @@ class TestGenerateDoorCodeDateBased:
 class TestGenerateDoorCodeStaticRandom:
     """Tests for _generate_door_code with static_random generator."""
 
+    def setup_method(self) -> None:
+        """Save random state before each test to prevent RNG leak."""
+        self._rng_state = random.getstate()
+
+    def teardown_method(self) -> None:
+        """Restore random state after each test."""
+        random.setstate(self._rng_state)
+
     def test_static_random_produces_code(self, hass) -> None:
         """Verify static_random produces a code seeded from description."""
         coordinator = _make_coordinator(code_generator="static_random", code_length=4)
@@ -665,9 +674,12 @@ class TestAsyncUpdateWithEvents:
 
         await sensor.async_update()
 
+        start = datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc)
+        expected_date = start.strftime("%-d %B %Y")
+        expected_time = start.strftime("%H:%M")
         assert "Reserved - Jane Smith" in sensor.state
-        assert "15 March 2025" in sensor.state
-        assert "16:00" in sensor.state
+        assert expected_date in sensor.state
+        assert expected_time in sensor.state
 
     @freeze_time("2025-03-10T12:00:00+00:00")
     async def test_updates_event_attributes(self, hass) -> None:
