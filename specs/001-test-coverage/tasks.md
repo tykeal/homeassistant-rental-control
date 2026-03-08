@@ -196,26 +196,26 @@ SPDX-License-Identifier: Apache-2.0
 
 **Note on FR-005 Coverage**: Tasks T083-T102 provide comprehensive coverage for sensor entity creation, state updates, and attribute mapping as required by FR-005. Tests verify sensor creation (T085, T088), state updates on coordinator changes (T086-T090, T098), and all attribute mappings (T091-T097).
 
-- [ ] T083 [P] [US3] Create tests/unit/test_sensors.py with SPDX header and module docstring
-- [ ] T084 [US3] Add test_sensor_platform_setup to verify sensor platform initializes with coordinator in tests/unit/test_sensors.py
-- [ ] T085 [US3] Add test_current_event_sensor_creation to verify current event sensor is created with correct entity_id in tests/unit/test_sensors.py
-- [ ] T086 [US3] Add test_current_event_sensor_state to verify current event sensor shows active event in tests/unit/test_sensors.py
-- [ ] T087 [US3] Add test_current_event_sensor_no_event to verify current event sensor shows unavailable when no current event in tests/unit/test_sensors.py
-- [ ] T088 [US3] Add test_next_event_sensor_creation to verify next event sensor is created in tests/unit/test_sensors.py
-- [ ] T089 [US3] Add test_next_event_sensor_state to verify next event sensor shows upcoming event in tests/unit/test_sensors.py
-- [ ] T090 [US3] Add test_multiple_event_sensors to verify max_events creates correct number of sensors in tests/unit/test_sensors.py
-- [ ] T091 [US3] Add test_sensor_attributes_guest_email to verify guest_email attribute is set correctly in tests/unit/test_sensors.py
-- [ ] T092 [US3] Add test_sensor_attributes_guest_phone to verify guest_phone attribute is set correctly in tests/unit/test_sensors.py
-- [ ] T093 [US3] Add test_sensor_attributes_guest_count to verify guest_count attribute is set correctly in tests/unit/test_sensors.py
-- [ ] T094 [US3] Add test_sensor_attributes_reservation_url to verify reservation_url attribute is set correctly in tests/unit/test_sensors.py
-- [ ] T095 [US3] Add test_sensor_attributes_door_code to verify door_code attribute is set correctly in tests/unit/test_sensors.py
-- [ ] T096 [US3] Add test_sensor_attributes_start_end_times to verify start and end time attributes in tests/unit/test_sensors.py
-- [ ] T097 [US3] Add test_sensor_attributes_missing_data to verify attributes handle missing data gracefully in tests/unit/test_sensors.py
-- [ ] T098 [US3] Add test_sensor_update_on_coordinator_refresh to verify sensors update when coordinator data changes in tests/unit/test_sensors.py
-- [ ] T099 [US3] Add test_sensor_availability to verify sensor availability tracking based on coordinator state in tests/unit/test_sensors.py
-- [ ] T100 [US3] Add test_sensor_unique_id to verify each sensor has unique_id for entity registry in tests/unit/test_sensors.py
-- [ ] T101 [US3] Add test_sensor_device_info to verify sensors include device_info for grouping in tests/unit/test_sensors.py
-- [ ] T102 [US3] Add test_calsensor_specific_attributes to verify CalSensor-specific attributes and methods in tests/unit/test_sensors.py
+- [X] T083 [P] [US3] Create tests/unit/test_sensors.py with SPDX header and module docstring
+- [X] T084 [US3] Verify sensor platform setup: async_setup_platform returns True, async_setup_entry creates max_events sensors, returns False on failed calendar fetch, calls coordinator.update()
+- [X] T085 [US3] Verify sensor initialization: name format (NAME name Event N), unique_id from gen_uuid, initial state "No reservation" with/without prefix, initial availability False, registers with coordinator.event_sensors
+- [X] T086 [US3] Verify sensor state shows "summary - date time" format via async_update with frozen time
+- [X] T087 [US3] Verify sensor resets to "No reservation" with cleared attributes when no events or event_number beyond list
+- [X] T088 [US3] Verify sensor name includes event_number for second+ event sensors
+- [X] T089 [US3] Verify async_update selects correct event by event_number index
+- [X] T090 [US3] Verify async_setup_entry creates exactly max_events RentalControlCalSensor instances
+- [X] T091 [US3] Verify _extract_email parses "Email: addr" format, returns None for missing/None description
+- [X] T092 [US3] Verify _extract_phone_number handles "Phone:" and "Phone Number:" labels, parenthesized area codes
+- [X] T093 [US3] Verify _extract_num_guests parses "Guests: N" and sums "Adults: N" + "Children: N"
+- [X] T094 [US3] Verify _extract_url parses http/https URLs from description
+- [X] T095 [US3] Verify _generate_door_code: date_based (truncation, lengths 4/6), static_random (determinism, seeding, length), last_four (explicit digits, phone fallback, code_length guard), description=None fallback
+- [X] T096 [US3] Verify ETA days/hours/minutes calculation for future events, None for past events
+- [X] T097 [US3] Verify parsed attributes (email, phone, guests, last_four, url) only appear when description contains matching data
+- [X] T098 [US3] Verify async_update re-reads code_generator and code_length from coordinator on each call
+- [X] T099 [US3] Verify available property reflects coordinator.calendar_ready after async_update
+- [X] T100 [US3] Verify unique_id uses gen_uuid(coordinator.unique_id + " sensor " + event_number), differs per event_number
+- [X] T101 [US3] Verify device_info property delegates to coordinator.device_info
+- [X] T102 [US3] Verify entity_category is DIAGNOSTIC, icon is ICON constant, slot_name population via get_slot_name, override interactions (set_code, update_times, clear_code, eta_days=0 boundary)
 
 **Checkpoint**: At this point, User Story 3 should be fully functional and testable independently. Sensor entities correctly expose event data.
 
