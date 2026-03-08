@@ -115,7 +115,14 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Implementation for User Story 2
 
-#### Calendar Parsing Tests (calendar.py)
+#### Calendar Entity Tests (calendar.py)
+
+> **Scope note:** The original tasks (T041-T053) specified ICS parsing,
+> timezone handling, and event filtering tests. These behaviors live in
+> the coordinator, not in calendar.py. calendar.py is a thin entity
+> wrapper that delegates to the coordinator. Tasks were revised to test
+> what calendar.py actually implements: entity initialization, property
+> delegation, async_update state management, and async_get_events routing.
 
 - [x] T040 [P] [US2] Create tests/unit/test_calendar.py with SPDX header and module docstring
 - [x] T041 [US2] Add entity initialization tests to verify name, available, entity_category, event defaults in tests/unit/test_calendar.py
@@ -135,6 +142,12 @@ SPDX-License-Identifier: Apache-2.0
 - [x] T055 [US2] Add test_returns_events_and_empty_list to verify async_get_events returns correct results in tests/unit/test_calendar.py
 
 #### Event Override Tests (event_overrides.py)
+
+> **Scope note:** The original tasks (T057-T061) specified checkin/checkout
+> time adjustment tests. Time adjustments are performed by the coordinator
+> during calendar refresh, not by EventOverrides. EventOverrides manages
+> Keymaster lock code slots: assignment, lookup, validation, and clearing.
+> Tasks were revised to test the actual EventOverrides class behavior.
 
 - [x] T056 [P] [US2] Create tests/unit/test_event_overrides.py with SPDX header and module docstring
 - [x] T057 [US2] Add initialization and property tests for EventOverrides in tests/unit/test_event_overrides.py
