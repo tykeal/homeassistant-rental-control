@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Execution Date: 2026-02-06
 
-## Overall Status: Phase 3 Complete - Core Component Tests Implemented
+## Overall Status: Phase 4 Complete - Calendar and Event Processing Tests Implemented
 
 ### Checklists Verification
 ✓ PASS - All checklists complete (requirements.md: 16/16 items completed)
@@ -71,15 +71,33 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] T039c: test_state_change_listeners - DEFERRED (requires Keymaster)
 - [ ] T039d: test_event_handling - DEFERRED (requires Keymaster)
 
-#### ⏸️ Phases 4-7: Not Started (0/101 tasks)
-- Phase 4: User Story 2 - Calendar and Event Processing (0/43 tasks)
+#### ✅ Phase 4: User Story 2 - Calendar and Event Processing (100% Complete - 43/43 tasks)
+
+**Calendar Tests (T040-T055):** 21 tests implemented and passing
+- [X] T040: Created tests/unit/test_calendar.py with structure
+- [X] T041-T053: Calendar entity init, properties, update, get_events tests
+- [X] T054: test_calendar_entity_creation - verifies correct entity attributes
+- [X] T055: test_calendar_entity_get_events - verifies date range event filtering
+
+**Event Override Tests (T056-T062):** 54 tests implemented and passing
+- [X] T056: Created tests/unit/test_event_overrides.py with structure
+- [X] T057-T061: Override update, slot assignment, time accessors, prefix handling
+- [X] T062: test_event_override_detection - async_check_overrides validation
+
+**Utility Function Tests (T063-T082):** 51 tests implemented and passing
+- [X] T063: Created tests/unit/test_util.py with structure
+- [X] T064-T073: get_slot_name tests (Airbnb, VRBO, Tripadvisor, Booking.com, Guesty)
+- [X] T074-T080: gen_uuid, get_event_names, delete_folder, async_reload tests
+- [X] T081-T082: add_call, edge case tests (prefix mismatch, empty name)
+
+#### ⏸️ Phases 5-7: Not Started (0/54 tasks)
 - Phase 5: User Story 3 - Sensor and Entity Testing (0/20 tasks)
 - Phase 6: User Story 4 - Integration Testing (0/23 tasks)
 - Phase 7: Polish & Cross-Cutting Concerns (0/11 tasks)
 
 ### Infrastructure Improvements
 
-#### Files Created (11 files)
+#### Files Created (14 files)
 1. `tests/__init__.py` - Test suite module
 2. `tests/conftest.py` - pytest fixtures and configuration
 3. `tests/fixtures/__init__.py` - Fixtures module
@@ -90,7 +108,10 @@ SPDX-License-Identifier: Apache-2.0
 8. `tests/unit/test_coordinator.py` - Coordinator tests (8 passing)
 9. `tests/unit/test_config_flow.py` - Config flow tests (11 passing)
 10. `tests/unit/test_init.py` - Initialization tests (5 passing)
-11. `tests/integration/__init__.py` - Integration tests module
+11. `tests/unit/test_calendar.py` - Calendar entity tests (21 passing)
+12. `tests/unit/test_event_overrides.py` - Event overrides tests (54 passing)
+13. `tests/unit/test_util.py` - Utility function tests (51 passing)
+14. `tests/integration/__init__.py` - Integration tests module
 
 #### Files Modified (4 files)
 1. `pyproject.toml` - Updated coverage settings (fail_under=80), added asyncio_mode config
@@ -102,8 +123,8 @@ SPDX-License-Identifier: Apache-2.0
 ### Test Execution Results
 
 ```
-✓ All 24 tests passing
-✓ Phase 1-3 complete (39/140 tasks = 28%)
+✓ All 153 tests passing
+✓ Phase 1-4 complete (82/140 tasks = 59%)
 ✓ pytest-homeassistant-custom-component integration successful
 ✓ Async test execution configured correctly
 ✓ All pre-commit hooks passing

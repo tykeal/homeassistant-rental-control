@@ -117,55 +117,55 @@ SPDX-License-Identifier: Apache-2.0
 
 #### Calendar Parsing Tests (calendar.py)
 
-- [ ] T040 [P] [US2] Create tests/unit/test_calendar.py with SPDX header and module docstring
-- [ ] T041 [US2] Add test_parse_ics_valid_airbnb to verify parsing Airbnb ICS format correctly in tests/unit/test_calendar.py
-- [ ] T042 [US2] Add test_parse_ics_valid_vrbo to verify parsing VRBO ICS format correctly in tests/unit/test_calendar.py
-- [ ] T043 [US2] Add test_parse_ics_generic to verify parsing generic ICS format in tests/unit/test_calendar.py
-- [ ] T044 [US2] Add test_parse_ics_multiple_events to verify extracting multiple events from single calendar in tests/unit/test_calendar.py
-- [ ] T045 [US2] Add test_parse_ics_empty_calendar to verify handling calendar with no events in tests/unit/test_calendar.py
-- [ ] T046 [US2] Add test_parse_ics_malformed to verify error handling for malformed ICS syntax in tests/unit/test_calendar.py
-- [ ] T047 [US2] Add test_parse_ics_missing_required_fields to verify handling events with missing DTSTART/DTEND in tests/unit/test_calendar.py
-- [ ] T048 [US2] Add test_timezone_handling_utc to verify parsing UTC times correctly (FR-016) in tests/unit/test_calendar.py
-- [ ] T049 [US2] Add test_timezone_handling_named to verify parsing events with named timezones (FR-016) in tests/unit/test_calendar.py
-- [ ] T050 [US2] Add test_timezone_handling_x_wr_timezone to verify handling X-WR-TIMEZONE property (FR-016) in tests/unit/test_calendar.py
-- [ ] T051 [US2] Add test_event_filtering_reserved to verify reserved events are included in tests/unit/test_calendar.py
-- [ ] T052 [US2] Add test_event_filtering_blocked to verify blocked events are filtered when ignore_non_reserved is True in tests/unit/test_calendar.py
-- [ ] T053 [US2] Add test_event_filtering_not_available to verify not available events are filtered appropriately in tests/unit/test_calendar.py
-- [ ] T054 [US2] Add test_calendar_entity_creation to verify CalendarEntity is created with correct attributes in tests/unit/test_calendar.py
-- [ ] T055 [US2] Add test_calendar_entity_get_events to verify calendar entity returns events for date range queries in tests/unit/test_calendar.py
+- [x] T040 [P] [US2] Create tests/unit/test_calendar.py with SPDX header and module docstring
+- [x] T041 [US2] Add test_parse_ics_valid_airbnb to verify parsing Airbnb ICS format correctly in tests/unit/test_calendar.py
+- [x] T042 [US2] Add test_parse_ics_valid_vrbo to verify parsing VRBO ICS format correctly in tests/unit/test_calendar.py
+- [x] T043 [US2] Add test_parse_ics_generic to verify parsing generic ICS format in tests/unit/test_calendar.py
+- [x] T044 [US2] Add test_parse_ics_multiple_events to verify extracting multiple events from single calendar in tests/unit/test_calendar.py
+- [x] T045 [US2] Add test_parse_ics_empty_calendar to verify handling calendar with no events in tests/unit/test_calendar.py
+- [x] T046 [US2] Add test_parse_ics_malformed to verify error handling for malformed ICS syntax in tests/unit/test_calendar.py
+- [x] T047 [US2] Add test_parse_ics_missing_required_fields to verify handling events with missing DTSTART/DTEND in tests/unit/test_calendar.py
+- [x] T048 [US2] Add test_timezone_handling_utc to verify parsing UTC times correctly (FR-016) in tests/unit/test_calendar.py
+- [x] T049 [US2] Add test_timezone_handling_named to verify parsing events with named timezones (FR-016) in tests/unit/test_calendar.py
+- [x] T050 [US2] Add test_timezone_handling_x_wr_timezone to verify handling X-WR-TIMEZONE property (FR-016) in tests/unit/test_calendar.py
+- [x] T051 [US2] Add test_event_filtering_reserved to verify reserved events are included in tests/unit/test_calendar.py
+- [x] T052 [US2] Add test_event_filtering_blocked to verify blocked events are filtered when ignore_non_reserved is True in tests/unit/test_calendar.py
+- [x] T053 [US2] Add test_event_filtering_not_available to verify not available events are filtered appropriately in tests/unit/test_calendar.py
+- [x] T054 [US2] Add test_calendar_entity_creation to verify CalendarEntity is created with correct attributes in tests/unit/test_calendar.py
+- [x] T055 [US2] Add test_calendar_entity_get_events to verify calendar entity returns events for date range queries in tests/unit/test_calendar.py
 
 #### Event Override Tests (event_overrides.py)
 
-- [ ] T056 [P] [US2] Create tests/unit/test_event_overrides.py with SPDX header and module docstring
-- [ ] T057 [US2] Add test_checkin_time_adjustment_allday to verify all-day events get checkin time applied in tests/unit/test_event_overrides.py
-- [ ] T058 [US2] Add test_checkout_time_adjustment_allday to verify all-day events get checkout time applied in tests/unit/test_event_overrides.py
-- [ ] T059 [US2] Add test_time_adjustment_timed_events to verify timed events are not adjusted in tests/unit/test_event_overrides.py
-- [ ] T060 [US2] Add test_time_adjustment_timezone_aware to verify timezone is preserved in adjusted times in tests/unit/test_event_overrides.py
-- [ ] T061 [US2] Add test_time_adjustment_custom_times to verify custom checkin/checkout times are applied in tests/unit/test_event_overrides.py
-- [ ] T062 [US2] Add test_event_override_detection to verify override logic identifies which events to adjust in tests/unit/test_event_overrides.py
+- [x] T056 [P] [US2] Create tests/unit/test_event_overrides.py with SPDX header and module docstring
+- [x] T057 [US2] Add test_checkin_time_adjustment_allday to verify all-day events get checkin time applied in tests/unit/test_event_overrides.py
+- [x] T058 [US2] Add test_checkout_time_adjustment_allday to verify all-day events get checkout time applied in tests/unit/test_event_overrides.py
+- [x] T059 [US2] Add test_time_adjustment_timed_events to verify timed events are not adjusted in tests/unit/test_event_overrides.py
+- [x] T060 [US2] Add test_time_adjustment_timezone_aware to verify timezone is preserved in adjusted times in tests/unit/test_event_overrides.py
+- [x] T061 [US2] Add test_time_adjustment_custom_times to verify custom checkin/checkout times are applied in tests/unit/test_event_overrides.py
+- [x] T062 [US2] Add test_event_override_detection to verify override logic identifies which events to adjust in tests/unit/test_event_overrides.py
 
 #### Utility Function Tests (util.py)
 
-- [ ] T063 [P] [US2] Create tests/unit/test_util.py with SPDX header and module docstring
-- [ ] T064 [US2] Add test_extract_guest_email_valid to verify email extraction from description in tests/unit/test_util.py
-- [ ] T065 [US2] Add test_extract_guest_email_missing to verify handling description without email in tests/unit/test_util.py
-- [ ] T066 [US2] Add test_extract_guest_email_invalid to verify handling malformed email addresses in tests/unit/test_util.py
-- [ ] T067 [US2] Add test_extract_guest_phone_valid to verify phone number extraction from description in tests/unit/test_util.py
-- [ ] T068 [US2] Add test_extract_guest_phone_missing to verify handling description without phone in tests/unit/test_util.py
-- [ ] T069 [US2] Add test_extract_guest_phone_formats to verify various phone number formats are extracted in tests/unit/test_util.py
-- [ ] T070 [US2] Add test_extract_guest_count_valid to verify guest count extraction from description in tests/unit/test_util.py
-- [ ] T071 [US2] Add test_extract_guest_count_missing to verify handling description without guest count in tests/unit/test_util.py
-- [ ] T072 [US2] Add test_extract_reservation_url_valid to verify URL extraction from description in tests/unit/test_util.py
-- [ ] T073 [US2] Add test_extract_reservation_url_missing to verify handling description without URL in tests/unit/test_util.py
-- [ ] T074 [US2] Add test_generate_code_date_based to verify date-based code generation produces deterministic codes in tests/unit/test_util.py
-- [ ] T075 [US2] Add test_generate_code_date_based_different_dates to verify different dates produce different codes in tests/unit/test_util.py
-- [ ] T076 [US2] Add test_generate_code_static_random to verify static random code generation with seed in tests/unit/test_util.py
-- [ ] T077 [US2] Add test_generate_code_static_random_same_seed to verify same seed produces same code in tests/unit/test_util.py
-- [ ] T078 [US2] Add test_generate_code_last_four to verify phone-based code generation using last 4 digits in tests/unit/test_util.py
-- [ ] T079 [US2] Add test_generate_code_last_four_missing_phone to verify fallback when phone is missing in tests/unit/test_util.py
-- [ ] T080 [US2] Add test_generate_code_length_validation to verify code length parameter is respected (4-8 digits) in tests/unit/test_util.py
-- [ ] T081 [US2] Add test_should_update_code_date_changed to verify code update logic when event dates change in tests/unit/test_util.py
-- [ ] T082 [US2] Add test_should_update_code_disabled to verify codes not updated when should_update_code is False in tests/unit/test_util.py
+- [x] T063 [P] [US2] Create tests/unit/test_util.py with SPDX header and module docstring
+- [x] T064 [US2] Add test_extract_guest_email_valid to verify email extraction from description in tests/unit/test_util.py
+- [x] T065 [US2] Add test_extract_guest_email_missing to verify handling description without email in tests/unit/test_util.py
+- [x] T066 [US2] Add test_extract_guest_email_invalid to verify handling malformed email addresses in tests/unit/test_util.py
+- [x] T067 [US2] Add test_extract_guest_phone_valid to verify phone number extraction from description in tests/unit/test_util.py
+- [x] T068 [US2] Add test_extract_guest_phone_missing to verify handling description without phone in tests/unit/test_util.py
+- [x] T069 [US2] Add test_extract_guest_phone_formats to verify various phone number formats are extracted in tests/unit/test_util.py
+- [x] T070 [US2] Add test_extract_guest_count_valid to verify guest count extraction from description in tests/unit/test_util.py
+- [x] T071 [US2] Add test_extract_guest_count_missing to verify handling description without guest count in tests/unit/test_util.py
+- [x] T072 [US2] Add test_extract_reservation_url_valid to verify URL extraction from description in tests/unit/test_util.py
+- [x] T073 [US2] Add test_extract_reservation_url_missing to verify handling description without URL in tests/unit/test_util.py
+- [x] T074 [US2] Add test_generate_code_date_based to verify date-based code generation produces deterministic codes in tests/unit/test_util.py
+- [x] T075 [US2] Add test_generate_code_date_based_different_dates to verify different dates produce different codes in tests/unit/test_util.py
+- [x] T076 [US2] Add test_generate_code_static_random to verify static random code generation with seed in tests/unit/test_util.py
+- [x] T077 [US2] Add test_generate_code_static_random_same_seed to verify same seed produces same code in tests/unit/test_util.py
+- [x] T078 [US2] Add test_generate_code_last_four to verify phone-based code generation using last 4 digits in tests/unit/test_util.py
+- [x] T079 [US2] Add test_generate_code_last_four_missing_phone to verify fallback when phone is missing in tests/unit/test_util.py
+- [x] T080 [US2] Add test_generate_code_length_validation to verify code length parameter is respected (4-8 digits) in tests/unit/test_util.py
+- [x] T081 [US2] Add test_should_update_code_date_changed to verify code update logic when event dates change in tests/unit/test_util.py
+- [x] T082 [US2] Add test_should_update_code_disabled to verify codes not updated when should_update_code is False in tests/unit/test_util.py
 
 **Checkpoint**: At this point, User Story 2 should be fully functional and testable independently. Calendar parsing and event processing have comprehensive coverage.
 
