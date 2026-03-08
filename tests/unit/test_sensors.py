@@ -1042,3 +1042,44 @@ class TestAsyncUpdateOverrides:
         ) as mock_set_code:
             await sensor.async_update()
             mock_set_code.assert_not_awaited()
+
+    @freeze_time("2025-03-15T12:00:00+00:00")
+    async def test_updates_times_not_clear_when_eta_days_zero(self, hass) -> None:
+        """Verify update_times (not clear_code) is called when eta_days is 0.
+
+        When event starts today (eta_days=0), the clear_code branch requires
+        eta_days > 0. With eta_days=0 the condition is false, so update_times
+        is called instead.
+        """
+        event = _make_event(
+            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+        )
+        override = {
+            "slot_code": "1234",
+            "start_time": datetime(2025, 3, 14, 16, 0, tzinfo=timezone.utc),
+            "end_time": datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+        }
+        overrides = MagicMock()
+        overrides.get_slot_with_name.return_value = override
+        coordinator = _make_coordinator(
+            calendar=[event],
+            event_overrides=overrides,
+            code_generator="date_based",
+            should_update_code=True,
+        )
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+
+        with (
+            patch(
+                "custom_components.rental_control.sensors.calsensor.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_clear_code,
+            patch(
+                "custom_components.rental_control.sensors.calsensor.async_fire_update_times",
+                new_callable=AsyncMock,
+            ) as mock_update_times,
+        ):
+            await sensor.async_update()
+            mock_clear_code.assert_not_awaited()
+            mock_update_times.assert_awaited_once_with(coordinator, sensor)
