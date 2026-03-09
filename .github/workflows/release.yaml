@@ -266,11 +266,11 @@ jobs:
       - name: "Grype summary"
         if: always()
         run: |
-            # Grype summary
-            echo "## Grype Summary" >> "$GITHUB_STEP_SUMMARY"
-            [ -f grype-results.txt ] && cat grype-results.txt \
-              >> "$GITHUB_STEP_SUMMARY" || echo "No scan results available" \
-              >> "$GITHUB_STEP_SUMMARY"
+          # Grype summary
+          echo "## Grype Summary" >> "$GITHUB_STEP_SUMMARY"
+          [ -f grype-results.txt ] && cat grype-results.txt \
+            >> "$GITHUB_STEP_SUMMARY" || echo "No scan results available" \
+            >> "$GITHUB_STEP_SUMMARY"
 
   build-zip:
     name: 'Build Integration ZIP'

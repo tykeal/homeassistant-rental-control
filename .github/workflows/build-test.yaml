@@ -159,6 +159,11 @@ jobs:
       contents: read
     steps:
       # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b  # v2.15.0
+        with:
+          egress-policy: audit
+
+      # yamllint disable-line rule:line-length
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: "Generate SBOM"
@@ -216,8 +221,8 @@ jobs:
       - name: "Grype summary"
         if: always()
         run: |
-            # Grype summary
-            echo "## Grype Summary" >> "$GITHUB_STEP_SUMMARY"
-            [ -f grype-results.txt ] && cat grype-results.txt \
-              >> "$GITHUB_STEP_SUMMARY" || echo "No scan results available" \
-              >> "$GITHUB_STEP_SUMMARY"
+          # Grype summary
+          echo "## Grype Summary" >> "$GITHUB_STEP_SUMMARY"
+          [ -f grype-results.txt ] && cat grype-results.txt \
+            >> "$GITHUB_STEP_SUMMARY" || echo "No scan results available" \
+            >> "$GITHUB_STEP_SUMMARY"
