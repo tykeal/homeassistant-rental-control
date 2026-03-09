@@ -29,14 +29,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.util import dt
 import voluptuous as vol
 
-from .config_flow import _lock_entry_convert as lock_entry_convert
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_GENERATE
-from .const import CONF_LOCK_ENTRY
 from .const import CONF_PATH
 from .const import CONF_SHOULD_UPDATE_CODE
 from .const import COORDINATOR
@@ -49,7 +46,6 @@ from .const import UNSUB_LISTENERS
 from .coordinator import RentalControlCoordinator
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
-from .util import gen_uuid
 from .util import handle_state_change
 
 _LOGGER = logging.getLogger(__name__)
@@ -156,40 +152,14 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
     version = config_entry.version
 
-    # 1 -> 2: Migrate keys
-    if version == 1:
-        _LOGGER.debug("Migrating from version %s", version)
-        data = config_entry.data.copy()
-
-        data[CONF_CREATION_DATETIME] = str(dt.now())
-        hass.config_entries.async_update_entry(
-            entry=config_entry,
-            unique_id=gen_uuid(data[CONF_CREATION_DATETIME]),
-            data=data,
-            version=2,
+    # Versions 1 and 2 are no longer supported (oldest supported: v0.9.0 = version 3)
+    if version < 3:
+        _LOGGER.error(
+            "Config entry version %s is too old to migrate; "
+            "please remove and re-add the integration",
+            version,
         )
-        version = 2
-        _LOGGER.debug("Migration to version %s complete", config_entry.version)
-
-    # 2 -> 3: Migrate lock
-    if version == 2:
-        _LOGGER.debug("Migrating from version %s", version)
-        if (
-            CONF_LOCK_ENTRY in config_entry.data
-            and config_entry.data[CONF_LOCK_ENTRY] is not None
-        ):
-            data = config_entry.data.copy()
-            convert = lock_entry_convert(hass, config_entry.data[CONF_LOCK_ENTRY], True)
-            data[CONF_LOCK_ENTRY] = convert
-            hass.config_entries.async_update_entry(
-                entry=config_entry,
-                unique_id=config_entry.unique_id,
-                data=data,
-                version=3,
-            )
-
-        version = 3
-        _LOGGER.debug("Migration to version %s complete", config_entry.version)
+        return False
 
     # 3 -> 4: Migrate code length
     if version == 3:
