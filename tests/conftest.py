@@ -29,7 +29,10 @@ _TESTS_ROOT = Path(__file__).parent
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Auto-apply 'unit' or 'integration' markers based on test path."""
     for item in items:
-        rel = Path(item.fspath).relative_to(_TESTS_ROOT)
+        try:
+            rel = item.path.relative_to(_TESTS_ROOT)
+        except ValueError:
+            continue
         parts = rel.parts
         if parts and parts[0] == "unit":
             item.add_marker(pytest.mark.unit)

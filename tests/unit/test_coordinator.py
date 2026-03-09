@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -501,20 +500,15 @@ async def test_coordinator_update_event_overrides_with_overrides(
     """
     mock_config_entry.add_to_hass(hass)
 
-    # Create coordinator with a lock entry to enable event_overrides
-    new_data = dict(mock_config_entry.data)
-    new_data["lock_entry"] = "test_lock"
-    hass.config_entries.async_update_entry(mock_config_entry, data=new_data)
-
+    # Create coordinator and directly inject a mock event_overrides
     coordinator = RentalControlCoordinator(hass, mock_config_entry)
 
-    # Override the event_overrides with a mock
     mock_overrides = MagicMock()
     mock_overrides.ready = True
     coordinator.event_overrides = mock_overrides
     coordinator.calendar_loaded = True
 
-    now = datetime.now()
+    now = dt.now()
     await coordinator.update_event_overrides(
         slot=1,
         slot_code="1234",
@@ -543,7 +537,7 @@ async def test_coordinator_update_event_overrides_without_overrides(
     assert coordinator.event_overrides is None
     coordinator.calendar_loaded = True
 
-    now = datetime.now()
+    now = dt.now()
     await coordinator.update_event_overrides(
         slot=1,
         slot_code="1234",
