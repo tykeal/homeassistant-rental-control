@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Execution Date: 2026-02-06
 
-## Overall Status: Phase 5 Complete - Sensor and Entity Tests Implemented
+## Overall Status: Phase 6 Complete - Integration Tests Implemented
 
 ### Checklists Verification
 ✓ PASS - All checklists complete (requirements.md: 16/16 items completed)
@@ -105,13 +105,43 @@ SPDX-License-Identifier: Apache-2.0
 - [X] T100-T101: Unique ID and device_info delegation
 - [X] T102: CalSensor-specific: entity_category, icon, override interactions (set_code, update_times, clear_code, eta_days=0)
 
-#### ⏸️ Phases 6-7: Not Started (0/34 tasks)
-- Phase 6: User Story 4 - Integration Testing (0/23 tasks)
+#### ✅ Phase 6: User Story 4 - Integration Testing (100% Complete - 23/23 tasks)
+
+**Full Setup Integration Tests (T103-T110):** 8 tests implemented and passing
+- [x] T103: Created tests/integration/test_full_setup.py with structure
+- [x] T104: test_integration_setup_minimal_config - minimal config loads correctly
+- [x] T105: test_integration_setup_complete_config - all options load correctly
+- [x] T106: test_entities_created - 4 entities (1 calendar + 3 sensors) registered
+- [x] T107: test_coordinator_initialized - coordinator accessible via hass.data
+- [x] T108: test_platforms_loaded - sensor and calendar platforms registered
+- [x] T109: test_device_registry_entry - device created with correct identifiers
+- [x] T110: test_integration_unload - clean removal from hass.data + listeners
+
+**Refresh Cycle Integration Tests (T111-T117):** 6 tests implemented and passing
+- [x] T111: Created tests/integration/test_refresh_cycle.py with structure
+- [x] T112: test_initial_data_load - first refresh loads and parses ICS data
+- [x] T113: test_scheduled_refresh - next_refresh advances after interval
+- [x] T114: test_sensor_updates_on_refresh - sensor state includes guest name
+- [x] T115: test_calendar_updates_on_refresh - coordinator.event set correctly
+- [x] T116: test_door_code_generation_on_refresh - slot_code generated (4-digit)
+- [x] T117: test_concurrent_calendar_updates - two entries maintain independent state
+
+**Error Handling Integration Tests (T118-T125):** 7 tests implemented and passing
+- [x] T118: Created tests/integration/test_error_handling.py with structure
+- [x] T119: test_network_error_handling - HTTP 500 handled gracefully
+- [x] T120: test_invalid_ics_handling - missing-field events skipped
+- [x] T121: test_missing_calendar_handling - 404 responses handled
+- [x] T122: test_timeout_handling - TimeoutError does not crash setup
+- [x] T123: test_sensor_availability_on_error - sensors show "No reservation"
+- [x] T124: test_recovery_after_error - transitions from not-loaded to loaded
+- [x] T125: test_coordinator_error_state - calendar_loaded/calendar_ready tracking
+
+#### ⏸️ Phase 7: Not Started (0/11 tasks)
 - Phase 7: Polish & Cross-Cutting Concerns (0/11 tasks)
 
 ### Infrastructure Improvements
 
-#### Files Created (15 files)
+#### Files Created (19 files)
 1. `tests/__init__.py` - Test suite module
 2. `tests/conftest.py` - pytest fixtures and configuration
 3. `tests/fixtures/__init__.py` - Fixtures module
@@ -127,8 +157,12 @@ SPDX-License-Identifier: Apache-2.0
 13. `tests/unit/test_util.py` - Utility function tests (51 passing)
 14. `tests/unit/test_sensors.py` - Sensor platform and CalSensor entity tests (74 passing)
 15. `tests/integration/__init__.py` - Integration tests module
+16. `tests/integration/helpers.py` - Shared integration test helpers (FROZEN_TIME, future_ics)
+17. `tests/integration/test_full_setup.py` - Full setup integration tests (8 passing)
+18. `tests/integration/test_refresh_cycle.py` - Refresh cycle integration tests (6 passing)
+19. `tests/integration/test_error_handling.py` - Error handling integration tests (7 passing)
 
-#### Files Modified (4 files)
+#### Files Modified (5 files)
 1. `pyproject.toml` - Updated coverage settings (fail_under=80), added asyncio_mode config
 2. `setup.cfg` - Updated coverage fail_under from 100 to 80
 3. `requirements_test.txt` - Added aioresponses dependency
@@ -138,8 +172,8 @@ SPDX-License-Identifier: Apache-2.0
 ### Test Execution Results
 
 ```
-✓ All 227 tests passing
-✓ Phase 1-5 complete (102/140 tasks = 73%)
+✓ All 249 tests passing
+✓ Phase 1-6 complete (125/140 tasks = 89%)
 ✓ pytest-homeassistant-custom-component integration successful
 ✓ Async test execution configured correctly
 ✓ All pre-commit hooks passing
