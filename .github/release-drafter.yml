@@ -7,19 +7,22 @@ tag-template: "v$RESOLVED_VERSION"
 change-template: "- $TITLE @$AUTHOR (#$NUMBER)"
 sort-direction: ascending
 categories:
-  - title: ":boom: Breaking Change :boom:"
+  - title: "💥 Breaking Change 💥"
     labels:
       - "breaking-change"
-  - title: ":sparkles: New Features and Enhancements :sparkles:"
+  - title: "✨ New Features ✨"
     labels:
       - "enhancement"
       - "feature"
-  - title: ":bug: Bug Fixes :bug:"
+  - title: "🐛 Bug Fixes 🐛"
     labels:
       - "fix"
       - "bugfix"
       - "bug"
-  - title: ":wrench: Maintenance :wrench:"
+  - title: "⚡ Performance ⚡"
+    labels:
+      - "performance"
+  - title: "🔧 Maintenance 🔧"
     labels:
       - "chore"
       - "documentation"
@@ -28,7 +31,10 @@ categories:
       - "dependencies"
       - "github_actions"
       - "refactor"
-  - title: ":mortar_board: Code Quality :mortar_board:"
+      - "style"
+      - "build"
+      - "revert"
+  - title: "🎓 Code Quality 🎓"
     labels:
       - "code-quality"
       - "CI"
@@ -36,28 +42,64 @@ categories:
 autolabeler:
   - label: "breaking-change"
     title:
-      - "/!:/i"
-  - label: "enhancement"
+      - '/^[a-z]+(\([^)]+\))?!:/i'
+  - label: "feature"
     title:
-      - "/feat:/i"
+      - '/^feat(\([^)]+\))?:/i'
   - label: "bug"
     title:
-      - "/fix:/i"
+      - '/^fix(\([^)]+\))?:/i'
   - label: "refactor"
     title:
-      - "/refactor:/i"
+      - '/^refactor(\([^)]+\))?:/i'
   - label: "code-quality"
     title:
-      - "/test:/i"
+      - '/^test(\([^)]+\))?:/i'
   - label: "CI"
     title:
-      - "/ci:/i"
+      - '/^ci(\([^)]+\))?:/i'
   - label: "chore"
     title:
-      - "/chore:/i"
+      - '/^chore(\([^)]+\))?:/i'
   - label: "documentation"
     title:
-      - "/docs:/i"
+      - '/^docs(\([^)]+\))?:/i'
+  - label: "style"
+    title:
+      - '/^style(\([^)]+\))?:/i'
+  - label: "performance"
+    title:
+      - '/^perf(\([^)]+\))?:/i'
+  - label: "revert"
+    title:
+      - '/^revert(\([^)]+\))?:/i'
+  - label: "build"
+    title:
+      - '/^build(\([^)]+\))?:/i'
+version-resolver:
+  major:
+    labels:
+      - "breaking-change"
+  minor:
+    labels:
+      - "feature"
+      - "enhancement"
+  patch:
+    labels:
+      - "bug"
+      - "fix"
+      - "bugfix"
+      - "performance"
+      - "refactor"
+      - "style"
+      - "build"
+      - "chore"
+      - "documentation"
+      - "CI"
+      - "test"
+      - "code-quality"
+      - "revert"
+  default: patch
 # yamllint disable rule:line-length
 template: |
   [![Downloads for this release](https://img.shields.io/github/downloads/tykeal/homeassistant-rental-control/v$RESOLVED_VERSION/total.svg)](https://github.com/tykeal/homeassistant-rental-control/releases/v$RESOLVED_VERSION)
