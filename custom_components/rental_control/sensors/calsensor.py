@@ -9,7 +9,11 @@ from datetime import datetime
 import logging
 import random
 import re
+from typing import TYPE_CHECKING
+from typing import Any
 
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt
@@ -23,6 +27,9 @@ from ..util import async_fire_update_times
 from ..util import gen_uuid
 from ..util import get_slot_name
 
+if TYPE_CHECKING:
+    from ..coordinator import RentalControlCoordinator
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -35,7 +42,13 @@ class RentalControlCalSensor(Entity):
     upcoming event.
     """
 
-    def __init__(self, hass, coordinator, sensor_name, event_number):
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        coordinator: RentalControlCoordinator,
+        sensor_name: str,
+        event_number: int,
+    ) -> None:
         """
         Initialize the sensor.
 
@@ -51,7 +64,7 @@ class RentalControlCalSensor(Entity):
         self._code_generator = coordinator.code_generator
         self._code_length = coordinator.code_length
         self._entity_category = EntityCategory.DIAGNOSTIC
-        self._event_attributes = {
+        self._event_attributes: dict[str, Any] = {
             "summary": summary,
             "description": None,
             "location": None,
@@ -63,7 +76,7 @@ class RentalControlCalSensor(Entity):
             "slot_name": None,
             "slot_code": None,
         }
-        self._parsed_attributes = {}
+        self._parsed_attributes: dict[str, str] = {}
         self._event_number = event_number
         self._hass = hass
         self._is_available = False
@@ -211,17 +224,17 @@ class RentalControlCalSensor(Entity):
         return ret
 
     @property
-    def available(self):
+    def available(self) -> bool:
         """Return True if calendar is ready."""
         return self._is_available
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return the device info block."""
         return self.coordinator.device_info
 
     @property
-    def entity_category(self):
+    def entity_category(self) -> EntityCategory:
         """Return the entity category."""
         return self._entity_category
 
@@ -232,26 +245,26 @@ class RentalControlCalSensor(Entity):
         return attrib
 
     @property
-    def icon(self):
+    def icon(self) -> str:
         """Return the icon for the frontend."""
         return ICON
 
     @property
-    def name(self):
+    def name(self) -> str:
         """Return the name of the sensor."""
         return self._name
 
     @property
-    def state(self):
+    def state(self) -> str:
         """Return the date of the next event."""
         return self._state
 
     @property
-    def unique_id(self):
+    def unique_id(self) -> str:
         """Return the unique_id."""
         return self._unique_id
 
-    async def async_update(self):
+    async def async_update(self) -> None:
         """Update the sensor."""
         _LOGGER.debug("Running RentalControlCalSensor async update for %s", self.name)
 
@@ -303,12 +316,12 @@ class RentalControlCalSensor(Entity):
             slot_name = get_slot_name(
                 self._event_attributes["summary"],
                 self._event_attributes["description"],
-                self.coordinator.event_prefix,
+                self.coordinator.event_prefix or "",
             )
             self._event_attributes["slot_name"] = slot_name
 
             override = None
-            if overrides:
+            if overrides and slot_name is not None:
                 override = overrides.get_slot_with_name(slot_name)
             if override is None:
                 set_code = True
@@ -357,11 +370,11 @@ class RentalControlCalSensor(Entity):
             self._parsed_attributes = parsed_attributes
 
             # fire set_code if not in current overrides
-            if overrides and set_code:
+            if overrides and set_code and overrides.next_slot is not None:
                 await async_fire_set_code(
                     self.coordinator,
                     self,
-                    self.coordinator.event_overrides.next_slot,
+                    overrides.next_slot,
                 )
 
             # Update the event times, if they have changed
@@ -374,15 +387,15 @@ class RentalControlCalSensor(Entity):
                     and eta_days
                     and eta_days > 0
                 ):
-                    slot_code = self.coordinator.event_overrides.get_slot_key_by_name(
-                        slot_name
-                    )
+                    assert overrides is not None
+                    assert slot_name is not None
+                    slot_key = overrides.get_slot_key_by_name(slot_name)
                     _LOGGER.debug(
                         "Clearing slot %s for sensor %s due to date shift",
-                        slot_code,
+                        slot_key,
                         self.name,
                     )
-                    await async_fire_clear_code(self.coordinator, slot_code)
+                    await async_fire_clear_code(self.coordinator, slot_key)
                 else:
                     await async_fire_update_times(self.coordinator, self)
 
