@@ -538,11 +538,11 @@ Please update Keymaster to at least v0.1.0-b0
             """Return the date from a datetime or date object."""
 
             _LOGGER.debug("In _get_date: %s", day)
-            if isinstance(day, date):
-                _LOGGER.debug("Returning date: %s", day)
-                return day
-            _LOGGER.debug("Returning date: %s", day.date())
-            return day.date()
+            if isinstance(day, datetime):
+                _LOGGER.debug("Returning date: %s", day.date())
+                return day.date()
+            _LOGGER.debug("Returning date: %s", day)
+            return day
 
         cal = self.calendar
         days = dt.start_of_local_day() + timedelta(days=self.days)
