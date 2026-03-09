@@ -252,7 +252,6 @@ async def test_migrate_entry_rejects_version_below_3(
 
 async def test_migrate_entry_v3_to_v7(
     hass: HomeAssistant,
-    mock_aiohttp_session,
 ) -> None:
     """Verify a version-3 entry migrates through all steps to version 7.
 
