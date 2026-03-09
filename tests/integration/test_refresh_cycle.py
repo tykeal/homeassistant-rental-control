@@ -246,6 +246,8 @@ async def test_door_code_generation_on_refresh(
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Code Test",
+        version=7,
+        unique_id="test-code-unique-id",
         data={
             "name": "Code Test",
             "url": "https://example.com/calendar.ics",

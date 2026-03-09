@@ -63,6 +63,8 @@ def mock_config_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Test Rental",
+        version=7,
+        unique_id="test-unique-id",
         data={
             "name": "Test Rental",
             "url": "https://example.com/calendar.ics",
@@ -92,6 +94,8 @@ def mock_config_entry_full() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Complete Rental",
+        version=7,
+        unique_id="test-full-unique-id",
         data={
             "name": "Complete Rental",
             "url": "https://example.com/calendar.ics",
