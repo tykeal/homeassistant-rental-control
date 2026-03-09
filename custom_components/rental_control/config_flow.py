@@ -3,13 +3,13 @@
 
 """Config flow for Rental Control integration."""
 
+import asyncio
 import logging
 from typing import Any
 from typing import Dict
 from typing import Optional
 from typing import Union
 
-import async_timeout
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
@@ -347,7 +347,7 @@ async def _start_config_flow(
                 session = async_get_clientsession(
                     cls.hass, verify_ssl=user_input[CONF_VERIFY_SSL]
                 )
-                async with async_timeout.timeout(REQUEST_TIMEOUT):
+                async with asyncio.timeout(REQUEST_TIMEOUT):
                     resp = await session.get(user_input[CONF_URL])
                 if resp.status != 200:
                     _LOGGER.error(

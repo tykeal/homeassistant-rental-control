@@ -25,7 +25,6 @@ from typing import Any
 from typing import Dict
 from zoneinfo import ZoneInfo  # noreorder
 
-import async_timeout
 from homeassistant.components.button import DOMAIN as BUTTON
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.components.datetime import DOMAIN as DATETIME
@@ -554,7 +553,7 @@ Please update Keymaster to at least v0.1.0-b0
         _LOGGER.debug("Running RentalControl _refresh_calendar for %s", self.name)
 
         session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
-        async with async_timeout.timeout(REQUEST_TIMEOUT):
+        async with asyncio.timeout(REQUEST_TIMEOUT):
             response = await session.get(self.url)
         if response.status != 200:
             _LOGGER.error(
