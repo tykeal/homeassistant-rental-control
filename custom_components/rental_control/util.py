@@ -412,9 +412,15 @@ async def handle_state_change(
             end_time = p_end_time
 
     _LOGGER.debug(
-        f"updating overrides for {lockname} slot {slot_num}. ",
-        f"slot_name: '{slot_name}', slot_code: '{slot_code}', ",
-        f"start_time: '{start_time}', end_time: '{end_time}'",
+        "updating overrides for %s slot %s. "
+        "slot_name: '%s', slot_code: '%s', "
+        "start_time: '%s', end_time: '%s'",
+        lockname,
+        slot_num,
+        slot_name,
+        slot_code,
+        start_time,
+        end_time,
     )
     await coordinator.update_event_overrides(
         slot_num,
