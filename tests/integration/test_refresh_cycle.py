@@ -22,6 +22,7 @@ from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 
 from tests.fixtures import calendar_data
+from tests.integration.helpers import FROZEN_START_OF_DAY
 from tests.integration.helpers import FROZEN_TIME
 from tests.integration.helpers import future_ics
 
@@ -48,7 +49,7 @@ async def test_initial_data_load(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=FROZEN_TIME),
-        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
@@ -84,7 +85,7 @@ async def test_scheduled_refresh(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=FROZEN_TIME),
-        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
@@ -105,7 +106,11 @@ async def test_scheduled_refresh(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=future),
-        patch.object(dt_util, "start_of_local_day", return_value=future),
+        patch.object(
+            dt_util,
+            "start_of_local_day",
+            return_value=future.replace(hour=0, minute=0, second=0, microsecond=0),
+        ),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
@@ -142,7 +147,7 @@ async def test_sensor_updates_on_refresh(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=FROZEN_TIME),
-        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
@@ -164,7 +169,11 @@ async def test_sensor_updates_on_refresh(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=future),
-        patch.object(dt_util, "start_of_local_day", return_value=future),
+        patch.object(
+            dt_util,
+            "start_of_local_day",
+            return_value=future.replace(hour=0, minute=0, second=0, microsecond=0),
+        ),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
@@ -202,7 +211,7 @@ async def test_calendar_updates_on_refresh(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=FROZEN_TIME),
-        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
@@ -260,7 +269,7 @@ async def test_door_code_generation_on_refresh(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=FROZEN_TIME),
-        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             entry.data["url"],
@@ -280,7 +289,11 @@ async def test_door_code_generation_on_refresh(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=future),
-        patch.object(dt_util, "start_of_local_day", return_value=future),
+        patch.object(
+            dt_util,
+            "start_of_local_day",
+            return_value=future.replace(hour=0, minute=0, second=0, microsecond=0),
+        ),
     ):
         mock_session.get(
             entry.data["url"],
@@ -366,7 +379,7 @@ async def test_concurrent_calendar_updates(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=FROZEN_TIME),
-        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(entry_a.data["url"], status=200, body=ics_a, repeat=True)
         mock_session.get(entry_b.data["url"], status=200, body=ics_b, repeat=True)

@@ -23,6 +23,7 @@ from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 
 from tests.fixtures import calendar_data
+from tests.integration.helpers import FROZEN_START_OF_DAY
 from tests.integration.helpers import FROZEN_TIME
 from tests.integration.helpers import future_ics
 
@@ -81,7 +82,7 @@ async def test_invalid_ics_handling(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=FROZEN_TIME),
-        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
@@ -217,7 +218,7 @@ async def test_recovery_after_error(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=FROZEN_TIME),
-        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
@@ -237,7 +238,11 @@ async def test_recovery_after_error(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=future),
-        patch.object(dt_util, "start_of_local_day", return_value=future),
+        patch.object(
+            dt_util,
+            "start_of_local_day",
+            return_value=future.replace(hour=0, minute=0, second=0, microsecond=0),
+        ),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
@@ -275,7 +280,7 @@ async def test_coordinator_error_state(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=FROZEN_TIME),
-        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
@@ -295,7 +300,11 @@ async def test_coordinator_error_state(
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=future),
-        patch.object(dt_util, "start_of_local_day", return_value=future),
+        patch.object(
+            dt_util,
+            "start_of_local_day",
+            return_value=future.replace(hour=0, minute=0, second=0, microsecond=0),
+        ),
     ):
         mock_session.get(
             mock_config_entry.data["url"],

@@ -11,6 +11,7 @@ from datetime import timedelta
 from homeassistant.util import dt as dt_util
 
 FROZEN_TIME = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+FROZEN_START_OF_DAY = datetime(2024, 12, 20, 0, 0, 0, tzinfo=dt_util.UTC)
 
 
 def future_ics(
@@ -21,7 +22,11 @@ def future_ics(
     *,
     base_time: datetime = FROZEN_TIME,
 ) -> str:
-    """Build a single-event ICS with dates relative to *base_time*."""
+    """Build a single-event ICS with dates relative to *base_time*.
+
+    Event start/end times are fixed at 16:00:00Z and 11:00:00Z respectively;
+    only date components are derived from *base_time*.
+    """
     start = (base_time + timedelta(days=days_ahead)).strftime("%Y%m%d")
     end = (base_time + timedelta(days=days_ahead + duration)).strftime("%Y%m%d")
     return (
