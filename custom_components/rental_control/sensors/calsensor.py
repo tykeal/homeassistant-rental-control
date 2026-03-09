@@ -15,6 +15,8 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt
 
 from ..const import ICON
+from ..const import SECONDS_PER_HOUR
+from ..const import SECONDS_PER_MINUTE
 from ..util import async_fire_clear_code
 from ..util import async_fire_set_code
 from ..util import async_fire_update_times
@@ -290,8 +292,8 @@ class RentalControlCalSensor(Entity):
             eta_minutes = None
             if td.total_seconds() >= 0:
                 eta_days = td.days
-                eta_hours = round(td.total_seconds() // 3600)
-                eta_minutes = round(td.total_seconds() // 60)
+                eta_hours = round(td.total_seconds() // SECONDS_PER_HOUR)
+                eta_minutes = round(td.total_seconds() // SECONDS_PER_MINUTE)
 
             self._event_attributes["eta_days"] = eta_days
             self._event_attributes["eta_hours"] = eta_hours

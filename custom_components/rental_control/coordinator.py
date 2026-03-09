@@ -64,7 +64,9 @@ from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_MAX_MISSES
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
+from .const import EVENT_AGE_THRESHOLD_DAYS
 from .const import REQUEST_TIMEOUT
+from .const import STARTUP_REFRESH_DELAY
 from .const import VERSION
 from .event_overrides import EventOverrides
 from .sensors.calsensor import RentalControlCalSensor
@@ -226,7 +228,7 @@ Please update Keymaster to at least v0.1.0-b0
             # the future to avoid having multiple calls to the calendar refresh
             # happen at the same time
             if self.refresh_frequency == 0:
-                self.next_refresh = now + timedelta(seconds=10)
+                self.next_refresh = now + timedelta(seconds=STARTUP_REFRESH_DELAY)
             else:
                 self.next_refresh = now + timedelta(minutes=self.refresh_frequency)
             _LOGGER.debug("Updating next refresh to %s", self.next_refresh)
@@ -395,7 +397,7 @@ Please update Keymaster to at least v0.1.0-b0
                     # Just ignore events that ended a long time ago
                     if "DTEND" in event and event[
                         "DTEND"
-                    ].dt < from_date.date() - timedelta(days=30):
+                    ].dt < from_date.date() - timedelta(days=EVENT_AGE_THRESHOLD_DAYS):
                         continue
                 except (AttributeError, TypeError):
                     pass
