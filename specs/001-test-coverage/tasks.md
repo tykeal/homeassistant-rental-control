@@ -231,35 +231,35 @@ SPDX-License-Identifier: Apache-2.0
 
 #### Full Setup Integration Tests
 
-- [ ] T103 [P] [US4] Create tests/integration/test_full_setup.py with SPDX header and module docstring
-- [ ] T104 [US4] Add test_integration_setup_minimal_config to verify integration loads with minimal required config in tests/integration/test_full_setup.py
-- [ ] T105 [US4] Add test_integration_setup_complete_config to verify integration loads with all configuration options in tests/integration/test_full_setup.py
-- [ ] T106 [US4] Add test_entities_created to verify all expected entities appear in entity registry in tests/integration/test_full_setup.py
-- [ ] T107 [US4] Add test_coordinator_initialized to verify coordinator is created and accessible in tests/integration/test_full_setup.py
-- [ ] T108 [US4] Add test_platforms_loaded to verify sensor and calendar platforms are loaded in tests/integration/test_full_setup.py
-- [ ] T109 [US4] Add test_device_registry_entry to verify device is registered for the calendar in tests/integration/test_full_setup.py
-- [ ] T110 [US4] Add test_integration_unload to verify clean unload and entity removal in tests/integration/test_full_setup.py
+- [x] T103 [P] [US4] Create tests/integration/test_full_setup.py with SPDX header and module docstring
+- [x] T104 [US4] Add test_integration_setup_minimal_config to verify integration loads with minimal required config in tests/integration/test_full_setup.py
+- [x] T105 [US4] Add test_integration_setup_complete_config to verify integration loads with all configuration options in tests/integration/test_full_setup.py
+- [x] T106 [US4] Add test_entities_created to verify all expected entities appear in entity registry in tests/integration/test_full_setup.py
+- [x] T107 [US4] Add test_coordinator_initialized to verify coordinator is created and accessible in tests/integration/test_full_setup.py
+- [x] T108 [US4] Add test_platforms_loaded to verify sensor and calendar platforms are loaded in tests/integration/test_full_setup.py
+- [x] T109 [US4] Add test_device_registry_entry to verify device is registered for the calendar in tests/integration/test_full_setup.py
+- [x] T110 [US4] Add test_integration_unload to verify clean unload and entity removal in tests/integration/test_full_setup.py
 
 #### Refresh Cycle Integration Tests
 
-- [ ] T111 [P] [US4] Create tests/integration/test_refresh_cycle.py with SPDX header and module docstring
-- [ ] T112 [US4] Add test_initial_data_load to verify first refresh fetches and processes calendar data in tests/integration/test_refresh_cycle.py
-- [ ] T113 [US4] Add test_scheduled_refresh to verify automatic refresh on schedule in tests/integration/test_refresh_cycle.py
-- [ ] T114 [US4] Add test_sensor_updates_on_refresh to verify sensor states update after coordinator refresh in tests/integration/test_refresh_cycle.py
-- [ ] T115 [US4] Add test_calendar_updates_on_refresh to verify calendar entity reflects new events in tests/integration/test_refresh_cycle.py
-- [ ] T116 [US4] Add test_door_code_generation_on_refresh to verify door codes are generated during refresh in tests/integration/test_refresh_cycle.py
-- [ ] T117 [US4] Add test_concurrent_calendar_updates to verify multiple calendars update independently in tests/integration/test_refresh_cycle.py
+- [x] T111 [P] [US4] Create tests/integration/test_refresh_cycle.py with SPDX header and module docstring
+- [x] T112 [US4] Add test_initial_data_load to verify first refresh fetches and processes calendar data in tests/integration/test_refresh_cycle.py
+- [x] T113 [US4] Add test_scheduled_refresh to verify automatic refresh on schedule in tests/integration/test_refresh_cycle.py
+- [x] T114 [US4] Add test_sensor_updates_on_refresh to verify sensor states update after coordinator refresh in tests/integration/test_refresh_cycle.py
+- [x] T115 [US4] Add test_calendar_updates_on_refresh to verify calendar entity reflects new events in tests/integration/test_refresh_cycle.py
+- [x] T116 [US4] Add test_door_code_generation_on_refresh to verify door codes are generated during refresh in tests/integration/test_refresh_cycle.py
+- [x] T117 [US4] Add test_concurrent_calendar_updates to verify multiple calendars update independently in tests/integration/test_refresh_cycle.py
 
 #### Error Handling Integration Tests
 
-- [ ] T118 [P] [US4] Create tests/integration/test_error_handling.py with SPDX header and module docstring
-- [ ] T119 [US4] Add test_network_error_handling to verify integration handles HTTP failures gracefully in tests/integration/test_error_handling.py
-- [ ] T120 [US4] Add test_invalid_ics_handling to verify integration handles malformed ICS data in tests/integration/test_error_handling.py
-- [ ] T121 [US4] Add test_missing_calendar_handling to verify integration handles 404 responses in tests/integration/test_error_handling.py
-- [ ] T122 [US4] Add test_timeout_handling to verify integration handles request timeouts in tests/integration/test_error_handling.py
-- [ ] T123 [US4] Add test_sensor_availability_on_error to verify sensors show unavailable on persistent errors in tests/integration/test_error_handling.py
-- [ ] T124 [US4] Add test_recovery_after_error to verify integration recovers when calendar becomes available again in tests/integration/test_error_handling.py
-- [ ] T125 [US4] Add test_coordinator_error_state to verify coordinator maintains error state correctly in tests/integration/test_error_handling.py
+- [x] T118 [P] [US4] Create tests/integration/test_error_handling.py with SPDX header and module docstring
+- [x] T119 [US4] Add test_network_error_handling to verify integration handles HTTP failures gracefully in tests/integration/test_error_handling.py
+- [x] T120 [US4] Add test_invalid_ics_handling to verify integration handles malformed ICS data in tests/integration/test_error_handling.py
+- [x] T121 [US4] Add test_missing_calendar_handling to verify integration handles 404 responses in tests/integration/test_error_handling.py
+- [x] T122 [US4] Add test_timeout_handling to verify integration handles request timeouts in tests/integration/test_error_handling.py
+- [x] T123 [US4] Add test_sensor_availability_on_error to verify sensors show unavailable on persistent errors in tests/integration/test_error_handling.py
+- [x] T124 [US4] Add test_recovery_after_error to verify integration recovers when calendar becomes available again in tests/integration/test_error_handling.py
+- [x] T125 [US4] Add test_coordinator_error_state to verify coordinator maintains error state correctly in tests/integration/test_error_handling.py
 
 **Checkpoint**: All user stories should now be independently functional. Integration tests verify end-to-end scenarios work correctly.
 
