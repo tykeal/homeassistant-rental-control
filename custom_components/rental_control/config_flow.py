@@ -9,6 +9,7 @@ from typing import Any
 from typing import Dict
 from typing import Optional
 from typing import Union
+from zoneinfo import available_timezones
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
@@ -19,7 +20,6 @@ from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.util import dt
-from pytz import common_timezones
 import voluptuous as vol
 from voluptuous.schema_builder import ALLOW_EXTRA
 
@@ -57,8 +57,7 @@ from .util import gen_uuid
 
 _LOGGER = logging.getLogger(__name__)
 
-sorted_tz = common_timezones
-sorted_tz.sort()
+sorted_tz = sorted(available_timezones())
 
 
 @config_entries.HANDLERS.register(DOMAIN)
