@@ -377,8 +377,6 @@ async def test_coordinator_update_interval_change(
     assert coordinator.refresh_frequency != initial_frequency
 
     # Verify next refresh was reset to trigger immediate update
-    from homeassistant.util import dt
-
     assert coordinator.next_refresh <= dt.now()
 
 
