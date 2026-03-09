@@ -399,16 +399,15 @@ async def handle_state_change(
         "" if slot_name.state in ("unknown", "unavailable") else slot_name.state
     )
 
-    if g_start_time is None:
-        start_time = dt.start_of_local_day()
-    else:
+    start_time = dt.start_of_local_day()
+    end_time = dt.start_of_local_day()
+
+    if g_start_time is not None:
         p_start_time = dt.parse_datetime(g_start_time.state)
         if p_start_time:
             start_time = p_start_time
 
-    if g_end_time is None:
-        end_time = dt.start_of_local_day()
-    else:
+    if g_end_time is not None:
         p_end_time = dt.parse_datetime(g_end_time.state)
         if p_end_time:
             end_time = p_end_time

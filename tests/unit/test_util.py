@@ -758,3 +758,82 @@ class TestHandleStateChangeStateMutation:
         mock_coordinator.update_event_overrides.assert_awaited_once()
         call_args = mock_coordinator.update_event_overrides.call_args
         assert call_args[0][2] == ""  # slot_name_value should be ""
+
+
+# ---------------------------------------------------------------------------
+# handle_state_change unbound variable tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandleStateChangeUnboundVars:
+    """Tests that handle_state_change does not raise UnboundLocalError."""
+
+    @pytest.mark.asyncio
+    async def test_unparseable_start_time_uses_default(self) -> None:
+        """Verify start_time defaults when parse_datetime returns None.
+
+        When use_date_range is on but the start time state cannot be
+        parsed, start_time must fall back to start_of_local_day instead
+        of raising UnboundLocalError.
+        """
+        lockname = "test_lock"
+        slot_num = 10
+
+        mock_slot_code_state = MagicMock()
+        mock_slot_code_state.state = "1234"
+        mock_slot_name_state = MagicMock()
+        mock_slot_name_state.state = "Guest"
+        mock_slot_enabled = MagicMock()
+        mock_slot_enabled.state = "on"
+        mock_use_date_range = MagicMock()
+        mock_use_date_range.state = "on"
+        mock_start_time = MagicMock()
+        mock_start_time.state = "not-a-datetime"
+        mock_end_time = MagicMock()
+        mock_end_time.state = "not-a-datetime"
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.event_overrides = MagicMock()
+        mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
+        mock_coordinator.update_event_overrides = AsyncMock()
+
+        def states_get(entity_id: str) -> MagicMock | None:
+            """Return mock states for various entities."""
+            if "enabled" in entity_id:
+                return mock_slot_enabled
+            if "pin" in entity_id:
+                return mock_slot_code_state
+            if "name" in entity_id and "date_range" not in entity_id:
+                return mock_slot_name_state
+            if "use_date_range" in entity_id:
+                return mock_use_date_range
+            if "date_range_start" in entity_id:
+                return mock_start_time
+            if "date_range_end" in entity_id:
+                return mock_end_time
+            return None
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+        hass.states.get = states_get
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": f"switch.{lockname}_code_slot_{slot_num}_enabled"}
+
+        # This must not raise UnboundLocalError
+        with patch("custom_components.rental_control.util.asyncio.sleep"):
+            await handle_state_change(hass, config_entry, event)
+
+        # update_event_overrides should still be called with default times
+        mock_coordinator.update_event_overrides.assert_awaited_once()
+        call_args = mock_coordinator.update_event_overrides.call_args
+        # start_time and end_time should be start_of_local_day defaults
+        from homeassistant.util import dt as dt_util
+
+        expected_default = dt_util.start_of_local_day()
+        assert call_args[0][3] == expected_default  # start_time
+        assert call_args[0][4] == expected_default  # end_time
