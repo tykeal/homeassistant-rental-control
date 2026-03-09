@@ -22,6 +22,7 @@ calendars and sensors to go with them related to managing rental properties.
     - [Where can I find my rental calendar's `ics` URL?](#where-can-i-find-my-rental-calendars-ics-url)
     - [How do I use custom calendars?](#how-do-i-use-custom-calendars)
     - [Automation Examples](#automation-examples)
+- [Development & Testing](#development--testing)
 
 ## Features
 
@@ -357,3 +358,45 @@ Here are some examples of automations that can be done with Rental Control
                   data:
                   temperature: 72
     ```
+
+## Development & Testing
+
+### Running Tests
+
+This project uses [pytest](https://docs.pytest.org/) with
+[pytest-homeassistant-custom-component](https://github.com/MatthewFlamworthy/pytest-homeassistant-custom-component)
+for testing.
+
+```bash
+# Run all tests
+python -m pytest tests/
+
+# Run with coverage report
+python -m pytest tests/ --cov=custom_components.rental_control --cov-report=term-missing
+
+# Run only unit tests
+python -m pytest -m unit
+
+# Run only integration tests
+python -m pytest -m integration
+
+# Run a specific test file
+python -m pytest tests/unit/test_config_flow.py -v
+```
+
+### Test Structure
+
+| Directory | Marker | Description |
+| --- | --- | --- |
+| `tests/unit/` | `unit` | Fast isolated tests for individual components |
+| `tests/integration/` | `integration` | Tests verifying component interactions |
+| `tests/fixtures/` | — | Shared test data (ICS calendars, mock entries) |
+
+### Pre-commit Hooks
+
+All commits must pass [pre-commit](https://pre-commit.com/) checks:
+
+```bash
+pre-commit install
+pre-commit run --all-files
+```

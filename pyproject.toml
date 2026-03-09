@@ -63,6 +63,10 @@ console_output_style = "count"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "unit: Unit tests for individual modules",
+    "integration: Integration tests spanning multiple components",
+]
 
 [tool.coverage.run]
 branch = false
@@ -70,7 +74,7 @@ source = ["custom_components.rental_control"]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 80
+fail_under = 85
 
 [tool.mypy]
 warn_return_any = true

@@ -5,9 +5,13 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 from aioresponses import aioresponses
+from homeassistant.components.calendar import CalendarEvent
+from homeassistant.util import dt
 
 from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
 from custom_components.rental_control.const import DEFAULT_REFRESH_FREQUENCY
@@ -373,6 +377,172 @@ async def test_coordinator_update_interval_change(
     assert coordinator.refresh_frequency != initial_frequency
 
     # Verify next refresh was reset to trigger immediate update
-    from homeassistant.util import dt
+    assert coordinator.next_refresh <= dt.now()
 
+
+# ---------------------------------------------------------------------------
+# Phase 7 – targeted coverage tests for coordinator.py
+# ---------------------------------------------------------------------------
+
+
+async def test_coordinator_events_ready_initially_false(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test events_ready is False before sensors are registered.
+
+    Covers coordinator.py events_ready property when event_sensors
+    count does not match max_events.
+    """
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+    assert coordinator.events_ready is False
+    assert len(coordinator.event_sensors) == 0
+
+
+async def test_coordinator_events_ready_becomes_true(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test events_ready becomes True when all sensors report available.
+
+    Covers coordinator.py events_ready property including the sensor
+    status aggregation branch.
+    """
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+    # Simulate registered sensors that report available
+    for _ in range(coordinator.max_events):
+        sensor = MagicMock()
+        sensor.available = True
+        coordinator.event_sensors.append(sensor)
+
+    assert coordinator.events_ready is True
+
+    # Once True, it stays True (cached)
+    assert coordinator.events_ready is True
+
+
+async def test_coordinator_events_ready_false_when_sensor_unavailable(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test events_ready stays False when any sensor is unavailable.
+
+    Covers coordinator.py events_ready aggregation with mixed states.
+    """
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+    for i in range(coordinator.max_events):
+        sensor = MagicMock()
+        sensor.available = i > 0  # First sensor unavailable
+        coordinator.event_sensors.append(sensor)
+
+    assert coordinator.events_ready is False
+
+
+async def test_coordinator_async_get_events_empty_calendar(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test async_get_events returns empty list with no calendar data.
+
+    Covers coordinator.py async_get_events empty calendar branch.
+    """
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+    start = dt.now()
+    end = start + timedelta(days=30)
+    events = await coordinator.async_get_events(hass, start, end)
+
+    assert events == []
+
+
+async def test_coordinator_async_get_events_filters_by_date(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test async_get_events filters events by date range.
+
+    Covers coordinator.py async_get_events date comparison logic.
+    """
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+    now = dt.now()
+    in_range_event = CalendarEvent(
+        start=now,
+        end=now + timedelta(days=2),
+        summary="In Range",
+    )
+    out_of_range_event = CalendarEvent(
+        start=now + timedelta(days=60),
+        end=now + timedelta(days=62),
+        summary="Out of Range",
+    )
+    coordinator.calendar = [in_range_event, out_of_range_event]
+
+    start = now - timedelta(days=1)
+    end = now + timedelta(days=30)
+    events = await coordinator.async_get_events(hass, start, end)
+
+    assert len(events) == 1
+    assert events[0].summary == "In Range"
+
+
+async def test_coordinator_update_event_overrides_with_overrides(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test update_event_overrides delegates to EventOverrides.
+
+    Covers coordinator.py update_event_overrides with event_overrides set.
+    """
+    mock_config_entry.add_to_hass(hass)
+
+    # Create coordinator and directly inject a mock event_overrides
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+    mock_overrides = MagicMock()
+    mock_overrides.ready = True
+    coordinator.event_overrides = mock_overrides
+    coordinator.calendar_loaded = True
+
+    now = dt.now()
+    await coordinator.update_event_overrides(
+        slot=1,
+        slot_code="1234",
+        slot_name="Test Guest",
+        start_time=now,
+        end_time=now + timedelta(days=2),
+    )
+
+    mock_overrides.update.assert_called_once()
+    assert coordinator.calendar_ready is True
+    assert coordinator.next_refresh <= dt.now()
+
+
+async def test_coordinator_update_event_overrides_without_overrides(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test update_event_overrides without event_overrides.
+
+    Covers coordinator.py update_event_overrides else branch when
+    event_overrides is None.
+    """
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+    # event_overrides is None when no lockname
+    assert coordinator.event_overrides is None
+    coordinator.calendar_loaded = True
+
+    now = dt.now()
+    await coordinator.update_event_overrides(
+        slot=1,
+        slot_code="1234",
+        slot_name="Test Guest",
+        start_time=now,
+        end_time=now + timedelta(days=2),
+    )
+
+    assert coordinator.calendar_ready is True
     assert coordinator.next_refresh <= dt.now()
