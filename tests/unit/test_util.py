@@ -5,14 +5,20 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from homeassistant.const import CONF_NAME
+from homeassistant.core import Event
 from homeassistant.exceptions import ServiceNotFound
+from homeassistant.util import dt as dt_util
 import pytest
 
+from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DEFAULT_PATH
+from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import NAME
 from custom_components.rental_control.util import add_call
 from custom_components.rental_control.util import async_reload_package_platforms
@@ -21,6 +27,7 @@ from custom_components.rental_control.util import delete_rc_and_base_folder
 from custom_components.rental_control.util import gen_uuid
 from custom_components.rental_control.util import get_event_names
 from custom_components.rental_control.util import get_slot_name
+from custom_components.rental_control.util import handle_state_change
 
 # ---------------------------------------------------------------------------
 # gen_uuid tests
@@ -546,3 +553,282 @@ class TestAddCall:
         add_call(hass, coro_list, "switch", "turn_off", "switch.b", {})
 
         assert len(coro_list) == 2
+
+
+# ---------------------------------------------------------------------------
+# handle_state_change logging tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandleStateChangeLogging:
+    """Tests for handle_state_change debug logging correctness."""
+
+    async def test_debug_log_contains_all_override_fields(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify the override update log message includes all fields.
+
+        Prior to the fix, extra f-string arguments were passed as
+        positional *args to _LOGGER.debug() and silently dropped.
+        This test ensures lockname, slot_num, slot_name, slot_code,
+        start_time, and end_time all appear in the emitted message.
+        """
+        lockname = "test_lock"
+        slot_num = 10
+        mock_slot_code_state = MagicMock()
+        mock_slot_code_state.state = "1234"
+        mock_slot_name_state = MagicMock()
+        mock_slot_name_state.state = "Guest Name"
+        mock_slot_enabled = MagicMock()
+        mock_slot_enabled.state = "on"
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.event_overrides = MagicMock()
+        mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
+        mock_coordinator.update_event_overrides = AsyncMock()
+
+        def states_get(entity_id: str) -> MagicMock | None:
+            """Return mock states for various entities."""
+            if "enabled" in entity_id:
+                return mock_slot_enabled
+            if "pin" in entity_id:
+                return mock_slot_code_state
+            if "name" in entity_id:
+                return mock_slot_name_state
+            if "use_date_range" in entity_id:
+                return None
+            return None
+
+        hass = MagicMock()
+        hass.data = {
+            DOMAIN: {
+                "entry_id": {COORDINATOR: mock_coordinator},
+            }
+        }
+        hass.states.get = states_get
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": f"switch.{lockname}_code_slot_{slot_num}_enabled"}
+
+        with (
+            patch("custom_components.rental_control.util.asyncio.sleep"),
+            caplog.at_level(
+                logging.DEBUG, logger="custom_components.rental_control.util"
+            ),
+        ):
+            await handle_state_change(hass, config_entry, event)
+
+        log_messages = " ".join(caplog.messages)
+        assert lockname in log_messages
+        assert str(slot_num) in log_messages
+        # Verify slot_name and slot_code objects appear (as repr strings)
+        assert "slot_name:" in log_messages
+        assert "slot_code:" in log_messages
+        # Verify start_time and end_time appear in the same message
+        assert "start_time:" in log_messages
+        assert "end_time:" in log_messages
+        # The critical assertion: all fields must be in a SINGLE log message.
+        # The original bug caused slot_name/slot_code/start_time/end_time to
+        # be silently dropped because they were separate f-string *args.
+        override_msgs = [m for m in caplog.messages if "updating overrides for" in m]
+        assert len(override_msgs) == 1
+        single_msg = override_msgs[0]
+        assert "slot_name:" in single_msg
+        assert "slot_code:" in single_msg
+        assert "start_time:" in single_msg
+        assert "end_time:" in single_msg
+
+
+# ---------------------------------------------------------------------------
+# handle_state_change state mutation tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandleStateChangeStateMutation:
+    """Tests that handle_state_change does not mutate HA State objects."""
+
+    async def test_unknown_slot_code_not_mutated(self) -> None:
+        """Verify State.state is not mutated when slot_code is 'unknown'.
+
+        The original code directly set slot_code.state = "" which mutates
+        Home Assistant internal State objects. The fix uses local variables.
+        """
+        lockname = "test_lock"
+        slot_num = 10
+        mock_slot_code_state = MagicMock()
+        mock_slot_code_state.state = "unknown"
+        mock_slot_name_state = MagicMock()
+        mock_slot_name_state.state = "Guest"
+        mock_slot_enabled = MagicMock()
+        mock_slot_enabled.state = "on"
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.event_overrides = MagicMock()
+        mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
+        mock_coordinator.update_event_overrides = AsyncMock()
+
+        def states_get(entity_id: str) -> MagicMock | None:
+            """Return mock states for various entities."""
+            if "enabled" in entity_id:
+                return mock_slot_enabled
+            if "pin" in entity_id:
+                return mock_slot_code_state
+            if "name" in entity_id:
+                return mock_slot_name_state
+            if "use_date_range" in entity_id:
+                return None
+            return None
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+        hass.states.get = states_get
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": f"switch.{lockname}_code_slot_{slot_num}_enabled"}
+
+        with patch("custom_components.rental_control.util.asyncio.sleep"):
+            await handle_state_change(hass, config_entry, event)
+
+        # State object must NOT have been mutated
+        assert mock_slot_code_state.state == "unknown"
+        # But update_event_overrides should have been called with ""
+        mock_coordinator.update_event_overrides.assert_awaited_once()
+        call_args = mock_coordinator.update_event_overrides.call_args
+        assert call_args[0][1] == ""  # slot_code_value should be ""
+
+    async def test_unavailable_slot_name_not_mutated(self) -> None:
+        """Verify State.state is not mutated when slot_name is 'unavailable'.
+
+        The original code directly set slot_name.state = "" which mutates
+        Home Assistant internal State objects. The fix uses local variables.
+        """
+        lockname = "test_lock"
+        slot_num = 10
+        mock_slot_code_state = MagicMock()
+        mock_slot_code_state.state = "1234"
+        mock_slot_name_state = MagicMock()
+        mock_slot_name_state.state = "unavailable"
+        mock_slot_enabled = MagicMock()
+        mock_slot_enabled.state = "on"
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.event_overrides = MagicMock()
+        mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
+        mock_coordinator.update_event_overrides = AsyncMock()
+
+        def states_get(entity_id: str) -> MagicMock | None:
+            """Return mock states for various entities."""
+            if "enabled" in entity_id:
+                return mock_slot_enabled
+            if "pin" in entity_id:
+                return mock_slot_code_state
+            if "name" in entity_id:
+                return mock_slot_name_state
+            if "use_date_range" in entity_id:
+                return None
+            return None
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+        hass.states.get = states_get
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": f"switch.{lockname}_code_slot_{slot_num}_enabled"}
+
+        with patch("custom_components.rental_control.util.asyncio.sleep"):
+            await handle_state_change(hass, config_entry, event)
+
+        # State object must NOT have been mutated
+        assert mock_slot_name_state.state == "unavailable"
+        # But update_event_overrides should have been called with ""
+        mock_coordinator.update_event_overrides.assert_awaited_once()
+        call_args = mock_coordinator.update_event_overrides.call_args
+        assert call_args[0][2] == ""  # slot_name_value should be ""
+
+
+# ---------------------------------------------------------------------------
+# handle_state_change unbound variable tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandleStateChangeUnboundVars:
+    """Tests that handle_state_change does not raise UnboundLocalError."""
+
+    async def test_unparseable_start_time_uses_default(self) -> None:
+        """Verify start_time defaults when parse_datetime returns None.
+
+        When use_date_range is on but the start time state cannot be
+        parsed, start_time must fall back to start_of_local_day instead
+        of raising UnboundLocalError.
+        """
+        lockname = "test_lock"
+        slot_num = 10
+
+        mock_slot_code_state = MagicMock()
+        mock_slot_code_state.state = "1234"
+        mock_slot_name_state = MagicMock()
+        mock_slot_name_state.state = "Guest"
+        mock_slot_enabled = MagicMock()
+        mock_slot_enabled.state = "on"
+        mock_use_date_range = MagicMock()
+        mock_use_date_range.state = "on"
+        mock_start_time = MagicMock()
+        mock_start_time.state = "not-a-datetime"
+        mock_end_time = MagicMock()
+        mock_end_time.state = "not-a-datetime"
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.event_overrides = MagicMock()
+        mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
+        mock_coordinator.update_event_overrides = AsyncMock()
+
+        def states_get(entity_id: str) -> MagicMock | None:
+            """Return mock states for various entities."""
+            if "enabled" in entity_id:
+                return mock_slot_enabled
+            if "pin" in entity_id:
+                return mock_slot_code_state
+            if "name" in entity_id and "date_range" not in entity_id:
+                return mock_slot_name_state
+            if "use_date_range" in entity_id:
+                return mock_use_date_range
+            if "date_range_start" in entity_id:
+                return mock_start_time
+            if "date_range_end" in entity_id:
+                return mock_end_time
+            return None
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+        hass.states.get = states_get
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": f"switch.{lockname}_code_slot_{slot_num}_enabled"}
+
+        # This must not raise UnboundLocalError
+        with patch("custom_components.rental_control.util.asyncio.sleep"):
+            await handle_state_change(hass, config_entry, event)
+
+        # update_event_overrides should still be called with default times
+        mock_coordinator.update_event_overrides.assert_awaited_once()
+        call_args = mock_coordinator.update_event_overrides.call_args
+        # start_time and end_time should be start_of_local_day defaults
+        expected_default = dt_util.start_of_local_day()
+        assert call_args[0][3] == expected_default  # start_time
+        assert call_args[0][4] == expected_default  # end_time

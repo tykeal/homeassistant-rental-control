@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -49,7 +50,6 @@ async def test_coordinator_first_refresh(
     Verifies that async_config_entry_first_refresh properly fetches
     and processes calendar data on initial load.
     """
-    from datetime import datetime
     from unittest.mock import patch
 
     import homeassistant.util.dt as dt_util
@@ -96,8 +96,6 @@ async def test_coordinator_scheduled_refresh(
     Verifies that the coordinator automatically refreshes calendar data
     when the scheduled interval elapses using async_fire_time_changed.
     """
-    from datetime import timedelta
-
     from homeassistant.util import dt
     from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
@@ -144,8 +142,6 @@ async def test_coordinator_refresh_success(
     Verifies that coordinator successfully fetches ICS data from URL,
     parses events, and updates internal calendar state.
     """
-    from datetime import datetime
-    from datetime import timedelta
     from unittest.mock import patch
 
     import homeassistant.util.dt as dt_util
@@ -283,8 +279,6 @@ async def test_coordinator_state_management(
     Verifies that coordinator properly maintains calendar state,
     tracks events, and updates next event reference.
     """
-    from datetime import datetime
-    from datetime import timedelta
     from unittest.mock import patch
 
     import homeassistant.util.dt as dt_util
@@ -546,3 +540,121 @@ async def test_coordinator_update_event_overrides_without_overrides(
 
     assert coordinator.calendar_ready is True
     assert coordinator.next_refresh <= dt.now()
+
+
+# ---------------------------------------------------------------------------
+# _refresh_event_dict._get_date isinstance ordering tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetDateIsinstance:
+    """Tests for the _get_date helper inside _refresh_event_dict.
+
+    Before the fix, isinstance(day, date) was checked first in _get_date.
+    Since datetime is a subclass of date, this always matched for
+    datetime objects, making the datetime branch dead code.  The helper
+    then returned a datetime instead of a plain date, causing a
+    TypeError when the list-comprehension compared datetime <= date.
+    """
+
+    async def test_datetime_events_filtered_without_error(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify _refresh_event_dict handles datetime starts.
+
+        With the old isinstance ordering, passing a timezone-aware
+        datetime to _get_date returned a datetime object.  The
+        subsequent ``datetime <= date`` comparison in the list
+        comprehension would raise TypeError.  After the fix,
+        _get_date converts datetime to date first so the comparison
+        succeeds.
+        """
+        mock_config_entry.add_to_hass(hass)
+        with aioresponses() as mock_session:
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=calendar_data.AIRBNB_ICS_CALENDAR,
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            await coordinator.update()
+
+        # Create an event with a timezone-aware datetime start that is
+        # within the configured max_days window so it should be included.
+        now = dt.now()
+        event = CalendarEvent(
+            start=now,
+            end=now + timedelta(hours=1),
+            summary="datetime event",
+        )
+        coordinator.calendar = [event]
+
+        # Before the fix this raised TypeError; after, it filters fine
+        result = coordinator._refresh_event_dict()  # noqa: SLF001
+        assert len(result) == 1
+        assert result[0].summary == "datetime event"
+
+    async def test_plain_date_events_filtered_correctly(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify that plain date events pass through filtering.
+
+        _get_date should return the date directly when the input is
+        not a datetime instance, and the filtering comparison should
+        work without error.
+        """
+        mock_config_entry.add_to_hass(hass)
+        with aioresponses() as mock_session:
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=calendar_data.AIRBNB_ICS_CALENDAR,
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            await coordinator.update()
+
+        today = dt.start_of_local_day().date()
+        event = CalendarEvent(
+            start=today,
+            end=today + timedelta(days=1),
+            summary="date event",
+        )
+        coordinator.calendar = [event]
+
+        result = coordinator._refresh_event_dict()  # noqa: SLF001
+        assert len(result) == 1
+        assert result[0].summary == "date event"
+
+    async def test_far_future_datetime_event_excluded(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify a datetime event far in the future is excluded.
+
+        Events whose start date exceeds the configured max_days window
+        should be filtered out, confirming the date comparison works
+        correctly for datetime values after the isinstance fix.
+        """
+        mock_config_entry.add_to_hass(hass)
+        with aioresponses() as mock_session:
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=calendar_data.AIRBNB_ICS_CALENDAR,
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            await coordinator.update()
+
+        # Event well beyond the max_days window
+        far_future = dt.now() + timedelta(days=coordinator.days + 100)
+        event = CalendarEvent(
+            start=far_future,
+            end=far_future + timedelta(hours=1),
+            summary="far future",
+        )
+        coordinator.calendar = [event]
+
+        result = coordinator._refresh_event_dict()  # noqa: SLF001
+        assert len(result) == 0
