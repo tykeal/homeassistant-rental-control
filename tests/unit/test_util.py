@@ -562,7 +562,6 @@ class TestAddCall:
 class TestHandleStateChangeLogging:
     """Tests for handle_state_change debug logging correctness."""
 
-    @pytest.mark.asyncio
     async def test_debug_log_contains_all_override_fields(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -651,7 +650,6 @@ class TestHandleStateChangeLogging:
 class TestHandleStateChangeStateMutation:
     """Tests that handle_state_change does not mutate HA State objects."""
 
-    @pytest.mark.asyncio
     async def test_unknown_slot_code_not_mutated(self) -> None:
         """Verify State.state is not mutated when slot_code is 'unknown'.
 
@@ -705,7 +703,6 @@ class TestHandleStateChangeStateMutation:
         call_args = mock_coordinator.update_event_overrides.call_args
         assert call_args[0][1] == ""  # slot_code_value should be ""
 
-    @pytest.mark.asyncio
     async def test_unavailable_slot_name_not_mutated(self) -> None:
         """Verify State.state is not mutated when slot_name is 'unavailable'.
 
@@ -768,7 +765,6 @@ class TestHandleStateChangeStateMutation:
 class TestHandleStateChangeUnboundVars:
     """Tests that handle_state_change does not raise UnboundLocalError."""
 
-    @pytest.mark.asyncio
     async def test_unparseable_start_time_uses_default(self) -> None:
         """Verify start_time defaults when parse_datetime returns None.
 

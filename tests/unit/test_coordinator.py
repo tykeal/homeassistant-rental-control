@@ -631,7 +631,7 @@ class TestGetDateIsinstance:
         assert len(result) == 1
         assert result[0].summary == "date event"
 
-    async def test_past_datetime_event_excluded(
+    async def test_far_future_datetime_event_excluded(
         self,
         hass: HomeAssistant,
         mock_config_entry: MockConfigEntry,
