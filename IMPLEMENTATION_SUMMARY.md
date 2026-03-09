@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Execution Date: 2026-02-06
 
-## Overall Status: Phase 4 Complete - Calendar and Event Processing Tests Implemented
+## Overall Status: Phase 5 Complete - Sensor and Entity Tests Implemented
 
 ### Checklists Verification
 ✓ PASS - All checklists complete (requirements.md: 16/16 items completed)
@@ -90,14 +90,28 @@ SPDX-License-Identifier: Apache-2.0
 - [X] T074-T080: gen_uuid, get_event_names, delete_folder, async_reload tests
 - [X] T081-T082: add_call, edge case tests (prefix mismatch, empty name)
 
-#### ⏸️ Phases 5-7: Not Started (0/54 tasks)
-- Phase 5: User Story 3 - Sensor and Entity Testing (0/20 tasks)
+#### ✅ Phase 5: User Story 3 - Sensor and Entity Testing (100% Complete - 20/20 tasks)
+
+**Sensor Platform and CalSensor Tests (T083-T102):** 74 tests implemented and passing
+- [X] T083: Created tests/unit/test_sensors.py with structure
+- [X] T084: Sensor platform setup tests (async_setup_platform, async_setup_entry)
+- [X] T085-T089: Sensor initialization, name, unique_id, state formatting
+- [X] T090: Multiple event sensors (max_events creates correct count)
+- [X] T091-T094: Attribute extraction (email, phone, guests, URL)
+- [X] T095: Door code generation (date_based, static_random, last_four, fallbacks)
+- [X] T096: ETA calculation (days/hours/minutes, None for past events)
+- [X] T097: Missing data handling (None description, empty attributes)
+- [X] T098-T099: Coordinator refresh and availability tracking
+- [X] T100-T101: Unique ID and device_info delegation
+- [X] T102: CalSensor-specific: entity_category, icon, override interactions (set_code, update_times, clear_code, eta_days=0)
+
+#### ⏸️ Phases 6-7: Not Started (0/34 tasks)
 - Phase 6: User Story 4 - Integration Testing (0/23 tasks)
 - Phase 7: Polish & Cross-Cutting Concerns (0/11 tasks)
 
 ### Infrastructure Improvements
 
-#### Files Created (14 files)
+#### Files Created (15 files)
 1. `tests/__init__.py` - Test suite module
 2. `tests/conftest.py` - pytest fixtures and configuration
 3. `tests/fixtures/__init__.py` - Fixtures module
@@ -111,7 +125,8 @@ SPDX-License-Identifier: Apache-2.0
 11. `tests/unit/test_calendar.py` - Calendar entity tests (21 passing)
 12. `tests/unit/test_event_overrides.py` - Event overrides tests (54 passing)
 13. `tests/unit/test_util.py` - Utility function tests (51 passing)
-14. `tests/integration/__init__.py` - Integration tests module
+14. `tests/unit/test_sensors.py` - Sensor platform and CalSensor entity tests (74 passing)
+15. `tests/integration/__init__.py` - Integration tests module
 
 #### Files Modified (4 files)
 1. `pyproject.toml` - Updated coverage settings (fail_under=80), added asyncio_mode config
@@ -123,8 +138,8 @@ SPDX-License-Identifier: Apache-2.0
 ### Test Execution Results
 
 ```
-✓ All 153 tests passing
-✓ Phase 1-4 complete (82/140 tasks = 59%)
+✓ All 227 tests passing
+✓ Phase 1-5 complete (102/140 tasks = 73%)
 ✓ pytest-homeassistant-custom-component integration successful
 ✓ Async test execution configured correctly
 ✓ All pre-commit hooks passing
