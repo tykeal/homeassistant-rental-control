@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rental_control.const import CONF_CODE_LENGTH
@@ -225,8 +226,10 @@ async def test_async_setup_entry_failure(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("old_version", [1, 2])
 async def test_migrate_entry_rejects_version_below_3(
     hass: HomeAssistant,
+    old_version: int,
 ) -> None:
     """Verify entries at version 1 or 2 are rejected with an error.
 
@@ -236,13 +239,13 @@ async def test_migrate_entry_rejects_version_below_3(
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Old Entry",
-        version=1,
-        unique_id="old-v1-entry",
+        version=old_version,
+        unique_id=f"old-v{old_version}-entry",
         data={
             "name": "Old Entry",
             "url": "https://example.com/calendar.ics",
         },
-        entry_id="old_v1_entry",
+        entry_id=f"old_v{old_version}_entry",
     )
     entry.add_to_hass(hass)
 
