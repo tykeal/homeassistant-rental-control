@@ -96,8 +96,6 @@ async def test_coordinator_scheduled_refresh(
     Verifies that the coordinator automatically refreshes calendar data
     when the scheduled interval elapses using async_fire_time_changed.
     """
-    from datetime import timedelta
-
     from homeassistant.util import dt
     from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
@@ -144,7 +142,6 @@ async def test_coordinator_refresh_success(
     Verifies that coordinator successfully fetches ICS data from URL,
     parses events, and updates internal calendar state.
     """
-    from datetime import timedelta
     from unittest.mock import patch
 
     import homeassistant.util.dt as dt_util
@@ -282,7 +279,6 @@ async def test_coordinator_state_management(
     Verifies that coordinator properly maintains calendar state,
     tracks events, and updates next event reference.
     """
-    from datetime import timedelta
     from unittest.mock import patch
 
     import homeassistant.util.dt as dt_util

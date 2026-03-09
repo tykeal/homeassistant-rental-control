@@ -13,6 +13,7 @@ from unittest.mock import patch
 from homeassistant.const import CONF_NAME
 from homeassistant.core import Event
 from homeassistant.exceptions import ServiceNotFound
+from homeassistant.util import dt as dt_util
 import pytest
 
 from custom_components.rental_control.const import COORDINATOR
@@ -828,8 +829,6 @@ class TestHandleStateChangeUnboundVars:
         mock_coordinator.update_event_overrides.assert_awaited_once()
         call_args = mock_coordinator.update_event_overrides.call_args
         # start_time and end_time should be start_of_local_day defaults
-        from homeassistant.util import dt as dt_util
-
         expected_default = dt_util.start_of_local_day()
         assert call_args[0][3] == expected_default  # start_time
         assert call_args[0][4] == expected_default  # end_time
