@@ -25,7 +25,6 @@ from typing import Any
 from typing import Dict
 from zoneinfo import ZoneInfo  # noreorder
 
-import async_timeout
 from homeassistant.components.button import DOMAIN as BUTTON
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.components.datetime import DOMAIN as DATETIME
@@ -65,7 +64,9 @@ from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_MAX_MISSES
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
+from .const import EVENT_AGE_THRESHOLD_DAYS
 from .const import REQUEST_TIMEOUT
+from .const import STARTUP_REFRESH_DELAY
 from .const import VERSION
 from .event_overrides import EventOverrides
 from .sensors.calsensor import RentalControlCalSensor
@@ -227,7 +228,7 @@ Please update Keymaster to at least v0.1.0-b0
             # the future to avoid having multiple calls to the calendar refresh
             # happen at the same time
             if self.refresh_frequency == 0:
-                self.next_refresh = now + timedelta(seconds=10)
+                self.next_refresh = now + timedelta(seconds=STARTUP_REFRESH_DELAY)
             else:
                 self.next_refresh = now + timedelta(minutes=self.refresh_frequency)
             _LOGGER.debug("Updating next refresh to %s", self.next_refresh)
@@ -396,16 +397,16 @@ Please update Keymaster to at least v0.1.0-b0
                     # Just ignore events that ended a long time ago
                     if "DTEND" in event and event[
                         "DTEND"
-                    ].dt < from_date.date() - timedelta(days=30):
+                    ].dt < from_date.date() - timedelta(days=EVENT_AGE_THRESHOLD_DAYS):
                         continue
-                except Exception:  # pylint: disable=broad-except
+                except (AttributeError, TypeError):
                     pass
 
                 try:
                     # Ignore dates that are too far in the future
                     if "DTSTART" in event and event["DTSTART"].dt > to_date.date():
                         continue
-                except Exception:  # pylint: disable=broad-except
+                except (AttributeError, TypeError):
                     pass
 
                 # Ignore Blocked or Not available by default, but if false,
@@ -554,7 +555,7 @@ Please update Keymaster to at least v0.1.0-b0
         _LOGGER.debug("Running RentalControl _refresh_calendar for %s", self.name)
 
         session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
-        async with async_timeout.timeout(REQUEST_TIMEOUT):
+        async with asyncio.timeout(REQUEST_TIMEOUT):
             response = await session.get(self.url)
         if response.status != 200:
             _LOGGER.error(

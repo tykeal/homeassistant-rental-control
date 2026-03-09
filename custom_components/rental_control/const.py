@@ -15,6 +15,17 @@ ISSUE_URL = "https://github.com/tykeal/homeassistant-rental-control/issues"
 # In seconds; argument to asyncio.timeout
 REQUEST_TIMEOUT = 60
 
+# Seconds to wait before first calendar refresh on startup when
+# refresh_frequency is 0 (avoids overlapping refresh calls)
+STARTUP_REFRESH_DELAY = 10
+
+# Number of days in the past to keep calendar events before filtering
+EVENT_AGE_THRESHOLD_DAYS = 30
+
+# Time conversion constants for ETA calculations
+SECONDS_PER_HOUR = 3600
+SECONDS_PER_MINUTE = 60
+
 # Icons
 ICON = "mdi:account-key"
 MAP_ICON = "mdi:map-search"
