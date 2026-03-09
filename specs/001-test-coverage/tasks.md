@@ -269,17 +269,17 @@ SPDX-License-Identifier: Apache-2.0
 
 **Purpose**: Improvements and validation that affect multiple user stories
 
-- [ ] T126 [P] Run full test suite and verify all tests pass with pytest
-- [ ] T127 [P] Generate coverage report and verify minimum 80% coverage is achieved
-- [ ] T128 [P] Run pre-commit hooks on all test files to verify code quality standards
-- [ ] T129 [P] Update pyproject.toml coverage settings to enforce achieved coverage percentage
-- [ ] T130 [P] Add test documentation to README.md explaining how to run tests
-- [ ] T131 Validate quickstart.md instructions by following them to run tests
-- [ ] T132 [P] Review coverage gaps and add targeted tests for uncovered lines
-- [ ] T133 [P] Add pytest markers (fast, slow, integration) to tests for selective execution
-- [ ] T134 [P] Verify test execution time is under 5 minutes total
-- [ ] T135 [P] Add coverage badge or report artifact for CI visibility
-- [ ] T136 Final validation: run entire test suite in clean environment to ensure no hidden dependencies
+- [x] T126 [P] Run full test suite and verify all tests pass with pytest
+- [x] T127 [P] Generate coverage report and verify minimum 80% coverage is achieved
+- [x] T128 [P] Run pre-commit hooks on all test files to verify code quality standards
+- [x] T129 [P] Update pyproject.toml coverage settings to enforce achieved coverage percentage
+- [x] T130 [P] Add test documentation to README.md explaining how to run tests
+- [x] T131 Validate quickstart.md instructions by following them to run tests
+- [x] T132 [P] Review coverage gaps and add targeted tests for uncovered lines
+- [x] T133 [P] Add pytest markers (fast, slow, integration) to tests for selective execution
+- [x] T134 [P] Verify test execution time is under 5 minutes total
+- [x] T135 [P] Add coverage badge or report artifact for CI visibility
+- [x] T136 Final validation: run entire test suite in clean environment to ensure no hidden dependencies
 
 ---
 
