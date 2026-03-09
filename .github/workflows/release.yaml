@@ -2,44 +2,437 @@
 # SPDX-FileCopyrightText: 2021 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
 
-name: Release
+name: 'Release'
 
 # yamllint disable-line rule:truthy
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - '**'
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: false
 
 jobs:
-  release_zip_file:
-    name: Prepare release asset
+  repository-metadata:
+    name: "Repository Metadata"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    timeout-minutes: 5
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Get Version
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF/refs\/tags\//}" >> "$GITHUB_OUTPUT"
-
-      - name: Update versions
-        # yamllint disable rule:line-length
-        run: |
-          sed -i '/VERSION = /c\VERSION = "${{ steps.get_version.outputs.VERSION }}"' ${{ github.workspace }}/custom_components/rental_control/const.py
-          sed -i '/version/c\  \"version\": \"${{ steps.get_version.outputs.VERSION }}\"' ${{ github.workspace }}/custom_components/rental_control/manifest.json
-        # yamllint enable
-      # Pack the rental_control dir as a zip and upload to the release
-
-      - name: ZIP rental_control Dir
-        run: |
-          cd ${{ github.workspace }}/custom_components/rental_control
-          zip rental_control.zip -r ./
-
-      - name: Upload zip to release
-        uses: svenstaro/upload-release-action@v2
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b  # v2.15.0
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          egress-policy: audit
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: "Gather repository metadata"
+        id: repo-metadata
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/repository-metadata-action@ceabcd987d13d7bfefd2372e01eebb0ddac45956  # v0.2.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_summary: 'true'
+          gerrit_summary: 'false'
+          artifact_upload: 'true'
+          artifact_formats: 'json'
+
+  tag-validate:
+    name: 'Validate Tag Push'
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: write
+    timeout-minutes: 5
+    outputs:
+      tag: "${{ steps.tag-validate.outputs.tag_name }}"
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b  # v2.15.0
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Checkout repository'
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: 'Verify pushed tag'
+        id: 'tag-validate'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/tag-validate-action@67695fa3d045917ca7ecc0f1d5f0cad03e231104  # v1.0.1
+        with:
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          require_type: 'semver'
+          reject_development: 'true'
+          require_github: 'true'
           # yamllint disable-line rule:line-length
-          file: ${{ github.workspace }}/custom_components/rental_control/rental_control.zip
-          asset_name: rental_control.zip
-          tag: ${{ github.ref }}
-          overwrite: true
+          require_signed: 'ssh,gpg-unverifiable'
+
+      - name: 'Ensure draft release exists'
+        id: 'ensure-release'
+        shell: bash
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          # Ensure draft release exists
+          TAG="${{ steps.tag-validate.outputs.tag_name }}"
+          # Check if release exists and get its draft status
+          if RELEASE_INFO=$(gh release view "$TAG" \
+            --json isDraft 2>/dev/null); then
+            IS_DRAFT=$(echo "$RELEASE_INFO" | jq -r '.isDraft')
+            if [ "$IS_DRAFT" = "true" ]; then
+              echo "Draft release for tag $TAG already exists"
+            else
+              echo "Published release for tag $TAG already exists"
+            fi
+          else
+            echo "Creating draft release for tag $TAG"
+            gh release create "$TAG" \
+              --draft \
+              --title "Release $TAG" \
+              --notes "Automated release for $TAG"
+          fi
+
+  python-build:
+    name: 'Python Build'
+    needs: 'tag-validate'
+    runs-on: 'ubuntu-latest'
+    outputs:
+      matrix_json: "${{ steps.python-build.outputs.matrix_json }}"
+      artefact_name: "${{ steps.python-build.outputs.artefact_name }}"
+      artefact_path: "${{ steps.python-build.outputs.artefact_path }}"
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b  # v2.15.0
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: 'Build Python project'
+        id: 'python-build'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/python-build-action@8e55c263713b2d2c8347c1d267e75b2a886d570a  # v1.0.3
+        with:
+          sigstore_sign: true
+          attestations: true
+
+  python-tests:
+    name: 'Python Tests'
+    runs-on: 'ubuntu-latest'
+    needs: 'python-build'
+    strategy:
+      fail-fast: false
+      matrix: "${{ fromJson(needs.python-build.outputs.matrix_json) }}"
+    permissions:
+      contents: read
+    timeout-minutes: 12
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b  # v2.15.0
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: 'Test Python project [PYTEST]'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/python-test-action@92d4110d44ebc18fa4575c6b00203ff67d01a1cb  # v1.0.1
+        with:
+          python_version: "${{ matrix.python-version }}"
+
+  python-audit:
+    name: 'Python Audit'
+    runs-on: 'ubuntu-latest'
+    needs: 'python-build'
+    strategy:
+      fail-fast: false
+      matrix: "${{ fromJson(needs.python-build.outputs.matrix_json) }}"
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b  # v2.15.0
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: 'Audit Python project'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/python-audit-action@ec8d84ca14c0413a2b2c6612a3e15b9803f9de75  # v0.2.5
+        with:
+          python_version: "${{ matrix.python-version }}"
+          # pillow transitive dep CVEs (via homeassistant)
+          ignore_vulns: >-
+            GHSA-4xh5-x5gv-qwph
+            GHSA-cfh3-3jmp-rvhc
+
+  sbom:
+    name: 'Generate SBOM'
+    runs-on: ubuntu-latest
+    needs: 'python-build'
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b  # v2.15.0
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: "Generate SBOM"
+        id: sbom
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/python-sbom-action@ae4aca2ef28d7da4ec95049cc78be43e632d322a  # v0.1.0
+        with:
+          include_dev: "false"
+          sbom_format: "both"
+
+      - name: "Upload SBOM artifacts"
+        # yamllint disable-line rule:line-length
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+        with:
+          name: sbom-files
+          path: |
+            sbom-cyclonedx.json
+            sbom-cyclonedx.xml
+          retention-days: 45
+
+      - name: "Security scan with Grype (SARIF)"
+        # yamllint disable-line rule:line-length
+        uses: anchore/scan-action@7037fa011853d5a11690026fb85feee79f4c946c  # v7.3.2
+        id: grype-sarif
+        # Do not block releases on Grype findings
+        continue-on-error: true
+        with:
+          sbom: "${{ steps.sbom.outputs.sbom_json_path }}"
+          output-format: "sarif"
+          output-file: "grype-results.sarif"
+          fail-build: "true"
+          config: ".grype.yaml"
+
+      - name: "Security scan with Grype (Text/Table)"
+        # yamllint disable-line rule:line-length
+        uses: anchore/scan-action@7037fa011853d5a11690026fb85feee79f4c946c  # v7.3.2
+        id: grype-table
+        if: always()
+        with:
+          sbom: "${{ steps.sbom.outputs.sbom_json_path }}"
+          output-format: "table"
+          output-file: "grype-results.txt"
+          fail-build: "false"
+          config: ".grype.yaml"
+
+      - name: "Upload Grype scan results"
+        # yamllint disable-line rule:line-length
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+        if: always()
+        with:
+          name: grype-scan-results
+          path: |
+            grype-results.sarif
+            grype-results.txt
+          retention-days: 90
+
+      - name: "Grype summary"
+        if: always()
+        run: |
+            # Grype summary
+            echo "## Grype Summary" >> "$GITHUB_STEP_SUMMARY"
+            [ -f grype-results.txt ] && cat grype-results.txt \
+              >> "$GITHUB_STEP_SUMMARY" || echo "No scan results available" \
+              >> "$GITHUB_STEP_SUMMARY"
+
+  build-zip:
+    name: 'Build Integration ZIP'
+    needs:
+      - 'tag-validate'
+      - 'python-tests'
+      - 'python-audit'
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b  # v2.15.0
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: 'Update manifest version'
+        shell: bash
+        run: |
+          # Update manifest.json version from tag
+          TAG="${{ needs.tag-validate.outputs.tag }}"
+          # Strip leading 'v' if present
+          VERSION="${TAG#v}"
+          echo "Setting version to: $VERSION"
+          cd "${{ github.workspace }}/custom_components/rental_control"
+          jq --arg v "$VERSION" '.version = $v' manifest.json \
+            > manifest.tmp && mv manifest.tmp manifest.json
+          echo "Updated manifest.json:"
+          cat manifest.json
+
+      - name: 'Update const.py version'
+        shell: bash
+        run: |
+          # Update VERSION in const.py from tag
+          TAG="${{ needs.tag-validate.outputs.tag }}"
+          # Strip leading 'v' if present
+          VERSION="${TAG#v}"
+          echo "Setting const.py VERSION to: $VERSION"
+          # yamllint disable-line rule:line-length
+          sed -i "/^VERSION = /c\\VERSION = \"${VERSION}\"" \
+            "${{ github.workspace }}/custom_components/rental_control/const.py"
+
+      - name: 'Create integration ZIP'
+        shell: bash
+        run: |
+          # Create ZIP of the integration directory
+          cd "${{ github.workspace }}/custom_components/rental_control"
+          zip -r \
+            "${{ github.workspace }}/rental_control.zip" \
+            ./ \
+            -x '*__pycache__/*' '*.pyc'
+
+      - name: 'Upload ZIP artifact'
+        # yamllint disable-line rule:line-length
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+        with:
+          name: integration-zip
+          path: rental_control.zip
+          retention-days: 45
+
+  attach-artefacts:
+    name: 'Attach Artefacts to Release'
+    runs-on: 'ubuntu-latest'
+    needs:
+      - 'tag-validate'
+      - 'python-build'
+      - 'build-zip'
+    permissions:
+      contents: write
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b  # v2.15.0
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: '⬇ Download build artefacts'
+        # yamllint disable-line rule:line-length
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3  # v8.0.0
+        with:
+          name: "${{ needs.python-build.outputs.artefact_name }}"
+          path: "${{ needs.python-build.outputs.artefact_path }}"
+
+      - name: '⬇ Download integration ZIP'
+        # yamllint disable-line rule:line-length
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3  # v8.0.0
+        with:
+          name: integration-zip
+          path: release-assets
+
+      - name: 'Attach artefacts to release'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/release-assets-action@985ecd2ba521dde165514af406dd114d3db5dab6  # v0.1.0
+        with:
+          # yamllint disable-line rule:line-length
+          asset_paths: '["${{ needs.python-build.outputs.artefact_path }}/**", "release-assets/**"]'
+          release_tag: "${{ needs.tag-validate.outputs.tag }}"
+
+  promote-release:
+    name: 'Promote Draft Release'
+    needs:
+      - 'tag-validate'
+      - 'attach-artefacts'
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: write
+    timeout-minutes: 2
+    outputs:
+      # yamllint disable-line rule:line-length
+      release_url: "${{ steps.promote-release.outputs.release_url || steps.set-promoted-url.outputs.release_url }}"
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b  # v2.15.0
+        with:
+          egress-policy: 'audit'
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: 'Check if release is already promoted'
+        id: 'check-promoted'
+        shell: bash
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          TAG="${{ needs.tag-validate.outputs.tag }}"
+          if gh release view "$TAG" --json isDraft --jq '.isDraft' \
+              2>/dev/null | grep -q "false"; then
+            echo "Release $TAG is already promoted"
+            echo "already_promoted=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release $TAG is draft, proceeding"
+            echo "already_promoted=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 'Promote draft release'
+        id: 'promote-release'
+        if: steps.check-promoted.outputs.already_promoted == 'false'
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/draft-release-promote-action@cd7cf442875ecaea5dbb070d0de94f21ece107c8  # v0.1.3
+        with:
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          tag: "${{ needs.tag-validate.outputs.tag }}"
+          latest: true
+
+      - name: 'Set release URL for already promoted release'
+        id: 'set-promoted-url'
+        if: steps.check-promoted.outputs.already_promoted == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          TAG="${{ needs.tag-validate.outputs.tag }}"
+          RELEASE_URL=$(gh release view "$TAG" \
+            --json url --jq '.url')
+          echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"

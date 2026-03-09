@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2021 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+---
+ignore:
+  # pillow transitive dependency via homeassistant — PSD
+  # out-of-bounds write (CVE-2026-25990), fixed in 12.1.1.
+  # We cannot pin pillow directly because it comes from
+  # homeassistant.
+  - vulnerability: GHSA-cfh3-3jmp-rvhc
+    package:
+      name: pillow
+      type: python
