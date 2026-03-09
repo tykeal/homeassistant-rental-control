@@ -743,3 +743,249 @@ async def test_config_flow_duplicate_detection(hass: HomeAssistant) -> None:
     # Duplicate unique_id should result in form with error
     assert result2["type"] == FlowResultType.FORM
     assert result2["errors"] == {CONF_NAME: "same_name"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 – targeted coverage tests for config_flow.py
+# ---------------------------------------------------------------------------
+
+
+async def test_config_flow_bad_checkin_time(hass: HomeAssistant) -> None:
+    """Test that an invalid check-in time is rejected.
+
+    Covers config_flow.py cv.time(user_input[CONF_CHECKIN]) exception path.
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: "not-a-time",
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {CONF_CHECKIN: "bad_time"}
+
+
+async def test_config_flow_bad_checkout_time(hass: HomeAssistant) -> None:
+    """Test that an invalid check-out time is rejected.
+
+    Covers config_flow.py cv.time(user_input[CONF_CHECKOUT]) exception path.
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: "invalid",
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {CONF_CHECKOUT: "bad_time"}
+
+
+async def test_config_flow_bad_days_minimum(hass: HomeAssistant) -> None:
+    """Test that days < 1 is rejected.
+
+    Covers config_flow.py CONF_DAYS < 1 validation.
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: 0,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {CONF_DAYS: "bad_minimum"}
+
+
+async def test_config_flow_bad_code_length(hass: HomeAssistant) -> None:
+    """Test that invalid code_length is rejected.
+
+    Covers config_flow.py code_length < DEFAULT or odd validation.
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: 3,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {CONF_CODE_LENGTH: "bad_code_length"}
+
+
+async def test_config_flow_url_non_200_response(hass: HomeAssistant) -> None:
+    """Test that non-200 HTTP response is reported as unknown error.
+
+    Covers config_flow.py resp.status != 200 branch.
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(test_url, status=500)
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {CONF_URL: "unknown"}
+
+
+async def test_config_flow_url_bad_content_type(hass: HomeAssistant) -> None:
+    """Test that non-calendar content-type is rejected.
+
+    Covers config_flow.py 'text/calendar' not in resp.content_type branch.
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body="<html>Not a calendar</html>",
+            headers={"content-type": "text/html"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {CONF_URL: "bad_ics"}
