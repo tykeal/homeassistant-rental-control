@@ -7,7 +7,7 @@
 NAME = "Rental Control"
 DOMAIN = "rental_control"
 DOMAIN_DATA = f"{DOMAIN}_DATA"
-VERSION = "0.0.1"
+VERSION = "0.0.0"
 LOCK_MANAGER = "keymaster"
 
 ISSUE_URL = "https://github.com/tykeal/homeassistant-rental-control/issues"
