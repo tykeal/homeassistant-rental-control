@@ -390,12 +390,14 @@ async def handle_state_change(
 
     if slot_code is None:
         return
-    if slot_code.state == "unknown" or slot_code.state == "unavailable":
-        slot_code.state = ""
+    slot_code_value = (
+        "" if slot_code.state in ("unknown", "unavailable") else slot_code.state
+    )
     if slot_name is None:
         return
-    if slot_name.state == "unknown" or slot_name.state == "unavailable":
-        slot_name.state = ""
+    slot_name_value = (
+        "" if slot_name.state in ("unknown", "unavailable") else slot_name.state
+    )
 
     if g_start_time is None:
         start_time = dt.start_of_local_day()
@@ -417,15 +419,15 @@ async def handle_state_change(
         "start_time: '%s', end_time: '%s'",
         lockname,
         slot_num,
-        slot_name,
-        slot_code,
+        slot_name_value,
+        slot_code_value,
         start_time,
         end_time,
     )
     await coordinator.update_event_overrides(
         slot_num,
-        slot_code.state,
-        slot_name.state,
+        slot_code_value,
+        slot_name_value,
         start_time,
         end_time,
     )

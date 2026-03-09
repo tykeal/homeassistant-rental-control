@@ -242,8 +242,11 @@ Please update Keymaster to at least v0.1.0-b0
                 _LOGGER.debug("Slot code: '%s'", slot_code)
                 if slot_code is None:
                     continue
-                if slot_code.state == "unknown" or slot_code.state == "unavailable":
-                    slot_code.state = ""
+                slot_code_value = (
+                    ""
+                    if slot_code.state in ("unknown", "unavailable")
+                    else slot_code.state
+                )
 
                 slot_name = self.hass.states.get(
                     f"{TEXT}.{self.lockname}_code_slot_{i}_name"
@@ -251,8 +254,11 @@ Please update Keymaster to at least v0.1.0-b0
                 _LOGGER.debug("Slot name: '%s'", slot_name)
                 if slot_name is None:
                     continue
-                if slot_name.state == "unknown" or slot_name.state == "unavailable":
-                    slot_name.state = ""
+                slot_name_value = (
+                    ""
+                    if slot_name.state in ("unknown", "unavailable")
+                    else slot_name.state
+                )
 
                 use_date_range = self.hass.states.get(
                     f"{SWITCH}.{self.lockname}_code_slot_{i}_use_date_range_limits"
@@ -289,16 +295,16 @@ Please update Keymaster to at least v0.1.0-b0
                 _LOGGER.debug(
                     "Slot %d: %s, %s, %s, %s",
                     i,
-                    slot_code.state,
-                    slot_name.state,
+                    slot_code_value,
+                    slot_name_value,
                     start_time,
                     end_time,
                 )
                 _LOGGER.debug("Updating event overrides")
                 await self.update_event_overrides(
                     i,
-                    slot_code.state,
-                    slot_name.state,
+                    slot_code_value,
+                    slot_name_value,
                     start_time,
                     end_time,
                 )
