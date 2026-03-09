@@ -26,7 +26,10 @@ pytest_plugins = ("pytest_homeassistant_custom_component",)
 _TESTS_ROOT = Path(__file__).parent
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(
+    config: pytest.Config,  # noqa: ARG001
+    items: list[pytest.Item],
+) -> None:
     """Auto-apply 'unit' or 'integration' markers based on test path."""
     for item in items:
         try:

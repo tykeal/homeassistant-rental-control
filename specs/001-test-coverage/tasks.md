@@ -276,7 +276,7 @@ SPDX-License-Identifier: Apache-2.0
 - [x] T130 [P] Add test documentation to README.md explaining how to run tests
 - [x] T131 Validate quickstart.md instructions by following them to run tests
 - [x] T132 [P] Review coverage gaps and add targeted tests for uncovered lines
-- [x] T133 [P] Add pytest markers (fast, slow, integration) to tests for selective execution
+- [x] T133 [P] Add pytest markers (unit, integration) to tests for selective execution
 - [x] T134 [P] Verify test execution time is under 5 minutes total
 - [x] T135 [P] Add coverage badge or report artifact for CI visibility
 - [x] T136 Final validation: run entire test suite in clean environment to ensure no hidden dependencies
