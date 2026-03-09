@@ -9,7 +9,13 @@ from typing import TYPE_CHECKING
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.rental_control.const import CONF_CODE_LENGTH
+from custom_components.rental_control.const import CONF_GENERATE
+from custom_components.rental_control.const import CONF_PATH
+from custom_components.rental_control.const import CONF_SHOULD_UPDATE_CODE
 from custom_components.rental_control.const import COORDINATOR
+from custom_components.rental_control.const import DEFAULT_CODE_LENGTH
+from custom_components.rental_control.const import DEFAULT_GENERATE
 from custom_components.rental_control.const import DOMAIN
 
 if TYPE_CHECKING:
@@ -212,3 +218,112 @@ async def test_async_setup_entry_failure(
     assert DOMAIN in hass.data
     assert mock_config_entry.entry_id in hass.data[DOMAIN]
     assert COORDINATOR in hass.data[DOMAIN][mock_config_entry.entry_id]
+
+
+# ---------------------------------------------------------------------------
+# Migration tests
+# ---------------------------------------------------------------------------
+
+
+async def test_migrate_entry_rejects_version_below_3(
+    hass: HomeAssistant,
+) -> None:
+    """Verify entries at version 1 or 2 are rejected with an error.
+
+    Versions 1 and 2 are no longer supported because the oldest known
+    installation (v0.9.0) ships at config version 3.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Old Entry",
+        version=1,
+        unique_id="old-v1-entry",
+        data={
+            "name": "Old Entry",
+            "url": "https://example.com/calendar.ics",
+        },
+        entry_id="old_v1_entry",
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.async_setup(entry.entry_id)
+    assert result is False
+
+
+async def test_migrate_entry_v3_to_v7(
+    hass: HomeAssistant,
+    mock_aiohttp_session,
+) -> None:
+    """Verify a version-3 entry migrates through all steps to version 7.
+
+    The migration chain 3→4→5→6→7 adds code_length, generate_package,
+    removes packages_path, and adds should_update_code.
+    """
+    from custom_components.rental_control import async_migrate_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="V3 Entry",
+        version=3,
+        unique_id="v3-migration-test",
+        data={
+            "name": "V3 Entry",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "America/New_York",
+            "checkin": "16:00",
+            "checkout": "11:00",
+            "start_slot": 10,
+            "max_events": 3,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+            "packages_path": "/config/packages",
+        },
+        entry_id="v3_entry",
+    )
+    entry.add_to_hass(hass)
+
+    result = await async_migrate_entry(hass, entry)
+
+    assert result is True
+    assert entry.version == 7
+    assert entry.data[CONF_CODE_LENGTH] == DEFAULT_CODE_LENGTH
+    assert entry.data[CONF_GENERATE] == DEFAULT_GENERATE
+    assert CONF_PATH not in entry.data
+    assert entry.data[CONF_SHOULD_UPDATE_CODE] is False
+
+
+async def test_migrate_entry_v6_to_v7(
+    hass: HomeAssistant,
+) -> None:
+    """Verify a version-6 entry only runs the v6→7 step."""
+    from custom_components.rental_control import async_migrate_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="V6 Entry",
+        version=6,
+        unique_id="v6-migration-test",
+        data={
+            "name": "V6 Entry",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "America/New_York",
+            "checkin": "16:00",
+            "checkout": "11:00",
+            "start_slot": 10,
+            "max_events": 3,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+            "code_length": 4,
+            "generate_package": True,
+        },
+        entry_id="v6_entry",
+    )
+    entry.add_to_hass(hass)
+
+    result = await async_migrate_entry(hass, entry)
+
+    assert result is True
+    assert entry.version == 7
+    assert entry.data[CONF_SHOULD_UPDATE_CODE] is False
