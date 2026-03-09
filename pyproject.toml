@@ -63,6 +63,10 @@ console_output_style = "count"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "unit: Unit tests for individual modules",
+    "integration: Integration tests spanning multiple components",
+]
 
 [tool.coverage.run]
 branch = false
