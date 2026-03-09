@@ -74,7 +74,7 @@ source = ["custom_components.rental_control"]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 80
+fail_under = 85
 
 [tool.mypy]
 warn_return_any = true
