@@ -397,14 +397,14 @@ Please update Keymaster to at least v0.1.0-b0
                         "DTEND"
                     ].dt < from_date.date() - timedelta(days=30):
                         continue
-                except Exception:  # pylint: disable=broad-except
+                except (AttributeError, TypeError):
                     pass
 
                 try:
                     # Ignore dates that are too far in the future
                     if "DTSTART" in event and event["DTSTART"].dt > to_date.date():
                         continue
-                except Exception:  # pylint: disable=broad-except
+                except (AttributeError, TypeError):
                     pass
 
                 # Ignore Blocked or Not available by default, but if false,

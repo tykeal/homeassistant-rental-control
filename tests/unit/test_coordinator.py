@@ -658,3 +658,120 @@ class TestGetDateIsinstance:
 
         result = coordinator._refresh_event_dict()  # noqa: SLF001
         assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# _ical_parser exception handling tests
+# ---------------------------------------------------------------------------
+
+
+class TestIcalParserExceptionHandling:
+    """Tests for narrowed exception handling in _ical_parser.
+
+    The _ical_parser method catches (AttributeError, TypeError) when
+    comparing event DTSTART/DTEND dates to the filtering range. This
+    ensures events with problematic date types are still processed
+    rather than crashing the parser.
+    """
+
+    async def test_tz_aware_datetime_events_parsed(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify events with tz-aware datetime dates are handled.
+
+        Comparing a tz-aware datetime to a plain date via operators
+        raises TypeError in Python 3. The exception handler should
+        catch this and still include the event.
+        """
+        from unittest.mock import patch
+
+        import homeassistant.util.dt as dt_util
+
+        mock_config_entry.add_to_hass(hass)
+
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        # ICS with tz-aware datetime DTSTART/DTEND (Z suffix = UTC)
+        tz_aware_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART:{future_start}T140000Z
+DTEND:{future_end}T110000Z
+UID:tz-test@example.com
+SUMMARY:Reserved: TZ Guest
+DESCRIPTION:Email: tz@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=tz_aware_ics,
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            await coordinator.update()
+
+        assert coordinator.calendar is not None
+        assert len(coordinator.calendar) > 0
+        assert coordinator.calendar[0].summary == "Reserved: TZ Guest"
+
+    async def test_date_only_events_parsed(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify events with plain date DTSTART/DTEND are handled.
+
+        Plain date comparisons should work without triggering the
+        exception handler at all.
+        """
+        from unittest.mock import patch
+
+        import homeassistant.util.dt as dt_util
+
+        mock_config_entry.add_to_hass(hass)
+
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        # ICS with plain DATE values (no time component)
+        date_only_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:date-test@example.com
+SUMMARY:Reserved: Date Guest
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=date_only_ics,
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            await coordinator.update()
+
+        assert coordinator.calendar is not None
+        assert len(coordinator.calendar) > 0
+        assert coordinator.calendar[0].summary == "Reserved: Date Guest"
