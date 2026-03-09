@@ -154,15 +154,14 @@ async def test_timeout_handling(
             repeat=True,
         )
 
-        # Setup may succeed (coordinator created) even if fetch times out.
-        # The important thing is it doesn't raise an unhandled exception.
+        # Setup succeeds even when fetch times out; coordinator is created
+        # but calendar data is not loaded.
         result = await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()
 
-    # If setup returned True, coordinator should exist but calendar not loaded
-    if result:
-        coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
-        assert coordinator.calendar_loaded is False
+    assert result is True
+    coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
+    assert coordinator.calendar_loaded is False
 
 
 # ---------------------------------------------------------------------------
