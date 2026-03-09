@@ -11,7 +11,6 @@ without crashing or leaving the system in an inconsistent state.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -24,42 +23,11 @@ from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 
 from tests.fixtures import calendar_data
+from tests.integration.helpers import FROZEN_TIME
+from tests.integration.helpers import future_ics
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-
-FROZEN_TIME = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
-
-
-def _future_ics(
-    summary: str = "Reserved: Test Guest",
-    days_ahead: int = 5,
-    duration: int = 5,
-    *,
-    base_time: datetime = FROZEN_TIME,
-) -> str:
-    """Build a single-event ICS with dates relative to *base_time*."""
-    start = (base_time + timedelta(days=days_ahead)).strftime("%Y%m%d")
-    end = (base_time + timedelta(days=days_ahead + duration)).strftime("%Y%m%d")
-    return (
-        "BEGIN:VCALENDAR\r\n"
-        "VERSION:2.0\r\n"
-        "PRODID:-//Test//EN\r\n"
-        "BEGIN:VEVENT\r\n"
-        f"DTSTART:{start}T160000Z\r\n"
-        f"DTEND:{end}T110000Z\r\n"
-        "UID:future-test@example.com\r\n"
-        f"SUMMARY:{summary}\r\n"
-        "DESCRIPTION:Email: test@example.com\r\n"
-        "STATUS:CONFIRMED\r\n"
-        "END:VEVENT\r\n"
-        "END:VCALENDAR\r\n"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +173,7 @@ async def test_sensor_availability_on_error(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
 ) -> None:
-    """Verify sensors remain available but show no-reservation state on error.
+    """Verify sensors are created and show no-reservation state on error.
 
     When the calendar fails to load, sensors should still be created
     and show "No reservation" as their state.
@@ -274,7 +242,7 @@ async def test_recovery_after_error(
         mock_session.get(
             mock_config_entry.data["url"],
             status=200,
-            body=_future_ics(base_time=future),
+            body=future_ics(base_time=future),
             repeat=True,
         )
 
@@ -332,7 +300,7 @@ async def test_coordinator_error_state(
         mock_session.get(
             mock_config_entry.data["url"],
             status=200,
-            body=_future_ics(base_time=future),
+            body=future_ics(base_time=future),
             repeat=True,
         )
 
