@@ -44,7 +44,7 @@ With `return_exceptions=True`, all coroutines complete and any
 exceptions are returned as values in the result list.
 
 **Alternatives considered**:
-- `asyncio.TaskGroup`: Requires Python 3.11+ (available) but uses
+- `asyncio.TaskGroup`: Available on our baseline Python 3.13+ but uses
   different cancellation semantics — a single failure cancels the
   group, which is the opposite of what we want.
 - Sequential execution: Would work but loses the parallelism benefit
