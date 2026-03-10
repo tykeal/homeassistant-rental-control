@@ -14,7 +14,7 @@ SPDX-License-Identifier: Apache-2.0
 - Project dependencies installed via `uv sync` (see `UV_USAGE.md`)
 - Pre-commit hooks installed (`pre-commit install`)
 - All tests passing: `uv run pytest tests/ -x -q`
-- Ruff clean: `uv run ruff check custom_components/ tests/`
+- Ruff clean (runs via pre-commit; or manually: `ruff check custom_components/ tests/`)
 
 ## Implementation Order
 
