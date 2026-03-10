@@ -51,7 +51,7 @@ exceptions are returned as values in the result list.
   for independent service calls.
 
 **Call sites to update**:
-1. `util.py` — `async_fire_set_code` (~line 250)
+1. `util.py` — `async_fire_set_code`
 2. `util.py` — `handle_state_change` (gather for service calls)
 3. `event_overrides.py` — `async_check_overrides`
 4. `coordinator.py` — `_refresh_calendar` sensor update gather
