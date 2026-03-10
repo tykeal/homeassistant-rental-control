@@ -141,20 +141,21 @@ sign-off.
 
 **Required Commit Trailers**:
 Every agent-authored commit MUST include:
-1. **Co-Authored-By line**: Identifying the AI agent
+1. **Co-authored-by line**: Identifying the AI agent
    ```
-   Co-Authored-By: GitHub Copilot <copilot@github.com>
-   Co-Authored-By: Claude <claude@anthropic.com>
+   Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+   Co-authored-by: Claude <claude@anthropic.com>
    ```
-   (Use appropriate agent name and a representative email address)
+   (Use appropriate agent name and email address)
 
 2. **DCO Sign-off line**: Added via `git commit -s`
    ```
    Signed-off-by: Human Author <human@email>
    ```
 
-**Execution**: Use `git commit -s` to automatically add DCO sign-off, then manually
-add Co-Authored-By trailer before finalizing commit.
+**Execution**: Use `git commit -s` to automatically add DCO sign-off. The
+Co-authored-by trailer goes in the commit message body; `git commit -s`
+appends Signed-off-by last.
 
 **Rationale**: Transparency in authorship is critical for:
 - Legal compliance (Developer Certificate of Origin)

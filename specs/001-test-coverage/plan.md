@@ -58,7 +58,7 @@ Each commit will be independently runnable.
 
 ### Principle V: Agent Co-Authorship & DCO Requirements
 **Status**: ✅ PASS
-**Notes**: Commits will include `Co-Authored-By: GitHub Copilot <copilot@github.com>` and DCO sign-off via `git commit -s`.
+**Notes**: Commits will include `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` and DCO sign-off via `git commit -s`.
 
 ### Principle VI: User Experience Consistency
 **Status**: ✅ PASS
