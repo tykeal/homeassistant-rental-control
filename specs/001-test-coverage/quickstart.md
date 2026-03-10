@@ -206,7 +206,7 @@ git commit -s -m "Test: add tests for <module_name>
 - Cover <edge cases>
 - Achieve <coverage percentage>% coverage
 
-Co-Authored-By: GitHub Copilot <copilot@github.com>"
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
 ---
