@@ -10,30 +10,32 @@ SPDX-License-Identifier: Apache-2.0
 
 # rental-control Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2025-11-24
+Auto-generated from all feature plans. Last updated: 2026-03-10
 
 ## Active Technologies
-
-- Python 3.11+ (supports 3.11, 3.12, 3.13 per pyproject.toml) + Home Assistant, pytest-homeassistant-custom-component, icalendar>=6.1.0, x-wr-timezone>=2.0.0 (001-test-coverage)
+- Python ≥3.13.2 + icalendar ≥6.1.0, x-wr-timezone ≥2.0.0 (002-code-health)
+- Home Assistant ≥2025.8.0 (platform + test harness) (002-code-health)
+- Test stack: pytest-homeassistant-custom-component, aioresponses (002-code-health)
+- Storage: N/A — Home Assistant config entries (002-code-health)
 
 ## Project Structure
 
 ```text
-src/
+custom_components/rental_control/
 tests/
 ```
 
 ## Commands
 
-cd src [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] pytest [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] ruff check .
+uv run pytest tests/ -x -q
+uv run ruff check custom_components/ tests/
 
 ## Code Style
 
-Python 3.11+ (supports 3.11, 3.12, 3.13 per pyproject.toml): Follow standard conventions
+Python ≥3.13.2: Follow standard conventions, ruff formatting
 
 ## Recent Changes
-
-- 001-test-coverage: Added Python 3.11+ (supports 3.11, 3.12, 3.13 per pyproject.toml) + Home Assistant, pytest-homeassistant-custom-component, icalendar>=6.1.0, x-wr-timezone>=2.0.0
+- 002-code-health: Added Python ≥3.13.2 + icalendar ≥6.1.0, x-wr-timezone ≥2.0.0
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
