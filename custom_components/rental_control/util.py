@@ -350,7 +350,11 @@ async def handle_state_change(
         f"Handling state change for {entity_id} in {lockname} with event: {event}"
     )
 
-    slot_num = int([int(s) for s in entity_id.split("_") if s.isdigit()][0])
+    slot_match = re.search(r"_code_slot_(\d+)_", entity_id)
+    if slot_match is None:
+        _LOGGER.warning("Could not extract slot number from entity_id: %s", entity_id)
+        return
+    slot_num = int(slot_match.group(1))
 
     if "_reset" in entity_id:
         _LOGGER.debug(f"Resetting overrides {slot_num} for {lockname}.")

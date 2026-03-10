@@ -46,8 +46,8 @@ requirements for agent contributions.
 
 **Rule**: All code changes MUST meet the following quality standards:
 
-- **Test Coverage**: Code MUST be tested. The project maintains 100% coverage requirement
-  (per setup.cfg). New code without adequate test coverage is PROHIBITED.
+- **Test Coverage**: Code MUST be tested. The project maintains coverage requirements
+  (per pyproject.toml). New code without adequate test coverage is PROHIBITED.
 - **Type Safety**: All Python code MUST include type hints and pass mypy validation.
 - **Documentation**: All public functions MUST have docstrings (per interrogate hook
   configuration requiring 100% documentation).
@@ -211,7 +211,7 @@ timely event updates - delays can cause automation failures affecting tenant acc
 
 ### Testing Requirements
 
-- **Coverage**: 100% code coverage REQUIRED (per setup.cfg).
+- **Coverage**: Code coverage requirements enforced via pyproject.toml.
 - **Test Types**: Unit tests for all business logic, integration tests for HA
   component integration.
 - **Test Execution**: Tests MUST pass before commit (verified via pre-commit if

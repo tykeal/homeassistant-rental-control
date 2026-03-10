@@ -311,7 +311,7 @@ class RentalControlCalSensor(Entity):
             self._event_attributes["eta_days"] = eta_days
             self._event_attributes["eta_hours"] = eta_hours
             self._event_attributes["eta_minutes"] = eta_minutes
-            self._state = f"{name} - {start.strftime('%-d %B %Y')}"
+            self._state = f"{name} - {start.day} {start.strftime('%B %Y')}"
             self._state += f" {start.strftime('%H:%M')}"
             slot_name = get_slot_name(
                 self._event_attributes["summary"],

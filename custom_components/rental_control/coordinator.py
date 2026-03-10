@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from datetime import date
 from datetime import datetime
 from datetime import time
@@ -194,7 +195,9 @@ Please update Keymaster to at least v0.1.0-b0
 
         return self._events_ready
 
-    async def async_get_events(self, hass, start_date, end_date) -> list[CalendarEvent]:  # pylint: disable=unused-argument
+    async def async_get_events(
+        self, hass: HomeAssistant, start_date: datetime, end_date: datetime
+    ) -> list[CalendarEvent]:  # pylint: disable=unused-argument
         """Get list of upcoming events."""
         _LOGGER.debug("Running RentalControl async_get_events")
         events = []
@@ -314,27 +317,27 @@ Please update Keymaster to at least v0.1.0-b0
         if self.event_overrides:
             await self.event_overrides.async_check_overrides(self)
 
-    def update_config(self, config) -> None:
+    def update_config(self, config: Mapping[str, Any]) -> None:
         """Update config entries."""
-        self._name = config.get(CONF_NAME)
-        self.url = config.get(CONF_URL)
-        self.timezone = ZoneInfo(config.get(CONF_TIMEZONE))
-        self.refresh_frequency = config.get(CONF_REFRESH_FREQUENCY)
+        self._name = config[CONF_NAME]
+        self.url = config[CONF_URL]
+        self.timezone = ZoneInfo(config[CONF_TIMEZONE])
+        self.refresh_frequency = config[CONF_REFRESH_FREQUENCY]
         # always do a refresh ASAP after a config change
         self.next_refresh = dt.now()
         self.event_prefix = config.get(CONF_EVENT_PREFIX)
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
-        self.checkin = cv.time(config.get(CONF_CHECKIN))
-        self.checkout = cv.time(config.get(CONF_CHECKOUT))
+        self.checkin = cv.time(config[CONF_CHECKIN])
+        self.checkout = cv.time(config[CONF_CHECKOUT])
         self.lockname = config.get(CONF_LOCK_ENTRY)
-        self.max_events = config.get(CONF_MAX_EVENTS)
-        self.days = config.get(CONF_DAYS)
+        self.max_events = config[CONF_MAX_EVENTS]
+        self.days = config[CONF_DAYS]
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
-        self.should_update_code = config.get(CONF_SHOULD_UPDATE_CODE)
+        self.should_update_code = bool(config.get(CONF_SHOULD_UPDATE_CODE))
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
-        self.ignore_non_reserved = config.get(CONF_IGNORE_NON_RESERVED)
-        self.verify_ssl = config.get(CONF_VERIFY_SSL)
+        self.ignore_non_reserved = bool(config.get(CONF_IGNORE_NON_RESERVED))
+        self.verify_ssl = bool(config.get(CONF_VERIFY_SSL))
 
         # updated the calendar in case the fetch days has changed
         self.calendar = self._refresh_event_dict()
