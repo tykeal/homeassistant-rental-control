@@ -18,9 +18,10 @@ Tests are placed last so they cover the improved code paths
 intentionally last per plan rationale. US4–US6 (P3) follow the
 plan's phase ordering.
 
-## Format: `[ID] [P?] [Story] Description`
+## Format: `- [ ] T### [P?] [Story?] Description`
 
-- **[P]**: Can run in parallel (different files, no dependencies)
+- **T###**: Sequential task ID (T001, T002, etc.)
+- **[P]**: Can run in parallel (different files, no deps)
 - **[Story]**: Which user story (US1–US6) from spec.md
 - Include exact file paths in descriptions
 
