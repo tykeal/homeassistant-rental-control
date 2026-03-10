@@ -685,7 +685,7 @@ class TestAsyncUpdateWithEvents:
         await sensor.async_update()
 
         start = datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc)
-        expected_date = start.strftime("%-d %B %Y")
+        expected_date = f"{start.day} {start.strftime('%B %Y')}"
         expected_time = start.strftime("%H:%M")
         assert "Reserved - Jane Smith" in sensor.state
         assert expected_date in sensor.state
