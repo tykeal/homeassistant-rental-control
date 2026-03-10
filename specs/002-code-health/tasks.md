@@ -174,8 +174,9 @@ and legacy idioms. Replace with current Python and HA conventions.
 
 **Independent Test**: Verify all deprecated patterns, dead code,
 and stale comments from the code review have been addressed.
-Run `grep -rn 'from typing import' custom_components/rental_control/ | grep -Ev 'TYPE_CHECKING|Any|Final'`
-and confirm zero output.
+Run `grep -rn 'from typing import' custom_components/rental_control/ | grep -Ev 'TYPE_CHECKING|Any|Final|TypedDict|Coroutine'`
+and confirm zero output. (`TypedDict` and `Coroutine` remain as
+legitimate typing imports with no built-in replacement.)
 
 ### Implementation for User Story 5
 
@@ -187,8 +188,9 @@ and confirm zero output.
   `custom_components/rental_control/event_overrides.py`,
   `custom_components/rental_control/util.py`.
   Remove the corresponding `from typing import` lines (keep
-  `TYPE_CHECKING`, `Any`, `Final` if used). This task touches
-  all four files and must complete before the remaining US5 tasks.
+  `TYPE_CHECKING`, `Any`, `Final`, `TypedDict`, `Coroutine` if
+  used). This task touches all four files and must complete
+  before the remaining US5 tasks.
   **FR**: FR-011
 - [ ] T011 [P] [US5] Remove the unused `Any` import and its
   associated `# noqa` suppression comment in
