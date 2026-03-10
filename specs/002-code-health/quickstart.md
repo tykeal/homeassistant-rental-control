@@ -11,7 +11,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - Python ≥3.13.2
 - uv package manager (used for all commands)
-- Project dependencies installed via `uv sync` (see `UV_USAGE.md`)
+- Project dependencies installed via `uv sync` (see [UV_USAGE.md](../../UV_USAGE.md))
 - Pre-commit hooks installed (`pre-commit install`)
 - All tests passing: `uv run pytest tests/ -x -q`
 - Ruff clean (runs via pre-commit; or manually: `uv run ruff check custom_components/ tests/`)
