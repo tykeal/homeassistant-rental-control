@@ -18,12 +18,6 @@ on:
     types: [opened, reopened, synchronize]
     branches:
       - main
-    paths:
-      - '**'
-      - '!.github/**'
-      - '!.*'
-      - '.grype.yaml'
-      - '!tox.ini'
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
