@@ -832,3 +832,120 @@ class TestHandleStateChangeUnboundVars:
         expected_default = dt_util.start_of_local_day()
         assert call_args[0][3] == expected_default  # start_time
         assert call_args[0][4] == expected_default  # end_time
+
+
+# ---------------------------------------------------------------------------
+# handle_state_change slot number extraction tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandleStateChangeSlotExtraction:
+    """Tests that handle_state_change extracts slot numbers correctly."""
+
+    async def test_numeric_lockname_extracts_correct_slot(self) -> None:
+        """Verify slot extraction when lockname contains numeric segments.
+
+        Prior to the fix, digit segments in the lockname could be
+        incorrectly selected as the slot number. The regex-based
+        extraction targets the _code_slot_N_ pattern specifically.
+        """
+        lockname = "lock_2_front"
+        expected_slot = 5
+
+        mock_slot_code_state = MagicMock()
+        mock_slot_code_state.state = "1234"
+        mock_slot_name_state = MagicMock()
+        mock_slot_name_state.state = "Guest"
+        mock_slot_enabled = MagicMock()
+        mock_slot_enabled.state = "on"
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.event_overrides = MagicMock()
+        mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
+        mock_coordinator.update_event_overrides = AsyncMock()
+
+        def states_get(entity_id: str) -> MagicMock | None:
+            """Return mock states for various entities."""
+            if "enabled" in entity_id:
+                return mock_slot_enabled
+            if "pin" in entity_id:
+                return mock_slot_code_state
+            if "name" in entity_id:
+                return mock_slot_name_state
+            if "use_date_range" in entity_id:
+                return None
+            return None
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+        hass.states.get = states_get
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {
+            "entity_id": f"switch.{lockname}_code_slot_{expected_slot}_enabled"
+        }
+
+        with patch("custom_components.rental_control.util.asyncio.sleep"):
+            await handle_state_change(hass, config_entry, event)
+
+        mock_coordinator.update_event_overrides.assert_awaited_once()
+        call_args = mock_coordinator.update_event_overrides.call_args
+        assert call_args[0][0] == expected_slot
+
+    async def test_malformed_entity_id_returns_early(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify early return with warning when slot number cannot be extracted."""
+        lockname = "test_lock"
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": "switch.malformed_entity_no_slot"}
+
+        with (
+            patch("custom_components.rental_control.util.asyncio.sleep"),
+            caplog.at_level(
+                logging.WARNING, logger="custom_components.rental_control.util"
+            ),
+        ):
+            await handle_state_change(hass, config_entry, event)
+
+        assert "Could not extract slot number" in caplog.text
+        mock_coordinator.update_event_overrides.assert_not_called()
+
+    async def test_reset_entity_with_numeric_lockname(self) -> None:
+        """Verify reset path extracts correct slot from numeric lockname."""
+        lockname = "lock_2_front"
+        expected_slot = 3
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.event_overrides = MagicMock()
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": f"button.{lockname}_code_slot_{expected_slot}_reset"}
+
+        with patch("custom_components.rental_control.util.asyncio.sleep"):
+            await handle_state_change(hass, config_entry, event)
+
+        mock_coordinator.event_overrides.update.assert_called_once()
+        call_args = mock_coordinator.event_overrides.update.call_args
+        assert call_args[0][0] == expected_slot
