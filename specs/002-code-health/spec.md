@@ -330,8 +330,9 @@ The following items from the code review are **explicitly out of scope**:
 - **Coordinator base class migration** (review §1.1): Migrating to the
   platform's built-in data update coordinator is a major architectural
   change requiring its own specification.
-- **Coordinator class extraction / refactoring** (review §1.2): Breaking
-  the coordinator into smaller classes is a separate refactoring effort.
+- **Coordinator class extraction / refactoring** (review §1.2, §1.3):
+  Breaking the coordinator into smaller classes or shorter methods is a
+  separate refactoring effort.
 - **UUID generation algorithm change** (review §4.1): Changing the hash
   function would break all existing entity IDs for current users.
 - **Door code random number generator change** (review §4.2): The
