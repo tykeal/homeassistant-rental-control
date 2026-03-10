@@ -41,7 +41,7 @@ issues.
 
 | # | FR | Commit Type | Scope | Files | Description |
 |---|-----|-------------|-------|-------|-------------|
-| 8 | 010 | Perf | logging | __init__.py, coordinator.py, event_overrides.py, util.py | Convert 27 f-string log calls to `%s`-style |
+| 8 | 010 | Perf | logging | __init__.py, coordinator.py, event_overrides.py, util.py | Convert all f-string log calls to `%s`-style |
 
 ### Phase 3: Code Modernization (P3 — User Stories 5 & 6)
 

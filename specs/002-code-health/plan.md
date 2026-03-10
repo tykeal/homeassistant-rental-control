@@ -34,7 +34,7 @@ formatting deferred when log level inactive
 **Constraints**: Must pass pre-commit pipeline (ruff, mypy,
 interrogate 100%, reuse); coverage ≥85% (fail_under); zero
 regressions in the existing test suite
-**Scale/Scope**: ~2,863 LOC source, ~7,036 LOC tests; 9 source
+**Scale/Scope**: ~2,863 LOC source, ~7,036 LOC tests; 6 source
 files affected, ~22 atomic commits
 
 ## Constitution Check

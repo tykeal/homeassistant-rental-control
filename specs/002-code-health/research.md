@@ -91,7 +91,7 @@ This should be explicit and testable.
 
 ### R5: Lazy logging approach (FR-010)
 
-**Decision**: Replace all 27 f-string log calls with `%s`-style
+**Decision**: Replace all f-string log calls with `%s`-style
 deferred formatting. Use `_LOGGER.debug("message %s", var)` pattern
 consistently.
 
@@ -114,7 +114,7 @@ logging framework and skipped entirely when the level is inactive.
   registration.
 - **FR-017**: Replace the `asyncio.gather` loop of individual
   `async_forward_entry_unload()` calls with a single
-  `config_entry.async_unload_platforms(hass, PLATFORMS)` call.
+  `hass.config_entries.async_unload_platforms(entry, PLATFORMS)` call.
 
 **Rationale**: These are all documented HA deprecations. The modern
 equivalents are simpler and reduce code.

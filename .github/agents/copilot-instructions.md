@@ -28,7 +28,7 @@ tests/
 ## Commands
 
 uv run pytest tests/ -x -q
-ruff check custom_components/ tests/
+uv run ruff check custom_components/ tests/
 
 ## Code Style
 
