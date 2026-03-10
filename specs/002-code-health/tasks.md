@@ -174,23 +174,24 @@ and legacy idioms. Replace with current Python and HA conventions.
 
 **Independent Test**: Verify all deprecated patterns, dead code,
 and stale comments from the code review have been addressed.
-Run `grep -rn 'from typing import' custom_components/rental_control/ | grep -Ev 'TYPE_CHECKING|Any|Final|TypedDict|Coroutine'`
-and confirm zero output. (`TypedDict` and `Coroutine` remain as
-legitimate typing imports with no built-in replacement.)
+Run `grep -rn 'from typing import' custom_components/rental_control/ | grep -Ev 'TYPE_CHECKING|Any|Final|TypedDict'`
+and confirm zero output. (`TypedDict` remains as a legitimate
+typing import with no built-in replacement.)
 
 ### Implementation for User Story 5
 
 - [ ] T010 [US5] Replace legacy `typing` module imports (`Dict`,
-  `List`, `Optional`, `Union`) with built-in generic equivalents
-  (`dict`, `list`, `X | None`, `X | Y`) in:
+  `List`, `Optional`, `Union`, `Coroutine`) with built-in
+  generic equivalents (`dict`, `list`, `X | None`, `X | Y`,
+  `collections.abc.Coroutine`) in:
   `custom_components/rental_control/config_flow.py`,
   `custom_components/rental_control/coordinator.py`,
   `custom_components/rental_control/event_overrides.py`,
   `custom_components/rental_control/util.py`.
   Remove the corresponding `from typing import` lines (keep
-  `TYPE_CHECKING`, `Any`, `Final`, `TypedDict`, `Coroutine` if
-  used). This task touches all four files and must complete
-  before the remaining US5 tasks.
+  `TYPE_CHECKING`, `Any`, `Final`, `TypedDict` if used). This
+  task touches all four files and must complete before the
+  remaining US5 tasks.
   **FR**: FR-011
 - [ ] T011 [P] [US5] Remove the unused `Any` import and its
   associated `# noqa` suppression comment in
