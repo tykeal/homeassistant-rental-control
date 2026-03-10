@@ -11,6 +11,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - Python ≥3.13.2
 - uv package manager (used for all commands)
+- Project dependencies installed via `uv sync` (see `UV_USAGE.md`)
 - Pre-commit hooks installed (`pre-commit install`)
 - All tests passing: `uv run pytest tests/ -x -q`
 - Ruff clean: `uv run ruff check custom_components/ tests/`
@@ -103,7 +104,7 @@ grep -rn "f['\"]" custom_components/rental_control/ | grep '_LOGGER\.'
 
 # Verify no legacy typing imports
 grep -rn 'from typing import' custom_components/rental_control/ \
-  | grep -v 'TYPE_CHECKING\|Any\|Final'
+  | grep -Ev 'TYPE_CHECKING|Any|Final'
 # Expected: no output (only TYPE_CHECKING, Any, Final allowed)
 ```
 

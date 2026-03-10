@@ -61,7 +61,7 @@ specs/002-code-health/
 ├── plan.md              # This file
 ├── research.md          # Phase 0: research decisions
 ├── quickstart.md        # Phase 1: developer implementation guide
-└── tasks.md             # Phase 2 output (/speckit.tasks command)
+└── tasks.md             # Generated later by /speckit.tasks (not in this PR)
 ```
 
 ### Source Code (repository root)
