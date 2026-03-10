@@ -29,8 +29,8 @@
 
 contrib=contrib-title-conventional-commits,contrib-body-requires-signed-off-by
 
-# [title-max-length]
-# line-length=80
+[title-max-length]
+line-length=50
 
 # [title-must-not-contain-word]
 # Comma-separated list of words that should not occur in the title. Matching is
