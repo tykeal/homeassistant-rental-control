@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 **Prerequisites**: [plan.md](plan.md), [spec.md](spec.md),
 [research.md](research.md), [quickstart.md](quickstart.md)
 
-**Tests**: Test tasks are included (Phase 7) per spec FR-022–024.
+**Tests**: Test tasks are included (Phase 7) per spec FR-022–FR-024.
 Tests are placed last so they cover the improved code paths
 (see [plan.md](plan.md) rationale).
 
@@ -64,7 +64,7 @@ available with its previous calendar state.
   traceback). On any error, return early preserving existing
   `self.calendar` data. See research.md R1 and quickstart.md key
   patterns for the exact exception hierarchy.
-  **FR**: 001, 002, 003
+  **FR**: FR-001, FR-002, FR-003
 - [ ] T003 [US1] Add `return_exceptions=True` to all
   `asyncio.gather` call sites and add result-checking logic that
   re-raises `asyncio.CancelledError` and logs other exceptions.
@@ -78,14 +78,14 @@ available with its previous calendar state.
   Note: `__init__.py` `async_unload_entry` gather is addressed
   separately in T016 (FR-017). See research.md R2 and quickstart.md
   gather pattern for the `BaseException` / `CancelledError` idiom.
-  **FR**: 004
+  **FR**: FR-004
 - [ ] T004 [US1] Remove the conditional that skips miss tracking
   when `len(calendar) > 1` in
   `custom_components/rental_control/coordinator.py`. Apply the
   same `max_misses` tracking logic regardless of calendar event
   count so that multi-event calendars track empty refreshes
   identically to single-event calendars. See research.md R3.
-  **FR**: 005
+  **FR**: FR-005
 - [ ] T005 [US1] Simplify the `overrides_loaded` readiness tracking
   in `custom_components/rental_control/coordinator.py`. Ensure
   there is a single clear code path for determining when the
@@ -94,7 +94,7 @@ available with its previous calendar state.
   `overrides_loaded = True` only when `lockname is None` —
   review and make the readiness determination explicit. See
   research.md R4.
-  **FR**: 006
+  **FR**: FR-006
 
 **Checkpoint**: After T002–T005, the integration should survive
 calendar failures gracefully. Verify with
@@ -120,19 +120,19 @@ patterns.
   `custom_components/rental_control/coordinator.py`. The
   underlying `.get()` method call can never raise `KeyError`,
   making this handler dead code. See code review §2.2.
-  **FR**: 007
+  **FR**: FR-007
 - [ ] T007 [US2] Fix debug logging to log the actual `cal_event`
   instance instead of the `CalendarEvent` class name (line 535)
   in `custom_components/rental_control/coordinator.py`. Change
   the log argument from the class reference to the event variable.
   See code review §2.3.
-  **FR**: 008
+  **FR**: FR-008
 - [ ] T008 [US2] Replace `isinstance(x, type(None))` with
   `x is None` for the non-reserved event filtering check
   (line 418) in
   `custom_components/rental_control/coordinator.py`. See code
   review §2.4.
-  **FR**: 009
+  **FR**: FR-009
 
 **Checkpoint**: After T006–T008, all P1 bug fixes are complete.
 Verify with `uv run pytest tests/ -x -q`.
@@ -159,7 +159,7 @@ and confirm zero output (no f-string log calls remain).
   Replace patterns like `_LOGGER.debug(f"message {var}")` with
   `_LOGGER.debug("message %s", var)`. See research.md R5 and
   quickstart.md lazy logging pattern.
-  **FR**: 010
+  **FR**: FR-010
 
 **Checkpoint**: After T009, verify zero f-string logging with the
 grep command above.
@@ -188,57 +188,57 @@ and confirm zero output.
   Remove the corresponding `from typing import` lines (keep
   `TYPE_CHECKING`, `Any`, `Final` if used). This task touches
   all four files and must complete before the remaining US5 tasks.
-  **FR**: 011
+  **FR**: FR-011
 - [ ] T011 [P] [US5] Remove the unused `Any` import and its
   associated `# noqa` suppression comment in
   `custom_components/rental_control/util.py`. See code review
   §5.1.
-  **FR**: 012
+  **FR**: FR-012
 - [ ] T012 [P] [US5] Remove the stale "temporary call" comment
   (line 356) in
   `custom_components/rental_control/coordinator.py`. See code
   review §5.2.
-  **FR**: 013
+  **FR**: FR-013
 - [ ] T013 [US5] Remove all inert `# pylint: disable=` directive
   comments across all source files in
   `custom_components/rental_control/`. The project uses ruff,
   not pylint — these directives have no effect. See code review
   §5.3.
-  **FR**: 014
+  **FR**: FR-014
 - [ ] T014 [P] [US5] Remove the empty `CONFIG_SCHEMA` variable
   and the synchronous `setup()` function in
   `custom_components/rental_control/__init__.py`. The integration
   is config-flow only (declared in `manifest.json`), so these
   are unnecessary. See research.md R6.
-  **FR**: 015
+  **FR**: FR-015
 - [ ] T015 [P] [US5] Remove the legacy
   `@config_entries.HANDLERS.register(DOMAIN)` decorator from the
   config flow class in
   `custom_components/rental_control/config_flow.py`. The manifest
   `config_flow: true` key handles registration. See research.md
   R6.
-  **FR**: 016
+  **FR**: FR-016
 - [ ] T016 [US5] Replace the `asyncio.gather` loop of individual
   `async_forward_entry_unload()` calls with a single
   `hass.config_entries.async_unload_platforms(entry, PLATFORMS)`
   call in `custom_components/rental_control/__init__.py`. See
   research.md R6 for the correct API signature.
-  **FR**: 017
+  **FR**: FR-017
 - [ ] T017 [US5] Convert all `os.path` calls to `pathlib.Path`
   operations in `custom_components/rental_control/util.py`. The
   test suite already uses `pathlib` via `tmp_path` fixtures. See
   research.md R7.
-  **FR**: 018
+  **FR**: FR-018
 - [ ] T018 [P] [US5] Remove the commented-out function parameter
   (line 135) in
   `custom_components/rental_control/config_flow.py`. See code
   review §5.5.
-  **FR**: 019
+  **FR**: FR-019
 - [ ] T019 [P] [US5] Fix the "EventOVerrides" docstring typo
   (capitalization error) in
   `custom_components/rental_control/event_overrides.py`. See
   code review §5.6.
-  **FR**: 020
+  **FR**: FR-020
 
 **Checkpoint**: After T010–T019, all modernization items from the
 code review should be addressed. Verify with
@@ -262,7 +262,7 @@ as an internal constant (not read from config entry data).
   `custom_components/rental_control/coordinator.py`, remove any
   `self.config_entry.data.get(CONF_MAX_MISSES, ...)` pattern and
   reference the constant directly. See research.md R8.
-  **FR**: 021
+  **FR**: FR-021
 
 **Checkpoint**: After T020, verify the miss threshold is purely
 constant-driven with `uv run pytest tests/ -x -q`.
@@ -288,7 +288,7 @@ and verify util.py ≥85% (up from 77%) and coordinator.py ≥85%
   `handle_state_change` using mocked Keymaster service calls.
   Cover both success and failure paths (service call raises, one
   of multiple gather coroutines fails). See research.md R9 item 1.
-  **FR**: 022
+  **FR**: FR-022
 - [ ] T022 [US3] Add calendar error scenario tests in
   `tests/unit/test_coordinator.py` and
   `tests/integration/test_error_handling.py`. Test timeout,
@@ -296,13 +296,13 @@ and verify util.py ≥85% (up from 77%) and coordinator.py ≥85%
   HTTP responses using aioresponses. Verify the coordinator
   preserves previous calendar state on each failure. See
   research.md R9 item 2.
-  **FR**: 023
+  **FR**: FR-023
 - [ ] T023 [US3] Add slot bootstrapping path tests in
   `tests/unit/test_coordinator.py`. Test the Keymaster entity
   discovery and slot initialization during coordinator startup.
   Cover the case where Keymaster entities are not yet available
   (still loading). See research.md R9 item 3.
-  **FR**: 024
+  **FR**: FR-024
 
 **Checkpoint**: After T021–T023, run coverage report and verify
 targets. Overall coverage must remain ≥85% (pyproject.toml
