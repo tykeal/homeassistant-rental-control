@@ -1,3 +1,8 @@
+---
+description: Development guidelines and conventions for the rental-control Home Assistant integration.
+applyTo: '**'
+---
+
 <!--
 SPDX-FileCopyrightText: 2025 Andrew Grimberg <tykeal@bardicgrove.org>
 SPDX-License-Identifier: Apache-2.0
