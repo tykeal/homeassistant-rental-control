@@ -98,7 +98,7 @@ uv run pytest tests/ --cov=custom_components.rental_control \
 # - coordinator.py: ≥85% (up from 81%)
 
 # Verify zero f-string logging
-grep -rn 'f"' custom_components/rental_control/ | grep '_LOGGER\.'
+grep -rn "f['\"]" custom_components/rental_control/ | grep '_LOGGER\.'
 # Expected: no output
 
 # Verify no legacy typing imports

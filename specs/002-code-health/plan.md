@@ -46,7 +46,7 @@ design.*
 |-----------|--------|-------|
 | I: Code Quality & Testing | ✅ PASS | All changes include tests; coverage will increase |
 | II: Atomic Commit Discipline | ✅ PASS | Plan defines ~22 atomic commits, one logical change each |
-| III: Licensing & Attribution | ✅ PASS | No new files need SPDX headers (modifying existing files) |
+| III: Licensing & Attribution | ✅ PASS | New doc files include SPDX headers; source files already have them |
 | IV: Pre-Commit Integrity | ✅ PASS | All commits must pass pre-commit; no bypass |
 | V: Agent Co-Authorship & DCO | ✅ PASS | All commits include Co-authored-by + DCO sign-off |
 | VI: User Experience Consistency | ✅ PASS | No user-facing changes; entity IDs/config preserved |
@@ -88,5 +88,5 @@ tests/
 ```
 
 **Structure Decision**: Existing HA custom integration layout. No
-new files are created; all changes modify existing source and test
-files.
+new source or test files are created; all code changes modify
+existing source and test files.

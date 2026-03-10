@@ -33,7 +33,7 @@ failures.
 
 ### R2: asyncio.gather error handling strategy (FR-004)
 
-**Decision**: Add `return_exceptions=True` to all 7 `asyncio.gather`
+**Decision**: Add `return_exceptions=True` to all `asyncio.gather`
 call sites, then check results for exceptions and log them.
 
 **Rationale**: Without `return_exceptions=True`, a single failing
