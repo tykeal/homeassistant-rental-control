@@ -35,6 +35,7 @@ dev = [
 ]
 
 test = [
+    "aioresponses",
     "homeassistant>=2025.8.0",
     "pytest-homeassistant-custom-component",
 ]
