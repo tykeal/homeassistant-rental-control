@@ -193,10 +193,13 @@ typing import with no built-in replacement.)
   task touches all four files and must complete before the
   remaining US5 tasks.
   **FR**: FR-011
-- [ ] T011 [P] [US5] Remove the unused `Any` import and its
-  associated `# noqa` suppression comment in
-  `custom_components/rental_control/util.py`. See code review
-  §5.1.
+- [ ] T011 [P] [US5] Remove the stale `# noqa: F401` suppression
+  on the `Any` import in
+  `custom_components/rental_control/util.py`. The import is
+  actually used (`dict[str, Any]` after T010, `# type: Any`
+  comment) so the noqa is unnecessary. Also remove the
+  `# type: Any` comment on line 289 if it becomes redundant
+  after T010 modernization. See code review §5.1.
   **FR**: FR-012
 - [ ] T012 [P] [US5] Remove the stale "temporary call" comment
   (line 356) in
