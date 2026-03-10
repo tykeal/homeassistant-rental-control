@@ -38,7 +38,7 @@ Keep subjects concise. The hard limit is 50 characters.
 ### Rule 3: Capitalize the subject line
 
 The subject line MUST start with a capital letter. This project uses
-Conventional Commits with capitalized types which naturally satisfies this rule.
+Conventional Commits, whose capitalized types naturally satisfy this rule.
 
 - **Enforcement**: gitlint `contrib-title-conventional-commits` requires
   capitalized types.
@@ -76,7 +76,7 @@ Bad examples:
 Body text MUST be wrapped at 72 characters per line. Lines containing URLs
 MAY exceed this limit, but enforcement tooling has limitations.
 
-- **Enforcement**: gitlint `body-max-line-length` (default 72). The
+- **Enforcement**: gitlint `body-max-line-length` (configured to 72). The
   configured `ignore-by-body` rule disables this check for the entire
   commit body if any line matches the URL pattern, so you MUST still
   manually wrap non-URL lines to 72 characters.

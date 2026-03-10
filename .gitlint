@@ -45,9 +45,8 @@ line-length=50
 # (e.g. title-must-not-contain-word).
 # regex=^US[0-9]*
 
-# [B1]
-# B1 = body-max-line-length
-# line-length=120
+[body-max-line-length]
+line-length=72
 
 # [body-min-length]
 # min-length=5
