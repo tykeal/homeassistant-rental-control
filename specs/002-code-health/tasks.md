@@ -153,11 +153,11 @@ and confirm zero output (no f-string log calls remain).
 ### Implementation for User Story 4
 
 - [ ] T009 [US4] Convert all f-string log calls to `%s`-style
-  deferred formatting across four files:
+  deferred formatting across three files:
   `custom_components/rental_control/__init__.py`,
-  `custom_components/rental_control/coordinator.py`,
   `custom_components/rental_control/event_overrides.py`,
   `custom_components/rental_control/util.py`.
+  (`coordinator.py` already uses `%s`-style — no changes needed.)
   Replace patterns like `_LOGGER.debug(f"message {var}")` with
   `_LOGGER.debug("message %s", var)`. See research.md R5 and
   quickstart.md lazy logging pattern.
