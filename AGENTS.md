@@ -27,7 +27,7 @@ The blank line between the subject and body is critical. Git tools like `log`,
 `shortlog`, and `rebase` rely on this separation. Simple changes may omit the
 body entirely.
 
-- **Enforcement**: Git itself; gitlint validates structure.
+- **Enforcement**: Convention and tooling; gitlint validates structure.
 
 ### Rule 2: Limit the subject line to 50 characters
 
@@ -74,10 +74,12 @@ Bad examples:
 ### Rule 6: Wrap the body at 72 characters
 
 Body text MUST be wrapped at 72 characters per line. Lines containing URLs
-are exempt from this limit.
+MAY exceed this limit, but enforcement tooling has limitations.
 
 - **Enforcement**: gitlint `body-max-line-length` (default 72). The
-  `ignore-by-body` rule exempts lines containing URLs.
+  configured `ignore-by-body` rule disables this check for the entire
+  commit body if any line matches the URL pattern, so you MUST still
+  manually wrap non-URL lines to 72 characters.
 
 ### Rule 7: Use the body to explain what and why, not how
 
@@ -97,8 +99,8 @@ Type(scope): Short imperative description
 Body explaining what and why. Wrap at 72 characters.
 URLs on their own line are exempt from the wrap limit.
 
-Signed-off-by: Name <email>
 Co-authored-by: <AI Model Name> <appropriate-email@provider.com>
+Signed-off-by: Name <email>
 ```
 
 **Allowed types** (capitalized, enforced by gitlint):
@@ -139,15 +141,17 @@ the AI model used:
 | Gemini | `Co-authored-by: Gemini <gemini@google.com>` |
 | Copilot | `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` |
 
-This trailer goes at the end of the commit message body, after the
-`Signed-off-by` line.
+This trailer goes at the end of the commit message body. Note that
+`git commit -s` appends the `Signed-off-by` line after all other
+content, so it will appear after the `Co-authored-by` trailer
+automatically.
 
 ## Gitlint Enforcement Summary
 
 The following gitlint rules are active (see `.gitlint` for full config):
 
-| Rule | What it checks | Default |
-| ---- | -------------- | ------- |
+| Rule | What it checks | Configured |
+| ---- | -------------- | ---------- |
 | `title-max-length` (T1) | Subject ≤50 chars | 50 |
 | `title-trailing-punctuation` (T3) | No trailing `.` `;` `:` etc. | Enabled |
 | `body-max-line-length` (B1) | Body lines ≤72 chars | 72 |
