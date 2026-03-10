@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 **Feature Branch**: `002-code-health`
 **Created**: 2026-03-10
 **Status**: Draft
-**Input**: Improve the overall code health of the Rental Control integration based on the code review findings in `code-reviews/20260310-rc_review.md`. Fix all identified bugs and logic issues, add missing error handling around calendar fetching and parsing so failures don't crash the integration, convert eager log formatting to lazy evaluation for performance, modernize the codebase by replacing deprecated patterns with current idioms, remove dead code and stale comments, and close test coverage gaps — particularly around lock slot management and network error scenarios. Exclude any large architectural refactors such as migrating the coordinator base class, changing UUID generation, or redesigning the polling model — those are separate efforts.
+**Input**: User description: "Improve the overall code health of the Rental Control integration based on the code review findings in `code-reviews/20260310-rc_review.md`. Fix all identified bugs and logic issues, add missing error handling around calendar fetching and parsing so failures don't crash the integration, convert eager log formatting to lazy evaluation for performance, modernize the codebase by replacing deprecated patterns with current idioms, remove dead code and stale comments, and close test coverage gaps — particularly around lock slot management and network error scenarios. Exclude any large architectural refactors such as migrating the coordinator base class, changing UUID generation, or redesigning the polling model — those are separate efforts."
 
 ## User Scenarios & Testing *(mandatory)*
 
