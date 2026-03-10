@@ -12,7 +12,7 @@ SPDX-License-Identifier: Apache-2.0
 - Python ≥3.13.2
 - uv package manager (used for all commands)
 - Pre-commit hooks installed (`pre-commit install`)
-- All 278 existing tests passing: `uv run pytest tests/ -x -q`
+- All tests passing: `uv run pytest tests/ -x -q`
 - Ruff clean: `uv run ruff check custom_components/ tests/`
 
 ## Implementation Order

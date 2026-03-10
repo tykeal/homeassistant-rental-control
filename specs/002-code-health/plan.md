@@ -21,8 +21,8 @@ UUID changes, or polling redesign.
 ## Technical Context
 
 **Language/Version**: Python ≥3.13.2
-**Primary Dependencies**: icalendar ≥6.1.0, x-wr-timezone ≥2.0.0,
-homeassistant ≥2025.8.0
+**Runtime Dependencies**: icalendar ≥6.1.0, x-wr-timezone ≥2.0.0
+**Platform/Dev Dependencies**: homeassistant ≥2025.8.0
 **Storage**: N/A (Home Assistant config entries)
 **Testing**: pytest with pytest-homeassistant-custom-component,
 aioresponses; asyncio_mode = auto
@@ -33,7 +33,7 @@ including Raspberry Pi)
 formatting deferred when log level inactive
 **Constraints**: Must pass pre-commit pipeline (ruff, mypy,
 interrogate 100%, reuse); coverage ≥85% (fail_under); zero
-regressions in existing 278 tests
+regressions in the existing test suite
 **Scale/Scope**: ~2,863 LOC source, ~7,036 LOC tests; 9 source
 files affected, ~22 atomic commits
 
