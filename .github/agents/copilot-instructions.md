@@ -13,6 +13,8 @@ SPDX-License-Identifier: Apache-2.0
 Auto-generated from all feature plans. Last updated: 2025-11-24
 
 ## Active Technologies
+- Python ≥3.13.2 + icalendar ≥6.1.0, x-wr-timezone ≥2.0.0, (002-code-health)
+- N/A (Home Assistant config entries) (002-code-health)
 
 - Python 3.11+ (supports 3.11, 3.12, 3.13 per pyproject.toml) + Home Assistant, pytest-homeassistant-custom-component, icalendar>=6.1.0, x-wr-timezone>=2.0.0 (001-test-coverage)
 
@@ -32,6 +34,7 @@ cd src [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLO
 Python 3.11+ (supports 3.11, 3.12, 3.13 per pyproject.toml): Follow standard conventions
 
 ## Recent Changes
+- 002-code-health: Added Python ≥3.13.2 + icalendar ≥6.1.0, x-wr-timezone ≥2.0.0,
 
 - 001-test-coverage: Added Python 3.11+ (supports 3.11, 3.12, 3.13 per pyproject.toml) + Home Assistant, pytest-homeassistant-custom-component, icalendar>=6.1.0, x-wr-timezone>=2.0.0
 
