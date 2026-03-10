@@ -54,13 +54,14 @@ integration remains available with its previous calendar state.
 
 ---
 
-### User Story 2 - Lock Slot Changes Complete Fully or Not at All (Priority: P1)
+### User Story 2 - Lock Slot Changes Are Resilient to Partial Failures (Priority: P1)
 
 As a property manager, when the system sets or clears a door code for a
 guest reservation, all of the related slot changes (pin, name, dates,
-enabled flag) either complete together or none of them apply. A partial
-update — such as a pin being set but the slot never being enabled —
-must not occur even if one of the intermediate steps encounters an error.
+enabled flag) are attempted even if one step encounters an error. A
+single failing step must not silently prevent the remaining steps from
+executing, and any failures are clearly reported so I can take corrective
+action.
 
 **Why this priority**: Partial lock slot updates are a security and
 usability hazard. A guest could arrive and be unable to enter the
