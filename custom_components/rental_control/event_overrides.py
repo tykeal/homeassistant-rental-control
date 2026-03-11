@@ -101,7 +101,7 @@ class EventOverrides:
         # Get all the available slots greater than our current max
         avail_slots = self.__get_slots_without_values(max_slot)
         if len(avail_slots):
-            _LOGGER.debug(f"Next slot is {avail_slots[0]}")
+            _LOGGER.debug("Next slot is %s", avail_slots[0])
             self._next_slot = avail_slots[0]
             return
 
@@ -110,7 +110,7 @@ class EventOverrides:
         avail_slots = self.__get_slots_without_values()
 
         if len(avail_slots):
-            _LOGGER.debug(f"Next slot is {avail_slots[0]}")
+            _LOGGER.debug("Next slot is %s", avail_slots[0])
             self._next_slot = avail_slots[0]
             return
 
@@ -149,7 +149,7 @@ class EventOverrides:
 
         _LOGGER.debug(self._overrides)
         event_names = get_event_names(coordinator)
-        _LOGGER.debug(f"event_names = {event_names}")
+        _LOGGER.debug("event_names = %s", event_names)
 
         assigned_slots = self.__get_slots_with_values()
 
@@ -164,7 +164,8 @@ class EventOverrides:
 
             if self.get_slot_name(slot) not in event_names:
                 _LOGGER.debug(
-                    f"{self._overrides[slot]} not in current events, clearing"
+                    "%s not in current events, clearing",
+                    self._overrides[slot],
                 )
                 clear_code = True
 
@@ -172,15 +173,17 @@ class EventOverrides:
             end_date = self.get_slot_end_date(slot)
 
             if not len(calendar):
-                _LOGGER.debug(f"No events in calendar, clearing {slot}")
+                _LOGGER.debug("No events in calendar, clearing %s", slot)
                 clear_code = True
 
             if not clear_code and start_date > end_date:
-                _LOGGER.debug(f"{slot} start and end times do not make sense, clearing")
+                _LOGGER.debug(
+                    "%s start and end times do not make sense, clearing", slot
+                )
                 clear_code = True
 
             if not clear_code and end_date < cur_date_start:
-                _LOGGER.debug(f"{slot} end is before today, clearing")
+                _LOGGER.debug("%s end is before today, clearing", slot)
                 clear_code = True
 
             if not clear_code:
@@ -190,11 +193,11 @@ class EventOverrides:
                     last_end = calendar[-1].end.date()
 
                 if start_date > last_end:
-                    _LOGGER.debug(f"{slot} start is after last event ends, clearing")
+                    _LOGGER.debug("%s start is after last event ends, clearing", slot)
                     clear_code = True
 
             if clear_code:
-                _LOGGER.debug(f"Firing clear code for slot {slot}")
+                _LOGGER.debug("Firing clear code for slot %s", slot)
                 await async_fire_clear_code(coordinator, slot)
 
                 self.update(
@@ -332,6 +335,6 @@ class EventOverrides:
         if len(overrides) == self.max_slots:
             self._ready = True
 
-        _LOGGER.debug(f"overrides = {self.overrides}")
-        _LOGGER.debug(f"ready = {self.ready}")
-        _LOGGER.debug(f"next_slot = {self.next_slot}")
+        _LOGGER.debug("overrides = %s", self.overrides)
+        _LOGGER.debug("ready = %s", self.ready)
+        _LOGGER.debug("next_slot = %s", self.next_slot)

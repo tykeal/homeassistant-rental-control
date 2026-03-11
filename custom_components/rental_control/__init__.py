@@ -179,7 +179,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
     # 4 -> 5: Drop startup automation
     if version == 4:
-        _LOGGER.debug(f"Migrating from version {version}")
+        _LOGGER.debug("Migrating from version %s", version)
 
         data = config_entry.data.copy()
         data[CONF_GENERATE] = DEFAULT_GENERATE
@@ -191,11 +191,11 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         )
 
         version = 5
-        _LOGGER.debug(f"Migration to version {config_entry.version} complete")
+        _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     # 5 -> 6: Drop package_path from configuration
     if version == 5:
-        _LOGGER.debug(f"Migrating from version {version}")
+        _LOGGER.debug("Migrating from version %s", version)
 
         data = config_entry.data.copy()
         data.pop(CONF_PATH, None)
@@ -207,11 +207,11 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         )
 
         version = 6
-        _LOGGER.debug(f"Migration to version {config_entry.version} complete")
+        _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     # 6 -> 7: Add should_update_code to configuration
     if version == 6:
-        _LOGGER.debug(f"Migrating from version {version}")
+        _LOGGER.debug("Migrating from version %s", version)
 
         data = config_entry.data.copy()
         # Default to False since prior versions didn't have this
@@ -225,7 +225,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         )
 
         version = 7
-        _LOGGER.debug(f"Migration to version {config_entry.version} complete")
+        _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     return True
 
@@ -272,12 +272,12 @@ async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -
     """Start tracking updates to entities."""
     entities: list[str] = []
 
-    _LOGGER.debug(f"entry_id = '{config_entry.unique_id}'")
+    _LOGGER.debug("entry_id = '%s'", config_entry.unique_id)
 
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
     lockname = coordinator.lockname
 
-    _LOGGER.debug(f"lockname = '{lockname}'")
+    _LOGGER.debug("lockname = '%s'", lockname)
 
     for i in range(
         coordinator.start_slot, coordinator.start_slot + coordinator.max_events

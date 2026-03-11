@@ -129,7 +129,9 @@ def delete_folder(absolute_path: str, *relative_paths: str) -> None:
 
 async def async_fire_clear_code(coordinator, slot: int) -> None:
     """Fire a clear_code signal."""
-    _LOGGER.debug(f"In async_fire_clear_code - slot: {slot}, name: {coordinator.name}")
+    _LOGGER.debug(
+        "In async_fire_clear_code - slot: %s, name: %s", slot, coordinator.name
+    )
     hass = coordinator.hass
     reset_entity = f"{BUTTON}.{coordinator.lockname}_code_slot_{slot}_reset"
 
@@ -147,9 +149,9 @@ async def async_fire_clear_code(coordinator, slot: int) -> None:
 
 async def async_fire_set_code(coordinator, event, slot: int) -> None:
     """Set codes into a slot."""
-    _LOGGER.debug(f"In async_fire_set_code - slot: {slot}")
-    _LOGGER.debug(f"Event: {event}")
-    _LOGGER.debug(f"Slot: {slot}")
+    _LOGGER.debug("In async_fire_set_code - slot: %s", slot)
+    _LOGGER.debug("Event: %s", event)
+    _LOGGER.debug("Slot: %s", slot)
 
     lockname: str = coordinator.lockname
     coro: List[Coroutine] = []
@@ -376,7 +378,10 @@ async def handle_state_change(
     entity_id = event.data["entity_id"]
 
     _LOGGER.debug(
-        f"Handling state change for {entity_id} in {lockname} with event: {event}"
+        "Handling state change for %s in %s with event: %s",
+        entity_id,
+        lockname,
+        event,
     )
 
     slot_match = re.search(r"_code_slot_(\d+)_", entity_id)
@@ -386,20 +391,22 @@ async def handle_state_change(
     slot_num = int(slot_match.group(1))
 
     if "_reset" in entity_id:
-        _LOGGER.debug(f"Resetting overrides {slot_num} for {lockname}.")
+        _LOGGER.debug("Resetting overrides %s for %s.", slot_num, lockname)
         coordinator.event_overrides.update(
             slot_num, "", "", dt.start_of_local_day(), dt.start_of_local_day()
         )
         return
 
     slot_state = hass.states.get(f"switch.{lockname}_code_slot_{slot_num}_enabled")
-    _LOGGER.debug(f"Slot {slot_num} state: {slot_state}")
+    _LOGGER.debug("Slot %s state: %s", slot_num, slot_state)
     if slot_state is None:
         return
 
     if slot_state.state != "on":
         _LOGGER.debug(
-            f"Slot {slot_num} is not enabled, skipping update for {lockname}."
+            "Slot %s is not enabled, skipping update for %s.",
+            slot_num,
+            lockname,
         )
         return
 
@@ -409,7 +416,7 @@ async def handle_state_change(
     use_date_range = hass.states.get(
         f"switch.{lockname}_code_slot_{slot_num}_use_date_range_limits"
     )
-    _LOGGER.debug(f"Use Date Range: {use_date_range}")
+    _LOGGER.debug("Use Date Range: %s", use_date_range)
     if use_date_range and use_date_range.state == "on":
         g_start_time = hass.states.get(
             f"datetime.{lockname}_code_slot_{slot_num}_date_range_start"
