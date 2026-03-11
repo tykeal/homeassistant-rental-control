@@ -519,11 +519,7 @@ Please update Keymaster to at least v0.1.0-b0
             self.timezone,
             start.astimezone(self.timezone),
         )
-        try:
-            description = event.get("DESCRIPTION")
-        except KeyError:
-            # VRBO and Booking.com do not have a DESCRIPTION element
-            description = None
+        description = event.get("DESCRIPTION")
 
         cal_event = CalendarEvent(
             description=description,
