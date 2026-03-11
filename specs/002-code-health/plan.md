@@ -68,14 +68,14 @@ specs/002-code-health/
 
 ```text
 custom_components/rental_control/
-├── __init__.py          # FR-010, FR-015, FR-017
+├── __init__.py          # FR-010, FR-014, FR-015, FR-017
 ├── calendar.py          # (no changes planned)
 ├── config_flow.py       # FR-011, FR-016, FR-019
 ├── const.py             # FR-021
 ├── coordinator.py       # FR-001–009, FR-010, FR-011, FR-013, FR-014
 ├── event_overrides.py   # FR-004, FR-010, FR-011, FR-020
 ├── sensor.py            # (no changes planned)
-├── util.py              # FR-004, FR-010–012, FR-014, FR-018
+├── util.py              # FR-004, FR-010–012, FR-018
 └── sensors/
     └── calsensor.py     # (no changes planned)
 

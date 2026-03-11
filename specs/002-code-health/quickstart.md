@@ -41,7 +41,7 @@ issues.
 
 | # | FR | Commit Type | Scope | Files | Description |
 |---|-----|-------------|-------|-------|-------------|
-| 8 | 010 | Perf | logging | __init__.py, coordinator.py, event_overrides.py, util.py | Convert all f-string log calls to `%s`-style |
+| 8 | 010 | Perf | logging | __init__.py, event_overrides.py, util.py | Convert all f-string log calls to `%s`-style |
 
 ### Phase 3: Code Modernization (P3 — User Stories 5 & 6)
 
@@ -49,8 +49,8 @@ Small, independent cleanup commits. Order within phase is flexible.
 
 | # | FR | Commit Type | Scope | Files | Description |
 |---|-----|-------------|-------|-------|-------------|
-| 9 | 011 | Refactor | typing | config_flow.py, coordinator.py, event_overrides.py, util.py | Replace `Dict`, `List`, `Optional`, `Union` with builtins |
-| 10 | 012 | Chore | imports | util.py | Remove unused `Any` import and noqa comment |
+| 9 | 011 | Refactor | typing | config_flow.py, coordinator.py, event_overrides.py, util.py | Replace `Dict`, `List`, `Optional`, `Union`, `Coroutine` with builtins |
+| 10 | 012 | Chore | imports | util.py | Remove stale `# noqa: F401` on `Any` import |
 | 11 | 013 | Chore | comments | coordinator.py | Remove stale "temporary call" comment (line 356) |
 | 12 | 014 | Chore | lint | multiple files | Remove inert `# pylint: disable=` directives |
 | 13 | 015 | Refactor | init | __init__.py | Remove empty `CONFIG_SCHEMA` and `setup()` function |
@@ -104,8 +104,8 @@ grep -rn "f['\"]" custom_components/rental_control/ | grep '_LOGGER\.'
 
 # Verify no legacy typing imports
 grep -rn 'from typing import' custom_components/rental_control/ \
-  | grep -Ev 'TYPE_CHECKING|Any|Final'
-# Expected: no output (only TYPE_CHECKING, Any, Final allowed)
+  | grep -Ev 'TYPE_CHECKING|Any|Final|TypedDict'
+# Expected: no output (only TYPE_CHECKING, Any, Final, TypedDict allowed)
 ```
 
 ## Key Patterns
