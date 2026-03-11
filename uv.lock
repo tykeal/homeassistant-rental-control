@@ -1386,7 +1386,6 @@ wheels = [
 
 [[package]]
 name = "homeassistant-rental-control"
-version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "icalendar" },
