@@ -149,7 +149,12 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         f"{SWITCH}.{lockname}_code_slot_{slot}_enabled",
         {},
     )
-    await asyncio.gather(*coro)
+    results = await asyncio.gather(*coro, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            _LOGGER.error("Lock slot operation failed: %s", result)
 
     coro.clear()
 
@@ -201,7 +206,12 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         {"value": slot_name},
     )
     # Update the slot details
-    await asyncio.gather(*coro)
+    results = await asyncio.gather(*coro, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            _LOGGER.error("Lock slot operation failed: %s", result)
 
     # Turn on the slot
     coro.clear()
@@ -214,7 +224,12 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         {},
     )
 
-    await asyncio.gather(*coro)
+    results = await asyncio.gather(*coro, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            _LOGGER.error("Lock slot operation failed: %s", result)
 
 
 async def async_fire_update_times(coordinator, event) -> None:
@@ -246,7 +261,12 @@ async def async_fire_update_times(coordinator, event) -> None:
         {"datetime": event.extra_state_attributes["start"]},
     )
     # Update the slot details
-    await asyncio.gather(*coro)
+    results = await asyncio.gather(*coro, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            _LOGGER.error("Lock slot operation failed: %s", result)
 
 
 def get_event_names(rc) -> List[str]:

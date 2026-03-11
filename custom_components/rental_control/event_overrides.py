@@ -205,9 +205,15 @@ class EventOverrides:
                 )
 
                 # signal an update to all the event sensors
-                await asyncio.gather(
-                    *[event.async_update() for event in coordinator.event_sensors]
+                results = await asyncio.gather(
+                    *[event.async_update() for event in coordinator.event_sensors],
+                    return_exceptions=True,
                 )
+                for result in results:
+                    if isinstance(result, BaseException):
+                        if isinstance(result, asyncio.CancelledError):
+                            raise result
+                        _LOGGER.error("Sensor update failed: %s", result)
 
     def get_slot_name(self, slot: int) -> str:
         """Return the slot name."""
