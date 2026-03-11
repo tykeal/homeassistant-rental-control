@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import logging
 
@@ -109,13 +108,8 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
         notification_id=notification_id,
     )
 
-    unload_ok = all(
-        await asyncio.gather(
-            *[
-                hass.config_entries.async_forward_entry_unload(config_entry, component)
-                for component in PLATFORMS
-            ]
-        )
+    unload_ok = await hass.config_entries.async_unload_platforms(
+        config_entry, PLATFORMS
     )
 
     if unload_ok:
