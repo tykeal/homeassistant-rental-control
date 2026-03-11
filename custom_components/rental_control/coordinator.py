@@ -640,7 +640,7 @@ Please update Keymaster to at least v0.1.0-b0
                 *[event.async_update() for event in self.event_sensors],
                 return_exceptions=True,
             )
-            check_gather_results(results, "Sensor update")
+            check_gather_results(results, "Sensor update", _LOGGER)
         except TimeoutError:
             _LOGGER.warning("Calendar refresh timed out for %s", self.name)
         except aiohttp.ClientError as err:

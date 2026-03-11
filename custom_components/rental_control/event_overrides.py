@@ -210,7 +210,7 @@ class EventOverrides:
                     *[event.async_update() for event in coordinator.event_sensors],
                     return_exceptions=True,
                 )
-                check_gather_results(results, "Sensor update")
+                check_gather_results(results, "Sensor update", _LOGGER)
 
     def get_slot_name(self, slot: int) -> str:
         """Return the slot name."""

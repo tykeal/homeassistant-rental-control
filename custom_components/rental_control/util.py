@@ -20,10 +20,11 @@ import hashlib
 import logging
 import os
 import re
-from typing import Any  # noqa: F401
+from typing import Any
 from typing import Coroutine
 from typing import Dict
 from typing import List
+from typing import Sequence
 import uuid
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
@@ -51,7 +52,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def check_gather_results(
-    results: list[BaseException | Any],
+    results: Sequence[object],
     context: str,
     logger: logging.Logger = _LOGGER,
 ) -> None:
