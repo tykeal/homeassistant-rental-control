@@ -3,7 +3,7 @@
 
 [project]
 name = "homeassistant-rental-control"
-version = "0.0.0"
+dynamic = ["version"]
 description = "Home Assistant integration for managing rental properties with calendar and door code management"
 readme = "README.md"
 requires-python = ">=3.13.2"
@@ -45,8 +45,12 @@ Repository = "https://github.com/tykeal/homeassistant-rental-control"
 Issues = "https://github.com/tykeal/homeassistant-rental-control/issues"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+tag-pattern = "v(?P<version>.*)"
 
 [tool.hatch.build.targets.wheel]
 packages = ["custom_components"]
