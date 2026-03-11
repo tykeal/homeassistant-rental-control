@@ -561,64 +561,66 @@ Please update Keymaster to at least v0.1.0-b0
             session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
             async with asyncio.timeout(REQUEST_TIMEOUT):
                 response = await session.get(self.url)
-            if response.status != 200:
-                _LOGGER.error(
-                    "%s returned %s - %s",
-                    self.url,
-                    response.status,
-                    response.reason,
+            try:
+                if response.status != 200:
+                    _LOGGER.error(
+                        "%s returned %s - %s",
+                        self.url,
+                        response.status,
+                        response.reason,
+                    )
+                    return
+                text = await response.text()
+            finally:
+                response.release()
+
+            # Some calendars are for some reason filled with NULL-bytes.
+            # They break the parsing, so we get rid of them
+            event_list = Calendar.from_ical(text.replace("\x00", ""))
+
+            # If the calendar is using a non-standard timezone definition,
+            # convert it to a standard one
+            if "X-WR-TIMEZONE" in event_list:
+                event_list = await self.hass.async_add_executor_job(
+                    x_wr_timezone.to_standard, event_list
+                )
+
+            start_of_events = dt.start_of_local_day()
+            end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
+
+            new_calendar: list[CalendarEvent] = await self._ical_parser(
+                event_list, start_of_events, end_of_events
+            )
+
+            if (
+                len(self.calendar) > 0
+                and len(new_calendar) == 0
+                and self.num_misses < self.max_misses
+            ):
+                self.num_misses += 1
+                _LOGGER.warning(
+                    "No events found in calendar %s, but %d in previous. Miss %d of %d",
+                    self.name,
+                    len(self.calendar),
+                    self.num_misses,
+                    self.max_misses,
                 )
                 return
             else:
-                text = await response.text()
-                # Some calendars are for some reason filled with NULL-bytes.
-                # They break the parsing, so we get rid of them
-                event_list = Calendar.from_ical(text.replace("\x00", ""))
-
-                # If the calendar is using a non-standard timezone definition,
-                # convert it to a standard one
-                if "X-WR-TIMEZONE" in event_list:
-                    event_list = await self.hass.async_add_executor_job(
-                        x_wr_timezone.to_standard, event_list
-                    )
-
-                start_of_events = dt.start_of_local_day()
-                end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
-
-                new_calendar: list[CalendarEvent] = await self._ical_parser(
-                    event_list, start_of_events, end_of_events
+                _LOGGER.debug(
+                    "Found %d events in calendar %s",
+                    len(new_calendar),
+                    self.name,
                 )
+                self.num_misses = 0
+                self.calendar = new_calendar
 
-                if (
-                    len(self.calendar) > 0
-                    and len(new_calendar) == 0
-                    and self.num_misses < self.max_misses
-                ):
-                    self.num_misses += 1
-                    _LOGGER.warning(
-                        "No events found in calendar %s,"
-                        " but %d in previous. Miss %d of %d",
-                        self.name,
-                        len(self.calendar),
-                        self.num_misses,
-                        self.max_misses,
-                    )
-                    return
-                else:
-                    _LOGGER.debug(
-                        "Found %d events in calendar %s",
-                        len(new_calendar),
-                        self.name,
-                    )
-                    self.num_misses = 0
-                    self.calendar = new_calendar
+            self.calendar_loaded = True
 
-                self.calendar_loaded = True
-
-                if not self.lockname:
-                    self.calendar_ready = True
-                elif self.event_overrides and self.event_overrides.ready:
-                    self.calendar_ready = True
+            if not self.lockname:
+                self.calendar_ready = True
+            elif self.event_overrides and self.event_overrides.ready:
+                self.calendar_ready = True
 
             if len(self.calendar) > 0:
                 found_next_event = False
@@ -641,7 +643,11 @@ Please update Keymaster to at least v0.1.0-b0
                 if isinstance(result, BaseException):
                     if isinstance(result, asyncio.CancelledError):
                         raise result
-                    _LOGGER.error("Sensor update failed: %s", result)
+                    _LOGGER.error(
+                        "Sensor update failed: %s",
+                        result,
+                        exc_info=(type(result), result, result.__traceback__),
+                    )
         except TimeoutError:
             _LOGGER.warning("Calendar refresh timed out for %s", self.name)
         except aiohttp.ClientError as err:

@@ -154,7 +154,11 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         if isinstance(result, BaseException):
             if isinstance(result, asyncio.CancelledError):
                 raise result
-            _LOGGER.error("Lock slot operation failed: %s", result)
+            _LOGGER.error(
+                "Lock slot operation failed: %s",
+                result,
+                exc_info=(type(result), result, result.__traceback__),
+            )
 
     coro.clear()
 
@@ -211,7 +215,11 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         if isinstance(result, BaseException):
             if isinstance(result, asyncio.CancelledError):
                 raise result
-            _LOGGER.error("Lock slot operation failed: %s", result)
+            _LOGGER.error(
+                "Lock slot operation failed: %s",
+                result,
+                exc_info=(type(result), result, result.__traceback__),
+            )
 
     # Turn on the slot
     coro.clear()
@@ -229,7 +237,11 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         if isinstance(result, BaseException):
             if isinstance(result, asyncio.CancelledError):
                 raise result
-            _LOGGER.error("Lock slot operation failed: %s", result)
+            _LOGGER.error(
+                "Lock slot operation failed: %s",
+                result,
+                exc_info=(type(result), result, result.__traceback__),
+            )
 
 
 async def async_fire_update_times(coordinator, event) -> None:
@@ -266,7 +278,11 @@ async def async_fire_update_times(coordinator, event) -> None:
         if isinstance(result, BaseException):
             if isinstance(result, asyncio.CancelledError):
                 raise result
-            _LOGGER.error("Lock slot operation failed: %s", result)
+            _LOGGER.error(
+                "Lock slot operation failed: %s",
+                result,
+                exc_info=(type(result), result, result.__traceback__),
+            )
 
 
 def get_event_names(rc) -> List[str]:

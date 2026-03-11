@@ -213,7 +213,15 @@ class EventOverrides:
                     if isinstance(result, BaseException):
                         if isinstance(result, asyncio.CancelledError):
                             raise result
-                        _LOGGER.error("Sensor update failed: %s", result)
+                        _LOGGER.error(
+                            "Sensor update failed: %s",
+                            result,
+                            exc_info=(
+                                type(result),
+                                result,
+                                result.__traceback__,
+                            ),
+                        )
 
     def get_slot_name(self, slot: int) -> str:
         """Return the slot name."""
