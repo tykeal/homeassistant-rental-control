@@ -40,7 +40,7 @@ tests/integration/                  # Integration tests
 
 **Purpose**: Verify baseline before making any changes
 
-- [ ] T001 Verify baseline: run `uv run pytest tests/ -x -q` (all
+- [x] T001 Verify baseline: run `uv run pytest tests/ -x -q` (all
   tests pass) and `uv run ruff check custom_components/ tests/`
   (zero findings) to confirm a clean starting state
 
@@ -58,7 +58,7 @@ available with its previous calendar state.
 
 ### Implementation for User Story 1
 
-- [ ] T002 [US1] Wrap the entire `_refresh_calendar` method body
+- [x] T002 [US1] Wrap the entire `_refresh_calendar` method body
   in a try/except in
   `custom_components/rental_control/coordinator.py`. Catch
   `asyncio.TimeoutError` (log warning), `aiohttp.ClientError`
@@ -67,7 +67,7 @@ available with its previous calendar state.
   `self.calendar` data. See research.md R1 and quickstart.md key
   patterns for the exact exception hierarchy.
   **FR**: FR-001, FR-002, FR-003
-- [ ] T003 [US1] Add `return_exceptions=True` to all
+- [x] T003 [US1] Add `return_exceptions=True` to all
   `asyncio.gather` call sites and add result-checking logic that
   re-raises `asyncio.CancelledError` and logs other exceptions.
   Files:
@@ -81,14 +81,14 @@ available with its previous calendar state.
   separately in T016 (FR-017). See research.md R2 and quickstart.md
   gather pattern for the `BaseException` / `CancelledError` idiom.
   **FR**: FR-004
-- [ ] T004 [US1] Remove the conditional that skips miss tracking
+- [x] T004 [US1] Remove the conditional that skips miss tracking
   when `len(calendar) > 1` in
   `custom_components/rental_control/coordinator.py`. Apply the
   same `max_misses` tracking logic regardless of calendar event
   count so that multi-event calendars track empty refreshes
   identically to single-event calendars. See research.md R3.
   **FR**: FR-005
-- [ ] T005 [US1] Simplify the `overrides_loaded` readiness tracking
+- [x] T005 [US1] Simplify the `overrides_loaded` readiness tracking
   in `custom_components/rental_control/coordinator.py`. Ensure
   there is a single clear code path for determining when the
   coordinator is ready to process events, regardless of whether a

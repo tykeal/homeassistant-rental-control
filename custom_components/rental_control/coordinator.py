@@ -26,6 +26,7 @@ from typing import Any
 from typing import Dict
 from zoneinfo import ZoneInfo  # noreorder
 
+import aiohttp
 from homeassistant.components.button import DOMAIN as BUTTON
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.components.datetime import DOMAIN as DATETIME
@@ -71,6 +72,7 @@ from .const import STARTUP_REFRESH_DELAY
 from .const import VERSION
 from .event_overrides import EventOverrides
 from .sensors.calsensor import RentalControlCalSensor
+from .util import check_gather_results
 from .util import get_slot_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,7 +114,6 @@ class RentalControlCoordinator:
         self.calendar: list[CalendarEvent] = []
         self.calendar_ready: bool = False
         self.calendar_loaded: bool = False
-        self.overrides_loaded: bool = False
         self.event_overrides: EventOverrides | None = (
             EventOverrides(self.start_slot, self.max_events) if self.lockname else None
         )
@@ -557,16 +558,23 @@ Please update Keymaster to at least v0.1.0-b0
         """Update list of upcoming events."""
         _LOGGER.debug("Running RentalControl _refresh_calendar for %s", self.name)
 
-        session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
-        async with asyncio.timeout(REQUEST_TIMEOUT):
-            response = await session.get(self.url)
-        if response.status != 200:
-            _LOGGER.error(
-                "%s returned %s - %s", self.url, response.status, response.reason
-            )
-            return
-        else:
-            text = await response.text()
+        try:
+            session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
+            async with asyncio.timeout(REQUEST_TIMEOUT):
+                response = await session.get(self.url)
+                try:
+                    if response.status != 200:
+                        _LOGGER.error(
+                            "%s returned %s - %s",
+                            self.url,
+                            response.status,
+                            response.reason,
+                        )
+                        return
+                    text = await response.text()
+                finally:
+                    response.release()
+
             # Some calendars are for some reason filled with NULL-bytes.
             # They break the parsing, so we get rid of them
             event_list = Calendar.from_ical(text.replace("\x00", ""))
@@ -585,52 +593,60 @@ Please update Keymaster to at least v0.1.0-b0
                 event_list, start_of_events, end_of_events
             )
 
-            if len(self.calendar) > 1 and len(new_calendar) == 0:
-                _LOGGER.error(
-                    "No events found in calendar %s, but there are %d events in the old calendar",
-                    self.name,
-                    len(self.calendar),
-                )
-                return
-            elif (
-                len(self.calendar) == 1
+            if (
+                len(self.calendar) > 0
                 and len(new_calendar) == 0
                 and self.num_misses < self.max_misses
             ):
                 self.num_misses += 1
                 _LOGGER.warning(
-                    "No events found in calendar %s. Miss %d of %d",
+                    "No events found in calendar %s, but %d in previous. Miss %d of %d",
                     self.name,
+                    len(self.calendar),
                     self.num_misses,
                     self.max_misses,
                 )
                 return
             else:
                 _LOGGER.debug(
-                    "Found %d events in calendar %s", len(new_calendar), self.name
+                    "Found %d events in calendar %s",
+                    len(new_calendar),
+                    self.name,
                 )
                 self.num_misses = 0
                 self.calendar = new_calendar
 
             self.calendar_loaded = True
 
-            if self.lockname is None:
-                self.overrides_loaded = True
-
-            if self.overrides_loaded:
+            if not self.lockname:
+                self.calendar_ready = True
+            elif self.event_overrides and self.event_overrides.ready:
                 self.calendar_ready = True
 
-        if len(self.calendar) > 0:
-            found_next_event = False
-            for event in self.calendar:
-                if event.end > dt.now() and not found_next_event:
-                    _LOGGER.debug(
-                        "Event %s is the first event with end in the future: %s",
-                        event.summary,
-                        event.end,
-                    )
-                    self.event = event
-                    found_next_event = True
+            if len(self.calendar) > 0:
+                found_next_event = False
+                for event in self.calendar:
+                    if event.end > dt.now() and not found_next_event:
+                        _LOGGER.debug(
+                            "Event %s is the first event with end in the future: %s",
+                            event.summary,
+                            event.end,
+                        )
+                        self.event = event
+                        found_next_event = True
 
-        # signal an update to all the event sensors
-        await asyncio.gather(*[event.async_update() for event in self.event_sensors])
+            # signal an update to all the event sensors
+            results = await asyncio.gather(
+                *[event.async_update() for event in self.event_sensors],
+                return_exceptions=True,
+            )
+            check_gather_results(results, "Sensor update", _LOGGER)
+        except TimeoutError:
+            _LOGGER.warning("Calendar refresh timed out for %s", self.name)
+        except aiohttp.ClientError as err:
+            _LOGGER.warning("Calendar fetch failed for %s: %s", self.name, err)
+        except Exception:
+            _LOGGER.exception(
+                "Unexpected error refreshing calendar for %s",
+                self.name,
+            )

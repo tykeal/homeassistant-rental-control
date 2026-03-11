@@ -20,10 +20,11 @@ import hashlib
 import logging
 import os
 import re
-from typing import Any  # noqa: F401
+from typing import Any
 from typing import Coroutine
 from typing import Dict
 from typing import List
+from typing import Sequence
 import uuid
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
@@ -48,6 +49,30 @@ from .const import DOMAIN
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def check_gather_results(
+    results: Sequence[object],
+    context: str,
+    logger: logging.Logger = _LOGGER,
+) -> None:
+    """Check asyncio.gather results for exceptions.
+
+    Re-raises BaseException subclasses that should not be
+    swallowed (CancelledError, SystemExit, KeyboardInterrupt)
+    and logs ordinary Exception instances with traceback so
+    failures are actionable from logs.
+    """
+    for result in results:
+        if isinstance(result, BaseException):
+            if not isinstance(result, Exception):
+                raise result
+            logger.error(
+                "%s failed: %s",
+                context,
+                result,
+                exc_info=(type(result), result, result.__traceback__),
+            )
 
 
 def add_call(
@@ -149,7 +174,8 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         f"{SWITCH}.{lockname}_code_slot_{slot}_enabled",
         {},
     )
-    await asyncio.gather(*coro)
+    results = await asyncio.gather(*coro, return_exceptions=True)
+    check_gather_results(results, "Lock slot operation")
 
     coro.clear()
 
@@ -201,7 +227,8 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         {"value": slot_name},
     )
     # Update the slot details
-    await asyncio.gather(*coro)
+    results = await asyncio.gather(*coro, return_exceptions=True)
+    check_gather_results(results, "Lock slot operation")
 
     # Turn on the slot
     coro.clear()
@@ -214,7 +241,8 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         {},
     )
 
-    await asyncio.gather(*coro)
+    results = await asyncio.gather(*coro, return_exceptions=True)
+    check_gather_results(results, "Lock slot operation")
 
 
 async def async_fire_update_times(coordinator, event) -> None:
@@ -246,7 +274,8 @@ async def async_fire_update_times(coordinator, event) -> None:
         {"datetime": event.extra_state_attributes["start"]},
     )
     # Update the slot details
-    await asyncio.gather(*coro)
+    results = await asyncio.gather(*coro, return_exceptions=True)
+    check_gather_results(results, "Lock slot operation")
 
 
 def get_event_names(rc) -> List[str]:
