@@ -80,8 +80,6 @@ _LOGGER = logging.getLogger(__name__)
 class RentalControlCoordinator:
     """Get a list of events."""
 
-    # pylint: disable=too-many-instance-attributes
-
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry):
         """Set up a calendar object."""
         config = config_entry.data
@@ -197,7 +195,7 @@ Please update Keymaster to at least v0.1.0-b0
 
     async def async_get_events(
         self, hass: HomeAssistant, start_date: datetime, end_date: datetime
-    ) -> list[CalendarEvent]:  # pylint: disable=unused-argument
+    ) -> list[CalendarEvent]:
         """Get list of upcoming events."""
         _LOGGER.debug("Running RentalControl async_get_events")
         events = []

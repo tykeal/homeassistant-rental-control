@@ -54,7 +54,7 @@ _LOGGER = logging.getLogger(__name__)
 CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
 
 
-def setup(hass, config):  # pylint: disable=unused-argument
+def setup(hass, config):
     """Set up this integration with config flow."""
     return True
 
