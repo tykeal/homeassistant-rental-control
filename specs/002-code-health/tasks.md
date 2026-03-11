@@ -129,7 +129,7 @@ patterns.
   the log argument from the class reference to the event variable.
   See code review §2.3.
   **FR**: FR-008
-- [ ] T008 [US2] Replace `isinstance(x, type(None))` with
+- [x] T008 [US2] Replace `isinstance(x, type(None))` with
   `x is None` for the non-reserved event filtering check
   (line 418) in
   `custom_components/rental_control/coordinator.py`. See code
