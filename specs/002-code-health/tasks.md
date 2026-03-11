@@ -81,7 +81,7 @@ available with its previous calendar state.
   separately in T016 (FR-017). See research.md R2 and quickstart.md
   gather pattern for the `BaseException` / `CancelledError` idiom.
   **FR**: FR-004
-- [ ] T004 [US1] Remove the conditional that skips miss tracking
+- [x] T004 [US1] Remove the conditional that skips miss tracking
   when `len(calendar) > 1` in
   `custom_components/rental_control/coordinator.py`. Apply the
   same `max_misses` tracking logic regardless of calendar event
