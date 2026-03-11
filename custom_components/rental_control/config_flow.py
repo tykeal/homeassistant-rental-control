@@ -130,7 +130,6 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
 
 def _available_lock_managers(
     hass: HomeAssistant,
-    # entry_id: str = None
 ) -> list:
     """Find lock manager configurations to use."""
 
