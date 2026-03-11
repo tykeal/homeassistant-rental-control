@@ -290,14 +290,14 @@ and verify util.py ≥85% (up from 77%) and coordinator.py ≥85%
 
 ### Implementation for User Story 3
 
-- [ ] T021 [P] [US3] Add lock slot management function tests in
+- [x] T021 [P] [US3] Add lock slot management function tests in
   `tests/unit/test_util.py`. Test `async_fire_set_code`,
   `async_fire_clear_code`, `async_fire_update_times`, and
   `handle_state_change` using mocked Keymaster service calls.
   Cover both success and failure paths (service call raises, one
   of multiple gather coroutines fails). See research.md R9 item 1.
   **FR**: FR-022
-- [ ] T022 [US3] Add calendar error scenario tests in
+- [x] T022 [US3] Add calendar error scenario tests in
   `tests/unit/test_coordinator.py` and
   `tests/integration/test_error_handling.py`. Test timeout,
   malformed ical data, timezone conversion failure, and non-200
@@ -305,7 +305,7 @@ and verify util.py ≥85% (up from 77%) and coordinator.py ≥85%
   preserves previous calendar state on each failure. See
   research.md R9 item 2.
   **FR**: FR-023
-- [ ] T023 [US3] Add slot bootstrapping path tests in
+- [x] T023 [US3] Add slot bootstrapping path tests in
   `tests/unit/test_coordinator.py`. Test the Keymaster entity
   discovery and slot initialization during coordinator startup.
   Cover the case where Keymaster entities are not yet available

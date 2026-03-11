@@ -8,11 +8,15 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
+import aiohttp
 from aioresponses import aioresponses
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.util import dt
+import homeassistant.util.dt as dt_util
 
 from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
 from custom_components.rental_control.const import DEFAULT_REFRESH_FREQUENCY
@@ -775,3 +779,516 @@ END:VCALENDAR
         assert coordinator.calendar is not None
         assert len(coordinator.calendar) > 0
         assert coordinator.calendar[0].summary == "Reserved: Date Guest"
+
+
+# ---------------------------------------------------------------------------
+# Calendar error scenario tests (T022)
+# ---------------------------------------------------------------------------
+
+FROZEN_TIME = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+FROZEN_START_OF_DAY = datetime(2024, 12, 20, 0, 0, 0, tzinfo=dt_util.UTC)
+
+
+def _future_ics(
+    summary: str = "Reserved: Test Guest",
+    days_ahead: int = 5,
+    duration: int = 5,
+    *,
+    base_time: datetime = FROZEN_TIME,
+) -> str:
+    """Build a single-event ICS with dates relative to base_time."""
+    start = (base_time + timedelta(days=days_ahead)).strftime("%Y%m%d")
+    end = (base_time + timedelta(days=days_ahead + duration)).strftime("%Y%m%d")
+    return (
+        "BEGIN:VCALENDAR\r\n"
+        "VERSION:2.0\r\n"
+        "PRODID:-//Test//EN\r\n"
+        "BEGIN:VEVENT\r\n"
+        f"DTSTART:{start}T160000Z\r\n"
+        f"DTEND:{end}T110000Z\r\n"
+        "UID:future-test@example.com\r\n"
+        f"SUMMARY:{summary}\r\n"
+        "DESCRIPTION:Email: test@example.com\r\n"
+        "STATUS:CONFIRMED\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    )
+
+
+class TestRefreshCalendarMissCounter:
+    """Tests for the calendar miss counter logic in _refresh_calendar."""
+
+    async def test_miss_counter_preserves_previous_calendar(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify empty calendar increments miss counter and keeps old data.
+
+        When a refresh returns zero events but the previous calendar
+        had events and misses are below the threshold, the coordinator
+        should increment num_misses and preserve the existing calendar.
+        """
+        mock_config_entry.add_to_hass(hass)
+
+        # First refresh: load valid calendar
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=_future_ics(),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            await coordinator.update()
+
+        assert len(coordinator.calendar) > 0
+        assert coordinator.num_misses == 0
+        previous_calendar = list(coordinator.calendar)
+
+        # Second refresh: return empty calendar
+        future = FROZEN_TIME + timedelta(minutes=coordinator.refresh_frequency + 1)
+        empty_ics = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nEND:VCALENDAR\r\n"
+        )
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=future),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=future.replace(hour=0, minute=0, second=0, microsecond=0),
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=empty_ics,
+            )
+            await coordinator.update()
+
+        # Miss counter should increment; calendar preserved
+        assert coordinator.num_misses == 1
+        assert len(coordinator.calendar) == len(previous_calendar)
+
+    async def test_miss_counter_resets_on_successful_refresh(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify miss counter resets to zero after a successful refresh."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=_future_ics(),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.num_misses = 1  # simulate previous miss
+            await coordinator.update()
+
+        assert coordinator.num_misses == 0
+        assert len(coordinator.calendar) > 0
+
+
+class TestRefreshCalendarClientError:
+    """Tests for aiohttp.ClientError handling in _refresh_calendar."""
+
+    async def test_client_error_preserves_state(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify aiohttp.ClientError is caught and state is preserved."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                exception=aiohttp.ClientError("Connection refused"),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            await coordinator.update()
+
+        assert coordinator.calendar_loaded is False
+        assert len(coordinator.calendar) == 0
+
+
+class TestRefreshCalendarGenericException:
+    """Tests for generic exception handling in _refresh_calendar."""
+
+    async def test_unexpected_error_preserves_state(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify unexpected exceptions are caught and state is preserved."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            # Malformed ICS triggers a parse error
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body="THIS IS NOT VALID ICS DATA",
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            await coordinator.update()
+
+        assert coordinator.calendar_loaded is False
+        assert len(coordinator.calendar) == 0
+
+
+class TestCalendarReadyWithOverrides:
+    """Tests for calendar_ready when overrides are configured."""
+
+    async def test_calendar_ready_with_ready_overrides(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify calendar_ready is True when overrides are ready."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=_future_ics(),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+            # Simulate lockname with ready overrides
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = True
+            mock_overrides.async_check_overrides = AsyncMock()
+            mock_overrides.get_slot_with_name.return_value = None
+            coordinator.event_overrides = mock_overrides
+
+            await coordinator.update()
+
+        assert coordinator.calendar_loaded is True
+        assert coordinator.calendar_ready is True
+
+    async def test_calendar_not_ready_with_unready_overrides(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify calendar_ready is False when overrides are not ready."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=_future_ics(),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+            # Simulate lockname with NOT ready overrides
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            mock_overrides.get_slot_with_name.return_value = None
+            coordinator.event_overrides = mock_overrides
+
+            await coordinator.update()
+
+        assert coordinator.calendar_loaded is True
+        assert coordinator.calendar_ready is False
+
+
+# ---------------------------------------------------------------------------
+# Slot bootstrapping tests (T023)
+# ---------------------------------------------------------------------------
+
+
+class TestSlotBootstrapping:
+    """Tests for Keymaster entity discovery and slot initialization."""
+
+    async def test_bootstrap_skips_missing_pin_entity(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify slots with no PIN entity are skipped during bootstrap."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=_future_ics(),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            # hass.states.get returns None for all entities
+            hass.states.async_set("dummy.entity", "on")
+
+            await coordinator.update()
+
+        # No overrides should be updated since PIN entities don't exist
+        mock_update.assert_not_awaited()
+
+    async def test_bootstrap_skips_missing_name_entity(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify slots with PIN but no NAME entity are skipped."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=_future_ics(),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            # Set PIN entity but no NAME entity
+            hass.states.async_set("text.front_door_code_slot_10_pin", "1234")
+
+            await coordinator.update()
+
+        mock_update.assert_not_awaited()
+
+    async def test_bootstrap_loads_slot_without_date_range(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify slot is loaded with default times when date range is off."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=_future_ics(),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            # Set PIN and NAME entities for slot 10
+            hass.states.async_set("text.front_door_code_slot_10_pin", "1234")
+            hass.states.async_set("text.front_door_code_slot_10_name", "Guest")
+
+            await coordinator.update()
+
+        mock_update.assert_awaited_once()
+        call_args = mock_update.call_args[0]
+        assert call_args[0] == 10  # slot number
+        assert call_args[1] == "1234"  # slot code
+        assert call_args[2] == "Guest"  # slot name
+        # Default times: start_of_local_day and +1 day
+        assert call_args[3] == FROZEN_START_OF_DAY
+        assert call_args[4] == FROZEN_START_OF_DAY + timedelta(days=1)
+
+    async def test_bootstrap_loads_slot_with_date_range(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify slot is loaded with parsed times when date range is on."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=_future_ics(),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            # Set all required entities
+            hass.states.async_set("text.front_door_code_slot_10_pin", "5678")
+            hass.states.async_set("text.front_door_code_slot_10_name", "VIP")
+            hass.states.async_set(
+                "switch.front_door_code_slot_10_use_date_range_limits", "on"
+            )
+            hass.states.async_set(
+                "datetime.front_door_code_slot_10_date_range_start",
+                "2024-12-25T16:00:00+00:00",
+            )
+            hass.states.async_set(
+                "datetime.front_door_code_slot_10_date_range_end",
+                "2024-12-30T11:00:00+00:00",
+            )
+
+            await coordinator.update()
+
+        mock_update.assert_awaited_once()
+        call_args = mock_update.call_args[0]
+        assert call_args[0] == 10
+        assert call_args[1] == "5678"
+        assert call_args[2] == "VIP"
+        # Parsed datetimes should be set
+        assert call_args[3] is not None
+        assert call_args[4] is not None
+
+    async def test_bootstrap_skips_unparseable_start_time(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify slot is skipped when start time cannot be parsed."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=_future_ics(),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            hass.states.async_set("text.front_door_code_slot_10_pin", "1234")
+            hass.states.async_set("text.front_door_code_slot_10_name", "Guest")
+            hass.states.async_set(
+                "switch.front_door_code_slot_10_use_date_range_limits", "on"
+            )
+            hass.states.async_set(
+                "datetime.front_door_code_slot_10_date_range_start",
+                "not-a-datetime",
+            )
+            hass.states.async_set(
+                "datetime.front_door_code_slot_10_date_range_end",
+                "2024-12-30T11:00:00+00:00",
+            )
+
+            await coordinator.update()
+
+        mock_update.assert_not_awaited()
+
+    async def test_bootstrap_handles_unknown_slot_states(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify unknown/unavailable states are converted to empty strings."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=_future_ics(),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            hass.states.async_set("text.front_door_code_slot_10_pin", "unknown")
+            hass.states.async_set("text.front_door_code_slot_10_name", "unavailable")
+
+            await coordinator.update()
+
+        mock_update.assert_awaited_once()
+        call_args = mock_update.call_args[0]
+        assert call_args[1] == ""  # unknown → empty
+        assert call_args[2] == ""  # unavailable → empty

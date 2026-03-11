@@ -21,6 +21,9 @@ from custom_components.rental_control.const import DEFAULT_PATH
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import NAME
 from custom_components.rental_control.util import add_call
+from custom_components.rental_control.util import async_fire_clear_code
+from custom_components.rental_control.util import async_fire_set_code
+from custom_components.rental_control.util import async_fire_update_times
 from custom_components.rental_control.util import async_reload_package_platforms
 from custom_components.rental_control.util import delete_folder
 from custom_components.rental_control.util import delete_rc_and_base_folder
@@ -949,3 +952,263 @@ class TestHandleStateChangeSlotExtraction:
         mock_coordinator.event_overrides.update.assert_called_once()
         call_args = mock_coordinator.event_overrides.update.call_args
         assert call_args[0][0] == expected_slot
+
+
+# ---------------------------------------------------------------------------
+# async_fire_clear_code tests (T021)
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncFireClearCode:
+    """Tests for async_fire_clear_code lock slot reset."""
+
+    async def test_calls_button_press_on_reset_entity(self) -> None:
+        """Verify the reset button entity is pressed for the given slot."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        await async_fire_clear_code(coordinator, 10)
+
+        coordinator.hass.services.async_call.assert_awaited_once_with(
+            domain="button",
+            service="press",
+            target={"entity_id": "button.front_door_code_slot_10_reset"},
+            blocking=True,
+        )
+
+    async def test_no_lockname_returns_early(self) -> None:
+        """Verify no service call when lockname is empty."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = ""
+        coordinator.hass.services.async_call = AsyncMock()
+
+        await async_fire_clear_code(coordinator, 10)
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+
+    async def test_none_lockname_returns_early(self) -> None:
+        """Verify no service call when lockname is None."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = None
+        coordinator.hass.services.async_call = AsyncMock()
+
+        await async_fire_clear_code(coordinator, 10)
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# async_fire_set_code tests (T021)
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncFireSetCode:
+    """Tests for async_fire_set_code lock slot programming."""
+
+    @staticmethod
+    def _make_event(
+        slot_name: str = "Guest",
+        slot_code: str = "1234",
+        start: str = "2025-01-15T16:00:00",
+        end: str = "2025-01-17T11:00:00",
+    ) -> MagicMock:
+        """Build a mock event with slot attributes."""
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": slot_name,
+            "slot_code": slot_code,
+            "start": start,
+            "end": end,
+        }
+        return event
+
+    async def test_no_lockname_returns_early(self) -> None:
+        """Verify no service calls when lockname is empty."""
+        coordinator = MagicMock()
+        coordinator.lockname = ""
+        coordinator.hass.services.async_call = AsyncMock()
+
+        await async_fire_set_code(coordinator, self._make_event(), 10)
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+
+    async def test_service_calls_sequence(self) -> None:
+        """Verify all service calls are made in the correct order."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.hass.services.async_call = AsyncMock()
+
+        event = self._make_event()
+        await async_fire_set_code(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+
+        # Phase 1: disable slot
+        assert calls[0].kwargs["domain"] == "switch"
+        assert calls[0].kwargs["service"] == "turn_off"
+        assert "enabled" in calls[0].kwargs["target"]["entity_id"]
+
+        # Phase 2: enable date range
+        assert calls[1].kwargs["domain"] == "switch"
+        assert calls[1].kwargs["service"] == "turn_on"
+        assert "use_date_range" in calls[1].kwargs["target"]["entity_id"]
+
+        # Phase 3: 4 parallel calls (end, start, pin, name)
+        phase3_domains = {c.kwargs["domain"] for c in calls[2:6]}
+        assert "datetime" in phase3_domains
+        assert "text" in phase3_domains
+
+        # Phase 4: enable slot
+        assert calls[6].kwargs["domain"] == "switch"
+        assert calls[6].kwargs["service"] == "turn_on"
+        assert "enabled" in calls[6].kwargs["target"]["entity_id"]
+
+    async def test_event_prefix_prepended(self) -> None:
+        """Verify event_prefix is prepended to the slot name."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = "Rental"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        event = self._make_event(slot_name="Guest")
+        await async_fire_set_code(coordinator, event, 10)
+
+        # Find the name set_value call
+        calls = coordinator.hass.services.async_call.await_args_list
+        name_calls = [
+            c
+            for c in calls
+            if c.kwargs.get("service_data", {}).get("value") == "Rental Guest"
+        ]
+        assert len(name_calls) == 1
+
+    async def test_no_prefix_uses_bare_name(self) -> None:
+        """Verify bare slot name when no prefix is set."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.hass.services.async_call = AsyncMock()
+
+        event = self._make_event(slot_name="Guest")
+        await async_fire_set_code(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        name_calls = [
+            c for c in calls if c.kwargs.get("service_data", {}).get("value") == "Guest"
+        ]
+        assert len(name_calls) == 1
+
+    async def test_gather_exception_logged_not_raised(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify a failing gather call is logged but does not crash."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+
+        call_count = 0
+        error = ServiceNotFound("switch", "turn_off")
+
+        async def side_effect(**kwargs: object) -> None:
+            """Fail only on gather-dispatched calls (phase 1)."""
+            nonlocal call_count
+            call_count += 1
+            # Phase 1 gather call is the first call
+            if call_count == 1:
+                raise error
+
+        coordinator.hass.services.async_call = AsyncMock(side_effect=side_effect)
+
+        event = self._make_event()
+        with caplog.at_level(
+            logging.ERROR, logger="custom_components.rental_control.util"
+        ):
+            await async_fire_set_code(coordinator, event, 10)
+
+        assert "Lock slot operation" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# async_fire_update_times tests (T021)
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncFireUpdateTimes:
+    """Tests for async_fire_update_times slot time updates."""
+
+    @staticmethod
+    def _make_event(
+        slot_name: str = "Guest",
+        start: str = "2025-01-15T16:00:00",
+        end: str = "2025-01-17T11:00:00",
+    ) -> MagicMock:
+        """Build a mock event with slot attributes."""
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": slot_name,
+            "start": start,
+            "end": end,
+        }
+        return event
+
+    async def test_updates_start_and_end_times(self) -> None:
+        """Verify both datetime entities are updated."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+        coordinator.hass.services.async_call = AsyncMock()
+
+        event = self._make_event()
+        await async_fire_update_times(coordinator, event)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        assert len(calls) == 2
+
+        targets = {c.kwargs["target"]["entity_id"] for c in calls}
+        assert "datetime.front_door_code_slot_10_date_range_end" in targets
+        assert "datetime.front_door_code_slot_10_date_range_start" in targets
+
+    async def test_no_lockname_returns_early(self) -> None:
+        """Verify no service calls when lockname is empty."""
+        coordinator = MagicMock()
+        coordinator.lockname = ""
+        coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+        coordinator.hass.services.async_call = AsyncMock()
+
+        await async_fire_update_times(coordinator, self._make_event())
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+
+    async def test_no_slot_found_returns_early(self) -> None:
+        """Verify no service calls when slot name is not found."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_overrides.get_slot_key_by_name.return_value = None
+        coordinator.hass.services.async_call = AsyncMock()
+
+        await async_fire_update_times(coordinator, self._make_event())
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+
+    async def test_gather_exception_logged_not_raised(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify a failing service call is logged but does not crash."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+        coordinator.hass.services.async_call = AsyncMock(
+            side_effect=ServiceNotFound("datetime", "set_value")
+        )
+
+        with caplog.at_level(
+            logging.ERROR, logger="custom_components.rental_control.util"
+        ):
+            await async_fire_update_times(coordinator, self._make_event())
+
+        assert "Lock slot operation" in caplog.text
