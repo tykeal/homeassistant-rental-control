@@ -415,7 +415,7 @@ Please update Keymaster to at least v0.1.0-b0
 
                 # Ignore Blocked or Not available by default, but if false,
                 # keep the events.
-                if self.ignore_non_reserved is None or self.ignore_non_reserved:
+                if self.ignore_non_reserved:
                     if any(x in event["SUMMARY"] for x in ["Blocked", "Not available"]):
                         # Skip Blocked or 'Not available' events
                         continue
