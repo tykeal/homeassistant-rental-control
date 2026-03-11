@@ -11,7 +11,7 @@
 # Contributors:
 #   Andrew Grimberg - Initial implementation
 ##############################################################################
-"""Rental Control EventOVerrides."""
+"""Rental Control EventOverrides."""
 
 import asyncio
 from datetime import date
