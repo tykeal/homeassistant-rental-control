@@ -11,7 +11,7 @@
 # Contributors:
 #   Andrew Grimberg - Initial implementation
 ##############################################################################
-"""Rental Control EventOVerrides."""
+"""Rental Control EventOverrides."""
 
 import asyncio
 from datetime import date
@@ -19,8 +19,6 @@ from datetime import datetime
 from datetime import time
 import logging
 import re
-from typing import Dict
-from typing import List
 from typing import TypedDict
 
 from homeassistant.util import dt
@@ -49,7 +47,7 @@ class EventOverrides:
 
         self._max_slots: int = max_slots
         self._next_slot: int | None = None
-        self._overrides: Dict[int, EventOverride | None] = {}
+        self._overrides: dict[int, EventOverride | None] = {}
         self._ready: bool = False
         self._start_slot: int = start_slot
 
@@ -64,7 +62,7 @@ class EventOverrides:
         return self._next_slot
 
     @property
-    def overrides(self) -> Dict[int, EventOverride | None]:
+    def overrides(self) -> dict[int, EventOverride | None]:
         """Return the overrides."""
         return self._overrides
 
@@ -117,13 +115,13 @@ class EventOverrides:
         # We should never hit this directly, but if we do, set our next to None
         self._next_slot = None
 
-    def __get_slots_with_values(self) -> List[int]:
+    def __get_slots_with_values(self) -> list[int]:
         """Get a sorted list of the keys that have values."""
         return sorted(
             k for k in self._overrides.keys() if self._overrides[k] is not None
         )
 
-    def __get_slots_without_values(self, max_slot: int = 0) -> List[int]:
+    def __get_slots_without_values(self, max_slot: int = 0) -> list[int]:
         """
         Get the sorted list of the keys that have no value greater than
         max_slot.

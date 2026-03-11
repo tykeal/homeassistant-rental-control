@@ -23,7 +23,6 @@ from datetime import time
 from datetime import timedelta
 import logging
 from typing import Any
-from typing import Dict
 from zoneinfo import ZoneInfo  # noreorder
 
 import aiohttp
@@ -80,8 +79,6 @@ _LOGGER = logging.getLogger(__name__)
 
 class RentalControlCoordinator:
     """Get a list of events."""
-
-    # pylint: disable=too-many-instance-attributes
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry):
         """Set up a calendar object."""
@@ -198,7 +195,7 @@ Please update Keymaster to at least v0.1.0-b0
 
     async def async_get_events(
         self, hass: HomeAssistant, start_date: datetime, end_date: datetime
-    ) -> list[CalendarEvent]:  # pylint: disable=unused-argument
+    ) -> list[CalendarEvent]:
         """Get list of upcoming events."""
         _LOGGER.debug("Running RentalControl async_get_events")
         events = []
@@ -354,7 +351,6 @@ Please update Keymaster to at least v0.1.0-b0
         """Update the event overrides with the ServiceCall data."""
         _LOGGER.debug("In update_event_overrides")
 
-        # temporary call new_update_event_overrides
         if self.event_overrides:
             self.event_overrides.update(
                 slot,
@@ -492,7 +488,7 @@ Please update Keymaster to at least v0.1.0-b0
         start: dt.dt.datetime,
         end: dt.dt.datetime,
         from_date: dt.dt.datetime,
-        event: Dict[Any, Any],
+        event: dict[Any, Any],
     ) -> CalendarEvent | None:
         """Ensure that events are within the start and end."""
         _LOGGER.debug(

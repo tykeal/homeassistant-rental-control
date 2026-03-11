@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import logging
 
@@ -29,7 +28,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_state_change_event
-import voluptuous as vol
 
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
@@ -49,14 +47,6 @@ from .util import delete_rc_and_base_folder
 from .util import handle_state_change
 
 _LOGGER = logging.getLogger(__name__)
-
-
-CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
-
-
-def setup(hass, config):  # pylint: disable=unused-argument
-    """Set up this integration with config flow."""
-    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -118,13 +108,8 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
         notification_id=notification_id,
     )
 
-    unload_ok = all(
-        await asyncio.gather(
-            *[
-                hass.config_entries.async_forward_entry_unload(config_entry, component)
-                for component in PLATFORMS
-            ]
-        )
+    unload_ok = await hass.config_entries.async_unload_platforms(
+        config_entry, PLATFORMS
     )
 
     if unload_ok:

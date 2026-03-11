@@ -181,7 +181,7 @@ typing import with no built-in replacement.)
 
 ### Implementation for User Story 5
 
-- [ ] T010 [US5] Replace legacy `typing` module imports (`Dict`,
+- [x] T010 [US5] Replace legacy `typing` module imports (`Dict`,
   `List`, `Optional`, `Union`, `Coroutine`) with built-in
   generic equivalents (`dict`, `list`, `X | None`, `X | Y`,
   `collections.abc.Coroutine`) in:
@@ -194,7 +194,7 @@ typing import with no built-in replacement.)
   task touches all four files and must complete before the
   remaining US5 tasks.
   **FR**: FR-011
-- [ ] T011 [P] [US5] Remove the stale `# noqa: F401` suppression
+- [x] T011 [P] [US5] Remove the stale `# noqa: F401` suppression
   on the `Any` import in
   `custom_components/rental_control/util.py`. The import is
   actually used (`dict[str, Any]` after T010, `# type: Any`
@@ -202,47 +202,47 @@ typing import with no built-in replacement.)
   `# type: Any` comment on line 289 if it becomes redundant
   after T010 modernization. See code review §5.1.
   **FR**: FR-012
-- [ ] T012 [P] [US5] Remove the stale "temporary call" comment
+- [x] T012 [P] [US5] Remove the stale "temporary call" comment
   (line 356) in
   `custom_components/rental_control/coordinator.py`. See code
   review §5.2.
   **FR**: FR-013
-- [ ] T013 [US5] Remove all inert `# pylint: disable=` directive
+- [x] T013 [US5] Remove all inert `# pylint: disable=` directive
   comments across all source files in
   `custom_components/rental_control/`. The project uses ruff,
   not pylint — these directives have no effect. See code review
   §5.3.
   **FR**: FR-014
-- [ ] T014 [P] [US5] Remove the empty `CONFIG_SCHEMA` variable
+- [x] T014 [P] [US5] Remove the empty `CONFIG_SCHEMA` variable
   and the synchronous `setup()` function in
   `custom_components/rental_control/__init__.py`. The integration
   is config-flow only (declared in `manifest.json`), so these
   are unnecessary. See research.md R6.
   **FR**: FR-015
-- [ ] T015 [P] [US5] Remove the legacy
+- [x] T015 [P] [US5] Remove the legacy
   `@config_entries.HANDLERS.register(DOMAIN)` decorator from the
   config flow class in
   `custom_components/rental_control/config_flow.py`. The manifest
   `config_flow: true` key handles registration. See research.md
   R6.
   **FR**: FR-016
-- [ ] T016 [US5] Replace the `asyncio.gather` loop of individual
+- [x] T016 [US5] Replace the `asyncio.gather` loop of individual
   `async_forward_entry_unload()` calls with a single
   `hass.config_entries.async_unload_platforms(entry, PLATFORMS)`
   call in `custom_components/rental_control/__init__.py`. See
   research.md R6 for the correct API signature.
   **FR**: FR-017
-- [ ] T017 [US5] Convert all `os.path` calls to `pathlib.Path`
+- [x] T017 [US5] Convert all `os.path` calls to `pathlib.Path`
   operations in `custom_components/rental_control/util.py`. The
   test suite already uses `pathlib` via `tmp_path` fixtures. See
   research.md R7.
   **FR**: FR-018
-- [ ] T018 [P] [US5] Remove the commented-out function parameter
+- [x] T018 [P] [US5] Remove the commented-out function parameter
   (line 135) in
   `custom_components/rental_control/config_flow.py`. See code
   review §5.5.
   **FR**: FR-019
-- [ ] T019 [P] [US5] Fix the "EventOVerrides" docstring typo
+- [x] T019 [P] [US5] Fix the "EventOVerrides" docstring typo
   (capitalization error) in
   `custom_components/rental_control/event_overrides.py`. See
   code review §5.6.

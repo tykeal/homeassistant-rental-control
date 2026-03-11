@@ -16,15 +16,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
+from collections.abc import Sequence
 import hashlib
 import logging
-import os
+from pathlib import Path
 import re
 from typing import Any
-from typing import Coroutine
-from typing import Dict
-from typing import List
-from typing import Sequence
 import uuid
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
@@ -77,12 +75,12 @@ def check_gather_results(
 
 def add_call(
     hass: HomeAssistant,
-    coro: List[Coroutine],
+    coro: list[Coroutine],
     domain: str,
     service: str,
     target: str,
-    data: Dict[str, Any],
-) -> List[Coroutine]:
+    data: dict[str, Any],
+) -> list[Coroutine]:
     """Append a new async_call to the coro list."""
     coro.append(
         hass.services.async_call(
@@ -98,33 +96,31 @@ def add_call(
 
 def delete_rc_and_base_folder(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Delete packages folder for RC and base rental_control folder if empty."""
-    base_path = os.path.join(
-        hass.config.path(), config_entry.data.get(CONF_PATH, DEFAULT_PATH)
-    )
+    base_path = Path(hass.config.path(), config_entry.data.get(CONF_PATH, DEFAULT_PATH))
     rc_name_slug = slugify(config_entry.data.get(CONF_NAME))
 
     delete_folder(base_path, rc_name_slug)
     # It is possible that the path may not exist because of RCs not
     # being connected to Keymaster configurations
-    if os.path.exists(base_path):
-        if not os.listdir(base_path):
-            os.rmdir(base_path)
+    if base_path.exists():
+        if not any(base_path.iterdir()):
+            base_path.rmdir()
 
 
-def delete_folder(absolute_path: str, *relative_paths: str) -> None:
+def delete_folder(absolute_path: str | Path, *relative_paths: str) -> None:
     """Recursively delete folder and all children files and folders (depth first)."""
-    path = os.path.join(absolute_path, *relative_paths)
+    path = Path(absolute_path, *relative_paths)
 
     # RC that doesn't manage a lock has no files to purge
-    if not os.path.exists(path):
+    if not path.exists():
         return
 
-    if os.path.isfile(path):
-        os.remove(path)
+    if path.is_file():
+        path.unlink()
     else:
-        for file_or_dir in os.listdir(path):
-            delete_folder(path, file_or_dir)
-        os.rmdir(path)
+        for child in path.iterdir():
+            delete_folder(child)
+        path.rmdir()
 
 
 async def async_fire_clear_code(coordinator, slot: int) -> None:
@@ -154,7 +150,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     _LOGGER.debug("Slot: %s", slot)
 
     lockname: str = coordinator.lockname
-    coro: List[Coroutine] = []
+    coro: list[Coroutine] = []
 
     if not lockname:
         return
@@ -251,7 +247,7 @@ async def async_fire_update_times(coordinator, event) -> None:
     """Update times on slot."""
 
     lockname: str = coordinator.lockname
-    coro: List[Coroutine] = []
+    coro: list[Coroutine] = []
     slot_name: str = event.extra_state_attributes["slot_name"]
     slot = coordinator.event_overrides.get_slot_key_by_name(slot_name)
 
@@ -280,7 +276,7 @@ async def async_fire_update_times(coordinator, event) -> None:
     check_gather_results(results, "Lock slot operation")
 
 
-def get_event_names(rc) -> List[str]:
+def get_event_names(rc) -> list[str]:
     """Get the current event names."""
     event_names = [
         e.extra_state_attributes["slot_name"]
