@@ -181,7 +181,7 @@ typing import with no built-in replacement.)
 
 ### Implementation for User Story 5
 
-- [ ] T010 [US5] Replace legacy `typing` module imports (`Dict`,
+- [x] T010 [US5] Replace legacy `typing` module imports (`Dict`,
   `List`, `Optional`, `Union`, `Coroutine`) with built-in
   generic equivalents (`dict`, `list`, `X | None`, `X | Y`,
   `collections.abc.Coroutine`) in:
