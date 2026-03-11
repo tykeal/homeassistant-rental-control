@@ -10,11 +10,13 @@ SPDX-License-Identifier: Apache-2.0
 **Status**: Draft
 **Input**: Migrate the hand-rolled coordinator to the platform's
 built-in data update coordinator base class, as identified in the
-code review (§1.1) and explicitly deferred from spec 002.
+code review (§1.1 of
+[20260310-rc_review.md](../../code-reviews/20260310-rc_review.md))
+and explicitly deferred from spec 002.
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 — Platform-Standard Data Refresh (Priority: P1)
+### User Story 1 - Platform-Standard Data Refresh (Priority: P1)
 
 As a user of the Rental Control integration, I expect the
 integration to follow the platform's standard data refresh
@@ -48,7 +50,7 @@ platform's standard subscription mechanism.
 
 ---
 
-### User Story 2 — Automatic Error Recovery (Priority: P1)
+### User Story 2 - Automatic Error Recovery (Priority: P1)
 
 As a user, I expect the integration to handle temporary upstream
 failures (network timeouts, HTTP errors, malformed calendar data)
@@ -85,7 +87,7 @@ without user intervention.
 
 ---
 
-### User Story 3 — Transparent Migration (Priority: P1)
+### User Story 3 - Transparent Migration (Priority: P1)
 
 As a user upgrading from the previous version, I expect the
 migration to be completely transparent — no reconfiguration, no
@@ -116,7 +118,7 @@ and Keymaster slot assignments continue to function identically.
 
 ---
 
-### User Story 4 — Entity Availability Reporting (Priority: P2)
+### User Story 4 - Entity Availability Reporting (Priority: P2)
 
 As a user viewing my dashboard, I expect entities to accurately
 reflect their availability — showing as "unavailable" only when
@@ -124,9 +126,9 @@ the coordinator genuinely cannot provide data, and recovering
 automatically once data is available again.
 
 **Why this priority**: The platform base class provides built-in
-availability tracking (`last_update_success`) that the current
-implementation lacks. This is a direct benefit of the migration
-but secondary to the core refresh and error recovery stories.
+availability tracking that the current implementation lacks. This
+is a direct benefit of the migration but secondary to the core
+refresh and error recovery stories.
 
 **Independent Test**: Cause a sustained calendar failure, verify
 entities show as unavailable in the UI, then restore the calendar
@@ -176,9 +178,9 @@ and verify entities recover to available.
   standard data update coordinator base class, gaining its
   built-in refresh scheduling, error tracking, and entity
   subscription model.
-- **FR-002**: The coordinator MUST delegate refresh scheduling
-  entirely to the platform base class, removing the custom
-  `next_refresh` timestamp comparison logic.
+- **FR-002**: The coordinator MUST rely entirely on the platform
+  base class for refresh scheduling, removing any custom
+  scheduling logic from the coordinator implementation.
 - **FR-003**: The coordinator MUST implement the platform's
   standard data-fetch callback so that the base class manages
   the fetch-parse-distribute lifecycle.
@@ -192,9 +194,10 @@ and verify entities recover to available.
 - **FR-005**: Entities MUST derive their availability from the
   coordinator's built-in success/failure tracking rather than
   custom flags.
-- **FR-006**: The calendar entity MUST continue to support the
-  platform's `async_get_events` interface for date-range queries
-  without changes to the event retrieval behavior.
+- **FR-006**: The calendar entity MUST continue to provide a
+  date-range event query interface compatible with existing
+  platform integrations, without changes to the event retrieval
+  behavior.
 
 #### Error Handling and Recovery
 
@@ -258,10 +261,9 @@ and verify entities recover to available.
   states on startup) can be preserved within the new base class's
   lifecycle hooks without requiring changes to the Keymaster
   integration itself.
-- The calendar entity's `async_get_events` method (used for
-  date-range queries in the UI) can continue to read directly
-  from the coordinator's stored data without triggering an
-  additional refresh.
+- The calendar entity's date-range event query interface can
+  continue to read directly from the coordinator's stored data
+  without triggering an additional refresh.
 - The miss-tracking logic for consecutive failed refreshes
   (added in spec 002) will be adapted to work with the platform's
   built-in error tracking rather than duplicating it.
@@ -298,9 +300,9 @@ and verify entities recover to available.
 - **SC-005**: When the upstream calendar recovers after a failure,
   entities update to reflect fresh data within one refresh interval
   without user intervention.
-- **SC-006**: The coordinator's custom refresh-timing logic
-  (next_refresh timestamp comparison) is fully removed, with all
-  scheduling delegated to the platform base class.
+- **SC-006**: The coordinator's custom refresh-timing logic is
+  fully removed, with all scheduling delegated to the platform
+  base class.
 - **SC-007**: Test coverage remains at or above 85% for the
   coordinator module after migration.
 - **SC-008**: The full pre-commit pipeline (linting, type checking,
