@@ -152,7 +152,7 @@ and confirm zero output (no f-string log calls remain).
 
 ### Implementation for User Story 4
 
-- [ ] T009 [US4] Convert all f-string log calls to `%s`-style
+- [x] T009 [US4] Convert all f-string log calls to `%s`-style
   deferred formatting across three files:
   `custom_components/rental_control/__init__.py`,
   `custom_components/rental_control/event_overrides.py`,
