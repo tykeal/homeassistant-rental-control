@@ -16,15 +16,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
+from collections.abc import Sequence
 import hashlib
 import logging
 import os
 import re
 from typing import Any
-from typing import Coroutine
-from typing import Dict
-from typing import List
-from typing import Sequence
 import uuid
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
@@ -77,12 +75,12 @@ def check_gather_results(
 
 def add_call(
     hass: HomeAssistant,
-    coro: List[Coroutine],
+    coro: list[Coroutine],
     domain: str,
     service: str,
     target: str,
-    data: Dict[str, Any],
-) -> List[Coroutine]:
+    data: dict[str, Any],
+) -> list[Coroutine]:
     """Append a new async_call to the coro list."""
     coro.append(
         hass.services.async_call(
@@ -154,7 +152,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     _LOGGER.debug("Slot: %s", slot)
 
     lockname: str = coordinator.lockname
-    coro: List[Coroutine] = []
+    coro: list[Coroutine] = []
 
     if not lockname:
         return
@@ -251,7 +249,7 @@ async def async_fire_update_times(coordinator, event) -> None:
     """Update times on slot."""
 
     lockname: str = coordinator.lockname
-    coro: List[Coroutine] = []
+    coro: list[Coroutine] = []
     slot_name: str = event.extra_state_attributes["slot_name"]
     slot = coordinator.event_overrides.get_slot_key_by_name(slot_name)
 
@@ -280,7 +278,7 @@ async def async_fire_update_times(coordinator, event) -> None:
     check_gather_results(results, "Lock slot operation")
 
 
-def get_event_names(rc) -> List[str]:
+def get_event_names(rc) -> list[str]:
     """Get the current event names."""
     event_names = [
         e.extra_state_attributes["slot_name"]

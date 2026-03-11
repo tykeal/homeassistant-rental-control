@@ -6,9 +6,6 @@
 import asyncio
 import logging
 from typing import Any
-from typing import Dict
-from typing import Optional
-from typing import Union
 from zoneinfo import available_timezones
 
 from homeassistant import config_entries
@@ -83,7 +80,7 @@ class RentalControlFlowHandler(config_entries.ConfigFlow):
         """Setup the RentalControlFlowHandler."""
         self.created = str(dt.now())
 
-    async def _get_unique_id(self, user_input) -> Dict[str, str]:
+    async def _get_unique_id(self, user_input) -> dict[str, str]:
         """Generate the unique_id."""
         existing_entry = await self.async_set_unique_id(
             gen_uuid(self.created), raise_on_progress=True
@@ -114,10 +111,10 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(
         self,
-        user_input: Optional[Dict[str, Any]] = None,
+        user_input: dict[str, Any] | None = None,
     ) -> Any:
         """Handle a flow initialized by the user."""
-        flow_data: Dict[str, Any] | None = None
+        flow_data: dict[str, Any] | None = None
         if self.config_entry.data:
             flow_data = dict(self.config_entry.data)
         return await _start_config_flow(
@@ -196,9 +193,9 @@ def _lock_entry_convert(hass: HomeAssistant, entry: str, to_entity: bool = True)
 
 def _get_schema(
     hass: HomeAssistant,
-    user_input: Optional[Dict[str, Any]],
-    default_dict: Optional[Dict[str, Any]],
-    entry_id: Optional[str] = None,
+    user_input: dict[str, Any] | None,
+    default_dict: dict[str, Any] | None,
+    entry_id: str | None = None,
 ) -> vol.Schema:
     """Gets a schema using the default_dict as a backup."""
     if user_input is None:
@@ -297,13 +294,13 @@ def _get_schema(
 
 
 def _show_config_form(
-    cls: Union[RentalControlFlowHandler, RentalControlOptionsFlow],
+    cls: RentalControlFlowHandler | RentalControlOptionsFlow,
     step_id: str,
-    user_input: Optional[Dict[str, Any]],
-    errors: Dict[str, str],
-    description_placeholders: Dict[str, str],
-    defaults: Optional[Dict[str, Any]] = None,
-    entry_id: Optional[str] = None,
+    user_input: dict[str, Any] | None,
+    errors: dict[str, str],
+    description_placeholders: dict[str, str],
+    defaults: dict[str, Any] | None = None,
+    entry_id: str | None = None,
 ) -> Any:
     """Show the configuration form to edit data."""
     return cls.async_show_form(
@@ -315,16 +312,16 @@ def _show_config_form(
 
 
 async def _start_config_flow(
-    cls: Union[RentalControlFlowHandler, RentalControlOptionsFlow],
+    cls: RentalControlFlowHandler | RentalControlOptionsFlow,
     step_id: str,
     title: str,
-    user_input: Optional[Dict[str, Any]],
-    defaults: Optional[Dict[str, Any]] = None,
-    entry_id: Optional[str] = None,
+    user_input: dict[str, Any] | None,
+    defaults: dict[str, Any] | None = None,
+    entry_id: str | None = None,
 ):
     """Start a config flow."""
-    errors: Dict[str, str] = {}
-    description_placeholders: Dict[str, str] = {}
+    errors: dict[str, str] = {}
+    description_placeholders: dict[str, str] = {}
 
     if user_input is not None:
         # Regular flow has an async function

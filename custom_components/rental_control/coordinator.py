@@ -23,7 +23,6 @@ from datetime import time
 from datetime import timedelta
 import logging
 from typing import Any
-from typing import Dict
 from zoneinfo import ZoneInfo  # noreorder
 
 import aiohttp
@@ -492,7 +491,7 @@ Please update Keymaster to at least v0.1.0-b0
         start: dt.dt.datetime,
         end: dt.dt.datetime,
         from_date: dt.dt.datetime,
-        event: Dict[Any, Any],
+        event: dict[Any, Any],
     ) -> CalendarEvent | None:
         """Ensure that events are within the start and end."""
         _LOGGER.debug(
