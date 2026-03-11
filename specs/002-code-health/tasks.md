@@ -322,11 +322,11 @@ targets. Overall coverage must remain ≥85% (pyproject.toml
 
 **Purpose**: Final verification that all success criteria are met
 
-- [ ] T024 Run final verification per
+- [x] T024 Run final verification per
   [quickstart.md](quickstart.md) Final Verification section:
   full test suite with coverage, f-string grep check, legacy
   typing import grep check
-- [ ] T025 Validate all success criteria from spec.md:
+- [x] T025 Validate all success criteria from spec.md:
   SC-001 (zero regressions), SC-002 (all tests pass),
   SC-003 (zero f-string logging), SC-004 (coverage targets met),
   SC-005 (calendar errors handled gracefully),
