@@ -57,8 +57,9 @@ _LOGGER = logging.getLogger(__name__)
 sorted_tz = sorted(available_timezones())
 
 
-@config_entries.HANDLERS.register(DOMAIN)
-class RentalControlFlowHandler(config_entries.ConfigFlow):
+class RentalControlFlowHandler(  # type: ignore[call-arg]
+    config_entries.ConfigFlow, domain=DOMAIN
+):
     """Handle the config flow for Rental Control."""
 
     VERSION = 7
