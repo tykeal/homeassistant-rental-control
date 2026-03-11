@@ -67,7 +67,7 @@ available with its previous calendar state.
   `self.calendar` data. See research.md R1 and quickstart.md key
   patterns for the exact exception hierarchy.
   **FR**: FR-001, FR-002, FR-003
-- [ ] T003 [US1] Add `return_exceptions=True` to all
+- [x] T003 [US1] Add `return_exceptions=True` to all
   `asyncio.gather` call sites and add result-checking logic that
   re-raises `asyncio.CancelledError` and logs other exceptions.
   Files:
