@@ -46,4 +46,4 @@ proceeding to planning
   document and spec 002's exclusion notes provide sufficient detail
   for all decisions.
 - The spec intentionally uses "platform" language rather than naming
-  specific Home Assistant classes to remain technology-agnostic.
+  specific platform classes to remain technology-agnostic.

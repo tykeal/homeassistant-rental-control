@@ -162,7 +162,7 @@ and verify entities recover to available.
   handle missing Keymaster entities and populate slots once they
   become available.
 - What happens when the coordinator is shut down mid-refresh
-  (e.g., during a Home Assistant restart)? The in-flight request
+  (e.g., during a platform restart)? The in-flight request
   should be cancelled cleanly without leaving dangling tasks.
 - What happens when two entities request a refresh at the same
   time? The platform base class should deduplicate concurrent
