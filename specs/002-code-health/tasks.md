@@ -40,7 +40,7 @@ tests/integration/                  # Integration tests
 
 **Purpose**: Verify baseline before making any changes
 
-- [ ] T001 Verify baseline: run `uv run pytest tests/ -x -q` (all
+- [x] T001 Verify baseline: run `uv run pytest tests/ -x -q` (all
   tests pass) and `uv run ruff check custom_components/ tests/`
   (zero findings) to confirm a clean starting state
 

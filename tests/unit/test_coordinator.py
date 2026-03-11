@@ -241,15 +241,12 @@ async def test_coordinator_refresh_network_error(
 async def test_coordinator_refresh_invalid_ics(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
-    """Test coordinator behavior with malformed ICS content.
+    """Test coordinator handles malformed ICS content gracefully.
 
-    Note: Currently the coordinator does not have try/except around
-    Calendar.from_ical(), so malformed ICS raises ValueError.
-    This test documents current behavior. Future enhancement could
-    add graceful error handling to log and continue without crashing.
+    The coordinator wraps _refresh_calendar in try/except, so
+    malformed ICS data is caught, logged, and the previous calendar
+    state is preserved without crashing.
     """
-    import pytest
-
     mock_config_entry.add_to_hass(hass)
 
     with aioresponses() as mock_session:
@@ -262,13 +259,16 @@ async def test_coordinator_refresh_invalid_ics(
 
         coordinator = RentalControlCoordinator(hass, mock_config_entry)
 
-        # Current behavior: malformed ICS raises ValueError from icalendar parser
-        # TODO: Consider adding try/except in coordinator._refresh_calendar()
-        # to handle gracefully (log error, keep calendar_loaded=False)
-        with pytest.raises(ValueError):
-            await coordinator.update()
+        # Graceful handling: malformed ICS is caught, logged,
+        # and the coordinator preserves its previous calendar state
+        await coordinator.update()
 
         await hass.async_block_till_done()
+
+        # Calendar should remain empty (initial state) since the
+        # malformed data could not be parsed
+        assert coordinator.calendar == []
+        assert coordinator.calendar_loaded is False
 
 
 async def test_coordinator_state_management(
