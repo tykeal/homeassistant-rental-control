@@ -529,7 +529,7 @@ Please update Keymaster to at least v0.1.0-b0
             start=start.astimezone(self.timezone),
         )
 
-        _LOGGER.debug("Event to add: %s", str(CalendarEvent))
+        _LOGGER.debug("Event to add: %s", cal_event)
         return cal_event
 
     def _refresh_event_dict(self) -> list[CalendarEvent]:
