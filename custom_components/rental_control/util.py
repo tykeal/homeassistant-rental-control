@@ -20,7 +20,7 @@ from collections.abc import Coroutine
 from collections.abc import Sequence
 import hashlib
 import logging
-import os
+from pathlib import Path
 import re
 from typing import Any
 import uuid
@@ -96,33 +96,31 @@ def add_call(
 
 def delete_rc_and_base_folder(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Delete packages folder for RC and base rental_control folder if empty."""
-    base_path = os.path.join(
-        hass.config.path(), config_entry.data.get(CONF_PATH, DEFAULT_PATH)
-    )
+    base_path = Path(hass.config.path(), config_entry.data.get(CONF_PATH, DEFAULT_PATH))
     rc_name_slug = slugify(config_entry.data.get(CONF_NAME))
 
     delete_folder(base_path, rc_name_slug)
     # It is possible that the path may not exist because of RCs not
     # being connected to Keymaster configurations
-    if os.path.exists(base_path):
-        if not os.listdir(base_path):
-            os.rmdir(base_path)
+    if base_path.exists():
+        if not any(base_path.iterdir()):
+            base_path.rmdir()
 
 
-def delete_folder(absolute_path: str, *relative_paths: str) -> None:
+def delete_folder(absolute_path: str | Path, *relative_paths: str) -> None:
     """Recursively delete folder and all children files and folders (depth first)."""
-    path = os.path.join(absolute_path, *relative_paths)
+    path = Path(absolute_path, *relative_paths)
 
     # RC that doesn't manage a lock has no files to purge
-    if not os.path.exists(path):
+    if not path.exists():
         return
 
-    if os.path.isfile(path):
-        os.remove(path)
+    if path.is_file():
+        path.unlink()
     else:
-        for file_or_dir in os.listdir(path):
-            delete_folder(path, file_or_dir)
-        os.rmdir(path)
+        for child in path.iterdir():
+            delete_folder(child)
+        path.rmdir()
 
 
 async def async_fire_clear_code(coordinator, slot: int) -> None:
