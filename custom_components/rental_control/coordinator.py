@@ -55,7 +55,6 @@ from .const import CONF_EVENT_PREFIX
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
-from .const import CONF_MAX_MISSES
 from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_START_SLOT
@@ -103,7 +102,7 @@ class RentalControlCoordinator:
         self.start_slot: int = int(str(config.get(CONF_START_SLOT)))
         self.lockname: str | None = config.get(CONF_LOCK_ENTRY)
         self.max_events: int = int(str(config.get(CONF_MAX_EVENTS)))
-        self.max_misses: int = int(str(config.get(CONF_MAX_MISSES, DEFAULT_MAX_MISSES)))
+        self.max_misses: int = DEFAULT_MAX_MISSES
         self.num_misses: int = 0
         self.days: int = int(str(config.get(CONF_DAYS)))
         self.ignore_non_reserved: bool = bool(config.get(CONF_IGNORE_NON_RESERVED))

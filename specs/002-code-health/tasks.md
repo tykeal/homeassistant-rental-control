@@ -264,7 +264,7 @@ as an internal constant (not read from config entry data).
 
 ### Implementation for User Story 6
 
-- [ ] T020 [US6] Make `CONF_MAX_MISSES` a pure internal constant.
+- [x] T020 [US6] Make `CONF_MAX_MISSES` a pure internal constant.
   In `custom_components/rental_control/const.py`, ensure it is
   defined as a plain constant. In
   `custom_components/rental_control/coordinator.py`, remove any
