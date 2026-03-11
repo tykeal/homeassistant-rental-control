@@ -58,12 +58,14 @@ def check_gather_results(
 ) -> None:
     """Check asyncio.gather results for exceptions.
 
-    Re-raises CancelledError and logs other exceptions with
-    traceback so failures are actionable from logs.
+    Re-raises BaseException subclasses that should not be
+    swallowed (CancelledError, SystemExit, KeyboardInterrupt)
+    and logs ordinary Exception instances with traceback so
+    failures are actionable from logs.
     """
     for result in results:
         if isinstance(result, BaseException):
-            if isinstance(result, asyncio.CancelledError):
+            if not isinstance(result, Exception):
                 raise result
             logger.error(
                 "%s failed: %s",
