@@ -562,18 +562,18 @@ Please update Keymaster to at least v0.1.0-b0
             session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
             async with asyncio.timeout(REQUEST_TIMEOUT):
                 response = await session.get(self.url)
-            try:
-                if response.status != 200:
-                    _LOGGER.error(
-                        "%s returned %s - %s",
-                        self.url,
-                        response.status,
-                        response.reason,
-                    )
-                    return
-                text = await response.text()
-            finally:
-                response.release()
+                try:
+                    if response.status != 200:
+                        _LOGGER.error(
+                            "%s returned %s - %s",
+                            self.url,
+                            response.status,
+                            response.reason,
+                        )
+                        return
+                    text = await response.text()
+                finally:
+                    response.release()
 
             # Some calendars are for some reason filled with NULL-bytes.
             # They break the parsing, so we get rid of them
