@@ -123,7 +123,7 @@ patterns.
   underlying `.get()` method call can never raise `KeyError`,
   making this handler dead code. See code review §2.2.
   **FR**: FR-007
-- [ ] T007 [US2] Fix debug logging to log the actual `cal_event`
+- [x] T007 [US2] Fix debug logging to log the actual `cal_event`
   instance instead of the `CalendarEvent` class name (line 535)
   in `custom_components/rental_control/coordinator.py`. Change
   the log argument from the class reference to the event variable.
