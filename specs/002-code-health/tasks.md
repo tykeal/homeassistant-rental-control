@@ -58,7 +58,7 @@ available with its previous calendar state.
 
 ### Implementation for User Story 1
 
-- [ ] T002 [US1] Wrap the entire `_refresh_calendar` method body
+- [x] T002 [US1] Wrap the entire `_refresh_calendar` method body
   in a try/except in
   `custom_components/rental_control/coordinator.py`. Catch
   `asyncio.TimeoutError` (log warning), `aiohttp.ClientError`
