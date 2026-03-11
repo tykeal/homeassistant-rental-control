@@ -88,7 +88,7 @@ available with its previous calendar state.
   count so that multi-event calendars track empty refreshes
   identically to single-event calendars. See research.md R3.
   **FR**: FR-005
-- [ ] T005 [US1] Simplify the `overrides_loaded` readiness tracking
+- [x] T005 [US1] Simplify the `overrides_loaded` readiness tracking
   in `custom_components/rental_control/coordinator.py`. Ensure
   there is a single clear code path for determining when the
   coordinator is ready to process events, regardless of whether a
