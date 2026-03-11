@@ -271,7 +271,7 @@ async def test_coordinator_error_state(
     After a failed fetch the coordinator should keep calendar_loaded as
     False and calendar_ready as False. After a successful fetch both
     should become True (ready depends on overrides, which are not
-    configured here so overrides_loaded defaults to True on first load).
+    configured here so calendar_ready is set directly on first load).
     """
     mock_config_entry.add_to_hass(hass)
 

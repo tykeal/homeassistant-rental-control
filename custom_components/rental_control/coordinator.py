@@ -113,7 +113,6 @@ class RentalControlCoordinator:
         self.calendar: list[CalendarEvent] = []
         self.calendar_ready: bool = False
         self.calendar_loaded: bool = False
-        self.overrides_loaded: bool = False
         self.event_overrides: EventOverrides | None = (
             EventOverrides(self.start_slot, self.max_events) if self.lockname else None
         )
@@ -616,10 +615,9 @@ Please update Keymaster to at least v0.1.0-b0
 
                 self.calendar_loaded = True
 
-                if self.lockname is None:
-                    self.overrides_loaded = True
-
-                if self.overrides_loaded:
+                if not self.lockname:
+                    self.calendar_ready = True
+                elif self.event_overrides and self.event_overrides.ready:
                     self.calendar_ready = True
 
             if len(self.calendar) > 0:
