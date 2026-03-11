@@ -116,20 +116,20 @@ patterns.
 
 ### Implementation for User Story 2
 
-- [ ] T006 [US2] Remove the unreachable `KeyError` exception
+- [x] T006 [US2] Remove the unreachable `KeyError` exception
   handler around calendar event description retrieval (lines
   521–525) in
   `custom_components/rental_control/coordinator.py`. The
   underlying `.get()` method call can never raise `KeyError`,
   making this handler dead code. See code review §2.2.
   **FR**: FR-007
-- [ ] T007 [US2] Fix debug logging to log the actual `cal_event`
+- [x] T007 [US2] Fix debug logging to log the actual `cal_event`
   instance instead of the `CalendarEvent` class name (line 535)
   in `custom_components/rental_control/coordinator.py`. Change
   the log argument from the class reference to the event variable.
   See code review §2.3.
   **FR**: FR-008
-- [ ] T008 [US2] Replace `isinstance(x, type(None))` with
+- [x] T008 [US2] Replace `isinstance(x, type(None))` with
   `x is None` for the non-reserved event filtering check
   (line 418) in
   `custom_components/rental_control/coordinator.py`. See code

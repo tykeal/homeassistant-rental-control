@@ -415,10 +415,7 @@ Please update Keymaster to at least v0.1.0-b0
 
                 # Ignore Blocked or Not available by default, but if false,
                 # keep the events.
-                if (
-                    isinstance(self.ignore_non_reserved, type(None))
-                    or self.ignore_non_reserved
-                ):
+                if self.ignore_non_reserved:
                     if any(x in event["SUMMARY"] for x in ["Blocked", "Not available"]):
                         # Skip Blocked or 'Not available' events
                         continue
@@ -519,11 +516,7 @@ Please update Keymaster to at least v0.1.0-b0
             self.timezone,
             start.astimezone(self.timezone),
         )
-        try:
-            description = event.get("DESCRIPTION")
-        except KeyError:
-            # VRBO and Booking.com do not have a DESCRIPTION element
-            description = None
+        description = event.get("DESCRIPTION")
 
         cal_event = CalendarEvent(
             description=description,
@@ -533,7 +526,7 @@ Please update Keymaster to at least v0.1.0-b0
             start=start.astimezone(self.timezone),
         )
 
-        _LOGGER.debug("Event to add: %s", str(CalendarEvent))
+        _LOGGER.debug("Event to add: %s", cal_event)
         return cal_event
 
     def _refresh_event_dict(self) -> list[CalendarEvent]:
