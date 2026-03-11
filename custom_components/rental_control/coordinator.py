@@ -353,7 +353,6 @@ Please update Keymaster to at least v0.1.0-b0
         """Update the event overrides with the ServiceCall data."""
         _LOGGER.debug("In update_event_overrides")
 
-        # temporary call new_update_event_overrides
         if self.event_overrides:
             self.event_overrides.update(
                 slot,
