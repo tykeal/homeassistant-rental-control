@@ -72,6 +72,7 @@ from .const import STARTUP_REFRESH_DELAY
 from .const import VERSION
 from .event_overrides import EventOverrides
 from .sensors.calsensor import RentalControlCalSensor
+from .util import check_gather_results
 from .util import get_slot_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -639,15 +640,7 @@ Please update Keymaster to at least v0.1.0-b0
                 *[event.async_update() for event in self.event_sensors],
                 return_exceptions=True,
             )
-            for result in results:
-                if isinstance(result, BaseException):
-                    if isinstance(result, asyncio.CancelledError):
-                        raise result
-                    _LOGGER.error(
-                        "Sensor update failed: %s",
-                        result,
-                        exc_info=(type(result), result, result.__traceback__),
-                    )
+            check_gather_results(results, "Sensor update")
         except TimeoutError:
             _LOGGER.warning("Calendar refresh timed out for %s", self.name)
         except aiohttp.ClientError as err:

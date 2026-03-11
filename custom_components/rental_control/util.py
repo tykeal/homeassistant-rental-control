@@ -50,6 +50,28 @@ from .const import NAME
 _LOGGER = logging.getLogger(__name__)
 
 
+def check_gather_results(
+    results: list[BaseException | Any],
+    context: str,
+    logger: logging.Logger = _LOGGER,
+) -> None:
+    """Check asyncio.gather results for exceptions.
+
+    Re-raises CancelledError and logs other exceptions with
+    traceback so failures are actionable from logs.
+    """
+    for result in results:
+        if isinstance(result, BaseException):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            logger.error(
+                "%s failed: %s",
+                context,
+                result,
+                exc_info=(type(result), result, result.__traceback__),
+            )
+
+
 def add_call(
     hass: HomeAssistant,
     coro: List[Coroutine],
@@ -150,15 +172,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         {},
     )
     results = await asyncio.gather(*coro, return_exceptions=True)
-    for result in results:
-        if isinstance(result, BaseException):
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-            _LOGGER.error(
-                "Lock slot operation failed: %s",
-                result,
-                exc_info=(type(result), result, result.__traceback__),
-            )
+    check_gather_results(results, "Lock slot operation")
 
     coro.clear()
 
@@ -211,15 +225,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     )
     # Update the slot details
     results = await asyncio.gather(*coro, return_exceptions=True)
-    for result in results:
-        if isinstance(result, BaseException):
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-            _LOGGER.error(
-                "Lock slot operation failed: %s",
-                result,
-                exc_info=(type(result), result, result.__traceback__),
-            )
+    check_gather_results(results, "Lock slot operation")
 
     # Turn on the slot
     coro.clear()
@@ -233,15 +239,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     )
 
     results = await asyncio.gather(*coro, return_exceptions=True)
-    for result in results:
-        if isinstance(result, BaseException):
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-            _LOGGER.error(
-                "Lock slot operation failed: %s",
-                result,
-                exc_info=(type(result), result, result.__traceback__),
-            )
+    check_gather_results(results, "Lock slot operation")
 
 
 async def async_fire_update_times(coordinator, event) -> None:
@@ -274,15 +272,7 @@ async def async_fire_update_times(coordinator, event) -> None:
     )
     # Update the slot details
     results = await asyncio.gather(*coro, return_exceptions=True)
-    for result in results:
-        if isinstance(result, BaseException):
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-            _LOGGER.error(
-                "Lock slot operation failed: %s",
-                result,
-                exc_info=(type(result), result, result.__traceback__),
-            )
+    check_gather_results(results, "Lock slot operation")
 
 
 def get_event_names(rc) -> List[str]:

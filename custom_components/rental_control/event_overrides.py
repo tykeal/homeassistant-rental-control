@@ -26,6 +26,7 @@ from typing import TypedDict
 from homeassistant.util import dt
 
 from .util import async_fire_clear_code
+from .util import check_gather_results
 from .util import get_event_names
 
 _LOGGER = logging.getLogger(__name__)
@@ -209,19 +210,7 @@ class EventOverrides:
                     *[event.async_update() for event in coordinator.event_sensors],
                     return_exceptions=True,
                 )
-                for result in results:
-                    if isinstance(result, BaseException):
-                        if isinstance(result, asyncio.CancelledError):
-                            raise result
-                        _LOGGER.error(
-                            "Sensor update failed: %s",
-                            result,
-                            exc_info=(
-                                type(result),
-                                result,
-                                result.__traceback__,
-                            ),
-                        )
+                check_gather_results(results, "Sensor update")
 
     def get_slot_name(self, slot: int) -> str:
         """Return the slot name."""
