@@ -116,7 +116,7 @@ patterns.
 
 ### Implementation for User Story 2
 
-- [ ] T006 [US2] Remove the unreachable `KeyError` exception
+- [x] T006 [US2] Remove the unreachable `KeyError` exception
   handler around calendar event description retrieval (lines
   521–525) in
   `custom_components/rental_control/coordinator.py`. The
