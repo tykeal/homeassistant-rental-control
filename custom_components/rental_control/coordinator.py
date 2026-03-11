@@ -590,23 +590,17 @@ Please update Keymaster to at least v0.1.0-b0
                     event_list, start_of_events, end_of_events
                 )
 
-                if len(self.calendar) > 1 and len(new_calendar) == 0:
-                    _LOGGER.error(
-                        "No events found in calendar %s, but there"
-                        " are %d events in the old calendar",
-                        self.name,
-                        len(self.calendar),
-                    )
-                    return
-                elif (
-                    len(self.calendar) == 1
+                if (
+                    len(self.calendar) > 0
                     and len(new_calendar) == 0
                     and self.num_misses < self.max_misses
                 ):
                     self.num_misses += 1
                     _LOGGER.warning(
-                        "No events found in calendar %s. Miss %d of %d",
+                        "No events found in calendar %s,"
+                        " but %d in previous. Miss %d of %d",
                         self.name,
+                        len(self.calendar),
                         self.num_misses,
                         self.max_misses,
                     )
