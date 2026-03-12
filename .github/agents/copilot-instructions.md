@@ -10,7 +10,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # rental-control Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-03-10
+Auto-generated from all feature plans. Last updated: 2026-03-12
 
 ## Active Technologies
 - Python ≥3.13.2 + icalendar ≥6.1.0, x-wr-timezone ≥2.0.0 (002-code-health)

@@ -32,13 +32,13 @@ aioresponses
 **Target Platform**: Home Assistant (Linux, various hardware)
 **Project Type**: Single project (HA custom component)
 **Performance Goals**: Refresh within configured interval (0–1440
-minutes; 0 maps to a 10-second startup delay), no event loop
-blocking, lightweight memory
+minutes), no event loop blocking, lightweight memory
 **Constraints**: Must not break existing entity IDs, sensor
 attributes, or automation references; must pass full pre-commit
 pipeline (ruff, mypy, interrogate 100%, reuse)
 **Scale/Scope**: ~7 source files affected, ~640-line coordinator,
-6 dependent entity/utility modules, ~30 test files
+6 dependent entity/utility modules, consolidated unit and
+integration test suite
 
 ## Constitution Check
 

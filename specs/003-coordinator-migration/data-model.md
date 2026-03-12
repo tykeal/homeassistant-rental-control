@@ -84,7 +84,7 @@ CE = CalendarEvent
 |-----------|-------------|
 | `calendar` | `self.data` (inherited) |
 | `calendar_ready` | `self.last_update_success` (inherited) |
-| `calendar_loaded` | `self.last_update_success` (inherited) |
+| `calendar_loaded` | Removed; "ever loaded" semantic is covered by `self.data is not None` after first successful refresh. Note: `calendar_loaded` meant "has ever loaded" (sticky True), while `last_update_success` reflects only the latest refresh. If any logic needs the "ever loaded" check, use `self.data is not None`. |
 | `next_refresh` | `self.update_interval` (inherited scheduler) |
 | `event_sensors` | DUC listener mechanism (automatic) |
 | `_events_ready` | Derived from entity state, not coordinator |
