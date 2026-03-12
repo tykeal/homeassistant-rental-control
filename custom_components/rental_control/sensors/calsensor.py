@@ -13,9 +13,10 @@ from typing import TYPE_CHECKING
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt
 
 from ..const import ICON
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-class RentalControlCalSensor(Entity):
+class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
     """
     Implementation of a iCal sensor.
 
@@ -55,8 +56,7 @@ class RentalControlCalSensor(Entity):
         sensor_name is typically the name of the calendar.
         eventnumber indicates which upcoming event this is, starting at zero
         """
-        self.coordinator = coordinator
-        self.coordinator.event_sensors.append(self)
+        super().__init__(coordinator)
         if coordinator.event_prefix:
             summary = f"{coordinator.event_prefix} No reservation"
         else:
@@ -264,12 +264,18 @@ class RentalControlCalSensor(Entity):
         """Return the unique_id."""
         return self._unique_id
 
-    async def async_update(self) -> None:
-        """Update the sensor."""
-        _LOGGER.debug("Running RentalControlCalSensor async update for %s", self.name)
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        _LOGGER.debug(
+            "Running RentalControlCalSensor coordinator update for %s",
+            self.name,
+        )
 
-        # Calendar is not ready, no reason to continue processing
-        if not self.coordinator.calendar_ready:
+        # Not yet successful, update availability and skip processing
+        if not self.coordinator.last_update_success:
+            self._is_available = False
+            self.async_write_ha_state()
             return
 
         set_code = False
@@ -278,7 +284,7 @@ class RentalControlCalSensor(Entity):
 
         self._code_generator = self.coordinator.code_generator
         self._code_length = self.coordinator.code_length
-        event_list = self.coordinator.calendar
+        event_list = self.coordinator.data
         if event_list and (self._event_number < len(event_list)):
             event = event_list[self._event_number]
             name = event.summary
@@ -369,17 +375,16 @@ class RentalControlCalSensor(Entity):
 
             self._parsed_attributes = parsed_attributes
 
-            # fire set_code if not in current overrides
+            # Schedule async Keymaster side effects
             if overrides and set_code and overrides.next_slot is not None:
-                await async_fire_set_code(
-                    self.coordinator,
-                    self,
-                    overrides.next_slot,
+                self.hass.async_create_task(
+                    async_fire_set_code(
+                        self.coordinator,
+                        self,
+                        overrides.next_slot,
+                    )
                 )
 
-            # Update the event times, if they have changed
-            # If the code generator is date_based, and the start day is in the
-            # future then clear slot instead
             if update_times:
                 if (
                     self.coordinator.code_generator == "date_based"
@@ -395,9 +400,13 @@ class RentalControlCalSensor(Entity):
                         slot_key,
                         self.name,
                     )
-                    await async_fire_clear_code(self.coordinator, slot_key)
+                    self.hass.async_create_task(
+                        async_fire_clear_code(self.coordinator, slot_key)
+                    )
                 else:
-                    await async_fire_update_times(self.coordinator, self)
+                    self.hass.async_create_task(
+                        async_fire_update_times(self.coordinator, self)
+                    )
 
         else:
             # No reservations
@@ -425,4 +434,5 @@ class RentalControlCalSensor(Entity):
             self._parsed_attributes = {}
             self._state = summary
 
-        self._is_available = self.coordinator.calendar_ready
+        self._is_available = self.coordinator.last_update_success
+        self.async_write_ha_state()

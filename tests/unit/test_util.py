@@ -5,11 +5,13 @@
 
 from __future__ import annotations
 
+from datetime import date
 import logging
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from homeassistant.components.calendar import CalendarEvent
 from homeassistant.const import CONF_NAME
 from homeassistant.core import Event
 from homeassistant.exceptions import ServiceNotFound
@@ -299,51 +301,70 @@ class TestGetSlotNameFallback:
 class TestGetEventNames:
     """Tests for the get_event_names function."""
 
-    def _make_sensor(self, slot_name: str) -> MagicMock:
-        """Create a mock event sensor with the given slot_name attribute.
-
-        Args:
-            slot_name: The slot_name to assign.
-
-        Returns:
-            MagicMock: Mock sensor with extra_state_attributes.
-        """
-        sensor = MagicMock()
-        sensor.extra_state_attributes = {"slot_name": slot_name}
-        return sensor
-
-    def test_returns_names_from_sensors(self) -> None:
-        """Verify event names are collected from event sensors."""
+    def test_returns_names_from_events(self) -> None:
+        """Verify event names are collected from coordinator data."""
         rc = MagicMock()
-        rc.event_sensors = [
-            self._make_sensor("Alice"),
-            self._make_sensor("Bob"),
+        rc.event_prefix = None
+        rc.data = [
+            CalendarEvent(
+                summary="Alice",
+                start=date(2025, 3, 15),
+                end=date(2025, 3, 20),
+            ),
+            CalendarEvent(
+                summary="Bob",
+                start=date(2025, 3, 21),
+                end=date(2025, 3, 25),
+            ),
         ]
         assert get_event_names(rc) == ["Alice", "Bob"]
 
     def test_filters_out_empty_slot_names(self) -> None:
-        """Verify sensors with empty/falsy slot names are excluded."""
+        """Verify events with empty/falsy slot names are excluded."""
         rc = MagicMock()
-        rc.event_sensors = [
-            self._make_sensor("Alice"),
-            self._make_sensor(""),
-            self._make_sensor("Bob"),
+        rc.event_prefix = None
+        rc.data = [
+            CalendarEvent(
+                summary="Alice",
+                start=date(2025, 3, 15),
+                end=date(2025, 3, 20),
+            ),
+            CalendarEvent(
+                summary="  ",
+                start=date(2025, 3, 21),
+                end=date(2025, 3, 25),
+            ),
+            CalendarEvent(
+                summary="Bob",
+                start=date(2025, 3, 26),
+                end=date(2025, 3, 30),
+            ),
         ]
         assert get_event_names(rc) == ["Alice", "Bob"]
 
     def test_filters_out_none_slot_names(self) -> None:
-        """Verify sensors with None slot names are excluded."""
+        """Verify events producing None slot names are excluded."""
         rc = MagicMock()
-        rc.event_sensors = [
-            self._make_sensor(None),  # type: ignore[arg-type]
-            self._make_sensor("Carol"),
+        rc.event_prefix = None
+        rc.data = [
+            CalendarEvent(
+                summary="Blocked",
+                start=date(2025, 3, 15),
+                end=date(2025, 3, 20),
+            ),
+            CalendarEvent(
+                summary="Carol",
+                start=date(2025, 3, 21),
+                end=date(2025, 3, 25),
+            ),
         ]
         assert get_event_names(rc) == ["Carol"]
 
-    def test_empty_sensor_list(self) -> None:
-        """Verify empty list is returned when there are no event sensors."""
+    def test_empty_data_list(self) -> None:
+        """Verify empty list is returned when there are no events."""
         rc = MagicMock()
-        rc.event_sensors = []
+        rc.event_prefix = None
+        rc.data = []
         assert get_event_names(rc) == []
 
 

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from datetime import date
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
@@ -41,6 +40,8 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt
 from icalendar import Calendar
 import x_wr_timezone
@@ -66,24 +67,19 @@ from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import EVENT_AGE_THRESHOLD_DAYS
 from .const import REQUEST_TIMEOUT
-from .const import STARTUP_REFRESH_DELAY
 from .const import VERSION
 from .event_overrides import EventOverrides
-from .sensors.calsensor import RentalControlCalSensor
-from .util import check_gather_results
 from .util import get_slot_name
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class RentalControlCoordinator:
-    """Get a list of events."""
+class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
+    """Coordinator for managing rental control calendar data."""
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry):
-        """Set up a calendar object."""
+        """Set up a calendar coordinator."""
         config = config_entry.data
-        self.hass: HomeAssistant = hass
-        self.config_entry: ConfigEntry = config_entry
         self._name: str = str(config.get(CONF_NAME))
         self._unique_id: str = str(config_entry.unique_id)
         self._entry_id: str = config_entry.entry_id
@@ -93,8 +89,6 @@ class RentalControlCoordinator:
         self.refresh_frequency: int = config.get(
             CONF_REFRESH_FREQUENCY, DEFAULT_REFRESH_FREQUENCY
         )
-        # after initial setup our first refresh should happen ASAP
-        self.next_refresh: dt.dt.datetime = dt.now()
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
         self.checkin: time = cv.time(config.get(CONF_CHECKIN))
@@ -107,14 +101,9 @@ class RentalControlCoordinator:
         self.days: int = int(str(config.get(CONF_DAYS)))
         self.ignore_non_reserved: bool = bool(config.get(CONF_IGNORE_NON_RESERVED))
         self.verify_ssl: bool = bool(config.get(CONF_VERIFY_SSL))
-        self.calendar: list[CalendarEvent] = []
-        self.calendar_ready: bool = False
-        self.calendar_loaded: bool = False
         self.event_overrides: EventOverrides | None = (
             EventOverrides(self.start_slot, self.max_events) if self.lockname else None
         )
-        self.event_sensors: list[RentalControlCalSensor] = []
-        self._events_ready: bool = False
         self.code_generator: str = config.get(
             CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION
         )
@@ -123,6 +112,14 @@ class RentalControlCoordinator:
         self.event: CalendarEvent | None = None
         self.created: str = config.get(CONF_CREATION_DATETIME, str(dt.now()))
         self._version: str = VERSION
+
+        super().__init__(
+            hass=hass,
+            logger=_LOGGER,
+            name=self._name,
+            config_entry=config_entry,
+            update_interval=timedelta(minutes=self.refresh_frequency),
+        )
 
         # setup device
         device_registry = dr.async_get(hass)
@@ -161,11 +158,6 @@ Please update Keymaster to at least v0.1.0-b0
         }
 
     @property
-    def name(self) -> str:
-        """Return the name."""
-        return self._name
-
-    @property
     def unique_id(self) -> str:
         """Return the unique id."""
         return self._unique_id
@@ -175,33 +167,18 @@ Please update Keymaster to at least v0.1.0-b0
         """Return the version."""
         return self._version
 
-    @property
-    def events_ready(self) -> bool:
-        """Return the status of all the event sensors"""
-
-        # Once all events report ready we don't keep checking
-        if self._events_ready:
-            return self._events_ready
-
-        # If all sensors have not yet been created we're still starting
-        if len(self.event_sensors) != self.max_events:
-            return self._events_ready
-
-        sensors_status = [event.available for event in self.event_sensors]
-        self._events_ready = all(sensors_status)
-
-        return self._events_ready
-
     async def async_get_events(
         self, hass: HomeAssistant, start_date: datetime, end_date: datetime
     ) -> list[CalendarEvent]:
         """Get list of upcoming events."""
         _LOGGER.debug("Running RentalControl async_get_events")
         events = []
-        if len(self.calendar) > 0:
-            for event in self.calendar:
+        cal_data: list[CalendarEvent] | None = self.data
+        if cal_data and len(cal_data) > 0:
+            for event in cal_data:
                 _LOGGER.debug(
-                    "Checking if event %s has start %s and end %s within in the limit: %s and %s",
+                    "Checking if event %s has start %s and end %s "
+                    "within in the limit: %s and %s",
                     event.summary,
                     event.start,
                     event.end,
@@ -214,114 +191,186 @@ Please update Keymaster to at least v0.1.0-b0
                     events.append(event)
         return events
 
-    async def update(self) -> None:
-        """Regularly update the calendar."""
-        _LOGGER.debug("Running RentalControl update for calendar %s", self.name)
+    async def async_setup_keymaster_overrides(self) -> None:
+        """Bootstrap Keymaster slot overrides on first load."""
+        if not self.lockname:
+            return
 
-        now = dt.now()
-        _LOGGER.debug("Refresh frequency is: %d", self.refresh_frequency)
-        _LOGGER.debug("Current time is: %s", now)
-        _LOGGER.debug("Next refresh is: %s", self.next_refresh)
-        if now >= self.next_refresh:
-            # Update the next refresh time before doing the calendar update
-            # If refresh_frequency is 0, then set the refresh for a little in
-            # the future to avoid having multiple calls to the calendar refresh
-            # happen at the same time
-            if self.refresh_frequency == 0:
-                self.next_refresh = now + timedelta(seconds=STARTUP_REFRESH_DELAY)
-            else:
-                self.next_refresh = now + timedelta(minutes=self.refresh_frequency)
-            _LOGGER.debug("Updating next refresh to %s", self.next_refresh)
-            await self._refresh_calendar()
+        for i in range(self.start_slot, self.start_slot + self.max_events):
+            slot_code = self.hass.states.get(
+                f"{TEXT}.{self.lockname}_code_slot_{i}_pin"
+            )
+            _LOGGER.debug("Slot code: '%s'", slot_code)
+            if slot_code is None:
+                continue
+            slot_code_value = (
+                "" if slot_code.state in ("unknown", "unavailable") else slot_code.state
+            )
 
-        # Get slot overrides on startup
-        if not self.calendar_ready and self.lockname:
-            for i in range(self.start_slot, self.start_slot + self.max_events):
-                slot_code = self.hass.states.get(
-                    f"{TEXT}.{self.lockname}_code_slot_{i}_pin"
+            slot_name = self.hass.states.get(
+                f"{TEXT}.{self.lockname}_code_slot_{i}_name"
+            )
+            _LOGGER.debug("Slot name: '%s'", slot_name)
+            if slot_name is None:
+                continue
+            slot_name_value = (
+                "" if slot_name.state in ("unknown", "unavailable") else slot_name.state
+            )
+
+            use_date_range = self.hass.states.get(
+                f"{SWITCH}.{self.lockname}_code_slot_{i}_use_date_range_limits"
+            )
+            if use_date_range and use_date_range.state == "on":
+                start_time_state = self.hass.states.get(
+                    f"{DATETIME}.{self.lockname}_code_slot_{i}_date_range_start"
                 )
-                _LOGGER.debug("Slot code: '%s'", slot_code)
-                if slot_code is None:
+                _LOGGER.debug("Start time: '%s'", start_time_state)
+                if start_time_state is None:
                     continue
-                slot_code_value = (
-                    ""
-                    if slot_code.state in ("unknown", "unavailable")
-                    else slot_code.state
-                )
-
-                slot_name = self.hass.states.get(
-                    f"{TEXT}.{self.lockname}_code_slot_{i}_name"
-                )
-                _LOGGER.debug("Slot name: '%s'", slot_name)
-                if slot_name is None:
+                start_datetime = dt.parse_datetime(start_time_state.state)
+                _LOGGER.debug("Start time: '%s'", start_datetime)
+                if start_datetime is None:
                     continue
-                slot_name_value = (
-                    ""
-                    if slot_name.state in ("unknown", "unavailable")
-                    else slot_name.state
-                )
+                start_time = start_datetime
 
-                use_date_range = self.hass.states.get(
-                    f"{SWITCH}.{self.lockname}_code_slot_{i}_use_date_range_limits"
+                end_time_state = self.hass.states.get(
+                    f"{DATETIME}.{self.lockname}_code_slot_{i}_date_range_end"
                 )
-                if use_date_range and use_date_range.state == "on":
-                    start_time_state = self.hass.states.get(
-                        f"{DATETIME}.{self.lockname}_code_slot_{i}_date_range_start"
-                    )
-                    _LOGGER.debug("Start time: '%s'", start_time_state)
-                    if start_time_state is None:
-                        continue
-                    start_datetime = dt.parse_datetime(start_time_state.state)
-                    _LOGGER.debug("Start time: '%s'", start_datetime)
-                    if start_datetime is None:
-                        continue
-                    start_time = start_datetime
-
-                    end_time_state = self.hass.states.get(
-                        f"{DATETIME}.{self.lockname}_code_slot_{i}_date_range_end"
-                    )
-                    _LOGGER.debug("End time: '%s'", end_time_state)
-                    if end_time_state is None:
-                        continue
-                    end_datetime = dt.parse_datetime(end_time_state.state)
-                    _LOGGER.debug("End time: '%s'", end_datetime)
-                    if end_datetime is None:
-                        continue
-                    else:
-                        end_time = end_datetime
+                _LOGGER.debug("End time: '%s'", end_time_state)
+                if end_time_state is None:
+                    continue
+                end_datetime = dt.parse_datetime(end_time_state.state)
+                _LOGGER.debug("End time: '%s'", end_datetime)
+                if end_datetime is None:
+                    continue
                 else:
-                    start_time = dt.start_of_local_day()
-                    end_time = dt.start_of_local_day() + timedelta(days=1)
+                    end_time = end_datetime
+            else:
+                start_time = dt.start_of_local_day()
+                end_time = dt.start_of_local_day() + timedelta(days=1)
 
-                _LOGGER.debug(
-                    "Slot %d: %s, %s, %s, %s",
-                    i,
-                    slot_code_value,
-                    slot_name_value,
-                    start_time,
-                    end_time,
-                )
-                _LOGGER.debug("Updating event overrides")
-                await self.update_event_overrides(
-                    i,
-                    slot_code_value,
-                    slot_name_value,
-                    start_time,
-                    end_time,
+            _LOGGER.debug(
+                "Slot %d: %s, %s, %s, %s",
+                i,
+                slot_code_value,
+                slot_name_value,
+                start_time,
+                end_time,
+            )
+            _LOGGER.debug("Updating event overrides")
+            await self.update_event_overrides(
+                i,
+                slot_code_value,
+                slot_name_value,
+                start_time,
+                end_time,
+                request_refresh=False,
+            )
+
+    async def _async_update_data(self) -> list[CalendarEvent]:
+        """Fetch and parse calendar data."""
+        _LOGGER.debug(
+            "Running RentalControl _async_update_data for %s",
+            self._name,
+        )
+
+        try:
+            session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
+            async with asyncio.timeout(REQUEST_TIMEOUT):
+                response = await session.get(self.url)
+                try:
+                    if response.status != 200:
+                        raise UpdateFailed(
+                            f"Calendar fetch failed for {self._name}: "
+                            f"HTTP {response.status} - {response.reason}"
+                        )
+                    text = await response.text()
+                finally:
+                    response.release()
+        except TimeoutError as err:
+            raise UpdateFailed(f"Calendar fetch timed out for {self._name}") from err
+        except aiohttp.ClientError as err:
+            raise UpdateFailed(
+                f"Calendar fetch failed for {self._name}: {err}"
+            ) from err
+
+        try:
+            # Some calendars are filled with NULL-bytes that break
+            # parsing
+            event_list = Calendar.from_ical(text.replace("\x00", ""))
+
+            # Convert non-standard timezone definitions
+            if "X-WR-TIMEZONE" in event_list:
+                event_list = await self.hass.async_add_executor_job(
+                    x_wr_timezone.to_standard, event_list
                 )
 
-        # always refresh the overrides
+            start_of_events = dt.start_of_local_day()
+            end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
+
+            new_calendar: list[CalendarEvent] = await self._ical_parser(
+                event_list, start_of_events, end_of_events
+            )
+        except Exception as err:
+            raise UpdateFailed(
+                f"Failed to parse calendar for {self._name}: {err}"
+            ) from err
+
+        # Miss tracking: preserve stale data when within tolerance
+        previous: list[CalendarEvent] | None = self.data
+        if (
+            previous
+            and len(previous) > 0
+            and len(new_calendar) == 0
+            and self.num_misses < self.max_misses
+        ):
+            self.num_misses += 1
+            _LOGGER.warning(
+                "No events found in calendar %s, but %d in previous. Miss %d of %d",
+                self._name,
+                len(previous),
+                self.num_misses,
+                self.max_misses,
+            )
+            return previous
+
+        _LOGGER.debug(
+            "Found %d events in calendar %s",
+            len(new_calendar),
+            self._name,
+        )
+        self.num_misses = 0
+
+        # Find the next upcoming event (clear stale state first)
+        self.event = None
+        if len(new_calendar) > 0:
+            found_next_event = False
+            for event in new_calendar:
+                if event.end > dt.now() and not found_next_event:
+                    _LOGGER.debug(
+                        "Event %s is the first event with end in the future: %s",
+                        event.summary,
+                        event.end,
+                    )
+                    self.event = event
+                    found_next_event = True
+
+        # Check overrides after successful parse
         if self.event_overrides:
-            await self.event_overrides.async_check_overrides(self)
+            await self.event_overrides.async_check_overrides(
+                self, calendar=new_calendar
+            )
 
-    def update_config(self, config: Mapping[str, Any]) -> None:
+        return new_calendar
+
+    async def update_config(self, config: Mapping[str, Any]) -> None:
         """Update config entries."""
         self._name = config[CONF_NAME]
+        self.name = self._name
         self.url = config[CONF_URL]
         self.timezone = ZoneInfo(config[CONF_TIMEZONE])
         self.refresh_frequency = config[CONF_REFRESH_FREQUENCY]
-        # always do a refresh ASAP after a config change
-        self.next_refresh = dt.now()
+        self.update_interval = timedelta(minutes=self.refresh_frequency)
         self.event_prefix = config.get(CONF_EVENT_PREFIX)
         # our config flow guarantees that checkin and checkout are valid times
         # just use cv.time to get the parsed time object
@@ -336,8 +385,7 @@ Please update Keymaster to at least v0.1.0-b0
         self.ignore_non_reserved = bool(config.get(CONF_IGNORE_NON_RESERVED))
         self.verify_ssl = bool(config.get(CONF_VERIFY_SSL))
 
-        # updated the calendar in case the fetch days has changed
-        self.calendar = self._refresh_event_dict()
+        await self.async_request_refresh()
 
     async def update_event_overrides(
         self,
@@ -346,6 +394,8 @@ Please update Keymaster to at least v0.1.0-b0
         slot_name: str,
         start_time: datetime,
         end_time: datetime,
+        *,
+        request_refresh: bool = True,
     ) -> None:
         """Update the event overrides with the ServiceCall data."""
         _LOGGER.debug("In update_event_overrides")
@@ -360,14 +410,8 @@ Please update Keymaster to at least v0.1.0-b0
                 self.event_prefix,
             )
 
-            if self.event_overrides.ready and self.calendar_loaded:
-                self.calendar_ready = True
-        else:
-            if self.calendar_loaded:
-                self.calendar_ready = True
-
-        # Overrides have updated, trigger refresh of calendar
-        self.next_refresh = dt.now()
+        if request_refresh:
+            await self.async_request_refresh()
 
     async def _ical_parser(
         self, calendar: Calendar, from_date: datetime, to_date: datetime
@@ -523,118 +567,3 @@ Please update Keymaster to at least v0.1.0-b0
 
         _LOGGER.debug("Event to add: %s", cal_event)
         return cal_event
-
-    def _refresh_event_dict(self) -> list[CalendarEvent]:
-        """Ensure that all events in the calendar are start before max days."""
-
-        def _get_date(day: date | datetime) -> date:
-            """Return the date from a datetime or date object."""
-
-            _LOGGER.debug("In _get_date: %s", day)
-            if isinstance(day, datetime):
-                _LOGGER.debug("Returning date: %s", day.date())
-                return day.date()
-            _LOGGER.debug("Returning date: %s", day)
-            return day
-
-        cal = self.calendar
-        days = dt.start_of_local_day() + timedelta(days=self.days)
-
-        return [x for x in cal if _get_date(x.start) <= days.date()]
-
-    async def _refresh_calendar(self) -> None:
-        """Update list of upcoming events."""
-        _LOGGER.debug("Running RentalControl _refresh_calendar for %s", self.name)
-
-        try:
-            session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
-            async with asyncio.timeout(REQUEST_TIMEOUT):
-                response = await session.get(self.url)
-                try:
-                    if response.status != 200:
-                        _LOGGER.error(
-                            "%s returned %s - %s",
-                            self.url,
-                            response.status,
-                            response.reason,
-                        )
-                        return
-                    text = await response.text()
-                finally:
-                    response.release()
-
-            # Some calendars are for some reason filled with NULL-bytes.
-            # They break the parsing, so we get rid of them
-            event_list = Calendar.from_ical(text.replace("\x00", ""))
-
-            # If the calendar is using a non-standard timezone definition,
-            # convert it to a standard one
-            if "X-WR-TIMEZONE" in event_list:
-                event_list = await self.hass.async_add_executor_job(
-                    x_wr_timezone.to_standard, event_list
-                )
-
-            start_of_events = dt.start_of_local_day()
-            end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
-
-            new_calendar: list[CalendarEvent] = await self._ical_parser(
-                event_list, start_of_events, end_of_events
-            )
-
-            if (
-                len(self.calendar) > 0
-                and len(new_calendar) == 0
-                and self.num_misses < self.max_misses
-            ):
-                self.num_misses += 1
-                _LOGGER.warning(
-                    "No events found in calendar %s, but %d in previous. Miss %d of %d",
-                    self.name,
-                    len(self.calendar),
-                    self.num_misses,
-                    self.max_misses,
-                )
-                return
-            else:
-                _LOGGER.debug(
-                    "Found %d events in calendar %s",
-                    len(new_calendar),
-                    self.name,
-                )
-                self.num_misses = 0
-                self.calendar = new_calendar
-
-            self.calendar_loaded = True
-
-            if not self.lockname:
-                self.calendar_ready = True
-            elif self.event_overrides and self.event_overrides.ready:
-                self.calendar_ready = True
-
-            if len(self.calendar) > 0:
-                found_next_event = False
-                for event in self.calendar:
-                    if event.end > dt.now() and not found_next_event:
-                        _LOGGER.debug(
-                            "Event %s is the first event with end in the future: %s",
-                            event.summary,
-                            event.end,
-                        )
-                        self.event = event
-                        found_next_event = True
-
-            # signal an update to all the event sensors
-            results = await asyncio.gather(
-                *[event.async_update() for event in self.event_sensors],
-                return_exceptions=True,
-            )
-            check_gather_results(results, "Sensor update", _LOGGER)
-        except TimeoutError:
-            _LOGGER.warning("Calendar refresh timed out for %s", self.name)
-        except aiohttp.ClientError as err:
-            _LOGGER.warning("Calendar fetch failed for %s: %s", self.name, err)
-        except Exception:
-            _LOGGER.exception(
-                "Unexpected error refreshing calendar for %s",
-                self.name,
-            )

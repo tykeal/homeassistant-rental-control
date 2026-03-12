@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from homeassistant.config_entries import ConfigEntryState
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -198,8 +199,10 @@ async def test_async_setup_entry_failure(
     """Test setup handles coordinator initialization errors.
 
     This test verifies that async_setup_entry properly handles
-    errors during coordinator initialization, specifically when
-    the coordinator creation fails or encounters an error.
+    errors during coordinator initialization. With DUC,
+    async_config_entry_first_refresh() raises ConfigEntryNotReady
+    when the first data fetch fails, causing the entry to enter
+    SETUP_RETRY state for automatic recovery.
     """
     mock_config_entry.add_to_hass(hass)
 
@@ -210,15 +213,13 @@ async def test_async_setup_entry_failure(
         body="Internal Server Error",
     )
 
-    # Setup should still succeed even if initial calendar fetch fails
-    # The coordinator will handle the error gracefully
-    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    # With DUC, async_config_entry_first_refresh() raises
+    # ConfigEntryNotReady when the first fetch fails, so setup
+    # does not succeed — the entry goes to SETUP_RETRY instead.
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
 
-    # Verify coordinator was still created (error handling is graceful)
-    assert DOMAIN in hass.data
-    assert mock_config_entry.entry_id in hass.data[DOMAIN]
-    assert COORDINATOR in hass.data[DOMAIN][mock_config_entry.entry_id]
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
 # ---------------------------------------------------------------------------

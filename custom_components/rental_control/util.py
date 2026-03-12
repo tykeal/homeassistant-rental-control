@@ -276,13 +276,25 @@ async def async_fire_update_times(coordinator, event) -> None:
     check_gather_results(results, "Lock slot operation")
 
 
-def get_event_names(rc) -> list[str]:
-    """Get the current event names."""
-    event_names = [
-        e.extra_state_attributes["slot_name"]
-        for e in rc.event_sensors
-        if e.extra_state_attributes["slot_name"]
-    ]
+def get_event_names(rc, calendar: list | None = None) -> list[str]:
+    """Get the current event names from coordinator data.
+
+    When called from within _async_update_data, pass the fresh
+    calendar list directly because coordinator.data has not been
+    updated yet.
+    """
+    events = calendar if calendar is not None else rc.data
+    if not events:
+        return []
+    event_names = []
+    for event in events:
+        slot_name = get_slot_name(
+            event.summary,
+            event.description or "",
+            rc.event_prefix or "",
+        )
+        if slot_name:
+            event_names.append(slot_name)
     return event_names
 
 

@@ -27,6 +27,7 @@ from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import CONF_CODE_LENGTH
@@ -70,6 +71,17 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         hass=hass,
         config_entry=config_entry,
     )
+
+    # Bootstrap Keymaster slot overrides from current HA state before
+    # first refresh so overrides are checked against the initial data
+    await coordinator.async_setup_keymaster_overrides()
+
+    # Perform first data refresh before platform setup to guarantee
+    # coordinator.data is populated when entities are created
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryNotReady:
+        raise
 
     hass.data[DOMAIN][config_entry.entry_id] = {
         COORDINATOR: coordinator,
@@ -238,7 +250,7 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     )
 
     # Update the calendar config
-    coordinator.update_config(new_data)
+    await coordinator.update_config(new_data)
 
     # Unsubscribe to any listeners so we can create new ones
     for unsub_listener in hass.data[DOMAIN][config_entry.entry_id].get(

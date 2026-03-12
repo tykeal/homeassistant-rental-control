@@ -575,6 +575,7 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
             status=200,
             body=calendar_data.AIRBNB_ICS_CALENDAR,
             headers={"content-type": "text/calendar"},
+            repeat=True,
         )
 
         config_result = await hass.config_entries.flow.async_init(
@@ -599,6 +600,7 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
                 CONF_SHOULD_UPDATE_CODE: True,
             },
         )
+        await hass.async_block_till_done()
 
     assert config_result["type"] == FlowResultType.CREATE_ENTRY
     entry = config_result["result"]
@@ -610,6 +612,7 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
             status=200,
             body=calendar_data.AIRBNB_ICS_CALENDAR,
             headers={"content-type": "text/calendar"},
+            repeat=True,
         )
 
         result = await hass.config_entries.options.async_init(entry.entry_id)

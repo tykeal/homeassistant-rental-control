@@ -13,19 +13,23 @@
 ##############################################################################
 """Rental Control EventOverrides."""
 
-import asyncio
+from __future__ import annotations
+
 from datetime import date
 from datetime import datetime
 from datetime import time
 import logging
 import re
+from typing import TYPE_CHECKING
 from typing import TypedDict
 
 from homeassistant.util import dt
 
 from .util import async_fire_clear_code
-from .util import check_gather_results
 from .util import get_event_names
+
+if TYPE_CHECKING:
+    from homeassistant.components.calendar import CalendarEvent
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -132,21 +136,27 @@ class EventOverrides:
             if self._overrides[k] is None and k > max_slot
         )
 
-    async def async_check_overrides(self, coordinator) -> None:
-        """Check if overrides need to have a clear_code event fired."""
+    async def async_check_overrides(
+        self,
+        coordinator,
+        calendar: list[CalendarEvent] | None = None,
+    ) -> None:
+        """Check if overrides need to have a clear_code event fired.
+
+        When called from within _async_update_data, pass the fresh
+        calendar list directly because coordinator.data has not been
+        updated yet by the DUC framework.
+        """
 
         _LOGGER.debug("In EventOverrides.async_check_overrides")
 
-        calendar = coordinator.calendar
-
-        if not coordinator.calendar_loaded or not coordinator.events_ready:
-            _LOGGER.debug(
-                "Calendar or events not loaded, not checking override validity"
-            )
+        cal = calendar if calendar is not None else coordinator.data
+        if cal is None:
+            _LOGGER.debug("Calendar data not available, not checking override validity")
             return
 
         _LOGGER.debug(self._overrides)
-        event_names = get_event_names(coordinator)
+        event_names = get_event_names(coordinator, calendar=cal)
         _LOGGER.debug("event_names = %s", event_names)
 
         assigned_slots = self.__get_slots_with_values()
@@ -170,7 +180,7 @@ class EventOverrides:
             start_date = self.get_slot_start_date(slot)
             end_date = self.get_slot_end_date(slot)
 
-            if not len(calendar):
+            if not len(cal):
                 _LOGGER.debug("No events in calendar, clearing %s", slot)
                 clear_code = True
 
@@ -185,10 +195,10 @@ class EventOverrides:
                 clear_code = True
 
             if not clear_code:
-                if coordinator.max_events <= len(calendar):
-                    last_end = calendar[coordinator.max_events - 1].end.date()
+                if coordinator.max_events <= len(cal):
+                    last_end = cal[coordinator.max_events - 1].end.date()
                 else:
-                    last_end = calendar[-1].end.date()
+                    last_end = cal[-1].end.date()
 
                 if start_date > last_end:
                     _LOGGER.debug("%s start is after last event ends, clearing", slot)
@@ -205,13 +215,6 @@ class EventOverrides:
                     dt.start_of_local_day(),
                     dt.start_of_local_day(),
                 )
-
-                # signal an update to all the event sensors
-                results = await asyncio.gather(
-                    *[event.async_update() for event in coordinator.event_sensors],
-                    return_exceptions=True,
-                )
-                check_gather_results(results, "Sensor update", _LOGGER)
 
     def get_slot_name(self, slot: int) -> str:
         """Return the slot name."""
