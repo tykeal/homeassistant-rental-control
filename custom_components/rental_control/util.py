@@ -379,6 +379,9 @@ async def handle_state_change(
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
     lockname = coordinator.lockname
 
+    if not lockname or not coordinator.event_overrides:
+        return
+
     # we can get state changed storms when a slot (or multiple slots) clear and
     # a new code is set, put in a small sleep to let things settle
     await asyncio.sleep(0.1)

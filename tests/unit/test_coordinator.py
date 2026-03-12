@@ -20,6 +20,8 @@ from homeassistant.util import dt
 import homeassistant.util.dt as dt_util
 import pytest
 
+from custom_components.rental_control.const import CONF_LOCK_ENTRY
+from custom_components.rental_control.const import CONF_MAX_EVENTS
 from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
 from custom_components.rental_control.const import DEFAULT_REFRESH_FREQUENCY
 from custom_components.rental_control.coordinator import RentalControlCoordinator
@@ -853,3 +855,269 @@ class TestSlotBootstrapping:
         call_args = mock_update.call_args[0]
         assert call_args[1] == ""
         assert call_args[2] == ""
+
+
+# ---------------------------------------------------------------------------
+# Lockname slugification tests
+# ---------------------------------------------------------------------------
+
+
+class TestLocknameSlugification:
+    """Verify lockname is slugified when assigned to coordinator."""
+
+    async def test_init_slugifies_lockname_with_spaces(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify lockname with spaces is slugified during init."""
+        mock_config_entry.add_to_hass(hass)
+
+        data = dict(mock_config_entry.data)
+        data[CONF_LOCK_ENTRY] = "Front Door"
+        hass.config_entries.async_update_entry(mock_config_entry, data=data)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        assert coordinator.lockname == "front_door"
+
+    async def test_init_slugifies_lockname_with_mixed_case(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify mixed-case lockname is lowered and slugified."""
+        mock_config_entry.add_to_hass(hass)
+
+        data = dict(mock_config_entry.data)
+        data[CONF_LOCK_ENTRY] = "Dining Room Lock"
+        hass.config_entries.async_update_entry(mock_config_entry, data=data)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        assert coordinator.lockname == "dining_room_lock"
+
+    async def test_init_preserves_none_lockname(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify None lockname stays None after init."""
+        mock_config_entry.add_to_hass(hass)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        assert coordinator.lockname is None
+
+    async def test_init_treats_whitespace_lockname_as_none(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify whitespace-only lockname becomes None."""
+        data = dict(mock_config_entry.data)
+        data[CONF_LOCK_ENTRY] = "   "
+        mock_config_entry.add_to_hass(hass)
+        hass.config_entries.async_update_entry(mock_config_entry, data=data)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        assert coordinator.lockname is None
+
+    async def test_init_preserves_already_slugified_lockname(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify pre-slugified lockname passes through unchanged."""
+        mock_config_entry.add_to_hass(hass)
+
+        data = dict(mock_config_entry.data)
+        data[CONF_LOCK_ENTRY] = "front_door"
+        hass.config_entries.async_update_entry(mock_config_entry, data=data)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        assert coordinator.lockname == "front_door"
+
+    async def test_update_config_slugifies_lockname(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify lockname is slugified during options update."""
+        mock_config_entry.add_to_hass(hass)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+        assert coordinator.lockname is None
+
+        config = dict(mock_config_entry.data)
+        config.update(mock_config_entry.options)
+        config[CONF_LOCK_ENTRY] = "Back Patio Door"
+
+        with patch.object(
+            coordinator,
+            "async_request_refresh",
+            new_callable=AsyncMock,
+        ):
+            await coordinator.update_config(config)
+
+        assert coordinator.lockname == "back_patio_door"
+
+    async def test_update_config_creates_event_overrides_when_lock_added(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify event_overrides is created when lockname is set."""
+        mock_config_entry.add_to_hass(hass)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+        assert coordinator.lockname is None
+        assert coordinator.event_overrides is None
+
+        config = dict(mock_config_entry.data)
+        config.update(mock_config_entry.options)
+        config[CONF_LOCK_ENTRY] = "Front Door"
+
+        with (
+            patch.object(
+                coordinator,
+                "async_request_refresh",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                coordinator,
+                "async_setup_keymaster_overrides",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await coordinator.update_config(config)
+
+        assert coordinator.event_overrides is not None
+
+    async def test_update_config_clears_event_overrides_when_lock_removed(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify event_overrides is cleared when lockname removed."""
+        mock_config_entry.add_to_hass(hass)
+
+        data = dict(mock_config_entry.data)
+        data[CONF_LOCK_ENTRY] = "Front Door"
+        hass.config_entries.async_update_entry(mock_config_entry, data=data)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+        assert coordinator.lockname == "front_door"
+        assert coordinator.event_overrides is not None
+
+        config = dict(mock_config_entry.data)
+        config.update(mock_config_entry.options)
+        config.pop(CONF_LOCK_ENTRY, None)
+
+        with patch.object(
+            coordinator,
+            "async_request_refresh",
+            new_callable=AsyncMock,
+        ):
+            await coordinator.update_config(config)
+
+        assert coordinator.lockname is None
+        assert coordinator.event_overrides is None
+
+    async def test_update_config_recreates_overrides_on_max_events_change(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify event_overrides is recreated when max_events changes."""
+        data = dict(mock_config_entry.data)
+        data[CONF_LOCK_ENTRY] = "Front Door"
+        mock_config_entry.add_to_hass(hass)
+        hass.config_entries.async_update_entry(mock_config_entry, data=data)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+        assert coordinator.event_overrides is not None
+        original_overrides = coordinator.event_overrides
+
+        config = dict(mock_config_entry.data)
+        config.update(mock_config_entry.options)
+        config[CONF_MAX_EVENTS] = coordinator.max_events + 1
+
+        with (
+            patch.object(
+                coordinator,
+                "async_request_refresh",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                coordinator,
+                "async_setup_keymaster_overrides",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await coordinator.update_config(config)
+
+        assert coordinator.event_overrides is not original_overrides
+
+    async def test_update_config_bootstraps_overrides_after_recreation(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify overrides are bootstrapped from HA state after recreation."""
+        mock_config_entry.add_to_hass(hass)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        config = dict(mock_config_entry.data)
+        config.update(mock_config_entry.options)
+        config[CONF_LOCK_ENTRY] = "Front Door"
+
+        with (
+            patch.object(
+                coordinator,
+                "async_request_refresh",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                coordinator,
+                "async_setup_keymaster_overrides",
+                new_callable=AsyncMock,
+            ) as mock_bootstrap,
+        ):
+            await coordinator.update_config(config)
+
+        mock_bootstrap.assert_called_once()
+
+    async def test_bootstrap_uses_slugified_lockname_for_entity_ids(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify entity ID lookups use slugified lockname."""
+        mock_config_entry.add_to_hass(hass)
+
+        data = dict(mock_config_entry.data)
+        data[CONF_LOCK_ENTRY] = "Front Door"
+        hass.config_entries.async_update_entry(mock_config_entry, data=data)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+        mock_overrides = MagicMock()
+        mock_overrides.ready = False
+        mock_overrides.async_check_overrides = AsyncMock()
+        coordinator.event_overrides = mock_overrides
+        mock_update = AsyncMock()
+        object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+        # Set states using slugified name (what HA would actually have)
+        hass.states.async_set("text.front_door_code_slot_10_pin", "1234")
+        hass.states.async_set("text.front_door_code_slot_10_name", "Guest")
+
+        await coordinator.async_setup_keymaster_overrides()
+
+        mock_update.assert_awaited_once()
+        call_args = mock_update.call_args[0]
+        assert call_args[1] == "1234"
+        assert call_args[2] == "Guest"
