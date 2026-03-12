@@ -102,7 +102,7 @@ uv run pytest tests/ -x -q
 uv run pytest tests/unit/test_coordinator.py -x -v
 
 # With coverage
-uv run pytest tests/ --cov=custom_components/rental_control
+uv run pytest tests/ --cov=custom_components.rental_control
 
 # Pre-commit pipeline
 uv run pre-commit run --all-files

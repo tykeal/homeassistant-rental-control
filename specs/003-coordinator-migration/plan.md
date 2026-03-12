@@ -23,7 +23,7 @@ behavioral regressions.
 
 ## Technical Context
 
-**Language/Version**: Python 3.13 / 3.14 (dual target per CI matrix)
+**Language/Version**: Python ≥ 3.13.2 (target: py313)
 **Primary Dependencies**: Home Assistant ≥ 2025.8.0, icalendar
 ≥ 6.1.0, x-wr-timezone ≥ 2.0.0
 **Storage**: N/A (all state in-memory, config via HA config entries)
@@ -31,8 +31,9 @@ behavioral regressions.
 aioresponses
 **Target Platform**: Home Assistant (Linux, various hardware)
 **Project Type**: Single project (HA custom component)
-**Performance Goals**: Refresh within configured interval (30s–1440m),
-no event loop blocking, lightweight memory
+**Performance Goals**: Refresh within configured interval (0–1440
+minutes; 0 maps to a 10-second startup delay), no event loop
+blocking, lightweight memory
 **Constraints**: Must not break existing entity IDs, sensor
 attributes, or automation references; must pass full pre-commit
 pipeline (ruff, mypy, interrogate 100%, reuse)

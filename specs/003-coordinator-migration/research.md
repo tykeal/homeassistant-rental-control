@@ -163,7 +163,7 @@ pattern and is no longer needed.
 listener notification.
 
 **Rationale**: Currently, `_refresh_calendar()` lines 627-631 manually
-iterate all registered sensors and calls `async_update()` on each.
+iterate all registered sensors and call `async_update()` on each.
 With the DUC, the flow becomes:
 
 1. `_async_update_data()` returns new data
