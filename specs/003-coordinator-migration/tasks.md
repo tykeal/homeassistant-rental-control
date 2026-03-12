@@ -107,11 +107,11 @@ stored config data are unchanged.
 
 ### Implementation
 
-- [ ] T026 [US3] Update `async_unload_entry()` in custom_components/rental_control/__init__.py: verify unload path works correctly with DUC-based coordinator; ensure listeners are cleaned up properly
-- [ ] T027 [US3] Verify entity identity preservation: confirm unique_id, name, device_info, and extra_state_attributes structure in custom_components/rental_control/calendar.py and custom_components/rental_control/sensors/calsensor.py produce identical values to pre-migration versions
-- [ ] T028 [P] [US3] Update util tests in tests/unit/test_util.py: verify `handle_state_change()` works with DUC coordinator; verify `update_listener()` sets `coordinator.update_interval`
-- [ ] T029 [P] [US3] Update full setup integration tests in tests/integration/test_full_setup.py: verify complete setup/teardown cycle with DUC coordinator; verify entity IDs, names, device registry entries are unchanged; verify Keymaster slot bootstrapping works in `_async_setup()`; verify configuration flow and stored config data are unaltered (FR-012)
-- [ ] T030 [US3] Update event overrides tests in tests/unit/test_event_overrides.py: verify `async_check_overrides()` called from `_async_update_data()` instead of `update()`; verify override integration unchanged; verify `coordinator.data` access replaces `coordinator.calendar`
+- [x] T026 [US3] Update `async_unload_entry()` in custom_components/rental_control/__init__.py: verify unload path works correctly with DUC-based coordinator; ensure listeners are cleaned up properly
+- [x] T027 [US3] Verify entity identity preservation: confirm unique_id, name, device_info, and extra_state_attributes structure in custom_components/rental_control/calendar.py and custom_components/rental_control/sensors/calsensor.py produce identical values to pre-migration versions
+- [x] T028 [P] [US3] Update util tests in tests/unit/test_util.py: verify `handle_state_change()` works with DUC coordinator; verify `update_listener()` sets `coordinator.update_interval`
+- [x] T029 [P] [US3] Update full setup integration tests in tests/integration/test_full_setup.py: verify complete setup/teardown cycle with DUC coordinator; verify entity IDs, names, device registry entries are unchanged; verify Keymaster slot bootstrapping works in `_async_setup()`; verify configuration flow and stored config data are unaltered (FR-012)
+- [x] T030 [US3] Update event overrides tests in tests/unit/test_event_overrides.py: verify `async_check_overrides()` called from `_async_update_data()` instead of `update()`; verify override integration unchanged; verify `coordinator.data` access replaces `coordinator.calendar`
 
 **Checkpoint**: Zero regressions verified. All entity identities
 preserved. Keymaster slot management unchanged. Configuration flow
