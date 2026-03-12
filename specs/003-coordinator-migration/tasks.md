@@ -124,11 +124,11 @@ intact. US3 is complete.
 **Purpose**: Final validation across all success criteria and edge
 cases from the specification
 
-- [ ] T031 Run full test suite and verify coverage ≥ 85% for the `custom_components.rental_control` integration via `uv run pytest tests/ --cov=custom_components.rental_control -x -q`
-- [ ] T032 Run full pre-commit pipeline via `uv run pre-commit run --all-files` and fix any issues
-- [ ] T033 Verify all success criteria: SC-001 (zero regressions), SC-002 (tests pass + new DUC tests), SC-003 (listener-based updates), SC-004 (stale data on failure), SC-005 (recovery), SC-006 (no custom scheduling), SC-007 (coverage ≥ 85%), SC-008 (pre-commit clean)
-- [ ] T034 Verify edge cases from spec: (1) first load with unreachable URL raises ConfigEntryNotReady and retries; (2) refresh interval change via options flow takes effect on next cycle; (3) Keymaster not loaded at startup handled gracefully in `_async_setup()`; (4) mid-refresh shutdown cancels cleanly (DUC cancellation); (5) concurrent refresh requests deduplicated by DUC
-- [ ] T035 Update tasks.md to mark all tasks complete
+- [x] T031 Run full test suite and verify coverage ≥ 85% for the `custom_components.rental_control` integration via `uv run pytest tests/ --cov=custom_components.rental_control -x -q`
+- [x] T032 Run full pre-commit pipeline via `uv run pre-commit run --all-files` and fix any issues
+- [x] T033 Verify all success criteria: SC-001 (zero regressions), SC-002 (tests pass + new DUC tests), SC-003 (listener-based updates), SC-004 (stale data on failure), SC-005 (recovery), SC-006 (no custom scheduling), SC-007 (coverage ≥ 85%), SC-008 (pre-commit clean)
+- [x] T034 Verify edge cases from spec: (1) first load with unreachable URL raises ConfigEntryNotReady and retries; (2) refresh interval change via options flow takes effect on next cycle; (3) Keymaster not loaded at startup handled gracefully in `_async_setup()`; (4) mid-refresh shutdown cancels cleanly (DUC cancellation); (5) concurrent refresh requests deduplicated by DUC
+- [x] T035 Update tasks.md to mark all tasks complete
 
 ---
 
