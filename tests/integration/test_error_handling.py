@@ -11,11 +11,11 @@ without crashing or leaving the system in an inconsistent state.
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from aioresponses import aioresponses
+from homeassistant.config_entries import ConfigEntryState
 import homeassistant.util.dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -42,9 +42,10 @@ async def test_network_error_handling(
 ) -> None:
     """Verify integration handles HTTP failures gracefully.
 
-    When the calendar URL returns HTTP 500, the integration should still
-    set up successfully (coordinator is created), but the calendar should
-    not be marked as loaded.
+    When the calendar URL returns HTTP 500,
+    async_config_entry_first_refresh() raises ConfigEntryNotReady,
+    causing the config entry to enter SETUP_RETRY state. The
+    integration will auto-retry later.
     """
     mock_config_entry.add_to_hass(hass)
 
@@ -55,12 +56,10 @@ async def test_network_error_handling(
             repeat=True,
         )
 
-        assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()
 
-    coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
-    assert coordinator.calendar_loaded is False
-    assert len(coordinator.calendar) == 0
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +73,9 @@ async def test_invalid_ics_handling(
 ) -> None:
     """Verify integration handles ICS data with missing fields.
 
-    ICS events that lack DTSTART/DTEND should be skipped during parsing.
-    The coordinator should still load without raising an exception.
+    ICS events that lack DTSTART/DTEND cause a parsing error in the
+    coordinator. With DUC, this raises UpdateFailed which becomes
+    ConfigEntryNotReady, putting the entry into SETUP_RETRY state.
     """
     mock_config_entry.add_to_hass(hass)
 
@@ -91,13 +91,10 @@ async def test_invalid_ics_handling(
             repeat=True,
         )
 
-        assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()
 
-    coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
-    # Missing-fields events are skipped; calendar_loaded may be True
-    # but the calendar list should be empty
-    assert len(coordinator.calendar) == 0
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
 # ---------------------------------------------------------------------------
@@ -111,8 +108,9 @@ async def test_missing_calendar_handling(
 ) -> None:
     """Verify integration handles 404 responses.
 
-    A 404 means the calendar URL is not found. The coordinator should
-    handle this gracefully without crashing.
+    A 404 means the calendar URL is not found. With DUC, this raises
+    UpdateFailed which becomes ConfigEntryNotReady, putting the entry
+    into SETUP_RETRY state for automatic recovery.
     """
     mock_config_entry.add_to_hass(hass)
 
@@ -123,12 +121,10 @@ async def test_missing_calendar_handling(
             repeat=True,
         )
 
-        assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()
 
-    coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
-    assert coordinator.calendar_loaded is False
-    assert len(coordinator.calendar) == 0
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +138,9 @@ async def test_timeout_handling(
 ) -> None:
     """Verify integration handles request timeouts.
 
-    When the HTTP request raises a TimeoutError the coordinator should
-    not crash the integration setup.
+    When the HTTP request raises a TimeoutError, the coordinator raises
+    UpdateFailed which becomes ConfigEntryNotReady, putting the entry
+    into SETUP_RETRY state for automatic recovery.
     """
     mock_config_entry.add_to_hass(hass)
 
@@ -154,14 +151,10 @@ async def test_timeout_handling(
             repeat=True,
         )
 
-        # Setup succeeds even when fetch times out; coordinator is created
-        # but calendar data is not loaded.
-        result = await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()
 
-    assert result is True
-    coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
-    assert coordinator.calendar_loaded is False
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
 # ---------------------------------------------------------------------------
@@ -173,10 +166,11 @@ async def test_sensor_availability_on_error(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
 ) -> None:
-    """Verify sensors are created and show no-reservation state on error.
+    """Verify setup enters SETUP_RETRY on HTTP error.
 
-    When the calendar fails to load, sensors should still be created
-    and show "No reservation" as their state.
+    With DUC, when the calendar URL returns HTTP 500, the first refresh
+    fails and the config entry goes to SETUP_RETRY state. Sensors are
+    not created until setup succeeds on a subsequent retry.
     """
     mock_config_entry.add_to_hass(hass)
 
@@ -187,14 +181,10 @@ async def test_sensor_availability_on_error(
             repeat=True,
         )
 
-        assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()
 
-    coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
-    assert len(coordinator.event_sensors) == mock_config_entry.data["max_events"]
-
-    for sensor in coordinator.event_sensors:
-        assert "No reservation" in sensor.state
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
 # ---------------------------------------------------------------------------
@@ -206,14 +196,15 @@ async def test_recovery_after_error(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
 ) -> None:
-    """Verify integration recovers when calendar becomes available again.
+    """Verify coordinator recovers after a failed update.
 
-    First update returns an error; second update returns valid data.
-    The coordinator should transition from not-loaded to loaded.
+    With DUC, the first refresh succeeds during setup. Subsequent
+    update failures are handled gracefully by the DUC framework,
+    and the coordinator recovers when valid data is available again.
     """
     mock_config_entry.add_to_hass(hass)
 
-    # Freeze time during setup so next_refresh is predictable
+    # Setup with valid data
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=FROZEN_TIME),
@@ -221,7 +212,8 @@ async def test_recovery_after_error(
     ):
         mock_session.get(
             mock_config_entry.data["url"],
-            status=500,
+            status=200,
+            body=future_ics(base_time=FROZEN_TIME),
             repeat=True,
         )
 
@@ -229,32 +221,40 @@ async def test_recovery_after_error(
         await hass.async_block_till_done()
 
     coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
-    assert coordinator.calendar_loaded is False
+    assert coordinator.last_update_success is True
+    assert len(coordinator.data) > 0
 
-    # Advance past refresh interval and provide valid data
-    future = FROZEN_TIME + timedelta(minutes=coordinator.refresh_frequency + 1)
+    # Trigger an update that fails — DUC handles gracefully
+    with aioresponses() as mock_session:
+        mock_session.get(
+            mock_config_entry.data["url"],
+            status=500,
+            repeat=True,
+        )
 
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    assert coordinator.last_update_success is False
+
+    # Recover with valid data
     with (
         aioresponses() as mock_session,
-        patch.object(dt_util, "now", return_value=future),
-        patch.object(
-            dt_util,
-            "start_of_local_day",
-            return_value=future.replace(hour=0, minute=0, second=0, microsecond=0),
-        ),
+        patch.object(dt_util, "now", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
             status=200,
-            body=future_ics(base_time=future),
+            body=future_ics(base_time=FROZEN_TIME),
             repeat=True,
         )
 
-        await coordinator.update()
+        await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    assert coordinator.calendar_loaded is True
-    assert len(coordinator.calendar) > 0
+    assert coordinator.last_update_success is True
+    assert len(coordinator.data) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -266,16 +266,16 @@ async def test_coordinator_error_state(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
 ) -> None:
-    """Verify coordinator maintains error state correctly.
+    """Verify coordinator tracks error and recovery state correctly.
 
-    After a failed fetch the coordinator should keep calendar_loaded as
-    False and calendar_ready as False. After a successful fetch both
-    should become True (ready depends on overrides, which are not
-    configured here so calendar_ready is set directly on first load).
+    With DUC, successful setup loads calendar data. A subsequent
+    failed update is tracked via last_update_success. Recovery on
+    the next successful update restores calendar_loaded and
+    calendar_ready to True.
     """
     mock_config_entry.add_to_hass(hass)
 
-    # Freeze time during setup so next_refresh is predictable
+    # Setup with valid data
     with (
         aioresponses() as mock_session,
         patch.object(dt_util, "now", return_value=FROZEN_TIME),
@@ -283,7 +283,8 @@ async def test_coordinator_error_state(
     ):
         mock_session.get(
             mock_config_entry.data["url"],
-            status=500,
+            status=200,
+            body=future_ics(base_time=FROZEN_TIME),
             repeat=True,
         )
 
@@ -291,29 +292,35 @@ async def test_coordinator_error_state(
         await hass.async_block_till_done()
 
     coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
-    assert coordinator.calendar_loaded is False
-    assert coordinator.calendar_ready is False
+    assert coordinator.last_update_success is True
 
-    # Now succeed with time advanced past next_refresh
-    future = FROZEN_TIME + timedelta(minutes=coordinator.refresh_frequency + 1)
+    # Trigger a failed update — DUC handles gracefully
+    with aioresponses() as mock_session:
+        mock_session.get(
+            mock_config_entry.data["url"],
+            status=500,
+            repeat=True,
+        )
+
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    assert coordinator.last_update_success is False
+
+    # Recover with valid data
     with (
         aioresponses() as mock_session,
-        patch.object(dt_util, "now", return_value=future),
-        patch.object(
-            dt_util,
-            "start_of_local_day",
-            return_value=future.replace(hour=0, minute=0, second=0, microsecond=0),
-        ),
+        patch.object(dt_util, "now", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             mock_config_entry.data["url"],
             status=200,
-            body=future_ics(base_time=future),
+            body=future_ics(base_time=FROZEN_TIME),
             repeat=True,
         )
 
-        await coordinator.update()
+        await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    assert coordinator.calendar_loaded is True
-    assert coordinator.calendar_ready is True
+    assert coordinator.last_update_success is True

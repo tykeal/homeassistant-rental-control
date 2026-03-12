@@ -25,7 +25,7 @@ def _mock_coordinator(
     *,
     name: str = "Test Rental",
     unique_id: str = "test_unique_id",
-    calendar_ready: bool = False,
+    last_update_success: bool = False,
     event: CalendarEvent | None = None,
 ) -> MagicMock:
     """Create a mock RentalControlCoordinator for testing."""
@@ -38,9 +38,8 @@ def _mock_coordinator(
         "manufacturer": "Andrew Grimberg",
     }
     coordinator.event = event
-    coordinator.calendar_ready = calendar_ready
+    coordinator.last_update_success = last_update_success
     coordinator.calendar = []
-    coordinator.update = AsyncMock()
     coordinator.async_get_events = AsyncMock(return_value=[])
     return coordinator
 
@@ -132,12 +131,12 @@ class TestAsyncSetupEntry:
 
         assert result is True
         async_add_entities.assert_called_once()
-        args, kwargs = async_add_entities.call_args
+        args, _kwargs = async_add_entities.call_args
         entities = args[0]
         assert len(entities) == 1
         assert isinstance(entities[0], RentalControlCalendar)
-        # Second positional arg is update_before_add=True
-        assert args[1] is True
+        # No update_before_add flag (coordinator handles updates)
+        assert len(args) == 1
 
     async def test_entity_uses_correct_coordinator(self) -> None:
         """Verify the created entity references the correct coordinator."""
@@ -164,63 +163,50 @@ class TestAsyncSetupEntry:
 
 
 # ---------------------------------------------------------------------------
-# async_update tests (T041-T053)
+# Coordinator-driven property tests (available, event)
 # ---------------------------------------------------------------------------
 
 
-class TestAsyncUpdate:
-    """Tests for RentalControlCalendar.async_update."""
+class TestCoordinatorDrivenProperties:
+    """Tests that available and event reflect coordinator state."""
 
-    async def test_calls_coordinator_update(self) -> None:
-        """Verify async_update calls coordinator.update()."""
-        coordinator = _mock_coordinator()
+    def test_available_true_when_coordinator_reports_success(self) -> None:
+        """Verify available is True when last_update_success is True."""
+        coordinator = _mock_coordinator(last_update_success=True)
         cal = RentalControlCalendar(coordinator)
+        assert cal.available is True
 
-        await cal.async_update()
+    def test_available_false_when_coordinator_reports_failure(self) -> None:
+        """Verify available is False when last_update_success is False."""
+        coordinator = _mock_coordinator(last_update_success=False)
+        cal = RentalControlCalendar(coordinator)
+        assert cal.available is False
 
-        coordinator.update.assert_awaited_once()
+    def test_available_tracks_coordinator_changes(self) -> None:
+        """Verify available reflects coordinator state changes dynamically."""
+        coordinator = _mock_coordinator(last_update_success=False)
+        cal = RentalControlCalendar(coordinator)
+        assert cal.available is False
 
-    async def test_sets_event_from_coordinator(self) -> None:
-        """Verify async_update copies coordinator.event to the entity."""
+        coordinator.last_update_success = True
+        assert cal.available is True
+
+        coordinator.last_update_success = False
+        assert cal.available is False
+
+    def test_event_returns_coordinator_event(self) -> None:
+        """Verify event property delegates to coordinator.event."""
         mock_event = CalendarEvent(
             summary="Guest Reservation",
             start=datetime(2025, 7, 1, 16, 0, tzinfo=timezone.utc),
             end=datetime(2025, 7, 5, 11, 0, tzinfo=timezone.utc),
         )
-        coordinator = _mock_coordinator(calendar_ready=True, event=mock_event)
+        coordinator = _mock_coordinator(event=mock_event)
         cal = RentalControlCalendar(coordinator)
-
-        assert cal.event is None
-        await cal.async_update()
         assert cal.event is mock_event
 
-    async def test_available_true_when_calendar_ready(self) -> None:
-        """Verify available becomes True when coordinator.calendar_ready is True."""
-        coordinator = _mock_coordinator(calendar_ready=True)
-        cal = RentalControlCalendar(coordinator)
-
-        assert cal.available is False
-        await cal.async_update()
-        assert cal.available is True
-
-    async def test_available_stays_false_when_not_ready(self) -> None:
-        """Verify available stays False when coordinator.calendar_ready is False."""
-        coordinator = _mock_coordinator(calendar_ready=False)
-        cal = RentalControlCalendar(coordinator)
-
-        await cal.async_update()
-        assert cal.available is False
-
-    async def test_event_none_when_coordinator_event_none(self) -> None:
-        """Verify event stays None when coordinator has no event."""
-        coordinator = _mock_coordinator(calendar_ready=True, event=None)
-        cal = RentalControlCalendar(coordinator)
-
-        await cal.async_update()
-        assert cal.event is None
-
-    async def test_event_updates_on_successive_calls(self) -> None:
-        """Verify event reflects latest coordinator state after each update."""
+    def test_event_tracks_coordinator_changes(self) -> None:
+        """Verify event reflects coordinator state changes dynamically."""
         event_1 = CalendarEvent(
             summary="First Guest",
             start=datetime(2025, 7, 1, 16, 0, tzinfo=timezone.utc),
@@ -231,31 +217,18 @@ class TestAsyncUpdate:
             start=datetime(2025, 7, 5, 16, 0, tzinfo=timezone.utc),
             end=datetime(2025, 7, 8, 11, 0, tzinfo=timezone.utc),
         )
-        coordinator = _mock_coordinator(calendar_ready=True, event=event_1)
+        coordinator = _mock_coordinator(event=event_1)
         cal = RentalControlCalendar(coordinator)
-
-        await cal.async_update()
         assert cal.event is event_1
 
         coordinator.event = event_2
-        await cal.async_update()
         assert cal.event is event_2
 
-    async def test_available_not_reset_when_calendar_becomes_unready(self) -> None:
-        """Verify available stays True once set even if calendar_ready flips to False.
-
-        The implementation only sets _available = True; it never resets to False.
-        """
-        coordinator = _mock_coordinator(calendar_ready=True)
+    def test_event_none_when_coordinator_has_no_event(self) -> None:
+        """Verify event is None when coordinator.event is None."""
+        coordinator = _mock_coordinator(event=None)
         cal = RentalControlCalendar(coordinator)
-
-        await cal.async_update()
-        assert cal.available is True
-
-        # Calendar becomes unready — but implementation doesn't reset available
-        coordinator.calendar_ready = False
-        await cal.async_update()
-        assert cal.available is True
+        assert cal.event is None
 
 
 # ---------------------------------------------------------------------------

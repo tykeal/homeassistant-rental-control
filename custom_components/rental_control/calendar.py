@@ -14,6 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import COORDINATOR
 from .const import DOMAIN
@@ -39,27 +40,27 @@ async def async_setup_entry(
 
     calendar = RentalControlCalendar(coordinator)
 
-    async_add_entities([calendar], True)
+    async_add_entities([calendar])
 
     return True
 
 
-class RentalControlCalendar(CalendarEntity):
+class RentalControlCalendar(
+    CoordinatorEntity[RentalControlCoordinator], CalendarEntity
+):
     """A device for getting the next Task from a WebDav Calendar."""
 
     def __init__(self, coordinator: RentalControlCoordinator) -> None:
         """Create the iCal Calendar Event Device."""
-        self._available: bool = False
+        super().__init__(coordinator)
         self._entity_category: EntityCategory = EntityCategory.DIAGNOSTIC
-        self._event: CalendarEvent | None = None
         self._name: str = f"{NAME} {coordinator.name}"
-        self.coordinator: RentalControlCoordinator = coordinator
-        self._unique_id: str = gen_uuid(f"{self.coordinator.unique_id} calendar")
+        self._unique_id: str = gen_uuid(f"{coordinator.unique_id} calendar")
 
     @property
     def available(self) -> bool:
-        """Return the calendar availablity."""
-        return self._available
+        """Return the calendar availability."""
+        return bool(self.coordinator.last_update_success)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -74,7 +75,7 @@ class RentalControlCalendar(CalendarEntity):
     @property
     def event(self) -> CalendarEvent | None:
         """Return the next upcoming event."""
-        return self._event
+        return self.coordinator.event
 
     @property
     def name(self) -> str:
@@ -90,12 +91,3 @@ class RentalControlCalendar(CalendarEntity):
         """Get all events in a specific time frame."""
         _LOGGER.debug("Running RentalControlCalendar async get events")
         return await self.coordinator.async_get_events(hass, start_date, end_date)
-
-    async def async_update(self) -> None:
-        """Update event data."""
-        _LOGGER.debug("Running RentalControlCalendar async update for %s", self.name)
-        await self.coordinator.update()
-        self._event = self.coordinator.event
-
-        if self.coordinator.calendar_ready:
-            self._available = True

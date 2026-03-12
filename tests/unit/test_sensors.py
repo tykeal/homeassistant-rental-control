@@ -52,8 +52,8 @@ def _make_coordinator(
     *,
     name: str = "Test Rental",
     unique_id: str = "test_unique_id",
-    calendar_ready: bool = True,
-    calendar: list | None = None,
+    last_update_success: bool = True,
+    data: list | None = None,
     event_prefix: str = "",
     code_generator: str = "date_based",
     code_length: int = 4,
@@ -64,20 +64,18 @@ def _make_coordinator(
     coordinator = MagicMock()
     coordinator.name = name
     coordinator.unique_id = unique_id
-    coordinator.calendar_ready = calendar_ready
-    coordinator.calendar = calendar
+    coordinator.last_update_success = last_update_success
+    coordinator.data = data
     coordinator.event_prefix = event_prefix
     coordinator.code_generator = code_generator
     coordinator.code_length = code_length
     coordinator.event_overrides = event_overrides
     coordinator.should_update_code = should_update_code
-    coordinator.event_sensors = []
     coordinator.device_info = {
         "identifiers": {(DOMAIN, unique_id)},
         "name": f"{NAME} {name}",
         "manufacturer": "Andrew Grimberg",
     }
-    coordinator.update = AsyncMock()
     return coordinator
 
 
@@ -100,7 +98,7 @@ class TestAsyncSetupEntry:
 
     async def test_creates_sensors_for_max_events(self, hass) -> None:
         """Verify async_setup_entry creates max_events sensors."""
-        coordinator = _make_coordinator(calendar=[_make_event()])
+        coordinator = _make_coordinator(data=[_make_event()])
         hass.data.setdefault(DOMAIN, {})
         hass.data[DOMAIN]["entry1"] = {COORDINATOR: coordinator}
 
@@ -121,8 +119,8 @@ class TestAsyncSetupEntry:
 
     async def test_returns_false_when_calendar_is_none(self, hass) -> None:
         """Verify async_setup_entry returns False when calendar fetch fails."""
-        coordinator = _make_coordinator(calendar_ready=False)
-        coordinator.calendar = None
+        coordinator = _make_coordinator(last_update_success=False)
+        coordinator.data = None
         hass.data.setdefault(DOMAIN, {})
         hass.data[DOMAIN]["entry1"] = {COORDINATOR: coordinator}
 
@@ -135,19 +133,6 @@ class TestAsyncSetupEntry:
 
         assert result is False
         async_add_entities.assert_not_called()
-
-    async def test_calls_coordinator_update(self, hass) -> None:
-        """Verify async_setup_entry calls coordinator.update() before checking calendar."""
-        coordinator = _make_coordinator(calendar=[_make_event()])
-        hass.data.setdefault(DOMAIN, {})
-        hass.data[DOMAIN]["entry1"] = {COORDINATOR: coordinator}
-
-        config_entry = MagicMock()
-        config_entry.data = {"name": "Test Rental", "max_events": 1}
-        config_entry.entry_id = "entry1"
-
-        await async_setup_entry(hass, config_entry, MagicMock())
-        coordinator.update.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -201,12 +186,6 @@ class TestSensorInit:
         coordinator = _make_coordinator()
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         assert sensor.available is False
-
-    def test_registers_with_coordinator(self, hass) -> None:
-        """Verify sensor appends itself to coordinator.event_sensors."""
-        coordinator = _make_coordinator()
-        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
-        assert sensor in coordinator.event_sensors
 
     def test_initial_event_attributes(self, hass) -> None:
         """Verify initial event attributes have expected keys with None values."""
@@ -664,25 +643,27 @@ class TestGenerateDoorCodeLastFour:
 
 
 # ---------------------------------------------------------------------------
-# async_update tests
+# _handle_coordinator_update tests
 # ---------------------------------------------------------------------------
 
 
-class TestAsyncUpdateWithEvents:
-    """Tests for async_update when events are available."""
+class TestHandleCoordinatorUpdateWithEvents:
+    """Tests for _handle_coordinator_update when events are available."""
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_updates_state_with_event(self, hass) -> None:
-        """Verify async_update sets state to 'summary - date time' format."""
+    def test_updates_state_with_event(self, hass) -> None:
+        """Verify _handle_coordinator_update sets state to 'summary - date time' format."""
         event = _make_event(
             summary="Reserved - Jane Smith",
             start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
             end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
         )
-        coordinator = _make_coordinator(calendar=[event])
+        coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         start = datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc)
         expected_date = f"{start.day} {start.strftime('%B %Y')}"
@@ -692,13 +673,15 @@ class TestAsyncUpdateWithEvents:
         assert expected_time in sensor.state
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_updates_event_attributes(self, hass) -> None:
-        """Verify async_update populates all event attributes."""
+    def test_updates_event_attributes(self, hass) -> None:
+        """Verify _handle_coordinator_update populates all event attributes."""
         event = _make_event()
-        coordinator = _make_coordinator(calendar=[event])
+        coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         attrs = sensor.extra_state_attributes
         assert attrs["summary"] == event.summary
@@ -708,14 +691,16 @@ class TestAsyncUpdateWithEvents:
         assert attrs["description"] == event.description
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_calculates_eta(self, hass) -> None:
+    def test_calculates_eta(self, hass) -> None:
         """Verify ETA days/hours/minutes are calculated for future events."""
         start = datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc)
         event = _make_event(start=start)
-        coordinator = _make_coordinator(calendar=[event])
+        coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         attrs = sensor.extra_state_attributes
         assert attrs["eta_days"] == 5
@@ -725,14 +710,16 @@ class TestAsyncUpdateWithEvents:
         assert attrs["eta_minutes"] > 0
 
     @freeze_time("2025-03-20T12:00:00+00:00")
-    async def test_eta_none_for_past_events(self, hass) -> None:
+    def test_eta_none_for_past_events(self, hass) -> None:
         """Verify ETA fields are None when event start is in the past."""
         start = datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc)
         event = _make_event(start=start)
-        coordinator = _make_coordinator(calendar=[event])
+        coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         attrs = sensor.extra_state_attributes
         assert attrs["eta_days"] is None
@@ -740,8 +727,8 @@ class TestAsyncUpdateWithEvents:
         assert attrs["eta_minutes"] is None
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_parses_description_attributes(self, hass) -> None:
-        """Verify async_update extracts parsed attributes from description."""
+    def test_parses_description_attributes(self, hass) -> None:
+        """Verify _handle_coordinator_update extracts parsed attributes from description."""
         description = (
             "Email: guest@airbnb.com\n"
             "Phone: +1 555-987-6543\n"
@@ -750,10 +737,12 @@ class TestAsyncUpdateWithEvents:
             "https://airbnb.com/reservations/abc"
         )
         event = _make_event(description=description)
-        coordinator = _make_coordinator(calendar=[event])
+        coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         attrs = sensor.extra_state_attributes
         assert attrs["guest_email"] == "guest@airbnb.com"
@@ -763,13 +752,15 @@ class TestAsyncUpdateWithEvents:
         assert attrs["reservation_url"] == "https://airbnb.com/reservations/abc"
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_generates_slot_code(self, hass) -> None:
-        """Verify async_update generates a door code."""
+    def test_generates_slot_code(self, hass) -> None:
+        """Verify _handle_coordinator_update generates a door code."""
         event = _make_event()
-        coordinator = _make_coordinator(calendar=[event], code_generator="date_based")
+        coordinator = _make_coordinator(data=[event], code_generator="date_based")
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         attrs = sensor.extra_state_attributes
         assert attrs["slot_code"] is not None
@@ -777,58 +768,65 @@ class TestAsyncUpdateWithEvents:
         assert attrs["slot_code"].isdigit()
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_sets_availability_from_coordinator(self, hass) -> None:
-        """Verify availability reflects coordinator.calendar_ready after update."""
+    def test_sets_availability_from_coordinator(self, hass) -> None:
+        """Verify availability reflects coordinator.last_update_success after update."""
         event = _make_event()
-        coordinator = _make_coordinator(calendar=[event], calendar_ready=True)
+        coordinator = _make_coordinator(data=[event], last_update_success=True)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         assert sensor.available is True
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_uses_correct_event_by_number(self, hass) -> None:
+    def test_uses_correct_event_by_number(self, hass) -> None:
         """Verify sensor selects event at its event_number index."""
         event0 = _make_event(summary="First Event")
         event1 = _make_event(summary="Second Event")
-        coordinator = _make_coordinator(calendar=[event0, event1])
+        coordinator = _make_coordinator(data=[event0, event1])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 1)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         assert "Second Event" in sensor.state
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_refreshes_code_settings_from_coordinator(self, hass) -> None:
-        """Verify async_update re-reads code_generator and code_length from coordinator."""
+    def test_refreshes_code_settings_from_coordinator(self, hass) -> None:
+        """Verify _handle_coordinator_update re-reads code_generator and code_length."""
         event = _make_event()
         coordinator = _make_coordinator(
-            calendar=[event], code_generator="date_based", code_length=4
+            data=[event], code_generator="date_based", code_length=4
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        # Change coordinator settings
         coordinator.code_generator = "static_random"
         coordinator.code_length = 6
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         assert sensor._code_generator == "static_random"
         assert sensor._code_length == 6
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_populates_slot_name(self, hass) -> None:
-        """Verify async_update sets slot_name via get_slot_name."""
+    def test_populates_slot_name(self, hass) -> None:
+        """Verify _handle_coordinator_update sets slot_name via get_slot_name."""
         event = _make_event(summary="Reserved - John Doe")
-        coordinator = _make_coordinator(calendar=[event])
+        coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.get_slot_name",
             return_value="John Doe",
         ) as mock_get_slot:
-            await sensor.async_update()
+            sensor._handle_coordinator_update()
             attrs = sensor.extra_state_attributes
             assert attrs["slot_name"] == "John Doe"
             mock_get_slot.assert_called_once_with(
@@ -838,33 +836,39 @@ class TestAsyncUpdateWithEvents:
             )
 
 
-class TestAsyncUpdateNoEvents:
-    """Tests for async_update when no events are available."""
+class TestHandleCoordinatorUpdateNoEvents:
+    """Tests for _handle_coordinator_update when no events are available."""
 
-    async def test_resets_to_no_reservation(self, hass) -> None:
+    def test_resets_to_no_reservation(self, hass) -> None:
         """Verify state resets to 'No reservation' when no events."""
-        coordinator = _make_coordinator(calendar=[])
+        coordinator = _make_coordinator(data=[])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         assert sensor.state == "No reservation"
 
-    async def test_resets_with_prefix(self, hass) -> None:
+    def test_resets_with_prefix(self, hass) -> None:
         """Verify 'No reservation' includes event_prefix when set."""
-        coordinator = _make_coordinator(calendar=[], event_prefix="Rental")
+        coordinator = _make_coordinator(data=[], event_prefix="Rental")
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         assert sensor.state == "Rental No reservation"
 
-    async def test_clears_event_attributes(self, hass) -> None:
+    def test_clears_event_attributes(self, hass) -> None:
         """Verify all event attributes are reset to None when no events."""
-        coordinator = _make_coordinator(calendar=[])
+        coordinator = _make_coordinator(data=[])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         attrs = sensor.extra_state_attributes
         assert attrs["description"] is None
@@ -875,35 +879,42 @@ class TestAsyncUpdateNoEvents:
         assert attrs["slot_name"] is None
         assert attrs["slot_code"] is None
 
-    async def test_clears_parsed_attributes(self, hass) -> None:
+    def test_clears_parsed_attributes(self, hass) -> None:
         """Verify parsed attributes are cleared when no events."""
-        coordinator = _make_coordinator(calendar=[])
+        coordinator = _make_coordinator(data=[])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor._parsed_attributes = {"guest_email": "old@example.com"}
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         assert "guest_email" not in sensor.extra_state_attributes
 
-    async def test_event_number_beyond_list(self, hass) -> None:
+    def test_event_number_beyond_list(self, hass) -> None:
         """Verify sensor handles event_number >= len(event_list) gracefully."""
         event = _make_event()
-        coordinator = _make_coordinator(calendar=[event])
+        coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 5)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         assert sensor.state == "No reservation"
 
-    async def test_returns_early_when_calendar_not_ready(self, hass) -> None:
-        """Verify async_update returns immediately when calendar_ready is False."""
-        coordinator = _make_coordinator(calendar_ready=False, calendar=[])
+    def test_returns_early_when_not_successful(self, hass) -> None:
+        """Verify _handle_coordinator_update returns when last_update_success is False."""
+        coordinator = _make_coordinator(last_update_success=False, data=[])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
         original_state = sensor.state
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         assert sensor.state == original_state
+        assert sensor._is_available is False
 
 
 # ---------------------------------------------------------------------------
@@ -911,28 +922,31 @@ class TestAsyncUpdateNoEvents:
 # ---------------------------------------------------------------------------
 
 
-class TestAsyncUpdateOverrides:
-    """Tests for async_update interactions with event_overrides."""
+class TestHandleCoordinatorUpdateOverrides:
+    """Tests for _handle_coordinator_update interactions with event_overrides."""
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_fires_set_code_when_no_override(self, hass) -> None:
-        """Verify async_fire_set_code is called when slot not in overrides."""
+    def test_fires_set_code_when_no_override(self, hass) -> None:
+        """Verify async_fire_set_code is scheduled when slot not in overrides."""
         event = _make_event()
         overrides = MagicMock()
         overrides.get_slot_with_name.return_value = None
         overrides.next_slot = 10
-        coordinator = _make_coordinator(calendar=[event], event_overrides=overrides)
+        coordinator = _make_coordinator(data=[event], event_overrides=overrides)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.async_fire_set_code",
             new_callable=AsyncMock,
         ) as mock_set_code:
-            await sensor.async_update()
-            mock_set_code.assert_awaited_once_with(coordinator, sensor, 10)
+            sensor._handle_coordinator_update()
+            mock_set_code.assert_called_once_with(coordinator, sensor, 10)
+            sensor.hass.async_create_task.assert_called_once()
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_uses_override_slot_code(self, hass) -> None:
+    def test_uses_override_slot_code(self, hass) -> None:
         """Verify slot_code from override takes precedence over generated code."""
         event = _make_event()
         override = {
@@ -942,15 +956,17 @@ class TestAsyncUpdateOverrides:
         }
         overrides = MagicMock()
         overrides.get_slot_with_name.return_value = override
-        coordinator = _make_coordinator(calendar=[event], event_overrides=overrides)
+        coordinator = _make_coordinator(data=[event], event_overrides=overrides)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         assert sensor.extra_state_attributes["slot_code"] == "5555"
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_generates_code_when_override_has_no_code(self, hass) -> None:
+    def test_generates_code_when_override_has_no_code(self, hass) -> None:
         """Verify code is generated when override exists but has no slot_code."""
         event = _make_event()
         override = {
@@ -961,24 +977,25 @@ class TestAsyncUpdateOverrides:
         overrides = MagicMock()
         overrides.get_slot_with_name.return_value = override
         coordinator = _make_coordinator(
-            calendar=[event], event_overrides=overrides, code_generator="date_based"
+            data=[event], event_overrides=overrides, code_generator="date_based"
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
-        await sensor.async_update()
+        sensor._handle_coordinator_update()
 
         attrs = sensor.extra_state_attributes
         assert attrs["slot_code"] is not None
         assert attrs["slot_code"].isdigit()
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_fires_update_times_when_dates_change(self, hass) -> None:
-        """Verify async_fire_update_times is called when override dates differ."""
+    def test_fires_update_times_when_dates_change(self, hass) -> None:
+        """Verify async_fire_update_times is scheduled when override dates differ."""
         event = _make_event(
             start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
             end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
         )
-        # Override has different dates
         override = {
             "slot_code": "1234",
             "start_time": datetime(2025, 3, 14, 16, 0, tzinfo=timezone.utc),
@@ -987,22 +1004,25 @@ class TestAsyncUpdateOverrides:
         overrides = MagicMock()
         overrides.get_slot_with_name.return_value = override
         coordinator = _make_coordinator(
-            calendar=[event],
+            data=[event],
             event_overrides=overrides,
             code_generator="static_random",
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.async_fire_update_times",
             new_callable=AsyncMock,
         ) as mock_update_times:
-            await sensor.async_update()
-            mock_update_times.assert_awaited_once_with(coordinator, sensor)
+            sensor._handle_coordinator_update()
+            mock_update_times.assert_called_once_with(coordinator, sensor)
+            sensor.hass.async_create_task.assert_called_once()
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_fires_clear_code_on_date_shift_date_based(self, hass) -> None:
-        """Verify async_fire_clear_code is called on date shift with date_based generator."""
+    def test_fires_clear_code_on_date_shift_date_based(self, hass) -> None:
+        """Verify async_fire_clear_code is scheduled on date shift with date_based generator."""
         event = _make_event(
             start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
             end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
@@ -1016,36 +1036,41 @@ class TestAsyncUpdateOverrides:
         overrides.get_slot_with_name.return_value = override
         overrides.get_slot_key_by_name.return_value = 10
         coordinator = _make_coordinator(
-            calendar=[event],
+            data=[event],
             event_overrides=overrides,
             code_generator="date_based",
             should_update_code=True,
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.async_fire_clear_code",
             new_callable=AsyncMock,
         ) as mock_clear_code:
-            await sensor.async_update()
-            mock_clear_code.assert_awaited_once_with(coordinator, 10)
+            sensor._handle_coordinator_update()
+            mock_clear_code.assert_called_once_with(coordinator, 10)
+            sensor.hass.async_create_task.assert_called_once()
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_no_override_interactions_when_overrides_none(self, hass) -> None:
+    def test_no_override_interactions_when_overrides_none(self, hass) -> None:
         """Verify no set_code/update_times calls when event_overrides is None."""
         event = _make_event()
-        coordinator = _make_coordinator(calendar=[event], event_overrides=None)
+        coordinator = _make_coordinator(data=[event], event_overrides=None)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.async_fire_set_code",
             new_callable=AsyncMock,
         ) as mock_set_code:
-            await sensor.async_update()
-            mock_set_code.assert_not_awaited()
+            sensor._handle_coordinator_update()
+            mock_set_code.assert_not_called()
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_no_set_code_when_override_exists(self, hass) -> None:
+    def test_no_set_code_when_override_exists(self, hass) -> None:
         """Verify set_code is not called when slot already has an override."""
         event = _make_event()
         override = {
@@ -1055,18 +1080,20 @@ class TestAsyncUpdateOverrides:
         }
         overrides = MagicMock()
         overrides.get_slot_with_name.return_value = override
-        coordinator = _make_coordinator(calendar=[event], event_overrides=overrides)
+        coordinator = _make_coordinator(data=[event], event_overrides=overrides)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.async_fire_set_code",
             new_callable=AsyncMock,
         ) as mock_set_code:
-            await sensor.async_update()
-            mock_set_code.assert_not_awaited()
+            sensor._handle_coordinator_update()
+            mock_set_code.assert_not_called()
 
     @freeze_time("2025-03-15T12:00:00+00:00")
-    async def test_updates_times_not_clear_when_eta_days_zero(self, hass) -> None:
+    def test_updates_times_not_clear_when_eta_days_zero(self, hass) -> None:
         """Verify update_times (not clear_code) is called when eta_days is 0.
 
         When event starts today (eta_days=0), the clear_code branch requires
@@ -1085,12 +1112,14 @@ class TestAsyncUpdateOverrides:
         overrides = MagicMock()
         overrides.get_slot_with_name.return_value = override
         coordinator = _make_coordinator(
-            calendar=[event],
+            data=[event],
             event_overrides=overrides,
             code_generator="date_based",
             should_update_code=True,
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
 
         with (
             patch(
@@ -1102,6 +1131,6 @@ class TestAsyncUpdateOverrides:
                 new_callable=AsyncMock,
             ) as mock_update_times,
         ):
-            await sensor.async_update()
-            mock_clear_code.assert_not_awaited()
-            mock_update_times.assert_awaited_once_with(coordinator, sensor)
+            sensor._handle_coordinator_update()
+            mock_clear_code.assert_not_called()
+            mock_update_times.assert_called_once_with(coordinator, sensor)

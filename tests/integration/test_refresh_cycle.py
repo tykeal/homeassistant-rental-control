@@ -62,8 +62,8 @@ async def test_initial_data_load(
         await hass.async_block_till_done()
 
     coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
-    assert coordinator.calendar_loaded is True
-    assert len(coordinator.calendar) > 0
+    assert coordinator.data is not None
+    assert len(coordinator.data) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -77,8 +77,8 @@ async def test_scheduled_refresh(
 ) -> None:
     """Verify automatic refresh happens after the refresh interval elapses.
 
-    Calls coordinator.update() twice: once to seed, then after advancing
-    past next_refresh to confirm a second fetch occurs.
+    After initial setup, calls async_refresh() with time advanced past
+    the refresh interval to confirm a second fetch occurs successfully.
     """
     mock_config_entry.add_to_hass(hass)
 
@@ -98,7 +98,6 @@ async def test_scheduled_refresh(
         await hass.async_block_till_done()
 
         coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
-        first_next_refresh = coordinator.next_refresh
 
     # Advance past the refresh interval and trigger update
     future = FROZEN_TIME + timedelta(minutes=coordinator.refresh_frequency + 1)
@@ -119,10 +118,11 @@ async def test_scheduled_refresh(
             repeat=True,
         )
 
-        await coordinator.update()
+        await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    assert coordinator.next_refresh > first_next_refresh
+    assert coordinator.data is not None
+    assert coordinator.last_update_success is True
 
 
 # ---------------------------------------------------------------------------
@@ -137,8 +137,9 @@ async def test_sensor_updates_on_refresh(
     """Verify sensor entity states reflect data after coordinator refresh.
 
     After setup, sensors are created but not yet updated with event data.
-    A subsequent coordinator update (with time advanced past next_refresh)
-    triggers sensor updates so their state includes the guest name.
+    A subsequent async_refresh() (with time advanced past the refresh
+    interval) triggers sensor updates so their state includes the guest
+    name.
     """
     mock_config_entry.add_to_hass(hass)
 
@@ -160,10 +161,9 @@ async def test_sensor_updates_on_refresh(
         await hass.async_block_till_done()
 
         coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
-        assert len(coordinator.event_sensors) == mock_config_entry.data["max_events"]
 
-        # Advance past next_refresh so a second update triggers a full refresh
-        # which also calls async_update on all event sensors
+        # Advance past the refresh interval so a second refresh triggers
+        # sensor updates with event data
         future = FROZEN_TIME + timedelta(minutes=coordinator.refresh_frequency + 1)
 
     with (
@@ -182,12 +182,12 @@ async def test_sensor_updates_on_refresh(
             repeat=True,
         )
 
-        await coordinator.update()
+        await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    first_sensor = coordinator.event_sensors[0]
-    assert first_sensor.state is not None
-    assert "Test Guest" in first_sensor.state
+    sensor_state = hass.states.get("sensor.rental_control_test_rental_event_0")
+    assert sensor_state is not None
+    assert "Test Guest" in sensor_state.state
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +240,7 @@ async def test_door_code_generation_on_refresh(
     """Verify door codes are generated during refresh when configured.
 
     Uses a config entry with code_generation enabled. After the initial
-    setup, a second coordinator update (past next_refresh) triggers
+    setup, a second async_refresh() (past the refresh interval) triggers
     sensor updates which generate door codes from event data.
     """
     entry = MockConfigEntry(
@@ -304,13 +304,14 @@ async def test_door_code_generation_on_refresh(
             repeat=True,
         )
 
-        await coordinator.update()
+        await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    first_sensor = coordinator.event_sensors[0]
+    sensor_state = hass.states.get("sensor.rental_control_code_test_event_0")
+    assert sensor_state is not None
 
     # Sensor with an event should have generated a door code (stored as slot_code)
-    attrs = first_sensor.extra_state_attributes
+    attrs = sensor_state.attributes
     assert attrs.get("slot_code") is not None
     assert len(attrs["slot_code"]) == 4
     assert attrs["slot_code"].isdigit()
@@ -399,11 +400,9 @@ async def test_concurrent_calendar_updates(
     assert coord_b.name == "Rental B"
     assert coord_a.max_events == 2
     assert coord_b.max_events == 3
-    assert len(coord_a.event_sensors) == 2
-    assert len(coord_b.event_sensors) == 3
 
     # Each coordinator loaded its own calendar independently
-    assert coord_a.calendar_loaded is True
-    assert coord_b.calendar_loaded is True
+    assert coord_a.data is not None
+    assert coord_b.data is not None
     assert coord_a.event.summary == "Reserved: Guest A"
     assert coord_b.event.summary == "Reserved: Guest B"

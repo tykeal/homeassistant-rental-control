@@ -44,8 +44,8 @@ async def async_setup_entry(
     max_events = config.get(CONF_MAX_EVENTS)
 
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
-    await coordinator.update()
-    if coordinator.calendar is None:
+    # Data is guaranteed available via async_config_entry_first_refresh()
+    if coordinator.data is None:
         _LOGGER.error("Unable to fetch iCal")
         return False
 

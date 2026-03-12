@@ -30,26 +30,17 @@ def _make_dt(
     return datetime(year, month, day, hour, minute, tzinfo=dt_util.UTC)
 
 
-def _make_event(end: datetime) -> MagicMock:
-    """Create a mock calendar event with the given end datetime."""
+def _make_event(end: datetime, summary: str = "") -> MagicMock:
+    """Create a mock calendar event with the given end and summary."""
     event = MagicMock()
     event.end = end
+    event.summary = summary
+    event.description = ""
     return event
 
 
-def _make_sensor(slot_name: str) -> MagicMock:
-    """Create a mock event sensor with the given slot_name attribute."""
-    sensor = MagicMock()
-    sensor.extra_state_attributes = {"slot_name": slot_name}
-    sensor.async_update = AsyncMock()
-    return sensor
-
-
 def _make_coordinator(
-    event_names: list[str] | None = None,
     calendar_events: list[MagicMock] | None = None,
-    calendar_loaded: bool = True,
-    events_ready: bool = True,
     max_events: int = 3,
     lockname: str = "test_lock",
 ) -> MagicMock:
@@ -60,13 +51,9 @@ def _make_coordinator(
     coordinator.hass = MagicMock()
     coordinator.hass.services = MagicMock()
     coordinator.hass.services.async_call = AsyncMock()
-    coordinator.calendar_loaded = calendar_loaded
-    coordinator.events_ready = events_ready
     coordinator.max_events = max_events
-
-    sensors = [_make_sensor(n) for n in (event_names or [])]
-    coordinator.event_sensors = sensors
-    coordinator.calendar = calendar_events if calendar_events is not None else []
+    coordinator.event_prefix = ""
+    coordinator.data = calendar_events
     return coordinator
 
 
@@ -459,24 +446,10 @@ class TestSlotTimeAccessors:
 class TestAsyncCheckOverrides:
     """Tests for async_check_overrides clearing logic."""
 
-    async def test_noop_when_calendar_not_loaded(self) -> None:
-        """Verify no action when calendar is not loaded."""
+    async def test_noop_when_calendar_data_unavailable(self) -> None:
+        """Verify no action when calendar data is unavailable."""
         eo = EventOverrides(start_slot=1, max_slots=1)
-        coordinator = _make_coordinator(calendar_loaded=False)
-        now = dt_util.now()
-        eo.update(1, "c", "Guest", now, now + timedelta(days=5))
-
-        with patch(
-            "custom_components.rental_control.event_overrides.async_fire_clear_code",
-            new_callable=AsyncMock,
-        ) as mock_fire:
-            await eo.async_check_overrides(coordinator)
-            mock_fire.assert_not_called()
-
-    async def test_noop_when_events_not_ready(self) -> None:
-        """Verify no action when events are not ready."""
-        eo = EventOverrides(start_slot=1, max_slots=1)
-        coordinator = _make_coordinator(events_ready=False)
+        coordinator = _make_coordinator()
         now = dt_util.now()
         eo.update(1, "c", "Guest", now, now + timedelta(days=5))
 
@@ -492,7 +465,9 @@ class TestAsyncCheckOverrides:
         eo = EventOverrides(start_slot=1, max_slots=1)
         now = dt_util.now()
         eo.update(1, "", "", now, now)
-        coordinator = _make_coordinator(event_names=[])
+        coordinator = _make_coordinator(
+            calendar_events=[_make_event(_make_dt(2025, 8, 1), "Some Event")],
+        )
 
         with patch(
             "custom_components.rental_control.event_overrides.async_fire_clear_code",
@@ -508,8 +483,9 @@ class TestAsyncCheckOverrides:
         eo.update(1, "c", "Departed Guest", now, now + timedelta(days=5))
 
         coordinator = _make_coordinator(
-            event_names=["Current Guest"],
-            calendar_events=[_make_event(now + timedelta(days=10))],
+            calendar_events=[
+                _make_event(now + timedelta(days=10), "Current Guest"),
+            ],
         )
 
         frozen = _make_dt(2025, 1, 1)
@@ -525,26 +501,24 @@ class TestAsyncCheckOverrides:
             # Slot should be cleared
             assert eo.overrides[1] is None
 
-    async def test_clears_when_calendar_empty(self) -> None:
-        """Verify slot is cleared when calendar has no events."""
+    async def test_clears_overrides_when_calendar_empty(self) -> None:
+        """Verify overrides are cleared when calendar is empty.
+
+        An empty event list means no active reservations, so any
+        existing overrides should be cleared.
+        """
         eo = EventOverrides(start_slot=1, max_slots=1)
         now = _make_dt(2025, 7, 1)
         eo.update(1, "c", "Guest", now, now + timedelta(days=5))
 
-        coordinator = _make_coordinator(
-            event_names=["Guest"],
-            calendar_events=[],
-        )
+        coordinator = _make_coordinator(calendar_events=[])
 
-        with (
-            patch(
-                "custom_components.rental_control.event_overrides.async_fire_clear_code",
-                new_callable=AsyncMock,
-            ) as mock_fire,
-            patch.object(dt_util, "start_of_local_day", return_value=now),
-        ):
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            new_callable=AsyncMock,
+        ) as mock_fire:
             await eo.async_check_overrides(coordinator)
-            mock_fire.assert_called_once_with(coordinator, 1)
+            mock_fire.assert_called_once()
 
     async def test_clears_when_start_after_end(self) -> None:
         """Verify slot is cleared when start_date > end_date."""
@@ -554,8 +528,7 @@ class TestAsyncCheckOverrides:
         eo.update(1, "c", "Bad Guest", start, end)
 
         coordinator = _make_coordinator(
-            event_names=["Bad Guest"],
-            calendar_events=[_make_event(_make_dt(2025, 8, 1))],
+            calendar_events=[_make_event(_make_dt(2025, 8, 1), "Bad Guest")],
         )
 
         frozen = _make_dt(2025, 7, 1)
@@ -577,8 +550,7 @@ class TestAsyncCheckOverrides:
         eo.update(1, "c", "Past Guest", start, end)
 
         coordinator = _make_coordinator(
-            event_names=["Past Guest"],
-            calendar_events=[_make_event(_make_dt(2025, 8, 1))],
+            calendar_events=[_make_event(_make_dt(2025, 8, 1), "Past Guest")],
         )
 
         # "Today" is June 10, so end (June 5) < today
@@ -602,8 +574,7 @@ class TestAsyncCheckOverrides:
 
         # Calendar ends July 15, but guest starts Sept 1
         coordinator = _make_coordinator(
-            event_names=["Future Guest"],
-            calendar_events=[_make_event(_make_dt(2025, 7, 15))],
+            calendar_events=[_make_event(_make_dt(2025, 7, 15), "Future Guest")],
             max_events=5,
         )
 
@@ -627,12 +598,11 @@ class TestAsyncCheckOverrides:
 
         # 3 events, max_events=2 => uses calendar[1].end
         events = [
-            _make_event(_make_dt(2025, 7, 10)),
+            _make_event(_make_dt(2025, 7, 10), "Guest"),
             _make_event(_make_dt(2025, 7, 15)),  # index 1
             _make_event(_make_dt(2025, 8, 1)),  # index 2 — ignored
         ]
         coordinator = _make_coordinator(
-            event_names=["Guest"],
             calendar_events=events,
             max_events=2,
         )
@@ -657,8 +627,7 @@ class TestAsyncCheckOverrides:
         eo.update(1, "c", "Valid Guest", start, end)
 
         coordinator = _make_coordinator(
-            event_names=["Valid Guest"],
-            calendar_events=[_make_event(_make_dt(2025, 8, 1))],
+            calendar_events=[_make_event(_make_dt(2025, 8, 1), "Valid Guest")],
             max_events=5,
         )
 
@@ -689,8 +658,11 @@ class TestAsyncCheckOverrides:
         eo.update(3, "c", "Also Past", past, past_end)
 
         coordinator = _make_coordinator(
-            event_names=["Past Guest", "Valid Guest", "Also Past"],
-            calendar_events=[_make_event(_make_dt(2025, 8, 1))],
+            calendar_events=[
+                _make_event(_make_dt(2025, 8, 1), "Past Guest"),
+                _make_event(_make_dt(2025, 8, 1), "Valid Guest"),
+                _make_event(_make_dt(2025, 8, 1), "Also Past"),
+            ],
             max_events=5,
         )
 
@@ -710,30 +682,6 @@ class TestAsyncCheckOverrides:
             # Slots 1 and 3 should be cleared
             assert eo.overrides[1] is None
             assert eo.overrides[3] is None
-
-    async def test_fires_event_sensor_updates_on_clear(self) -> None:
-        """Verify event_sensors.async_update is called when a slot is cleared."""
-        eo = EventOverrides(start_slot=1, max_slots=1)
-        now = _make_dt(2025, 7, 1)
-        eo.update(1, "c", "Gone Guest", now, now + timedelta(days=1))
-
-        sensor = _make_sensor("Other")
-        coordinator = _make_coordinator(
-            event_names=["Other"],
-            calendar_events=[_make_event(now + timedelta(days=30))],
-        )
-        coordinator.event_sensors = [sensor]
-
-        frozen = now
-        with (
-            patch(
-                "custom_components.rental_control.event_overrides.async_fire_clear_code",
-                new_callable=AsyncMock,
-            ),
-            patch.object(dt_util, "start_of_local_day", return_value=frozen),
-        ):
-            await eo.async_check_overrides(coordinator)
-            sensor.async_update.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -806,8 +754,7 @@ class TestEdgeCases:
         eo.update(1, "c", "Today Guest", start, end)
 
         coordinator = _make_coordinator(
-            event_names=["Today Guest"],
-            calendar_events=[_make_event(_make_dt(2025, 8, 1))],
+            calendar_events=[_make_event(_make_dt(2025, 8, 1), "Today Guest")],
             max_events=5,
         )
 
@@ -831,8 +778,7 @@ class TestEdgeCases:
 
         # Last event ends July 15 — same as start
         coordinator = _make_coordinator(
-            event_names=["Edge Guest"],
-            calendar_events=[_make_event(_make_dt(2025, 7, 15))],
+            calendar_events=[_make_event(_make_dt(2025, 7, 15), "Edge Guest")],
             max_events=5,
         )
 
