@@ -39,7 +39,6 @@ def _mock_coordinator(
     }
     coordinator.event = event
     coordinator.last_update_success = last_update_success
-    coordinator.calendar = []
     coordinator.async_get_events = AsyncMock(return_value=[])
     return coordinator
 

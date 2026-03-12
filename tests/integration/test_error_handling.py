@@ -270,8 +270,7 @@ async def test_coordinator_error_state(
 
     With DUC, successful setup loads calendar data. A subsequent
     failed update is tracked via last_update_success. Recovery on
-    the next successful update restores calendar_loaded and
-    calendar_ready to True.
+    the next successful update restores last_update_success to True.
     """
     mock_config_entry.add_to_hass(hass)
 
