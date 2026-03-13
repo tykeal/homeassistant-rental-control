@@ -79,7 +79,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         self._parsed_attributes: dict[str, str] = {}
         self._event_number = event_number
         self._hass = hass
-        self._is_available = False
         self._name = f"{sensor_name} Event {self._event_number}"
         self._state = summary
         self._unique_id = gen_uuid(
@@ -224,11 +223,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         return ret
 
     @property
-    def available(self) -> bool:
-        """Return True if calendar is ready."""
-        return self._is_available
-
-    @property
     def device_info(self) -> DeviceInfo:
         """Return the device info block."""
         return self.coordinator.device_info
@@ -272,9 +266,8 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             self.name,
         )
 
-        # Not yet successful, update availability and skip processing
+        # Not yet successful, skip processing
         if not self.coordinator.last_update_success:
-            self._is_available = False
             self.async_write_ha_state()
             return
 
@@ -434,5 +427,4 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             self._parsed_attributes = {}
             self._state = summary
 
-        self._is_available = self.coordinator.last_update_success
         self.async_write_ha_state()

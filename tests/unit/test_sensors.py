@@ -181,11 +181,15 @@ class TestSensorInit:
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         assert sensor.state == "Rental No reservation"
 
-    def test_initial_availability_false(self, hass) -> None:
-        """Verify sensor is not available initially."""
+    def test_initial_availability_matches_coordinator(self, hass) -> None:
+        """Verify sensor availability tracks coordinator from creation."""
         coordinator = _make_coordinator()
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
-        assert sensor.available is False
+        assert sensor.available is True
+
+        coordinator_fail = _make_coordinator(last_update_success=False)
+        sensor_fail = RentalControlCalSensor(hass, coordinator_fail, f"{NAME} Test", 0)
+        assert sensor_fail.available is False
 
     def test_initial_event_attributes(self, hass) -> None:
         """Verify initial event attributes have expected keys with None values."""
@@ -914,7 +918,7 @@ class TestHandleCoordinatorUpdateNoEvents:
         sensor._handle_coordinator_update()
 
         assert sensor.state == original_state
-        assert sensor._is_available is False
+        assert sensor.available is False
 
 
 # ---------------------------------------------------------------------------
