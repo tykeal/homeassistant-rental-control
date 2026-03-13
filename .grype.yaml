@@ -17,3 +17,12 @@ ignore:
     package:
       name: pillow
       type: python
+
+  # orjson transitive dependency via homeassistant —
+  # unlimited recursion depth in orjson.dumps, fixed in
+  # 3.11.6. We cannot pin orjson directly because it
+  # comes from homeassistant.
+  - vulnerability: GHSA-hx9q-6w63-j58v
+    package:
+      name: orjson
+      type: python
