@@ -85,6 +85,16 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             f"{self.coordinator.unique_id} sensor {self._event_number}"
         )
 
+    async def async_added_to_hass(self) -> None:
+        """Register listener and process existing coordinator data."""
+        await super().async_added_to_hass()
+        # The first coordinator refresh completes before sensors are
+        # created, so the listener registered above will not fire until
+        # the next scheduled refresh.  Process the data that is already
+        # available so the sensor shows current events immediately.
+        if self.coordinator.last_update_success and self.coordinator.data is not None:
+            self._handle_coordinator_update()
+
     def _extract_email(self) -> str | None:
         """Extract guest email from a description"""
         if self._event_attributes["description"] is None:
