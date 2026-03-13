@@ -1233,3 +1233,169 @@ class TestAsyncFireUpdateTimes:
             await async_fire_update_times(coordinator, self._make_event())
 
         assert "Lock slot operation" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Slugified lockname entity ID construction tests
+# ---------------------------------------------------------------------------
+
+
+class TestSlugifiedLocknameEntityIds:
+    """Verify entity IDs use slugified locknames throughout util."""
+
+    async def test_set_code_constructs_slugified_entity_ids(
+        self,
+    ) -> None:
+        """Verify async_fire_set_code builds correct entity IDs.
+
+        When the coordinator lockname has already been slugified from
+        a friendly name like 'Front Door' to 'front_door', all entity
+        IDs in service calls must use the slugified form.
+        """
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.hass.services.async_call = AsyncMock()
+
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "slot_code": "1234",
+            "start": "2025-01-15T16:00:00",
+            "end": "2025-01-17T11:00:00",
+        }
+
+        await async_fire_set_code(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        entity_ids = []
+        for call in calls:
+            target = call.kwargs.get("target", {})
+            eid = target.get("entity_id", "")
+            if eid:
+                entity_ids.append(eid)
+
+        assert entity_ids, "Expected at least one service call with entity_id"
+        for eid in entity_ids:
+            assert "front_door" in eid
+            assert " " not in eid
+
+    async def test_clear_code_constructs_slugified_entity_id(
+        self,
+    ) -> None:
+        """Verify async_fire_clear_code uses slugified lockname."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        await async_fire_clear_code(coordinator, 10)
+
+        call = coordinator.hass.services.async_call.await_args
+        entity_id = call.kwargs["target"]["entity_id"]
+        assert entity_id == "button.front_door_code_slot_10_reset"
+        assert " " not in entity_id
+
+    async def test_state_change_matches_slugified_entity_ids(
+        self,
+    ) -> None:
+        """Verify handle_state_change finds states with slugified IDs.
+
+        Simulates a lock originally named 'Front Door' that has been
+        slugified to 'front_door' by the coordinator. The entity IDs
+        in Home Assistant use the slugified form, and the state change
+        handler must look up those same IDs.
+        """
+        lockname = "front_door"
+        slot_num = 10
+
+        mock_slot_code = MagicMock()
+        mock_slot_code.state = "5678"
+        mock_slot_name = MagicMock()
+        mock_slot_name.state = "Visitor"
+        mock_slot_enabled = MagicMock()
+        mock_slot_enabled.state = "on"
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.event_overrides = MagicMock()
+        mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
+        mock_coordinator.update_event_overrides = AsyncMock()
+
+        def states_get(entity_id: str) -> MagicMock | None:
+            """Return mock states keyed by slugified entity IDs."""
+            assert " " not in entity_id, f"Entity ID contains spaces: {entity_id}"
+            if "enabled" in entity_id:
+                return mock_slot_enabled
+            if "pin" in entity_id:
+                return mock_slot_code
+            if "name" in entity_id:
+                return mock_slot_name
+            if "use_date_range" in entity_id:
+                return None
+            return None
+
+        hass = MagicMock()
+        hass.data = {
+            DOMAIN: {
+                "entry_id": {COORDINATOR: mock_coordinator},
+            }
+        }
+        hass.states.get = states_get
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": (f"switch.{lockname}_code_slot_{slot_num}_enabled")}
+
+        with patch(
+            "custom_components.rental_control.util.asyncio.sleep",
+            new_callable=AsyncMock,
+        ):
+            await handle_state_change(hass, config_entry, event)
+
+        mock_coordinator.update_event_overrides.assert_awaited_once()
+        call_args = mock_coordinator.update_event_overrides.call_args[0]
+        assert call_args[1] == "5678"
+        assert call_args[2] == "Visitor"
+
+    async def test_state_change_returns_early_when_no_lockname(
+        self,
+    ) -> None:
+        """Verify handle_state_change exits early when lockname is None."""
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = None
+        mock_coordinator.event_overrides = MagicMock()
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": "switch.test_code_slot_1_enabled"}
+
+        await handle_state_change(hass, config_entry, event)
+
+        mock_coordinator.event_overrides.update.assert_not_called()
+
+    async def test_state_change_returns_early_when_no_event_overrides(
+        self,
+    ) -> None:
+        """Verify handle_state_change exits early when event_overrides is None."""
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = "front_door"
+        mock_coordinator.event_overrides = None
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": "switch.front_door_code_slot_1_enabled"}
+
+        await handle_state_change(hass, config_entry, event)

@@ -43,6 +43,7 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt
+from homeassistant.util import slugify
 from icalendar import Calendar
 import x_wr_timezone
 
@@ -94,7 +95,10 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
         self.checkin: time = cv.time(config.get(CONF_CHECKIN))
         self.checkout: time = cv.time(config.get(CONF_CHECKOUT))
         self.start_slot: int = int(str(config.get(CONF_START_SLOT)))
-        self.lockname: str | None = config.get(CONF_LOCK_ENTRY)
+        lockname_raw = config.get(CONF_LOCK_ENTRY)
+        self.lockname: str | None = (
+            slugify(lockname_raw) if lockname_raw and lockname_raw.strip() else None
+        )
         self.max_events: int = int(str(config.get(CONF_MAX_EVENTS)))
         self.max_misses: int = DEFAULT_MAX_MISSES
         self.num_misses: int = 0
@@ -132,9 +136,7 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
 
         entity_registry = er.async_get(hass)
         if self.lockname:
-            reset_entity = (
-                f"{BUTTON}.{self.lockname.lower()}_code_slot_{self.start_slot}_reset"
-            )
+            reset_entity = f"{BUTTON}.{self.lockname}_code_slot_{self.start_slot}_reset"
             has_reset = entity_registry.async_get(reset_entity)
             if has_reset is None:
                 error_msg = """
@@ -376,8 +378,28 @@ Please update Keymaster to at least v0.1.0-b0
         # just use cv.time to get the parsed time object
         self.checkin = cv.time(config[CONF_CHECKIN])
         self.checkout = cv.time(config[CONF_CHECKOUT])
-        self.lockname = config.get(CONF_LOCK_ENTRY)
-        self.max_events = config[CONF_MAX_EVENTS]
+        lockname_raw = config.get(CONF_LOCK_ENTRY)
+        previous_lockname = self.lockname
+        previous_max_events = self.max_events
+        previous_start_slot = self.start_slot
+        self.lockname = (
+            slugify(lockname_raw) if lockname_raw and lockname_raw.strip() else None
+        )
+        self.max_events = int(str(config.get(CONF_MAX_EVENTS)))
+        self.start_slot = int(str(config.get(CONF_START_SLOT)))
+        # Keep event_overrides in sync with config changes
+        if self.lockname:
+            overrides_stale = (
+                self.event_overrides is None
+                or self.lockname != previous_lockname
+                or self.max_events != previous_max_events
+                or self.start_slot != previous_start_slot
+            )
+            if overrides_stale:
+                self.event_overrides = EventOverrides(self.start_slot, self.max_events)
+                await self.async_setup_keymaster_overrides()
+        else:
+            self.event_overrides = None
         self.days = config[CONF_DAYS]
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.should_update_code = bool(config.get(CONF_SHOULD_UPDATE_CODE))
