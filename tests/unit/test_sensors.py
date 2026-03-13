@@ -207,6 +207,48 @@ class TestSensorInit:
         assert attrs["slot_name"] is None
         assert attrs["slot_code"] is None
 
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    async def test_async_added_to_hass_processes_existing_data(self, hass) -> None:
+        """Verify sensor processes coordinator data on registration."""
+        event = _make_event()
+        coordinator = _make_coordinator(data=[event], last_update_success=True)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+        sensor.async_on_remove = MagicMock()
+        coordinator.async_add_listener = MagicMock(return_value=MagicMock())
+
+        await sensor.async_added_to_hass()
+
+        assert "Reserved - John Doe" in sensor.state
+
+    async def test_async_added_to_hass_skips_when_no_data(self, hass) -> None:
+        """Verify sensor skips processing when coordinator has no data."""
+        coordinator = _make_coordinator(data=None, last_update_success=True)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+        sensor.async_on_remove = MagicMock()
+        coordinator.async_add_listener = MagicMock(return_value=MagicMock())
+
+        await sensor.async_added_to_hass()
+
+        assert sensor.state == "No reservation"
+
+    async def test_async_added_to_hass_skips_when_not_successful(self, hass) -> None:
+        """Verify sensor skips processing when coordinator failed."""
+        event = _make_event()
+        coordinator = _make_coordinator(data=[event], last_update_success=False)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+        sensor.async_on_remove = MagicMock()
+        coordinator.async_add_listener = MagicMock(return_value=MagicMock())
+
+        await sensor.async_added_to_hass()
+
+        assert sensor.state == "No reservation"
+
 
 class TestSensorProperties:
     """Tests for RentalControlCalSensor property accessors."""
