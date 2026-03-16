@@ -269,13 +269,8 @@ Please update Keymaster to at least v0.1.0-b0
                 request_refresh=False,
             )
 
-    async def _async_update_data(self) -> list[CalendarEvent]:
-        """Fetch and parse calendar data."""
-        _LOGGER.debug(
-            "Running RentalControl _async_update_data for %s",
-            self._name,
-        )
-
+    async def _async_fetch_calendar(self) -> list[CalendarEvent]:
+        """Fetch iCalendar data from URL and parse into events."""
         try:
             session = async_get_clientsession(self.hass, verify_ssl=self.verify_ssl)
             async with asyncio.timeout(REQUEST_TIMEOUT):
@@ -295,6 +290,12 @@ Please update Keymaster to at least v0.1.0-b0
             raise UpdateFailed(
                 f"Calendar fetch failed for {self._name}: {err}"
             ) from err
+        except UpdateFailed:
+            raise
+        except Exception as err:
+            raise UpdateFailed(
+                f"Calendar fetch failed for {self._name}: {err}"
+            ) from err
 
         try:
             # Some calendars are filled with NULL-bytes that break
@@ -310,54 +311,77 @@ Please update Keymaster to at least v0.1.0-b0
             start_of_events = dt.start_of_local_day()
             end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
 
-            new_calendar: list[CalendarEvent] = await self._ical_parser(
-                event_list, start_of_events, end_of_events
-            )
+            return await self._ical_parser(event_list, start_of_events, end_of_events)
         except Exception as err:
             raise UpdateFailed(
                 f"Failed to parse calendar for {self._name}: {err}"
             ) from err
 
-        # Miss tracking: preserve stale data when within tolerance
-        previous: list[CalendarEvent] | None = self.data
-        if (
-            previous
-            and len(previous) > 0
-            and len(new_calendar) == 0
-            and self.num_misses < self.max_misses
-        ):
-            self.num_misses += 1
-            _LOGGER.warning(
-                "No events found in calendar %s, but %d in previous. Miss %d of %d",
-                self._name,
-                len(previous),
-                self.num_misses,
-                self.max_misses,
-            )
-            return previous
-
+    async def _async_update_data(self) -> list[CalendarEvent]:
+        """Fetch and parse calendar data."""
         _LOGGER.debug(
-            "Found %d events in calendar %s",
-            len(new_calendar),
+            "Running RentalControl _async_update_data for %s",
             self._name,
         )
-        self.num_misses = 0
+
+        is_fresh_data = True
+
+        try:
+            new_calendar = await self._async_fetch_calendar()
+        except UpdateFailed as err:
+            if self.data is not None:
+                _LOGGER.warning(
+                    "Calendar fetch/parse failed for %s: %s; "
+                    "using cached data (%d events)",
+                    self._name,
+                    err,
+                    len(self.data),
+                )
+                new_calendar = list(self.data)
+                is_fresh_data = False
+            else:
+                raise
+
+        if is_fresh_data:
+            # Miss tracking: preserve stale data when within tolerance
+            previous: list[CalendarEvent] | None = self.data
+            if (
+                previous
+                and len(previous) > 0
+                and len(new_calendar) == 0
+                and self.num_misses < self.max_misses
+            ):
+                self.num_misses += 1
+                _LOGGER.warning(
+                    "No events found in calendar %s, but %d in previous. Miss %d of %d",
+                    self._name,
+                    len(previous),
+                    self.num_misses,
+                    self.max_misses,
+                )
+                new_calendar = list(previous)
+            else:
+                _LOGGER.debug(
+                    "Found %d events in calendar %s",
+                    len(new_calendar),
+                    self._name,
+                )
+                self.num_misses = 0
 
         # Find the next upcoming event (clear stale state first)
         self.event = None
         if len(new_calendar) > 0:
-            found_next_event = False
             for event in new_calendar:
-                if event.end > dt.now() and not found_next_event:
+                if event.end > dt.now():
                     _LOGGER.debug(
                         "Event %s is the first event with end in the future: %s",
                         event.summary,
                         event.end,
                     )
                     self.event = event
-                    found_next_event = True
+                    break
 
-        # Check overrides after successful parse
+        # Check overrides against current calendar data
         if self.event_overrides:
             await self.event_overrides.async_check_overrides(
                 self, calendar=new_calendar
