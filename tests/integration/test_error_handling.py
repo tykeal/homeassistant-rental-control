@@ -196,11 +196,12 @@ async def test_recovery_after_error(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
 ) -> None:
-    """Verify coordinator recovers after a failed update.
+    """Verify coordinator uses cached data during fetch failures.
 
     With DUC, the first refresh succeeds during setup. Subsequent
-    update failures are handled gracefully by the DUC framework,
-    and the coordinator recovers when valid data is available again.
+    update failures fall back to cached data, keeping
+    last_update_success True. A later successful update returns
+    fresh data normally.
     """
     mock_config_entry.add_to_hass(hass)
 
@@ -224,7 +225,7 @@ async def test_recovery_after_error(
     assert coordinator.last_update_success is True
     assert len(coordinator.data) > 0
 
-    # Trigger an update that fails — DUC handles gracefully
+    # Trigger an update that fails — cached data used, still successful
     with aioresponses() as mock_session:
         mock_session.get(
             mock_config_entry.data["url"],
@@ -235,7 +236,9 @@ async def test_recovery_after_error(
         await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    assert coordinator.last_update_success is False
+    # Coordinator rides on cached data, so last_update_success stays True
+    assert coordinator.last_update_success is True
+    assert len(coordinator.data) > 0
 
     # Recover with valid data
     with (
@@ -266,11 +269,12 @@ async def test_coordinator_error_state(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
 ) -> None:
-    """Verify coordinator tracks error and recovery state correctly.
+    """Verify coordinator rides on cached data during fetch failures.
 
     With DUC, successful setup loads calendar data. A subsequent
-    failed update is tracked via last_update_success. Recovery on
-    the next successful update restores last_update_success to True.
+    failed update falls back to cached data, keeping
+    last_update_success True. Recovery on the next successful update
+    returns fresh data normally.
     """
     mock_config_entry.add_to_hass(hass)
 
@@ -293,7 +297,7 @@ async def test_coordinator_error_state(
     coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
     assert coordinator.last_update_success is True
 
-    # Trigger a failed update — DUC handles gracefully
+    # Trigger a failed update — cached data used, still successful
     with aioresponses() as mock_session:
         mock_session.get(
             mock_config_entry.data["url"],
@@ -304,7 +308,8 @@ async def test_coordinator_error_state(
         await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    assert coordinator.last_update_success is False
+    # Coordinator rides on cached data, so last_update_success stays True
+    assert coordinator.last_update_success is True
 
     # Recover with valid data
     with (
@@ -323,3 +328,68 @@ async def test_coordinator_error_state(
         await hass.async_block_till_done()
 
     assert coordinator.last_update_success is True
+
+
+# ---------------------------------------------------------------------------
+# T126 – sensors stay available on fetch failure with cached data
+# ---------------------------------------------------------------------------
+
+
+async def test_sensors_available_on_fetch_failure(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Verify sensors remain available when fetch fails with cached data.
+
+    After a successful initial load, a subsequent fetch failure should
+    not make sensors unavailable. The coordinator returns cached data,
+    keeping last_update_success True and sensor states intact.
+    """
+    mock_config_entry.add_to_hass(hass)
+
+    ics_body = future_ics(base_time=FROZEN_TIME)
+
+    # Setup with valid data
+    with (
+        aioresponses() as mock_session,
+        patch.object(dt_util, "now", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
+    ):
+        mock_session.get(
+            mock_config_entry.data["url"],
+            status=200,
+            body=ics_body,
+            repeat=True,
+        )
+
+        assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
+
+        # Trigger a second refresh so sensors populate with event data
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    sensor_state = hass.states.get("sensor.rental_control_test_rental_event_0")
+    assert sensor_state is not None
+    assert sensor_state.state != "unavailable"
+    original_state = sensor_state.state
+
+    # Now trigger a fetch failure
+    with aioresponses() as mock_session:
+        mock_session.get(
+            mock_config_entry.data["url"],
+            status=500,
+            repeat=True,
+        )
+
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    assert coordinator.last_update_success is True
+
+    sensor_state = hass.states.get("sensor.rental_control_test_rental_event_0")
+    assert sensor_state is not None
+    assert sensor_state.state != "unavailable"
+    assert sensor_state.state == original_state

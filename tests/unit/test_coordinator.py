@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -661,6 +662,156 @@ class TestRefreshCalendarGenericException:
             coordinator = RentalControlCoordinator(hass, mock_config_entry)
             with pytest.raises(UpdateFailed):
                 await coordinator._async_update_data()
+
+
+class TestFetchFailureCachedDataFallback:
+    """Tests that fetch failures fall back to cached data when available."""
+
+    async def _setup_coordinator_with_cache(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> RentalControlCoordinator:
+        """Create a coordinator and populate it with cached data."""
+        mock_config_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body=_future_ics(),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            result = await coordinator._async_update_data()
+            coordinator.data = result
+
+        assert len(coordinator.data) > 0
+        return coordinator
+
+    async def test_client_error_returns_cached_data(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify aiohttp.ClientError returns cached data."""
+        coordinator = await self._setup_coordinator_with_cache(hass, mock_config_entry)
+        cached_count = len(coordinator.data)
+
+        with aioresponses() as mock_session:
+            mock_session.get(
+                mock_config_entry.data["url"],
+                exception=aiohttp.ClientError("Connection refused"),
+            )
+            result = await coordinator._async_update_data()
+
+        assert len(result) == cached_count
+
+    async def test_http_error_returns_cached_data(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify HTTP 500 returns cached data."""
+        coordinator = await self._setup_coordinator_with_cache(hass, mock_config_entry)
+        cached_count = len(coordinator.data)
+
+        with aioresponses() as mock_session:
+            mock_session.get(
+                mock_config_entry.data["url"],
+                status=500,
+            )
+            result = await coordinator._async_update_data()
+
+        assert len(result) == cached_count
+
+    async def test_parse_error_returns_cached_data(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify malformed ICS returns cached data."""
+        coordinator = await self._setup_coordinator_with_cache(hass, mock_config_entry)
+        cached_count = len(coordinator.data)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+        ):
+            mock_session.get(
+                mock_config_entry.data["url"],
+                body="THIS IS NOT VALID ICS DATA",
+            )
+            result = await coordinator._async_update_data()
+
+        assert len(result) == cached_count
+
+    async def test_timeout_returns_cached_data(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify timeout returns cached data."""
+        coordinator = await self._setup_coordinator_with_cache(hass, mock_config_entry)
+        cached_count = len(coordinator.data)
+
+        with aioresponses() as mock_session:
+            mock_session.get(
+                mock_config_entry.data["url"],
+                exception=asyncio.TimeoutError(),
+            )
+            result = await coordinator._async_update_data()
+
+        assert len(result) == cached_count
+
+    async def test_no_cache_still_raises_update_failed(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify UpdateFailed raised when no cached data exists."""
+        mock_config_entry.add_to_hass(hass)
+
+        with aioresponses() as mock_session:
+            mock_session.get(
+                mock_config_entry.data["url"],
+                exception=aiohttp.ClientError("Connection refused"),
+            )
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+
+    async def test_empty_cache_returns_empty_list(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify empty cached data is returned on fetch failure.
+
+        When the previous fetch returned zero events (valid "no
+        reservations" state), a subsequent fetch failure should return
+        the empty list rather than raising UpdateFailed.
+        """
+        mock_config_entry.add_to_hass(hass)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+        coordinator.data = []
+
+        with aioresponses() as mock_session:
+            mock_session.get(
+                mock_config_entry.data["url"],
+                exception=aiohttp.ClientError("Connection refused"),
+            )
+            result = await coordinator._async_update_data()
+
+        assert result == []
 
 
 # ---------------------------------------------------------------------------

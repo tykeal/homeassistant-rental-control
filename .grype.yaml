@@ -26,3 +26,12 @@ ignore:
     package:
       name: orjson
       type: python
+
+  # PyJWT transitive dependency via homeassistant —
+  # accepts unknown crit header extensions
+  # (CVE-2026-32597). We cannot pin PyJWT directly
+  # because it comes from homeassistant.
+  - vulnerability: GHSA-752w-5fwx-jx9f
+    package:
+      name: PyJWT
+      type: python
