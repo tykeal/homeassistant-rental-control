@@ -791,3 +791,58 @@ class TestEdgeCases:
         ):
             await eo.async_check_overrides(coordinator)
             mock_fire.assert_not_called()
+
+    async def test_clears_slot_beyond_max_events_boundary(self) -> None:
+        """Verify slot is cleared when its event is beyond max_events.
+
+        When the calendar has more events than max_events, only the
+        first max_events events are managed by sensors. A slot tied
+        to an event beyond that boundary should be cleared even though
+        the event name still exists in the full calendar.
+        """
+        eo = EventOverrides(start_slot=1, max_slots=2)
+        today = _make_dt(2025, 7, 1)
+
+        # Slot 1: assigned to "Current Guest" (will be within boundary)
+        eo.update(
+            1,
+            "1234",
+            "Current Guest",
+            _make_dt(2025, 7, 5),
+            _make_dt(2025, 7, 10),
+        )
+        # Slot 2: assigned to "Old Guest" (will be beyond boundary)
+        eo.update(
+            2,
+            "5678",
+            "Old Guest",
+            _make_dt(2025, 7, 12),
+            _make_dt(2025, 7, 18),
+        )
+
+        # Calendar: 3 events, but max_events=2 so sensors only see
+        # the first 2. "Old Guest" is at index 2 (beyond sensors).
+        events = [
+            _make_event(_make_dt(2025, 7, 10), "Current Guest"),
+            _make_event(_make_dt(2025, 7, 20), "New Guest"),
+            _make_event(_make_dt(2025, 7, 25), "Old Guest"),
+        ]
+        coordinator = _make_coordinator(
+            calendar_events=events,
+            max_events=2,
+        )
+
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=today),
+        ):
+            await eo.async_check_overrides(coordinator)
+            # "Old Guest" at index 2 is beyond max_events=2, clear it
+            mock_fire.assert_called_once_with(coordinator, 2)
+            assert eo.overrides[2] is None
+            # "Current Guest" at index 0 stays
+            assert eo.overrides[1] is not None
+            assert eo.overrides[1]["slot_name"] == "Current Guest"

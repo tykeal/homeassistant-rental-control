@@ -156,7 +156,10 @@ class EventOverrides:
             return
 
         _LOGGER.debug(self._overrides)
-        event_names = get_event_names(coordinator, calendar=cal)
+        # Only consider events within the sensor boundary so that
+        # slots tied to events beyond max_events get cleared.
+        sensor_cal = cal[: coordinator.max_events]
+        event_names = get_event_names(coordinator, calendar=sensor_cal)
         _LOGGER.debug("event_names = %s", event_names)
 
         assigned_slots = self.__get_slots_with_values()
