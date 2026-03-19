@@ -603,12 +603,14 @@ Please update Keymaster to at least v0.1.0-b0
         )
         description = event.get("DESCRIPTION")
 
+        raw_uid = event.get("UID")
         cal_event = CalendarEvent(
             description=description,
             end=end.astimezone(self.timezone),
             location=event.get("LOCATION"),
             summary=event.get("SUMMARY", "Unknown"),
             start=start.astimezone(self.timezone),
+            uid=str(raw_uid) if raw_uid is not None else None,
         )
 
         _LOGGER.debug("Event to add: %s", cal_event)
