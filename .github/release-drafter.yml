@@ -102,9 +102,9 @@ version-resolver:
   default: patch
 # yamllint disable rule:line-length
 template: |
-  [![Downloads for this release](https://img.shields.io/github/downloads/tykeal/homeassistant-rental-control/v$RESOLVED_VERSION/total.svg)](https://github.com/tykeal/homeassistant-rental-control/releases/v$RESOLVED_VERSION)
+  [![Downloads for this release](https://img.shields.io/github/downloads/$OWNER/$REPOSITORY/v$RESOLVED_VERSION/total.svg)](https://github.com/$OWNER/$REPOSITORY/releases/v$RESOLVED_VERSION)
 
   $CHANGES
 
   ## Links
-  - [Submit bugs/feature requests](https://github.com/tykeal/homeassistant-rental-control/issues)
+  - [Submit bugs/feature requests](https://github.com/$OWNER/$REPOSITORY/issues)
