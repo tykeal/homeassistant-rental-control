@@ -35,3 +35,19 @@ ignore:
     package:
       name: PyJWT
       type: python
+
+  # pyOpenSSL transitive dependency via homeassistant —
+  # use-after-free on connection shutdown
+  # (GHSA-5pwr-322w-8jr4) and low-severity issue
+  # (GHSA-vp96-hxj8-p424), fixed in 26.0.0. We cannot
+  # pin pyOpenSSL directly because it comes from
+  # homeassistant.
+  - vulnerability: GHSA-5pwr-322w-8jr4
+    package:
+      name: pyOpenSSL
+      type: python
+
+  - vulnerability: GHSA-vp96-hxj8-p424
+    package:
+      name: pyOpenSSL
+      type: python
