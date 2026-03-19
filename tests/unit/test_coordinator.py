@@ -130,6 +130,63 @@ END:VCALENDAR
 
         assert len(result) > 0
         assert result[0].summary == "Reserved: Test Guest"
+        assert result[0].uid == "test-event@example.com"
+
+
+async def test_coordinator_populates_uid_from_ical(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test that CalendarEvent.uid is populated from the iCal UID.
+
+    Verifies that events with a UID property have it passed through
+    to the CalendarEvent, and events missing a UID default to None.
+    """
+    mock_config_entry.add_to_hass(hass)
+
+    frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+
+    future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+    future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+    future_start2 = (frozen_time + timedelta(days=15)).strftime("%Y%m%d")
+    future_end2 = (frozen_time + timedelta(days=20)).strftime("%Y%m%d")
+
+    ics_data = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test Calendar//EN
+BEGIN:VEVENT
+DTSTART:{future_start}T140000Z
+DTEND:{future_end}T110000Z
+UID:stable-id-123@booking.example
+SUMMARY:Reserved: Guest With UID
+STATUS:CONFIRMED
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:{future_start2}T140000Z
+DTEND:{future_end2}T110000Z
+SUMMARY:Reserved: Guest No UID
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+    with (
+        aioresponses() as mock_session,
+        patch.object(dt_util, "now", return_value=frozen_time),
+        patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+    ):
+        mock_session.get(
+            "https://example.com/calendar.ics",
+            status=200,
+            body=ics_data,
+        )
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        result = await coordinator._async_update_data()
+
+        assert len(result) == 2
+        assert result[0].uid == "stable-id-123@booking.example"
+        assert result[1].uid is None
 
 
 async def test_coordinator_refresh_network_error(
