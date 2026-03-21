@@ -187,6 +187,9 @@ class CheckinTrackingSensor(
         self._transition_target_time: datetime | None = None
         self._checked_out_event_key: str | None = None
 
+        # FR-006c: Start day of the follow-on event for midnight-to-awaiting
+        self._next_event_start_day: datetime | None = None
+
         # Internal timer unsubscribe handle
         self._unsub_timer: CALLBACK_TYPE | None = None
 
@@ -477,6 +480,7 @@ class CheckinTrackingSensor(
         self._checkout_source = None
         self._checkout_time = None
         self._checked_out_event_key = None
+        self._next_event_start_day = None
 
         # Schedule auto check-in at event start time
         self._cancel_timer()
@@ -617,18 +621,26 @@ class CheckinTrackingSensor(
 
         Determines which FR-006 scenario applies based on the next
         event's timing and schedules the appropriate transition.
+
+        Date comparisons use the HA-configured local timezone so that
+        "same calendar day" is evaluated from the user's perspective,
+        not raw UTC dates.
         """
         checkout_time = self._checkout_time or dt_util.now()
         next_event = self._find_followon_event(checkout_time)
 
         if next_event is not None:
-            # Check if next event starts on same calendar day
-            if next_event.start.date() == checkout_time.date():
+            # Compare dates in the HA-configured local timezone (T038)
+            local_checkout = dt_util.as_local(checkout_time)
+            local_next_start = dt_util.as_local(next_event.start)
+
+            if local_next_start.date() == local_checkout.date():
                 # FR-006a: Same-day turnover
                 # Transition at half the gap between checkout and next start
                 gap = next_event.start - checkout_time
                 half_gap = checkout_time + (gap / 2)
                 self._transition_target_time = half_gap
+                self._next_event_start_day = None
                 self._unsub_timer = async_track_point_in_time(
                     self._hass,
                     self._async_linger_to_awaiting_callback,
@@ -640,9 +652,13 @@ class CheckinTrackingSensor(
                 )
             else:
                 # FR-006c: Different-day follow-on
-                # Transition at midnight boundary
+                # Transition at midnight boundary; store next event's start
+                # day for the follow-up timer (T039)
                 midnight = dt_util.start_of_local_day(checkout_time + timedelta(days=1))
                 self._transition_target_time = midnight
+                self._next_event_start_day = dt_util.start_of_local_day(
+                    next_event.start
+                )
                 self._unsub_timer = async_track_point_in_time(
                     self._hass,
                     self._async_linger_to_no_reservation_callback,
@@ -650,8 +666,9 @@ class CheckinTrackingSensor(
                 )
                 _LOGGER.debug(
                     "FR-006c: Different-day follow-on, transition to "
-                    "no_reservation at %s",
+                    "no_reservation at %s, follow-up awaiting at %s",
                     midnight.isoformat(),
+                    self._next_event_start_day.isoformat(),
                 )
         else:
             # FR-006b: No follow-on reservation
@@ -659,6 +676,7 @@ class CheckinTrackingSensor(
             cleaning_hours = self._get_cleaning_window()
             linger_end = checkout_time + timedelta(hours=cleaning_hours)
             self._transition_target_time = linger_end
+            self._next_event_start_day = None
             self._unsub_timer = async_track_point_in_time(
                 self._hass,
                 self._async_linger_to_no_reservation_callback,
@@ -673,6 +691,9 @@ class CheckinTrackingSensor(
         """Transition to no_reservation state.
 
         Clears all tracked event data and cancels any pending timers.
+        Note: Does NOT clear ``_next_event_start_day`` — the FR-006c
+        follow-up logic in ``_async_linger_to_no_reservation_callback``
+        reads it after this method returns.
         """
         _LOGGER.debug("Transitioning to no_reservation")
         self._state = CHECKIN_STATE_NO_RESERVATION
@@ -743,7 +764,9 @@ class CheckinTrackingSensor(
     def _async_linger_to_no_reservation_callback(self, _now: datetime) -> None:
         """Timer callback for post-checkout linger expiry (FR-006b/c).
 
-        Transitions from checked_out to no_reservation.
+        Transitions from checked_out to no_reservation. For FR-006c,
+        schedules a follow-up timer at 00:00 on the next event's start
+        day to transition from no_reservation to awaiting_checkin (T039).
 
         Args:
             _now: The current time when the callback fires.
@@ -751,7 +774,67 @@ class CheckinTrackingSensor(
         _LOGGER.debug("Linger-to-no-reservation timer fired for %s", self.name)
         self._unsub_timer = None
         if self._state == CHECKIN_STATE_CHECKED_OUT:
+            # Capture follow-on event start day before clearing state
+            followon_start_day = self._next_event_start_day
             self._transition_to_no_reservation()
+
+            # T039: FR-006c follow-up timer for midnight-to-awaiting
+            if followon_start_day is not None:
+                now = dt_util.now()
+                if followon_start_day > now:
+                    self._transition_target_time = followon_start_day
+                    self._next_event_start_day = followon_start_day
+                    self._unsub_timer = async_track_point_in_time(
+                        self._hass,
+                        self._async_no_reservation_to_awaiting_callback,
+                        followon_start_day,
+                    )
+                    _LOGGER.debug(
+                        "FR-006c: Scheduled follow-up awaiting transition at %s for %s",
+                        followon_start_day.isoformat(),
+                        self.name,
+                    )
+                    self.async_write_ha_state()
+                else:
+                    # Follow-on start day already passed — trigger
+                    # coordinator-driven evaluation on next update
+                    _LOGGER.debug(
+                        "FR-006c: Follow-on start day %s already passed, "
+                        "relying on coordinator update",
+                        followon_start_day.isoformat(),
+                    )
+
+    @callback
+    def _async_no_reservation_to_awaiting_callback(self, _now: datetime) -> None:
+        """Timer callback for FR-006c follow-up awaiting transition.
+
+        Fires at 00:00 on the next event's start day. Finds the
+        follow-on event in coordinator data and transitions to
+        awaiting_checkin. Falls back to no-op if the event has
+        disappeared.
+
+        Args:
+            _now: The current time when the callback fires.
+        """
+        _LOGGER.debug(
+            "FR-006c no-reservation-to-awaiting timer fired for %s",
+            self.name,
+        )
+        self._unsub_timer = None
+        self._next_event_start_day = None
+
+        if self._state != CHECKIN_STATE_NO_RESERVATION:
+            return
+
+        # Find the next event from coordinator data
+        event = self._get_relevant_event()
+        if event is not None:
+            self._transition_to_awaiting(event)
+        else:
+            _LOGGER.debug(
+                "FR-006c: No event found in coordinator data at "
+                "follow-up time, staying in no_reservation",
+            )
 
     async def async_checkout(self) -> None:
         """Handle manual checkout service call.
