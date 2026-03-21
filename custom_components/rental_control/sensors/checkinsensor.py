@@ -3,16 +3,14 @@
 
 """Check-in/check-out tracking sensor for Rental Control.
 
-Implements a four-state state machine that tracks guest occupancy:
-``no_reservation`` → ``awaiting_checkin`` → ``checked_in`` → ``checked_out``.
-Transitions are driven by coordinator data updates and timer-scheduled
-callbacks.
+Phase 2 skeleton — provides entity wiring, unique_id, device_info,
+extra_state_attributes, and _event_key.  State-machine transitions
+will be added in later phases.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-import logging
 from typing import TYPE_CHECKING
 from typing import Any
 
@@ -29,8 +27,6 @@ from ..util import gen_uuid
 if TYPE_CHECKING:
     from ..coordinator import RentalControlCoordinator
 
-_LOGGER = logging.getLogger(__name__)
-
 
 class CheckinTrackingSensor(
     CoordinatorEntity["RentalControlCoordinator"],
@@ -38,13 +34,9 @@ class CheckinTrackingSensor(
 ):
     """Sensor that tracks guest check-in/check-out state.
 
-    Maintains a four-state state machine driven by coordinator data
-    updates and timer-scheduled callbacks:
-
-    - ``no_reservation``: No relevant calendar event
-    - ``awaiting_checkin``: Event identified, waiting for guest arrival
-    - ``checked_in``: Guest has arrived
-    - ``checked_out``: Guest has departed, post-checkout linger active
+    Phase 2 skeleton — exposes entity metadata and attributes.
+    State-machine transitions (no_reservation → awaiting_checkin →
+    checked_in → checked_out) will be added in later phases.
     """
 
     def __init__(
@@ -63,7 +55,7 @@ class CheckinTrackingSensor(
         super().__init__(coordinator)
         self._hass = hass
         self._config_entry = config_entry
-        self._attr_native_value: str = CHECKIN_STATE_NO_RESERVATION
+        self._state: str = CHECKIN_STATE_NO_RESERVATION
 
         # Tracked event fields (from data-model.md)
         self._tracked_event_summary: str | None = None
@@ -93,6 +85,11 @@ class CheckinTrackingSensor(
         return f"{self.coordinator.name} Check-in"
 
     @property
+    def state(self) -> str:
+        """Return the current check-in tracking state."""
+        return self._state
+
+    @property
     def device_info(self) -> DeviceInfo:
         """Return device info linking to the existing integration device."""
         return self.coordinator.device_info
@@ -104,7 +101,7 @@ class CheckinTrackingSensor(
         Returns all tracked event attributes per data-model.md.
         """
         return {
-            "state": self._attr_native_value,
+            "state": self._state,
             "summary": self._tracked_event_summary,
             "start": (
                 self._tracked_event_start.isoformat()
