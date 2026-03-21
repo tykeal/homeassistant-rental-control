@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
-from custom_components.rental_control.const import KEYMASTER_MONITORING_ENTITY_ID
+from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
 from custom_components.rental_control.const import UNSUB_LISTENERS
 from custom_components.rental_control.switch import KeymasterMonitoringSwitch
 from custom_components.rental_control.switch import async_setup_entry
@@ -256,12 +256,12 @@ class TestKeymasterMonitoringSwitchRestore:
 
         assert switch.is_on is False
 
-    async def test_added_to_hass_stores_entity_id(
+    async def test_added_to_hass_stores_entity_reference(
         self,
         hass: HomeAssistant,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test async_added_to_hass stores entity_id in hass.data."""
+        """Test async_added_to_hass stores switch reference in hass.data."""
         coordinator = _make_coordinator(hass)
         switch = _create_switch(hass, coordinator, mock_checkin_config_entry)
 
@@ -269,9 +269,9 @@ class TestKeymasterMonitoringSwitchRestore:
             await switch.async_added_to_hass()
 
         stored = hass.data[DOMAIN][mock_checkin_config_entry.entry_id].get(
-            KEYMASTER_MONITORING_ENTITY_ID,
+            KEYMASTER_MONITORING_SWITCH,
         )
-        assert stored == "switch.test_rental_keymaster_monitoring"
+        assert stored is switch
 
 
 class TestSwitchPlatformSetup:

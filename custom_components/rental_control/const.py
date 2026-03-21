@@ -34,7 +34,7 @@ MAP_ICON = "mdi:map-search"
 COORDINATOR = "coordinator"
 UNSUB_LISTENERS = "unsub_listeners"
 CHECKIN_SENSOR = "checkin_sensor"
-KEYMASTER_MONITORING_ENTITY_ID = "keymaster_monitoring_entity_id"
+KEYMASTER_MONITORING_SWITCH = "keymaster_monitoring_switch"
 
 # Platforms
 CALENDAR = "calendar"

@@ -42,7 +42,7 @@ from .const import COORDINATOR
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_GENERATE
 from .const import DOMAIN
-from .const import KEYMASTER_MONITORING_ENTITY_ID
+from .const import KEYMASTER_MONITORING_SWITCH
 from .const import NAME
 from .const import PLATFORMS
 from .const import UNSUB_LISTENERS
@@ -366,13 +366,19 @@ def async_register_keymaster_listener(
             )
             return
 
-        # Look up monitoring switch entity_id from hass.data
-        monitoring_entity_id = entry_data.get(KEYMASTER_MONITORING_ENTITY_ID)
-        if monitoring_entity_id is None:
+        # Check monitoring switch via stored entity reference
+        monitoring_switch = entry_data.get(KEYMASTER_MONITORING_SWITCH)
+        if monitoring_switch is None:
             _LOGGER.warning(
                 "Keymaster unlock event received but monitoring "
-                "switch entity_id not found for entry %s",
+                "switch not found for entry %s",
                 config_entry.entry_id,
+            )
+            return
+
+        if not monitoring_switch.is_on:
+            _LOGGER.debug(
+                "Ignoring keymaster unlock: monitoring switch is off",
             )
             return
 
@@ -382,7 +388,6 @@ def async_register_keymaster_listener(
         )
         checkin_sensor.async_handle_keymaster_unlock(
             code_slot_num=code_slot_num,
-            monitoring_entity_id=monitoring_entity_id,
         )
 
     unsub = hass.bus.async_listen(

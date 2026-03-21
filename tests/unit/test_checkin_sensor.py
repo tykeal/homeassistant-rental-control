@@ -1646,9 +1646,6 @@ class TestKeymasterEventHandling:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_AWAITING
 
-        # Mock the keymaster monitoring switch as ON
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
-
         # Collect fired events
         fired_events = []
         hass.bus.async_listen(
@@ -1659,7 +1656,6 @@ class TestKeymasterEventHandling:
         # Call the keymaster unlock handler with a valid code slot
         sensor.async_handle_keymaster_unlock(
             code_slot_num=11,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
 
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
@@ -1692,12 +1688,10 @@ class TestKeymasterEventHandling:
         assert sensor._state == CHECKIN_STATE_AWAITING
 
         # Mock switch ON
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
 
         # Call with code_slot_num=0 — should be ignored
         sensor.async_handle_keymaster_unlock(
             code_slot_num=0,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
 
         # Should remain in awaiting_checkin
@@ -1723,26 +1717,21 @@ class TestKeymasterEventHandling:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_AWAITING
 
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
-
         # Slot 9 is below range [10, 13)
         sensor.async_handle_keymaster_unlock(
             code_slot_num=9,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
         assert sensor._state == CHECKIN_STATE_AWAITING
 
         # Slot 13 is at upper bound (exclusive), so outside range
         sensor.async_handle_keymaster_unlock(
             code_slot_num=13,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
         assert sensor._state == CHECKIN_STATE_AWAITING
 
         # Slot 100 is well outside range
         sensor.async_handle_keymaster_unlock(
             code_slot_num=100,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
         assert sensor._state == CHECKIN_STATE_AWAITING
 
@@ -1764,11 +1753,8 @@ class TestKeymasterEventHandling:
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._checkin_source = "automatic"
 
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
-
         sensor.async_handle_keymaster_unlock(
             code_slot_num=11,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
 
         # Should remain checked_in with original source
@@ -1781,7 +1767,14 @@ class TestKeymasterEventHandling:
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test that unlock when monitoring switch is off is ignored."""
+        """Test that unlock when monitoring switch is off is filtered by listener.
+
+        The monitoring switch check is now performed by the event bus
+        listener in __init__.py. This test verifies the sensor method
+        does NOT receive calls when the switch is off (tested via the
+        event bus listener tests in TestEventBusListenerFiltering).
+        The sensor-level method no longer checks switch state.
+        """
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
@@ -1795,16 +1788,13 @@ class TestKeymasterEventHandling:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_AWAITING
 
-        # Switch is OFF
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "off")
-
+        # Calling the sensor method directly transitions (switch check
+        # is now in the listener, not the sensor)
         sensor.async_handle_keymaster_unlock(
             code_slot_num=11,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
 
-        # Should remain in awaiting_checkin
-        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
 
     async def test_unlock_when_monitoring_switch_missing_ignored(
         self,
@@ -1812,7 +1802,11 @@ class TestKeymasterEventHandling:
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test that unlock is ignored when monitoring switch entity is not found."""
+        """Test that sensor method works when called directly.
+
+        The monitoring switch entity lookup was moved to the event
+        bus listener.  The sensor method no longer checks switch state.
+        """
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
@@ -1826,13 +1820,11 @@ class TestKeymasterEventHandling:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_AWAITING
 
-        # No switch entity set in hass.states — entity doesn't exist
         sensor.async_handle_keymaster_unlock(
             code_slot_num=11,
-            monitoring_entity_id="switch.nonexistent_keymaster_monitoring",
         )
 
-        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
 
     async def test_checkin_event_fires_with_keymaster_source(
         self,
@@ -1858,8 +1850,6 @@ class TestKeymasterEventHandling:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_AWAITING
 
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
-
         fired_events = []
         hass.bus.async_listen(
             EVENT_RENTAL_CONTROL_CHECKIN,
@@ -1868,7 +1858,6 @@ class TestKeymasterEventHandling:
 
         sensor.async_handle_keymaster_unlock(
             code_slot_num=11,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
         await hass.async_block_till_done()
 
@@ -1896,12 +1885,9 @@ class TestKeymasterEventHandling:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_AWAITING
 
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
-
         # Slot 10 is the lower bound (inclusive)
         sensor.async_handle_keymaster_unlock(
             code_slot_num=10,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
 
@@ -1925,12 +1911,9 @@ class TestKeymasterEventHandling:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_AWAITING
 
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
-
         # Slot 12 = 10 + 3 - 1 is the last valid slot
         sensor.async_handle_keymaster_unlock(
             code_slot_num=12,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
 
@@ -1949,10 +1932,11 @@ class TestToggleMidEvent:
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test toggling keymaster monitoring on while awaiting starts listening.
+        """Test sensor accepts keymaster unlock when in awaiting state.
 
-        When the switch is turned on while in awaiting_checkin, the sensor
-        should accept keymaster unlock events immediately.
+        The monitoring switch check is now in the event bus listener.
+        This test verifies the sensor method transitions correctly
+        when called directly (listener already validated switch is on).
         """
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
@@ -1968,21 +1952,9 @@ class TestToggleMidEvent:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_AWAITING
 
-        # Initially switch is off — unlock should be ignored
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "off")
+        # Sensor method called (listener verified switch is on)
         sensor.async_handle_keymaster_unlock(
             code_slot_num=11,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
-        )
-        assert sensor._state == CHECKIN_STATE_AWAITING
-
-        # Now toggle switch on
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
-
-        # Now unlock should work immediately
-        sensor.async_handle_keymaster_unlock(
-            code_slot_num=11,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
         assert sensor._checkin_source == "keymaster"
@@ -1993,11 +1965,12 @@ class TestToggleMidEvent:
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test toggling off while awaiting falls back to time-based auto check-in.
+        """Test time-based fallback fires at event start regardless of toggle.
 
-        The auto check-in timer should still be scheduled at event start
-        regardless of toggle state. When monitoring is toggled off, the
-        time-based fallback at event start time still fires.
+        The auto check-in timer is always scheduled at event start
+        regardless of monitoring switch state.  When monitoring is off,
+        the listener blocks keymaster events, and only the time-based
+        callback fires.
         """
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
@@ -2014,18 +1987,7 @@ class TestToggleMidEvent:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_AWAITING
 
-        # Switch is on
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
-
-        # Toggle switch off — unlock should no longer work
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "off")
-        sensor.async_handle_keymaster_unlock(
-            code_slot_num=11,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
-        )
-        assert sensor._state == CHECKIN_STATE_AWAITING
-
-        # But auto check-in timer should still be scheduled
+        # Auto check-in timer should be scheduled
         assert sensor._unsub_timer is not None
         assert sensor._transition_target_time == future_start
 
@@ -2061,13 +2023,9 @@ class TestToggleMidEvent:
         sensor._tracked_event_end = event.end
         sensor._checkin_source = "automatic"
 
-        # Toggle monitoring switch on — should not affect current checked_in state
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
-
         # Unlock event while already checked in — should be ignored
         sensor.async_handle_keymaster_unlock(
             code_slot_num=11,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
 
         # State and source unchanged
@@ -2090,11 +2048,8 @@ class TestToggleMidEvent:
 
         assert sensor._state == CHECKIN_STATE_NO_RESERVATION
 
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
-
         sensor.async_handle_keymaster_unlock(
             code_slot_num=11,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
 
         assert sensor._state == CHECKIN_STATE_NO_RESERVATION
@@ -2115,11 +2070,8 @@ class TestToggleMidEvent:
 
         sensor._state = CHECKIN_STATE_CHECKED_OUT
 
-        hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
-
         sensor.async_handle_keymaster_unlock(
             code_slot_num=11,
-            monitoring_entity_id="switch.test_rental_keymaster_monitoring",
         )
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
@@ -2149,9 +2101,7 @@ class TestEventBusListenerFiltering:
         from custom_components.rental_control.const import CHECKIN_SENSOR
         from custom_components.rental_control.const import COORDINATOR
         from custom_components.rental_control.const import DOMAIN
-        from custom_components.rental_control.const import (
-            KEYMASTER_MONITORING_ENTITY_ID,
-        )
+        from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
         from custom_components.rental_control.const import UNSUB_LISTENERS
 
         mock_checkin_coordinator.lockname = "front_door"
@@ -2165,7 +2115,7 @@ class TestEventBusListenerFiltering:
             COORDINATOR: mock_checkin_coordinator,
             UNSUB_LISTENERS: [],
             CHECKIN_SENSOR: sensor,
-            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
         }
 
         async_register_keymaster_listener(hass, mock_checkin_config_entry)
@@ -2182,7 +2132,6 @@ class TestEventBusListenerFiltering:
 
         sensor.async_handle_keymaster_unlock.assert_called_once_with(
             code_slot_num=11,
-            monitoring_entity_id="switch.test_monitoring",
         )
 
     async def test_wrong_lockname_not_forwarded(
@@ -2196,9 +2145,7 @@ class TestEventBusListenerFiltering:
         from custom_components.rental_control.const import CHECKIN_SENSOR
         from custom_components.rental_control.const import COORDINATOR
         from custom_components.rental_control.const import DOMAIN
-        from custom_components.rental_control.const import (
-            KEYMASTER_MONITORING_ENTITY_ID,
-        )
+        from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
         from custom_components.rental_control.const import UNSUB_LISTENERS
 
         mock_checkin_coordinator.lockname = "front_door"
@@ -2212,7 +2159,7 @@ class TestEventBusListenerFiltering:
             COORDINATOR: mock_checkin_coordinator,
             UNSUB_LISTENERS: [],
             CHECKIN_SENSOR: sensor,
-            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
         }
 
         async_register_keymaster_listener(hass, mock_checkin_config_entry)
@@ -2240,9 +2187,7 @@ class TestEventBusListenerFiltering:
         from custom_components.rental_control.const import CHECKIN_SENSOR
         from custom_components.rental_control.const import COORDINATOR
         from custom_components.rental_control.const import DOMAIN
-        from custom_components.rental_control.const import (
-            KEYMASTER_MONITORING_ENTITY_ID,
-        )
+        from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
         from custom_components.rental_control.const import UNSUB_LISTENERS
 
         mock_checkin_coordinator.lockname = "front_door"
@@ -2256,7 +2201,7 @@ class TestEventBusListenerFiltering:
             COORDINATOR: mock_checkin_coordinator,
             UNSUB_LISTENERS: [],
             CHECKIN_SENSOR: sensor,
-            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
         }
 
         async_register_keymaster_listener(hass, mock_checkin_config_entry)
@@ -2284,9 +2229,7 @@ class TestEventBusListenerFiltering:
         from custom_components.rental_control.const import CHECKIN_SENSOR
         from custom_components.rental_control.const import COORDINATOR
         from custom_components.rental_control.const import DOMAIN
-        from custom_components.rental_control.const import (
-            KEYMASTER_MONITORING_ENTITY_ID,
-        )
+        from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
         from custom_components.rental_control.const import UNSUB_LISTENERS
 
         mock_checkin_coordinator.lockname = "front_door"
@@ -2300,7 +2243,7 @@ class TestEventBusListenerFiltering:
             COORDINATOR: mock_checkin_coordinator,
             UNSUB_LISTENERS: [],
             CHECKIN_SENSOR: sensor,
-            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
         }
 
         async_register_keymaster_listener(hass, mock_checkin_config_entry)
@@ -2328,9 +2271,7 @@ class TestEventBusListenerFiltering:
         from custom_components.rental_control.const import CHECKIN_SENSOR
         from custom_components.rental_control.const import COORDINATOR
         from custom_components.rental_control.const import DOMAIN
-        from custom_components.rental_control.const import (
-            KEYMASTER_MONITORING_ENTITY_ID,
-        )
+        from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
         from custom_components.rental_control.const import UNSUB_LISTENERS
 
         mock_checkin_coordinator.lockname = "front_door"
@@ -2344,7 +2285,7 @@ class TestEventBusListenerFiltering:
             COORDINATOR: mock_checkin_coordinator,
             UNSUB_LISTENERS: [],
             CHECKIN_SENSOR: sensor,
-            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
         }
 
         async_register_keymaster_listener(hass, mock_checkin_config_entry)
@@ -2372,9 +2313,7 @@ class TestEventBusListenerFiltering:
         from custom_components.rental_control.const import CHECKIN_SENSOR
         from custom_components.rental_control.const import COORDINATOR
         from custom_components.rental_control.const import DOMAIN
-        from custom_components.rental_control.const import (
-            KEYMASTER_MONITORING_ENTITY_ID,
-        )
+        from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
         from custom_components.rental_control.const import UNSUB_LISTENERS
 
         mock_checkin_coordinator.lockname = "front_door"
@@ -2389,7 +2328,7 @@ class TestEventBusListenerFiltering:
             COORDINATOR: mock_checkin_coordinator,
             UNSUB_LISTENERS: unsub_list,
             CHECKIN_SENSOR: sensor,
-            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
         }
 
         async_register_keymaster_listener(hass, mock_checkin_config_entry)
@@ -2433,9 +2372,7 @@ class TestEventBusListenerFiltering:
         from custom_components.rental_control import async_register_keymaster_listener
         from custom_components.rental_control.const import COORDINATOR
         from custom_components.rental_control.const import DOMAIN
-        from custom_components.rental_control.const import (
-            KEYMASTER_MONITORING_ENTITY_ID,
-        )
+        from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
         from custom_components.rental_control.const import UNSUB_LISTENERS
 
         mock_checkin_coordinator.lockname = "front_door"
@@ -2447,7 +2384,7 @@ class TestEventBusListenerFiltering:
         hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
             COORDINATOR: mock_checkin_coordinator,
             UNSUB_LISTENERS: [],
-            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
         }
 
         async_register_keymaster_listener(hass, mock_checkin_config_entry)
@@ -2462,3 +2399,85 @@ class TestEventBusListenerFiltering:
             },
         )
         await hass.async_block_till_done()
+
+    async def test_monitoring_switch_off_not_forwarded(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test event filtered when monitoring switch is off."""
+        from custom_components.rental_control import async_register_keymaster_listener
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import COORDINATOR
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
+        from custom_components.rental_control.const import UNSUB_LISTENERS
+
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        sensor = MagicMock()
+        mock_checkin_config_entry.add_to_hass(hass)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+            CHECKIN_SENSOR: sensor,
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=False),
+        }
+
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "front_door",
+                "state": "unlocked",
+                "code_slot_num": 11,
+            },
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_not_called()
+
+    async def test_monitoring_switch_missing_not_forwarded(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test event filtered when monitoring switch not in hass.data."""
+        from custom_components.rental_control import async_register_keymaster_listener
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import COORDINATOR
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.const import UNSUB_LISTENERS
+
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        sensor = MagicMock()
+        mock_checkin_config_entry.add_to_hass(hass)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+            CHECKIN_SENSOR: sensor,
+        }
+
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "front_door",
+                "state": "unlocked",
+                "code_slot_num": 11,
+            },
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_not_called()
