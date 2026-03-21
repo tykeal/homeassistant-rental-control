@@ -1761,19 +1761,17 @@ class TestKeymasterEventHandling:
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
         assert sensor._checkin_source == "automatic"
 
-    async def test_unlock_when_monitoring_off_ignored(
+    async def test_direct_sensor_call_transitions_to_checked_in(
         self,
         hass: HomeAssistant,
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test that unlock when monitoring switch is off is filtered by listener.
+        """Test direct sensor method call transitions when awaiting.
 
-        The monitoring switch check is now performed by the event bus
-        listener in __init__.py. This test verifies the sensor method
-        does NOT receive calls when the switch is off (tested via the
-        event bus listener tests in TestEventBusListenerFiltering).
-        The sensor-level method no longer checks switch state.
+        The monitoring switch check is performed by the event bus
+        listener. When called directly, the sensor transitions if in
+        awaiting_checkin with a valid code slot.
         """
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
@@ -1790,36 +1788,6 @@ class TestKeymasterEventHandling:
 
         # Calling the sensor method directly transitions (switch check
         # is now in the listener, not the sensor)
-        sensor.async_handle_keymaster_unlock(
-            code_slot_num=11,
-        )
-
-        assert sensor._state == CHECKIN_STATE_CHECKED_IN
-
-    async def test_unlock_when_monitoring_switch_missing_ignored(
-        self,
-        hass: HomeAssistant,
-        mock_checkin_coordinator: MagicMock,
-        mock_checkin_config_entry: MockConfigEntry,
-    ) -> None:
-        """Test that sensor method works when called directly.
-
-        The monitoring switch entity lookup was moved to the event
-        bus listener.  The sensor method no longer checks switch state.
-        """
-        sensor = _create_sensor(
-            hass, mock_checkin_coordinator, mock_checkin_config_entry
-        )
-        mock_checkin_coordinator.lockname = "test_lock"
-        mock_checkin_coordinator.start_slot = 10
-        mock_checkin_coordinator.max_events = 3
-
-        event = _make_event(start=dt_util.now() + timedelta(hours=1))
-        mock_checkin_coordinator.data = [event]
-        mock_checkin_coordinator.last_update_success = True
-        sensor._handle_coordinator_update()
-        assert sensor._state == CHECKIN_STATE_AWAITING
-
         sensor.async_handle_keymaster_unlock(
             code_slot_num=11,
         )

@@ -359,9 +359,9 @@ def async_register_keymaster_listener(
         entry_data = hass.data.get(DOMAIN, {}).get(config_entry.entry_id, {})
         checkin_sensor = entry_data.get(CHECKIN_SENSOR)
         if checkin_sensor is None:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Keymaster unlock event received but checkin sensor "
-                "not found for entry %s",
+                "not yet available for entry %s",
                 config_entry.entry_id,
             )
             return
@@ -369,9 +369,9 @@ def async_register_keymaster_listener(
         # Check monitoring switch via stored entity reference
         monitoring_switch = entry_data.get(KEYMASTER_MONITORING_SWITCH)
         if monitoring_switch is None:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Keymaster unlock event received but monitoring "
-                "switch not found for entry %s",
+                "switch not yet available for entry %s",
                 config_entry.entry_id,
             )
             return
