@@ -3004,6 +3004,10 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_summary = "Reserved - John Smith"
         sensor._tracked_event_start = now - timedelta(hours=2)
         sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         # NO early expiry switch in hass.data — sensor should handle gracefully
 
@@ -3036,6 +3040,10 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_summary = "Reserved - John Smith"
         sensor._tracked_event_start = now - timedelta(hours=2)
         sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
 
@@ -3062,6 +3070,10 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_summary = "Reserved - John Smith"
         sensor._tracked_event_start = now - timedelta(hours=2)
         sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
 

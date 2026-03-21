@@ -1181,7 +1181,7 @@ class CheckinTrackingSensor(
                 tracked_slot = self.coordinator.event_overrides.get_slot_key_by_name(
                     self._tracked_event_slot_name
                 )
-            if tracked_slot and tracked_slot != code_slot_num:
+            if tracked_slot != code_slot_num:
                 _LOGGER.debug(
                     "Ignoring keymaster unlock: code_slot_num %d "
                     "does not match tracked event slot %d",
@@ -1257,6 +1257,9 @@ class CheckinTrackingSensor(
         *new_end* instead of the original reservation end.
         """
         if self._tracked_event_slot_name is None:
+            return
+
+        if not self.coordinator.event_overrides:
             return
 
         slot = self.coordinator.event_overrides.get_slot_key_by_name(
