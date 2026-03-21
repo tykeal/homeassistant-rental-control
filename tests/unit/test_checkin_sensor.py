@@ -1198,6 +1198,8 @@ class TestStaleStateValidation:
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
         assert sensor._checkout_source == "automatic"
+        # Checkout time should be anchored to event end, not restore time
+        assert sensor._checkout_time == end
 
     async def test_awaiting_transitions_to_checked_in_when_start_passed(
         self,
@@ -1424,6 +1426,31 @@ class TestStaleStateValidation:
         # Linger long expired with no events → should go to no_reservation
         # or at minimum handle the state correctly by reprocessing
         # coordinator data
+        assert sensor._state == CHECKIN_STATE_NO_RESERVATION
+
+    async def test_unknown_state_resets_to_no_reservation(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test unknown restored state falls back to no_reservation."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        data_dict = _make_extra_data_dict(state="bogus_state")
+
+        mock_checkin_coordinator.data = []
+        mock_checkin_coordinator.last_update_success = True
+
+        with patch.object(
+            sensor,
+            "async_get_last_extra_data",
+            new=AsyncMock(return_value=_mock_extra_data(data_dict)),
+        ):
+            await sensor.async_added_to_hass()
+
         assert sensor._state == CHECKIN_STATE_NO_RESERVATION
 
 

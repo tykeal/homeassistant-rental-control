@@ -819,6 +819,10 @@ class CheckinTrackingSensor(
                     "transitioning to checked_out"
                 )
                 self._transition_to_checked_out(source="automatic")
+                # Use the event's end time as the effective checkout time
+                # so the post-checkout linger window is anchored correctly
+                # rather than to the restore time.
+                self._checkout_time = self._tracked_event_end
             else:
                 # Still valid checked_in — reschedule auto-checkout timer
                 if self._tracked_event_end is not None:
@@ -892,10 +896,29 @@ class CheckinTrackingSensor(
             ):
                 self._handle_coordinator_update()
             else:
+                # Linger has not expired — reschedule the linger timer
+                # so we will transition out of checked_out once the
+                # window ends.
+                self._compute_linger_timing()
                 self.async_write_ha_state()
 
         elif current_state == CHECKIN_STATE_NO_RESERVATION:
             # Process current coordinator data
+            if (
+                self.coordinator.last_update_success
+                and self.coordinator.data is not None
+            ):
+                self._handle_coordinator_update()
+            else:
+                self.async_write_ha_state()
+
+        else:
+            # Unknown or corrupted state — reset to no_reservation
+            _LOGGER.warning(
+                "Unknown restored state '%s', resetting to no_reservation",
+                current_state,
+            )
+            self._state = CHECKIN_STATE_NO_RESERVATION
             if (
                 self.coordinator.last_update_success
                 and self.coordinator.data is not None
