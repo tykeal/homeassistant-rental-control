@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from datetime import date
+from datetime import timedelta
 import logging
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -27,6 +28,7 @@ from custom_components.rental_control.util import async_fire_clear_code
 from custom_components.rental_control.util import async_fire_set_code
 from custom_components.rental_control.util import async_fire_update_times
 from custom_components.rental_control.util import async_reload_package_platforms
+from custom_components.rental_control.util import compute_early_expiry_time
 from custom_components.rental_control.util import delete_folder
 from custom_components.rental_control.util import delete_rc_and_base_folder
 from custom_components.rental_control.util import gen_uuid
@@ -1399,3 +1401,49 @@ class TestSlugifiedLocknameEntityIds:
         event.data = {"entity_id": "switch.front_door_code_slot_1_enabled"}
 
         await handle_state_change(hass, config_entry, event)
+
+
+# ---------------------------------------------------------------------------
+# compute_early_expiry_time tests (T031)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeEarlyExpiryTime:
+    """Tests for the compute_early_expiry_time helper (T031)."""
+
+    def test_returns_now_plus_grace_when_more_than_grace_remain(self) -> None:
+        """Verify returns now + 15min when more than 15min remain."""
+        now = dt_util.now()
+        original_end = now + timedelta(hours=2)  # 120 min remain
+        result = compute_early_expiry_time(now, original_end)
+        expected = now + timedelta(minutes=15)
+        assert result == expected
+
+    def test_returns_original_end_when_less_than_grace_remain(self) -> None:
+        """Verify returns original_end when less than 15min remain."""
+        now = dt_util.now()
+        original_end = now + timedelta(minutes=10)  # 10 min remain
+        result = compute_early_expiry_time(now, original_end)
+        assert result == original_end
+
+    def test_returns_original_end_when_exactly_grace_remain(self) -> None:
+        """Verify returns original_end when exactly 15min remain."""
+        now = dt_util.now()
+        original_end = now + timedelta(minutes=15)  # exactly 15 min
+        result = compute_early_expiry_time(now, original_end)
+        assert result == original_end
+
+    def test_custom_grace_minutes(self) -> None:
+        """Verify custom grace_minutes parameter is respected."""
+        now = dt_util.now()
+        original_end = now + timedelta(hours=2)
+        result = compute_early_expiry_time(now, original_end, grace_minutes=30)
+        expected = now + timedelta(minutes=30)
+        assert result == expected
+
+    def test_custom_grace_when_less_than_custom_remain(self) -> None:
+        """Verify original_end returned when less than custom grace remain."""
+        now = dt_util.now()
+        original_end = now + timedelta(minutes=20)
+        result = compute_early_expiry_time(now, original_end, grace_minutes=30)
+        assert result == original_end

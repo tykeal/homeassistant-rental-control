@@ -11,6 +11,7 @@ callbacks.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from datetime import timedelta
 import logging
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING
 from typing import Any
 
 from homeassistant.components.calendar import CalendarEvent
+from homeassistant.components.datetime import DOMAIN as DATETIME
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE
 from homeassistant.core import HomeAssistant
@@ -36,8 +38,13 @@ from ..const import CHECKIN_STATE_CHECKED_OUT
 from ..const import CHECKIN_STATE_NO_RESERVATION
 from ..const import CONF_CLEANING_WINDOW
 from ..const import DEFAULT_CLEANING_WINDOW
+from ..const import DOMAIN
+from ..const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from ..const import EVENT_RENTAL_CONTROL_CHECKIN
 from ..const import EVENT_RENTAL_CONTROL_CHECKOUT
+from ..util import add_call
+from ..util import check_gather_results
+from ..util import compute_early_expiry_time
 from ..util import gen_uuid
 from ..util import get_slot_name
 
@@ -1141,7 +1148,9 @@ class CheckinTrackingSensor(
 
         - ``code_slot_num != 0`` (FR-017: ignore manual/RF unlocks)
         - ``code_slot_num`` is within the managed slot range
-        - Sensor is in ``awaiting_checkin`` state
+        - Sensor is in ``awaiting_checkin`` state → transition to checked_in
+        - Sensor is in ``checked_in`` state → apply early checkout expiry
+          if the switch is enabled
 
         Args:
             code_slot_num: The keymaster code slot number that was used.
@@ -1164,7 +1173,26 @@ class CheckinTrackingSensor(
             )
             return
 
-        # Only process when in awaiting_checkin state
+        # Early checkout expiry: unlock while checked_in with switch on
+        if self._state == CHECKIN_STATE_CHECKED_IN:
+            # Validate the unlock slot matches the tracked event
+            tracked_slot = 0
+            if self._tracked_event_slot_name and self.coordinator.event_overrides:
+                tracked_slot = self.coordinator.event_overrides.get_slot_key_by_name(
+                    self._tracked_event_slot_name
+                )
+            if tracked_slot != code_slot_num:
+                _LOGGER.debug(
+                    "Ignoring keymaster unlock: code_slot_num %d "
+                    "does not match tracked event slot %d",
+                    code_slot_num,
+                    tracked_slot,
+                )
+                return
+            self._handle_early_checkout_expiry()
+            return
+
+        # Only process check-in when in awaiting_checkin state
         if self._state != CHECKIN_STATE_AWAITING:
             _LOGGER.debug(
                 "Ignoring keymaster unlock: sensor state is %s, not awaiting_checkin",
@@ -1179,3 +1207,79 @@ class CheckinTrackingSensor(
             self._tracked_event_summary,
         )
         self._transition_to_checked_in(source="keymaster")
+
+    def _handle_early_checkout_expiry(self) -> None:
+        """Handle early checkout expiry when unlock occurs while checked_in.
+
+        When the ``EarlyCheckoutExpirySwitch`` is on and a keymaster
+        unlock occurs while the sensor is in ``checked_in`` state,
+        the tracked event end time is shortened to
+        ``now + EARLY_CHECKOUT_GRACE_MINUTES`` (if that is sooner
+        than the original end) and the auto-checkout timer is
+        rescheduled accordingly.
+        """
+        entry_data = self._hass.data.get(DOMAIN, {}).get(
+            self._config_entry.entry_id, {}
+        )
+        early_expiry_switch = entry_data.get(EARLY_CHECKOUT_EXPIRY_SWITCH)
+
+        if early_expiry_switch is None or not early_expiry_switch.is_on:
+            _LOGGER.debug(
+                "Early checkout expiry switch is off or missing; "
+                "ignoring unlock while checked_in"
+            )
+            return
+
+        if self._tracked_event_end is None:
+            return
+
+        now = dt_util.now()
+        new_end = compute_early_expiry_time(now, self._tracked_event_end)
+
+        if new_end < self._tracked_event_end:
+            _LOGGER.info(
+                "Early checkout expiry: shortening end time from %s to %s for %s",
+                self._tracked_event_end,
+                new_end,
+                self._tracked_event_summary,
+            )
+            self._tracked_event_end = new_end
+            self._cancel_timer()
+            self._schedule_auto_checkout(new_end)
+            self.async_write_ha_state()
+            self._hass.async_create_task(self._async_update_lock_code_expiry(new_end))
+
+    async def _async_update_lock_code_expiry(self, new_end: datetime) -> None:
+        """Update keymaster lock code expiry after early checkout.
+
+        Calls the ``datetime.set_value`` service to shorten the
+        lock-code date-range end so the physical code expires at
+        *new_end* instead of the original reservation end.
+        """
+        if self._tracked_event_slot_name is None:
+            return
+
+        if not self.coordinator.event_overrides:
+            return
+
+        slot = self.coordinator.event_overrides.get_slot_key_by_name(
+            self._tracked_event_slot_name
+        )
+        lockname = self.coordinator.lockname
+        if not slot or not lockname:
+            return
+
+        coro = add_call(
+            self._hass,
+            [],
+            DATETIME,
+            "set_value",
+            f"datetime.{lockname}_code_slot_{slot}_date_range_end",
+            {"datetime": new_end.isoformat()},
+        )
+        results = await asyncio.gather(*coro, return_exceptions=True)
+        check_gather_results(
+            results,
+            "Early checkout lock code expiry update",
+            _LOGGER,
+        )

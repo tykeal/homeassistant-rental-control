@@ -22,6 +22,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import COORDINATOR
 from .const import DOMAIN
+from .const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from .const import KEYMASTER_MONITORING_SWITCH
 from .util import gen_uuid
 
@@ -54,6 +55,7 @@ async def async_setup_entry(
 
     if coordinator.lockname:
         entities.append(KeymasterMonitoringSwitch(coordinator, config_entry))
+        entities.append(EarlyCheckoutExpirySwitch(coordinator, config_entry))
 
     async_add_entities(entities)
 
@@ -135,6 +137,91 @@ class KeymasterMonitoringSwitch(SwitchEntity, RestoreEntity):
 
         _LOGGER.debug(
             "Keymaster monitoring switch restored: is_on=%s, entity_id=%s",
+            self._attr_is_on,
+            self.entity_id,
+        )
+
+
+class EarlyCheckoutExpirySwitch(SwitchEntity, RestoreEntity):
+    """Switch to enable/disable early checkout lock code expiry.
+
+    When ``on``, a keymaster unlock while the sensor is in
+    ``checked_in`` state shortens the lock code expiry to
+    ``now + grace_minutes`` instead of the original reservation end.
+    When ``off`` (default), no expiry modification occurs.
+
+    Inherits from ``RestoreEntity`` to persist on/off state across
+    Home Assistant restarts.
+    """
+
+    def __init__(
+        self,
+        coordinator: RentalControlCoordinator,
+        config_entry: ConfigEntry,
+    ) -> None:
+        """Initialize the early checkout expiry switch.
+
+        Args:
+            coordinator: The rental control data coordinator.
+            config_entry: The integration config entry.
+        """
+        self._coordinator = coordinator
+        self._config_entry = config_entry
+        self._attr_is_on: bool = False
+        self._unique_id = gen_uuid(f"{coordinator.unique_id} early_checkout_expiry")
+
+    @property
+    def unique_id(self) -> str:
+        """Return the unique ID for this switch."""
+        return self._unique_id
+
+    @property
+    def name(self) -> str:
+        """Return the name of the switch."""
+        return f"{self._coordinator.name} Early Checkout Expiry"
+
+    @property
+    def is_on(self) -> bool:
+        """Return whether early checkout expiry is enabled."""
+        return self._attr_is_on
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info linking to the existing integration device."""
+        return self._coordinator.device_info
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable early checkout expiry.
+
+        Args:
+            **kwargs: Additional keyword arguments (unused).
+        """
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable early checkout expiry.
+
+        Args:
+            **kwargs: Additional keyword arguments (unused).
+        """
+        self._attr_is_on = False
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        """Restore last known on/off state when added to hass."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            self._attr_is_on = last_state.state == "on"
+
+        # Store entity reference in hass.data for the sensor to look up
+        self.hass.data.setdefault(DOMAIN, {}).setdefault(
+            self._config_entry.entry_id, {}
+        )[EARLY_CHECKOUT_EXPIRY_SWITCH] = self
+
+        _LOGGER.debug(
+            "Early checkout expiry switch restored: is_on=%s, entity_id=%s",
             self._attr_is_on,
             self.entity_id,
         )

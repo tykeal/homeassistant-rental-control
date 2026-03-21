@@ -34,9 +34,14 @@ from custom_components.rental_control.const import CHECKIN_STATE_AWAITING
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_OUT
 from custom_components.rental_control.const import CHECKIN_STATE_NO_RESERVATION
+from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DEFAULT_CLEANING_WINDOW
+from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import EARLY_CHECKOUT_EXPIRY_SWITCH
+from custom_components.rental_control.const import EARLY_CHECKOUT_GRACE_MINUTES
 from custom_components.rental_control.const import EVENT_RENTAL_CONTROL_CHECKIN
 from custom_components.rental_control.const import EVENT_RENTAL_CONTROL_CHECKOUT
+from custom_components.rental_control.const import UNSUB_LISTENERS
 from custom_components.rental_control.sensors.checkinsensor import CheckinTrackingSensor
 
 if TYPE_CHECKING:
@@ -2759,3 +2764,481 @@ class TestManualCheckout:
         await sensor.async_checkout()
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+
+
+# ===========================================================================
+# T032: Early checkout expiry integration tests
+# ===========================================================================
+
+
+def _setup_early_expiry_switch(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    is_on: bool,
+) -> MagicMock:
+    """Create a mock EarlyCheckoutExpirySwitch and store it in hass.data.
+
+    Args:
+        hass: Home Assistant instance.
+        config_entry: Mock config entry.
+        is_on: Whether the switch should be on.
+
+    Returns:
+        MagicMock: The mock switch.
+    """
+    mock_switch = MagicMock()
+    mock_switch.is_on = is_on
+
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN].setdefault(
+        config_entry.entry_id,
+        {COORDINATOR: MagicMock(), UNSUB_LISTENERS: []},
+    )
+    hass.data[DOMAIN][config_entry.entry_id][EARLY_CHECKOUT_EXPIRY_SWITCH] = mock_switch
+    return mock_switch
+
+
+class TestEarlyCheckoutExpiry:
+    """Tests for early checkout expiry behavior on CheckinTrackingSensor (T032)."""
+
+    async def test_unlock_while_checked_in_with_expiry_on_shortens_end_time(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test keymaster unlock while checked_in with early-expiry ON shortens end time.
+
+        Verifies that end time is shortened to now + EARLY_CHECKOUT_GRACE_MINUTES
+        when more than grace_minutes remain before original end.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        start = now - timedelta(hours=2)
+        original_end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = start
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        sensor._checkin_source = "keymaster"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
+        # Set up early expiry switch as ON
+        _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
+
+        # Trigger a keymaster unlock while checked_in
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+
+        # End time should be shortened to approximately now + 15min
+        assert sensor._tracked_event_end < original_end
+        expected_end = now + timedelta(minutes=EARLY_CHECKOUT_GRACE_MINUTES)
+        delta = abs((sensor._tracked_event_end - expected_end).total_seconds())
+        assert delta < 2  # Allow small timing delta
+
+    async def test_unlock_while_checked_in_with_expiry_off_no_change(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test keymaster unlock while checked_in with early-expiry OFF does NOT alter end time."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        start = now - timedelta(hours=2)
+        original_end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = start
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        sensor._checkin_source = "keymaster"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
+        # Set up early expiry switch as OFF
+        _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=False)
+
+        # Trigger a keymaster unlock while checked_in
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+
+        # End time should remain unchanged
+        assert sensor._tracked_event_end == original_end
+
+    async def test_auto_checkout_timer_rescheduled_to_shortened_end(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test auto-checkout timer is rescheduled to the shortened end time.
+
+        Verifies that _transition_target_time and _unsub_timer are updated
+        when early expiry shortens the end time.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        start = now - timedelta(hours=2)
+        original_end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = start
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        sensor._checkin_source = "keymaster"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
+        # Set an existing timer that would fire at original_end
+        old_unsub = MagicMock()
+        sensor._unsub_timer = old_unsub
+        sensor._transition_target_time = original_end
+
+        # Set up early expiry switch as ON
+        _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
+
+        # Trigger early expiry
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+
+        # Old timer should have been cancelled
+        old_unsub.assert_called_once()
+
+        # New timer should be scheduled for shortened end time
+        assert sensor._unsub_timer is not None
+        assert sensor._transition_target_time is not None
+        expected_end = now + timedelta(minutes=EARLY_CHECKOUT_GRACE_MINUTES)
+        delta = abs((sensor._transition_target_time - expected_end).total_seconds())
+        assert delta < 2
+
+    async def test_linger_timing_uses_shortened_end_time(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test that linger timing uses the shortened end time after early expiry.
+
+        When the auto-checkout fires at the shortened end time, the
+        checkout_time is approximately the shortened end, and linger is
+        computed from that checkout_time.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        start = now - timedelta(hours=2)
+        original_end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = start
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        sensor._checkin_source = "keymaster"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
+        # No follow-on events → FR-006b cleaning window
+        mock_checkin_coordinator.data = []
+
+        # Set up early expiry switch as ON
+        _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
+
+        # Trigger early expiry
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+
+        # End time should be shortened
+        assert sensor._tracked_event_end < original_end
+
+        # Now simulate the auto-checkout firing (manually invoke transition)
+        sensor._transition_to_checked_out(source="automatic")
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._checkout_time is not None
+
+        # Linger should be based on the checkout_time (approximately now),
+        # not the original end time (48 hours away)
+        expected_linger = sensor._checkout_time + timedelta(
+            hours=DEFAULT_CLEANING_WINDOW
+        )
+        assert sensor._transition_target_time is not None
+        delta = abs((sensor._transition_target_time - expected_linger).total_seconds())
+        assert delta < 2
+
+        # Linger should be in the near future, not 48+ hours away
+        assert sensor._transition_target_time < now + timedelta(hours=12)
+
+    async def test_unlock_while_checked_in_no_switch_no_change(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test unlock while checked_in without switch configured does nothing."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        original_end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(hours=2)
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
+        # NO early expiry switch in hass.data — sensor should handle gracefully
+
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+
+        # End time unchanged, still checked_in
+        assert sensor._tracked_event_end == original_end
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+
+    async def test_early_expiry_no_shortening_when_less_than_grace_remain(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test no shortening when less than grace_minutes remain before end.
+
+        When the remaining time is already less than or equal to the grace
+        period, the end time should not be changed.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        # Only 10 minutes remain
+        original_end = now + timedelta(minutes=10)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(hours=2)
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
+        _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
+
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+
+        # End time should remain unchanged — already within grace period
+        assert sensor._tracked_event_end == original_end
+
+    async def test_early_expiry_state_written_on_shortening(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test that async_write_ha_state is called when end time is shortened."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        original_end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(hours=2)
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
+        _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
+
+        # Reset call count
+        sensor.async_write_ha_state.reset_mock()
+
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+
+        sensor.async_write_ha_state.assert_called()
+
+    async def test_early_expiry_updates_lock_code_expiry(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test early checkout expiry updates keymaster lock code end time.
+
+        When the end time is shortened, the keymaster slot's
+        date_range_end entity must be updated via the datetime
+        service so the physical lock code expires at the new time.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        start = now - timedelta(hours=2)
+        original_end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = start
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        sensor._checkin_source = "keymaster"
+
+        # Configure coordinator with lockname and slot mapping
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
+        _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
+
+        mock_coro = AsyncMock(return_value=None)
+        with patch(
+            "custom_components.rental_control.sensors.checkinsensor.add_call",
+            return_value=[mock_coro()],
+        ) as mock_add_call:
+            sensor.async_handle_keymaster_unlock(code_slot_num=10)
+            await hass.async_block_till_done()
+
+            mock_add_call.assert_called_once_with(
+                hass,
+                [],
+                "datetime",
+                "set_value",
+                "datetime.front_door_code_slot_10_date_range_end",
+                {"datetime": sensor._tracked_event_end.isoformat()},
+            )
+
+    async def test_early_expiry_no_lock_update_without_lockname(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test no lock code update when coordinator has no lockname."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        original_end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(hours=2)
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        sensor._checkin_source = "keymaster"
+
+        # No lockname configured
+        mock_checkin_coordinator.lockname = None
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
+        _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
+
+        with patch(
+            "custom_components.rental_control.sensors.checkinsensor.add_call",
+        ) as mock_add_call:
+            sensor.async_handle_keymaster_unlock(code_slot_num=10)
+            await hass.async_block_till_done()
+
+            mock_add_call.assert_not_called()
+
+    async def test_early_expiry_no_lock_update_without_slot(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test no lock code update when slot name is not mapped."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        original_end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(hours=2)
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        sensor._checkin_source = "keymaster"
+
+        mock_checkin_coordinator.lockname = "front_door"
+        # Slot not found → returns 0 (falsy)
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 0
+
+        _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
+
+        with patch(
+            "custom_components.rental_control.sensors.checkinsensor.add_call",
+        ) as mock_add_call:
+            sensor.async_handle_keymaster_unlock(code_slot_num=10)
+            await hass.async_block_till_done()
+
+            mock_add_call.assert_not_called()
+
+    async def test_different_slot_unlock_does_not_trigger_early_expiry(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test unlock from different slot skips early expiry.
+
+        A maintenance or housekeeping code in the managed range
+        must not prematurely shorten the guest reservation when
+        its slot number differs from the tracked event slot.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        original_end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(hours=2)
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        sensor._checkin_source = "keymaster"
+
+        # Tracked event is in slot 10
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
+        _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
+
+        # Unlock from slot 11 (different — e.g. maintenance)
+        sensor.async_handle_keymaster_unlock(code_slot_num=11)
+
+        # End time must remain unchanged
+        assert sensor._tracked_event_end == original_end
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+        sensor.async_write_ha_state.assert_not_called()
