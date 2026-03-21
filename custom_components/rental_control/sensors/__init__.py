@@ -2,3 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Sensors submodule."""
+
+from .checkinsensor import CheckinTrackingSensor
+
+__all__ = ["CheckinTrackingSensor"]

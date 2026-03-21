@@ -19,6 +19,7 @@ from .const import COORDINATOR
 from .const import DOMAIN
 from .const import NAME
 from .sensors.calsensor import RentalControlCalSensor
+from .sensors.checkinsensor import CheckinTrackingSensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,6 +60,15 @@ async def async_setup_entry(
                 eventnumber,
             )
         )
+
+    # Add check-in tracking sensor (FR-028: created for every instance)
+    sensors.append(
+        CheckinTrackingSensor(
+            hass,
+            coordinator,
+            config_entry,
+        )
+    )
 
     async_add_entities(sensors)
 

@@ -22,6 +22,7 @@ from custom_components.rental_control.const import NAME
 from custom_components.rental_control.sensor import async_setup_entry
 from custom_components.rental_control.sensor import async_setup_platform
 from custom_components.rental_control.sensors.calsensor import RentalControlCalSensor
+from custom_components.rental_control.sensors.checkinsensor import CheckinTrackingSensor
 from custom_components.rental_control.util import gen_uuid
 
 
@@ -112,10 +113,11 @@ class TestAsyncSetupEntry:
         await async_setup_entry(hass, config_entry, async_add_entities)
 
         assert async_add_entities.called
-        assert len(added_entities) == 3
-        for i, sensor in enumerate(added_entities):
+        assert len(added_entities) == 4  # 3 cal sensors + 1 checkin sensor
+        for i, sensor in enumerate(added_entities[:3]):
             assert isinstance(sensor, RentalControlCalSensor)
             assert sensor._event_number == i
+        assert isinstance(added_entities[3], CheckinTrackingSensor)
 
     async def test_returns_false_when_calendar_is_none(self, hass) -> None:
         """Verify async_setup_entry returns False when calendar fetch fails."""
