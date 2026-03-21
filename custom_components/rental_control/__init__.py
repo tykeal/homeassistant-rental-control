@@ -26,10 +26,13 @@ from homeassistant.components.switch import DOMAIN as SWITCH
 from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
+from homeassistant.core import Event
 from homeassistant.core import HomeAssistant
+from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_state_change_event
 
+from .const import CHECKIN_SENSOR
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_GENERATE
@@ -92,6 +95,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     await async_start_listener(hass, config_entry)
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
+
+    # Register keymaster event bus listener after platform setup
+    # so the checkin sensor reference is available (T024/T026)
+    if coordinator.lockname:
+        async_register_keymaster_listener(hass, config_entry)
 
     config_entry.add_update_listener(update_listener)
 
@@ -261,6 +269,7 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
 
     if coordinator.lockname:
         await async_start_listener(hass, config_entry)
+        async_register_keymaster_listener(hass, config_entry)
     else:
         _LOGGER.debug("Skipping re-adding listeners")
 
@@ -293,3 +302,85 @@ async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -
             functools.partial(handle_state_change, hass, config_entry),
         )
     )
+
+
+@callback
+def async_register_keymaster_listener(
+    hass: HomeAssistant, config_entry: ConfigEntry
+) -> None:
+    """Register keymaster event bus listener for unlock detection (T024/T026).
+
+    Listens for ``keymaster_lock_state_changed`` events and forwards
+    matching unlock events to the check-in tracking sensor.
+
+    The listener validates:
+    - ``lockname`` matches ``coordinator.lockname``
+    - ``state`` is ``"unlocked"``
+    - ``code_slot_num != 0`` (FR-017)
+    - ``code_slot_num`` is in ``[start_slot, start_slot + max_events)``
+
+    Args:
+        hass: Home Assistant instance.
+        config_entry: The integration config entry.
+    """
+    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
+    lockname = coordinator.lockname
+    start_slot = coordinator.start_slot
+    max_events = coordinator.max_events
+
+    # Build the monitoring switch entity ID for the sensor to check
+    from homeassistant.util import slugify
+
+    monitoring_entity_id = f"switch.{slugify(coordinator.name)}_keymaster_monitoring"
+
+    @callback
+    def _handle_keymaster_event(event: Event) -> None:
+        """Handle a keymaster_lock_state_changed event.
+
+        Args:
+            event: The HA event bus event.
+        """
+        event_data = event.data
+
+        # Validate lockname matches
+        if event_data.get("lockname") != lockname:
+            return
+
+        # Validate state is unlocked
+        if event_data.get("state") != "unlocked":
+            return
+
+        # FR-017: Ignore code_slot_num == 0
+        code_slot_num = event_data.get("code_slot_num")
+        if code_slot_num is None or code_slot_num == 0:
+            return
+
+        # Validate code slot is in managed range
+        if not (start_slot <= code_slot_num < start_slot + max_events):
+            return
+
+        # Retrieve the checkin sensor and forward the unlock
+        entry_data = hass.data.get(DOMAIN, {}).get(config_entry.entry_id, {})
+        checkin_sensor = entry_data.get(CHECKIN_SENSOR)
+        if checkin_sensor is None:
+            _LOGGER.warning(
+                "Keymaster unlock event received but checkin sensor "
+                "not found for entry %s",
+                config_entry.entry_id,
+            )
+            return
+
+        _LOGGER.debug(
+            "Forwarding keymaster unlock (slot=%d) to checkin sensor",
+            code_slot_num,
+        )
+        checkin_sensor.async_handle_keymaster_unlock(
+            code_slot_num=code_slot_num,
+            monitoring_entity_id=monitoring_entity_id,
+        )
+
+    unsub = hass.bus.async_listen(
+        "keymaster_lock_state_changed", _handle_keymaster_event
+    )
+    hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(unsub)
+    _LOGGER.debug("Registered keymaster event bus listener for lockname=%s", lockname)

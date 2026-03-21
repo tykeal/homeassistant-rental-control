@@ -974,3 +974,67 @@ class CheckinTrackingSensor(
         """Clean up when entity is being removed."""
         self._cancel_timer()
         await super().async_will_remove_from_hass()
+
+    @callback
+    def async_handle_keymaster_unlock(
+        self,
+        code_slot_num: int,
+        monitoring_entity_id: str,
+    ) -> None:
+        """Handle a keymaster unlock event.
+
+        Validates all conditions before triggering check-in:
+        - ``code_slot_num != 0`` (FR-017: ignore manual/RF unlocks)
+        - ``code_slot_num`` is within the managed slot range
+        - Sensor is in ``awaiting_checkin`` state
+        - Keymaster monitoring switch is ``on``
+
+        Args:
+            code_slot_num: The keymaster code slot number that was used.
+            monitoring_entity_id: Entity ID of the keymaster monitoring
+                switch to check.
+        """
+        # FR-017: Ignore manual/RF unlocks (code_slot_num == 0)
+        if code_slot_num == 0:
+            _LOGGER.debug("Ignoring keymaster unlock: code_slot_num == 0 (manual/RF)")
+            return
+
+        # Validate code slot is in managed range
+        start_slot = self.coordinator.start_slot
+        max_events = self.coordinator.max_events
+        if not (start_slot <= code_slot_num < start_slot + max_events):
+            _LOGGER.debug(
+                "Ignoring keymaster unlock: code_slot_num %d outside "
+                "managed range [%d, %d)",
+                code_slot_num,
+                start_slot,
+                start_slot + max_events,
+            )
+            return
+
+        # Only process when in awaiting_checkin state
+        if self._state != CHECKIN_STATE_AWAITING:
+            _LOGGER.debug(
+                "Ignoring keymaster unlock: sensor state is %s, not awaiting_checkin",
+                self._state,
+            )
+            return
+
+        # Check if monitoring switch is on
+        switch_state = self._hass.states.get(monitoring_entity_id)
+        if switch_state is None or switch_state.state != "on":
+            _LOGGER.debug(
+                "Ignoring keymaster unlock: monitoring switch %s is not on (state=%s)",
+                monitoring_entity_id,
+                switch_state.state if switch_state else "not found",
+            )
+            return
+
+        # All conditions met — transition to checked_in
+        _LOGGER.info(
+            "Keymaster unlock detected for slot %d, transitioning to checked_in for %s",
+            code_slot_num,
+            self._tracked_event_summary,
+        )
+        self._cancel_timer()
+        self._transition_to_checked_in(source="keymaster")
