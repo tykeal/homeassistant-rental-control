@@ -20,6 +20,7 @@ from unittest.mock import patch
 
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import KEYMASTER_MONITORING_ENTITY_ID
 from custom_components.rental_control.const import UNSUB_LISTENERS
 from custom_components.rental_control.switch import KeymasterMonitoringSwitch
 from custom_components.rental_control.switch import async_setup_entry
@@ -70,6 +71,8 @@ def _create_switch(
 ) -> KeymasterMonitoringSwitch:
     """Create a KeymasterMonitoringSwitch for testing without adding to hass.
 
+    Sets up hass.data so async_added_to_hass can store the entity_id.
+
     Args:
         hass: Home Assistant instance.
         coordinator: Mock coordinator.
@@ -78,6 +81,11 @@ def _create_switch(
     Returns:
         KeymasterMonitoringSwitch: The switch entity.
     """
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN].setdefault(
+        config_entry.entry_id,
+        {COORDINATOR: coordinator, UNSUB_LISTENERS: []},
+    )
     switch = KeymasterMonitoringSwitch(coordinator, config_entry)
     switch.hass = hass
     switch.entity_id = "switch.test_rental_keymaster_monitoring"
@@ -247,6 +255,23 @@ class TestKeymasterMonitoringSwitchRestore:
             await switch.async_added_to_hass()
 
         assert switch.is_on is False
+
+    async def test_added_to_hass_stores_entity_id(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test async_added_to_hass stores entity_id in hass.data."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_switch(hass, coordinator, mock_checkin_config_entry)
+
+        with patch.object(switch, "async_get_last_state", return_value=None):
+            await switch.async_added_to_hass()
+
+        stored = hass.data[DOMAIN][mock_checkin_config_entry.entry_id].get(
+            KEYMASTER_MONITORING_ENTITY_ID,
+        )
+        assert stored == "switch.test_rental_keymaster_monitoring"
 
 
 class TestSwitchPlatformSetup:

@@ -42,6 +42,7 @@ from .const import COORDINATOR
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_GENERATE
 from .const import DOMAIN
+from .const import KEYMASTER_MONITORING_ENTITY_ID
 from .const import NAME
 from .const import PLATFORMS
 from .const import UNSUB_LISTENERS
@@ -328,11 +329,6 @@ def async_register_keymaster_listener(
     start_slot = coordinator.start_slot
     max_events = coordinator.max_events
 
-    # Build the monitoring switch entity ID for the sensor to check
-    from homeassistant.util import slugify
-
-    monitoring_entity_id = f"switch.{slugify(coordinator.name)}_keymaster_monitoring"
-
     @callback
     def _handle_keymaster_event(event: Event) -> None:
         """Handle a keymaster_lock_state_changed event.
@@ -366,6 +362,16 @@ def async_register_keymaster_listener(
             _LOGGER.warning(
                 "Keymaster unlock event received but checkin sensor "
                 "not found for entry %s",
+                config_entry.entry_id,
+            )
+            return
+
+        # Look up monitoring switch entity_id from hass.data
+        monitoring_entity_id = entry_data.get(KEYMASTER_MONITORING_ENTITY_ID)
+        if monitoring_entity_id is None:
+            _LOGGER.warning(
+                "Keymaster unlock event received but monitoring "
+                "switch entity_id not found for entry %s",
                 config_entry.entry_id,
             )
             return

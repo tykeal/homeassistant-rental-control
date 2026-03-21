@@ -1647,8 +1647,6 @@ class TestKeymasterEventHandling:
         assert sensor._state == CHECKIN_STATE_AWAITING
 
         # Mock the keymaster monitoring switch as ON
-        mock_switch_state = MagicMock()
-        mock_switch_state.state = "on"
         hass.states.async_set("switch.test_rental_keymaster_monitoring", "on")
 
         # Collect fired events
@@ -2125,3 +2123,342 @@ class TestToggleMidEvent:
         )
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+
+
+# ===========================================================================
+# T024/T026: Event bus listener filtering and forwarding
+# ===========================================================================
+
+
+class TestEventBusListenerFiltering:
+    """Tests for keymaster event bus listener in __init__.py (T024/T026).
+
+    Validates that async_register_keymaster_listener correctly filters
+    events by lockname, state, and code_slot_num before forwarding to
+    the checkin sensor.
+    """
+
+    async def test_matching_event_forwarded_to_sensor(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test matching unlock event is forwarded to checkin sensor."""
+        from custom_components.rental_control import async_register_keymaster_listener
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import COORDINATOR
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.const import (
+            KEYMASTER_MONITORING_ENTITY_ID,
+        )
+        from custom_components.rental_control.const import UNSUB_LISTENERS
+
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        sensor = MagicMock()
+        mock_checkin_config_entry.add_to_hass(hass)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+            CHECKIN_SENSOR: sensor,
+            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+        }
+
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "front_door",
+                "state": "unlocked",
+                "code_slot_num": 11,
+            },
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_called_once_with(
+            code_slot_num=11,
+            monitoring_entity_id="switch.test_monitoring",
+        )
+
+    async def test_wrong_lockname_not_forwarded(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test event with wrong lockname is filtered out."""
+        from custom_components.rental_control import async_register_keymaster_listener
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import COORDINATOR
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.const import (
+            KEYMASTER_MONITORING_ENTITY_ID,
+        )
+        from custom_components.rental_control.const import UNSUB_LISTENERS
+
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        sensor = MagicMock()
+        mock_checkin_config_entry.add_to_hass(hass)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+            CHECKIN_SENSOR: sensor,
+            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+        }
+
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "back_door",
+                "state": "unlocked",
+                "code_slot_num": 11,
+            },
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_not_called()
+
+    async def test_locked_state_not_forwarded(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test event with state != unlocked is filtered out."""
+        from custom_components.rental_control import async_register_keymaster_listener
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import COORDINATOR
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.const import (
+            KEYMASTER_MONITORING_ENTITY_ID,
+        )
+        from custom_components.rental_control.const import UNSUB_LISTENERS
+
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        sensor = MagicMock()
+        mock_checkin_config_entry.add_to_hass(hass)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+            CHECKIN_SENSOR: sensor,
+            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+        }
+
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "front_door",
+                "state": "locked",
+                "code_slot_num": 11,
+            },
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_not_called()
+
+    async def test_code_slot_zero_not_forwarded(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test event with code_slot_num == 0 is filtered (FR-017)."""
+        from custom_components.rental_control import async_register_keymaster_listener
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import COORDINATOR
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.const import (
+            KEYMASTER_MONITORING_ENTITY_ID,
+        )
+        from custom_components.rental_control.const import UNSUB_LISTENERS
+
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        sensor = MagicMock()
+        mock_checkin_config_entry.add_to_hass(hass)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+            CHECKIN_SENSOR: sensor,
+            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+        }
+
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "front_door",
+                "state": "unlocked",
+                "code_slot_num": 0,
+            },
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_not_called()
+
+    async def test_code_slot_outside_range_not_forwarded(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test event with slot outside managed range is filtered."""
+        from custom_components.rental_control import async_register_keymaster_listener
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import COORDINATOR
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.const import (
+            KEYMASTER_MONITORING_ENTITY_ID,
+        )
+        from custom_components.rental_control.const import UNSUB_LISTENERS
+
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        sensor = MagicMock()
+        mock_checkin_config_entry.add_to_hass(hass)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+            CHECKIN_SENSOR: sensor,
+            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+        }
+
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "front_door",
+                "state": "unlocked",
+                "code_slot_num": 99,
+            },
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_not_called()
+
+    async def test_unsubscribe_stops_forwarding(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test unsubscribe function stops event forwarding."""
+        from custom_components.rental_control import async_register_keymaster_listener
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import COORDINATOR
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.const import (
+            KEYMASTER_MONITORING_ENTITY_ID,
+        )
+        from custom_components.rental_control.const import UNSUB_LISTENERS
+
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        unsub_list: list = []
+        sensor = MagicMock()
+        mock_checkin_config_entry.add_to_hass(hass)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: unsub_list,
+            CHECKIN_SENSOR: sensor,
+            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+        }
+
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        assert len(unsub_list) == 1
+        assert callable(unsub_list[0])
+
+        # Fire matching event — should forward
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "front_door",
+                "state": "unlocked",
+                "code_slot_num": 11,
+            },
+        )
+        await hass.async_block_till_done()
+        assert sensor.async_handle_keymaster_unlock.call_count == 1
+
+        # Unsubscribe and fire again — should NOT forward
+        unsub_list[0]()
+        sensor.async_handle_keymaster_unlock.reset_mock()
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "front_door",
+                "state": "unlocked",
+                "code_slot_num": 11,
+            },
+        )
+        await hass.async_block_till_done()
+        sensor.async_handle_keymaster_unlock.assert_not_called()
+
+    async def test_missing_sensor_reference_no_crash(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test no crash when checkin sensor not in hass.data."""
+        from custom_components.rental_control import async_register_keymaster_listener
+        from custom_components.rental_control.const import COORDINATOR
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.const import (
+            KEYMASTER_MONITORING_ENTITY_ID,
+        )
+        from custom_components.rental_control.const import UNSUB_LISTENERS
+
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        mock_checkin_config_entry.add_to_hass(hass)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+            KEYMASTER_MONITORING_ENTITY_ID: "switch.test_monitoring",
+        }
+
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        # Fire matching event — sensor not stored, should not crash
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "front_door",
+                "state": "unlocked",
+                "code_slot_num": 11,
+            },
+        )
+        await hass.async_block_till_done()

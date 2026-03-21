@@ -22,6 +22,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import COORDINATOR
 from .const import DOMAIN
+from .const import KEYMASTER_MONITORING_ENTITY_ID
 from .util import gen_uuid
 
 if TYPE_CHECKING:
@@ -127,7 +128,13 @@ class KeymasterMonitoringSwitch(SwitchEntity, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state is not None:
             self._attr_is_on = last_state.state == "on"
+
+        # Store entity_id in hass.data for the event bus listener
+        entry_data = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id, {})
+        entry_data[KEYMASTER_MONITORING_ENTITY_ID] = self.entity_id
+
         _LOGGER.debug(
-            "Keymaster monitoring switch restored: is_on=%s",
+            "Keymaster monitoring switch restored: is_on=%s, entity_id=%s",
             self._attr_is_on,
+            self.entity_id,
         )
