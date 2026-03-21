@@ -31,7 +31,7 @@ The service handler validates the following before executing:
    - Error: `"Checkout is only available when the guest is checked in (current state: {state})"`
 
 2. **Reservation window check**: Current datetime must be within the active reservation window — on or after the event start datetime and strictly before the event end datetime (FR-019)
-   - Error: `"Checkout is only available during the active reservation window (current: {current_datetime}, allowed: {start_datetime}–{end_datetime})"`
+   - Error: `"Checkout is only available during the active reservation window (current: {current_datetime}, allowed: {start_datetime} to {end_datetime})"`
 
 ## Success Response
 
