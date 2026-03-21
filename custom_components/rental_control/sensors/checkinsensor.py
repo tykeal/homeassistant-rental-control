@@ -831,10 +831,11 @@ class CheckinTrackingSensor(
                 # so the post-checkout linger window is anchored correctly
                 # rather than to the restore time.
                 self._checkout_time = self._tracked_event_end
-                # Timers scheduled during the transition were anchored to
-                # restore time and are no longer valid.
+                # Recompute linger timing anchored to the corrected
+                # checkout time (replaces the stale timers that the
+                # transition scheduled based on restore time).
                 self._cancel_timer()
-                self._transition_target_time = None
+                self._compute_linger_timing()
             else:
                 # Still valid checked_in — reschedule auto-checkout timer
                 if self._tracked_event_end is not None:
@@ -906,7 +907,11 @@ class CheckinTrackingSensor(
                 self.coordinator.last_update_success
                 and self.coordinator.data is not None
             ):
-                self._handle_coordinator_update()
+                # Reschedule linger timer based on restored checkout time
+                # and current coordinator data. _handle_coordinator_update
+                # does not schedule linger transitions for checked_out.
+                self._compute_linger_timing()
+                self.async_write_ha_state()
             else:
                 # Linger has not expired — reschedule the linger timer
                 # so we will transition out of checked_out once the

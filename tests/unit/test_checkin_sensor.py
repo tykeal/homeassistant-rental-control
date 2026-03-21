@@ -1453,6 +1453,51 @@ class TestStaleStateValidation:
 
         assert sensor._state == CHECKIN_STATE_NO_RESERVATION
 
+    async def test_checked_out_linger_timer_rescheduled_on_restore(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test checked_out with unexpired linger reschedules timer."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        old_start = now - timedelta(hours=48)
+        old_end = now - timedelta(hours=1)
+        checkout_time = now - timedelta(minutes=30)
+        old_event_key = f"Reserved - Recent Guest|{old_start.isoformat()}"
+
+        data_dict = _make_extra_data_dict(
+            state=CHECKIN_STATE_CHECKED_OUT,
+            summary="Reserved - Recent Guest",
+            start=old_start,
+            end=old_end,
+            slot_name="Recent Guest",
+            checkin_source="automatic",
+            checkout_source="automatic",
+            checkout_time=checkout_time,
+            checked_out_event_key=old_event_key,
+        )
+
+        # No new events — same checked-out event scenario
+        mock_checkin_coordinator.data = []
+        mock_checkin_coordinator.last_update_success = True
+
+        with patch.object(
+            sensor,
+            "async_get_last_extra_data",
+            new=AsyncMock(return_value=_mock_extra_data(data_dict)),
+        ):
+            await sensor.async_added_to_hass()
+
+        # Should stay checked_out with linger timer rescheduled
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._unsub_timer is not None
+        assert sensor._transition_target_time is not None
+
 
 # ===========================================================================
 # T019: ExtraStoredData subclass (extra_restore_state_data property)
