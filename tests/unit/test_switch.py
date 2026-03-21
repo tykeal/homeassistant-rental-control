@@ -20,8 +20,10 @@ from unittest.mock import patch
 
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
 from custom_components.rental_control.const import UNSUB_LISTENERS
+from custom_components.rental_control.switch import EarlyCheckoutExpirySwitch
 from custom_components.rental_control.switch import KeymasterMonitoringSwitch
 from custom_components.rental_control.switch import async_setup_entry
 from custom_components.rental_control.util import gen_uuid
@@ -89,6 +91,35 @@ def _create_switch(
     switch = KeymasterMonitoringSwitch(coordinator, config_entry)
     switch.hass = hass
     switch.entity_id = "switch.test_rental_keymaster_monitoring"
+    switch.async_write_ha_state = MagicMock()
+    return switch
+
+
+def _create_early_expiry_switch(
+    hass: HomeAssistant,
+    coordinator: MagicMock,
+    config_entry: MockConfigEntry,
+) -> EarlyCheckoutExpirySwitch:
+    """Create an EarlyCheckoutExpirySwitch for testing without adding to hass.
+
+    Sets up hass.data so async_added_to_hass can store the entity reference.
+
+    Args:
+        hass: Home Assistant instance.
+        coordinator: Mock coordinator.
+        config_entry: Mock config entry.
+
+    Returns:
+        EarlyCheckoutExpirySwitch: The switch entity.
+    """
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN].setdefault(
+        config_entry.entry_id,
+        {COORDINATOR: coordinator, UNSUB_LISTENERS: []},
+    )
+    switch = EarlyCheckoutExpirySwitch(coordinator, config_entry)
+    switch.hass = hass
+    switch.entity_id = "switch.test_rental_early_checkout_expiry"
     switch.async_write_ha_state = MagicMock()
     return switch
 
@@ -350,12 +381,16 @@ class TestSwitchPlatformSetup:
 
         await async_setup_entry(hass, mock_checkin_config_entry, mock_add_entities)
 
-        # Should have KeymasterMonitoringSwitch (and EarlyCheckoutExpirySwitch
-        # will be added in a later phase)
+        # Should have KeymasterMonitoringSwitch and EarlyCheckoutExpirySwitch
         monitoring_switches = [
             e for e in added_entities if isinstance(e, KeymasterMonitoringSwitch)
         ]
         assert len(monitoring_switches) == 1
+
+        expiry_switches = [
+            e for e in added_entities if isinstance(e, EarlyCheckoutExpirySwitch)
+        ]
+        assert len(expiry_switches) == 1
 
     async def test_switch_count_when_lockname_set(
         self,
@@ -380,5 +415,265 @@ class TestSwitchPlatformSetup:
 
         await async_setup_entry(hass, mock_checkin_config_entry, mock_add_entities)
 
-        # At minimum, KeymasterMonitoringSwitch should be present
-        assert len(added_entities) >= 1
+        # KeymasterMonitoringSwitch and EarlyCheckoutExpirySwitch
+        assert len(added_entities) == 2
+
+
+# ===========================================================================
+# T030: EarlyCheckoutExpirySwitch entity tests
+# ===========================================================================
+
+
+class TestEarlyCheckoutExpirySwitchCreation:
+    """Tests for EarlyCheckoutExpirySwitch entity creation (T030)."""
+
+    async def test_unique_id_uses_gen_uuid(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test unique_id is generated via gen_uuid with coordinator unique_id."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_early_expiry_switch(
+            hass, coordinator, mock_checkin_config_entry
+        )
+
+        expected = gen_uuid(f"{coordinator.unique_id} early_checkout_expiry")
+        assert switch.unique_id == expected
+
+    async def test_name_includes_coordinator_name(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test name includes the coordinator name and 'Early Checkout Expiry'."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_early_expiry_switch(
+            hass, coordinator, mock_checkin_config_entry
+        )
+
+        assert "Test Rental" in switch.name
+        assert "Early Checkout Expiry" in switch.name
+
+    async def test_device_info_links_to_existing_device(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test device_info links to the coordinator's device."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_early_expiry_switch(
+            hass, coordinator, mock_checkin_config_entry
+        )
+
+        assert switch.device_info == coordinator.device_info
+
+    async def test_default_state_is_off(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test default is_on state is False (off)."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_early_expiry_switch(
+            hass, coordinator, mock_checkin_config_entry
+        )
+
+        assert switch.is_on is False
+
+
+class TestEarlyCheckoutExpirySwitchToggle:
+    """Tests for EarlyCheckoutExpirySwitch toggle (T030)."""
+
+    async def test_turn_on_sets_is_on_true(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test async_turn_on sets is_on to True."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_early_expiry_switch(
+            hass, coordinator, mock_checkin_config_entry
+        )
+
+        await switch.async_turn_on()
+
+        assert switch.is_on is True
+        switch.async_write_ha_state.assert_called()
+
+    async def test_turn_off_sets_is_on_false(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test async_turn_off sets is_on to False."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_early_expiry_switch(
+            hass, coordinator, mock_checkin_config_entry
+        )
+
+        await switch.async_turn_on()
+        assert switch.is_on is True
+
+        await switch.async_turn_off()
+        assert switch.is_on is False
+        switch.async_write_ha_state.assert_called()
+
+    async def test_turn_on_then_off_cycle(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test full on/off/on toggle cycle."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_early_expiry_switch(
+            hass, coordinator, mock_checkin_config_entry
+        )
+
+        assert switch.is_on is False
+
+        await switch.async_turn_on()
+        assert switch.is_on is True
+
+        await switch.async_turn_off()
+        assert switch.is_on is False
+
+        await switch.async_turn_on()
+        assert switch.is_on is True
+
+
+class TestEarlyCheckoutExpirySwitchRestore:
+    """Tests for EarlyCheckoutExpirySwitch RestoreEntity state restoration (T030)."""
+
+    async def test_restore_on_state(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test RestoreEntity restores 'on' state from last known state."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_early_expiry_switch(
+            hass, coordinator, mock_checkin_config_entry
+        )
+
+        mock_state = MagicMock()
+        mock_state.state = "on"
+
+        with patch.object(switch, "async_get_last_state", return_value=mock_state):
+            await switch.async_added_to_hass()
+
+        assert switch.is_on is True
+
+    async def test_restore_off_state(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test RestoreEntity restores 'off' state from last known state."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_early_expiry_switch(
+            hass, coordinator, mock_checkin_config_entry
+        )
+
+        mock_state = MagicMock()
+        mock_state.state = "off"
+
+        with patch.object(switch, "async_get_last_state", return_value=mock_state):
+            await switch.async_added_to_hass()
+
+        assert switch.is_on is False
+
+    async def test_restore_no_prior_state_defaults_off(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test default is_on=False when no prior state exists."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_early_expiry_switch(
+            hass, coordinator, mock_checkin_config_entry
+        )
+
+        with patch.object(switch, "async_get_last_state", return_value=None):
+            await switch.async_added_to_hass()
+
+        assert switch.is_on is False
+
+    async def test_added_to_hass_stores_entity_reference(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test async_added_to_hass stores switch reference in hass.data."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_early_expiry_switch(
+            hass, coordinator, mock_checkin_config_entry
+        )
+
+        with patch.object(switch, "async_get_last_state", return_value=None):
+            await switch.async_added_to_hass()
+
+        stored = hass.data[DOMAIN][mock_checkin_config_entry.entry_id].get(
+            EARLY_CHECKOUT_EXPIRY_SWITCH,
+        )
+        assert stored is switch
+
+
+class TestEarlyCheckoutExpirySwitchPlatformSetup:
+    """Tests for EarlyCheckoutExpirySwitch conditional creation (FR-027)."""
+
+    async def test_not_created_when_lockname_empty(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test EarlyCheckoutExpirySwitch NOT created when lockname is None (FR-027)."""
+        coordinator = _make_coordinator(hass, lockname=None)
+        mock_checkin_config_entry.add_to_hass(hass)
+
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: coordinator,
+            UNSUB_LISTENERS: [],
+        }
+
+        added_entities: list = []
+
+        def mock_add_entities(entities: list) -> None:
+            """Collect entities added by platform setup."""
+            added_entities.extend(entities)
+
+        await async_setup_entry(hass, mock_checkin_config_entry, mock_add_entities)
+
+        expiry_switches = [
+            e for e in added_entities if isinstance(e, EarlyCheckoutExpirySwitch)
+        ]
+        assert len(expiry_switches) == 0
+
+    async def test_created_when_lockname_truthy(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test EarlyCheckoutExpirySwitch IS created when lockname is truthy (FR-027)."""
+        coordinator = _make_coordinator(hass, lockname="my_lock")
+        mock_checkin_config_entry.add_to_hass(hass)
+
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: coordinator,
+            UNSUB_LISTENERS: [],
+        }
+
+        added_entities: list = []
+
+        def mock_add_entities(entities: list) -> None:
+            """Collect entities added by platform setup."""
+            added_entities.extend(entities)
+
+        await async_setup_entry(hass, mock_checkin_config_entry, mock_add_entities)
+
+        expiry_switches = [
+            e for e in added_entities if isinstance(e, EarlyCheckoutExpirySwitch)
+        ]
+        assert len(expiry_switches) == 1
