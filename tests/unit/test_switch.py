@@ -153,8 +153,8 @@ class TestKeymasterMonitoringSwitchCreation:
         coordinator = _make_coordinator(hass)
         switch = _create_switch(hass, coordinator, mock_checkin_config_entry)
 
-        assert switch._attr_has_entity_name is True
-        assert switch._attr_translation_key == "keymaster_monitoring"
+        assert switch.has_entity_name is True
+        assert switch.translation_key == "keymaster_monitoring"
 
     async def test_device_info_links_to_existing_device(
         self,
@@ -452,8 +452,8 @@ class TestEarlyCheckoutExpirySwitchCreation:
             hass, coordinator, mock_checkin_config_entry
         )
 
-        assert switch._attr_has_entity_name is True
-        assert switch._attr_translation_key == "early_checkout_expiry"
+        assert switch.has_entity_name is True
+        assert switch.translation_key == "early_checkout_expiry"
 
     async def test_device_info_links_to_existing_device(
         self,
