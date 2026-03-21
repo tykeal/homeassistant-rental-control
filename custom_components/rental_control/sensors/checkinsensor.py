@@ -189,6 +189,8 @@ class CheckinTrackingSensor(
         super().__init__(coordinator)
         self._hass = hass
         self._config_entry = config_entry
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "checkin"
         self._state: str = CHECKIN_STATE_NO_RESERVATION
 
         # Tracked event fields (from data-model.md)
@@ -215,11 +217,6 @@ class CheckinTrackingSensor(
     def unique_id(self) -> str:
         """Return the unique ID for this sensor."""
         return self._unique_id
-
-    @property
-    def name(self) -> str:
-        """Return the name of the sensor."""
-        return f"{self.coordinator.name} Check-in"
 
     @property
     def state(self) -> str:
@@ -292,13 +289,11 @@ class CheckinTrackingSensor(
         """Return the configured cleaning window in hours.
 
         Returns:
-            The cleaning window duration from config options,
+            The cleaning window duration from config data,
             or the default value.
         """
         return float(
-            self._config_entry.options.get(
-                CONF_CLEANING_WINDOW, DEFAULT_CLEANING_WINDOW
-            )
+            self._config_entry.data.get(CONF_CLEANING_WINDOW, DEFAULT_CLEANING_WINDOW)
         )
 
     def _cancel_timer(self) -> None:
@@ -379,7 +374,7 @@ class CheckinTrackingSensor(
         """
         _LOGGER.debug(
             "Running CheckinTrackingSensor coordinator update for %s",
-            self.name,
+            self.coordinator.name,
         )
 
         if not self.coordinator.last_update_success:
@@ -733,7 +728,7 @@ class CheckinTrackingSensor(
         Args:
             _now: The current time when the callback fires.
         """
-        _LOGGER.debug("Auto check-in timer fired for %s", self.name)
+        _LOGGER.debug("Auto check-in timer fired for %s", self.coordinator.name)
         self._unsub_timer = None
         if self._state == CHECKIN_STATE_AWAITING:
             self._transition_to_checked_in(source="automatic")
@@ -745,7 +740,7 @@ class CheckinTrackingSensor(
         Args:
             _now: The current time when the callback fires.
         """
-        _LOGGER.debug("Auto check-out timer fired for %s", self.name)
+        _LOGGER.debug("Auto check-out timer fired for %s", self.coordinator.name)
         self._unsub_timer = None
         if self._state == CHECKIN_STATE_CHECKED_IN:
             self._transition_to_checked_out(source="automatic")
@@ -759,7 +754,7 @@ class CheckinTrackingSensor(
         Args:
             _now: The current time when the callback fires.
         """
-        _LOGGER.debug("Linger-to-awaiting timer fired for %s", self.name)
+        _LOGGER.debug("Linger-to-awaiting timer fired for %s", self.coordinator.name)
         self._unsub_timer = None
         if self._state == CHECKIN_STATE_CHECKED_OUT:
             # Pick the next event, skipping the one we checked out from
@@ -787,7 +782,9 @@ class CheckinTrackingSensor(
         Args:
             _now: The current time when the callback fires.
         """
-        _LOGGER.debug("Linger-to-no-reservation timer fired for %s", self.name)
+        _LOGGER.debug(
+            "Linger-to-no-reservation timer fired for %s", self.coordinator.name
+        )
         self._unsub_timer = None
         if self._state == CHECKIN_STATE_CHECKED_OUT:
             # Capture follow-on event start day before clearing state
@@ -807,7 +804,7 @@ class CheckinTrackingSensor(
                     _LOGGER.debug(
                         "FR-006c: Scheduled follow-up awaiting transition at %s for %s",
                         followon_start_day.isoformat(),
-                        self.name,
+                        self.coordinator.name,
                     )
                     self.async_write_ha_state()
                 else:
@@ -833,7 +830,7 @@ class CheckinTrackingSensor(
         """
         _LOGGER.debug(
             "FR-006c no-reservation-to-awaiting timer fired for %s",
-            self.name,
+            self.coordinator.name,
         )
         self._unsub_timer = None
         self._next_event_start_day = None
@@ -924,7 +921,9 @@ class CheckinTrackingSensor(
             self._checked_out_event_key = restored.checked_out_event_key
             self._next_event_start_day = restored.next_event_start_day
 
-            _LOGGER.debug("Restored state '%s' for %s", self._state, self.name)
+            _LOGGER.debug(
+                "Restored state '%s' for %s", self._state, self.coordinator.name
+            )
 
             # --- T020: Stale-state validation ---
             self._validate_restored_state()
@@ -940,7 +939,7 @@ class CheckinTrackingSensor(
         else:
             _LOGGER.debug(
                 "No prior state for %s, starting as %s",
-                self.name,
+                self.coordinator.name,
                 CHECKIN_STATE_NO_RESERVATION,
             )
             # Fall through: process any current coordinator data
@@ -1114,7 +1113,7 @@ class CheckinTrackingSensor(
                 _LOGGER.debug(
                     "Restored FR-006c follow-up timer at %s for %s",
                     self._next_event_start_day.isoformat(),
-                    self.name,
+                    self.coordinator.name,
                 )
             elif self._next_event_start_day is not None:
                 # Follow-up time already passed — clear stale data

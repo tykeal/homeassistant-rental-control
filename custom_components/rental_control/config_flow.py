@@ -23,6 +23,7 @@ from voluptuous.schema_builder import ALLOW_EXTRA
 from .const import CODE_GENERATORS
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
+from .const import CONF_CLEANING_WINDOW
 from .const import CONF_CODE_GENERATION
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
@@ -38,6 +39,7 @@ from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import DEFAULT_CHECKIN
 from .const import DEFAULT_CHECKOUT
+from .const import DEFAULT_CLEANING_WINDOW
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_DAYS
@@ -288,6 +290,10 @@ def _get_schema(
             vol.Optional(
                 CONF_VERIFY_SSL, default=_get_default(CONF_VERIFY_SSL, True)
             ): cv.boolean,
+            vol.Optional(
+                CONF_CLEANING_WINDOW,
+                default=_get_default(CONF_CLEANING_WINDOW, DEFAULT_CLEANING_WINDOW),
+            ): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=48.0)),
         },
         extra=ALLOW_EXTRA,
     )

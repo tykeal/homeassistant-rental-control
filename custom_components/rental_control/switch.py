@@ -83,6 +83,8 @@ class KeymasterMonitoringSwitch(SwitchEntity, RestoreEntity):
         """
         self._coordinator = coordinator
         self._config_entry = config_entry
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "keymaster_monitoring"
         self._attr_is_on: bool = False
         self._unique_id = gen_uuid(f"{coordinator.unique_id} keymaster_monitoring")
 
@@ -90,11 +92,6 @@ class KeymasterMonitoringSwitch(SwitchEntity, RestoreEntity):
     def unique_id(self) -> str:
         """Return the unique ID for this switch."""
         return self._unique_id
-
-    @property
-    def name(self) -> str:
-        """Return the name of the switch."""
-        return f"{self._coordinator.name} Keymaster Monitoring"
 
     @property
     def is_on(self) -> bool:
@@ -167,6 +164,8 @@ class EarlyCheckoutExpirySwitch(SwitchEntity, RestoreEntity):
         """
         self._coordinator = coordinator
         self._config_entry = config_entry
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "early_checkout_expiry"
         self._attr_is_on: bool = False
         self._unique_id = gen_uuid(f"{coordinator.unique_id} early_checkout_expiry")
 
@@ -174,11 +173,6 @@ class EarlyCheckoutExpirySwitch(SwitchEntity, RestoreEntity):
     def unique_id(self) -> str:
         """Return the unique ID for this switch."""
         return self._unique_id
-
-    @property
-    def name(self) -> str:
-        """Return the name of the switch."""
-        return f"{self._coordinator.name} Early Checkout Expiry"
 
     @property
     def is_on(self) -> bool:

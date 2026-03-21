@@ -405,12 +405,14 @@ async def test_entity_names_match_expected_format(
     assert len(calendar_entities) == 1
     assert calendar_entities[0].original_name == f"{NAME} {rental_name}"
 
-    # Sensor entity names: '{NAME} {rental_name} Event {N}' + '{rental_name} Check-in'
+    # Sensor entity names: '{NAME} {rental_name} Event {N}' + 'Check-in'
+    # The check-in sensor uses has_entity_name=True with translation_key,
+    # so original_name is just the entity-specific translated name.
     max_events = mock_config_entry.data["max_events"]
     expected_sensor_names = {
         f"{NAME} {rental_name} Event {i}" for i in range(max_events)
     }
-    expected_sensor_names.add(f"{rental_name} Check-in")
+    expected_sensor_names.add("Check-in")
     actual_sensor_names = {e.original_name for e in sensor_entities}
     assert actual_sensor_names == expected_sensor_names
 

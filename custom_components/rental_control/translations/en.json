@@ -17,6 +17,7 @@
         "data": {
           "checkin": "Default Check-in time",
           "checkout": "Default Check-out time",
+          "cleaning_window": "Cleaning Window (hours)",
           "code_generation": "Door code generator",
           "code_length": "Door code length (>= 4 and an even number)",
           "days": "Maximum number of days into the future to fetch",
@@ -31,6 +32,9 @@
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates"
+        },
+        "data_description": {
+          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)"
         }
       }
     }
@@ -53,6 +57,7 @@
         "data": {
           "checkin": "Default Check-in time",
           "checkout": "Default Check-out time",
+          "cleaning_window": "Cleaning Window (hours)",
           "code_generation": "Door code generator",
           "code_length": "Door code length (>= 4 and an even number)",
           "days": "Maximum number of days into the future to fetch",
@@ -67,7 +72,31 @@
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates"
+        },
+        "data_description": {
+          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)"
         }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "checkin": {
+        "name": "Check-in",
+        "state": {
+          "no_reservation": "No Reservation",
+          "awaiting_checkin": "Awaiting Check-in",
+          "checked_in": "Checked In",
+          "checked_out": "Checked Out"
+        }
+      }
+    },
+    "switch": {
+      "keymaster_monitoring": {
+        "name": "Keymaster Monitoring"
+      },
+      "early_checkout_expiry": {
+        "name": "Early Checkout Expiry"
       }
     }
   },

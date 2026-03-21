@@ -144,17 +144,17 @@ class TestKeymasterMonitoringSwitchCreation:
         expected = gen_uuid(f"{coordinator.unique_id} keymaster_monitoring")
         assert switch.unique_id == expected
 
-    async def test_name_includes_coordinator_name(
+    async def test_name_uses_entity_translation(
         self,
         hass: HomeAssistant,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test name includes the coordinator name."""
+        """Test entity uses translation-based naming."""
         coordinator = _make_coordinator(hass)
         switch = _create_switch(hass, coordinator, mock_checkin_config_entry)
 
-        assert "Test Rental" in switch.name
-        assert "Keymaster Monitoring" in switch.name
+        assert switch.has_entity_name is True
+        assert switch.translation_key == "keymaster_monitoring"
 
     async def test_device_info_links_to_existing_device(
         self,
@@ -441,19 +441,19 @@ class TestEarlyCheckoutExpirySwitchCreation:
         expected = gen_uuid(f"{coordinator.unique_id} early_checkout_expiry")
         assert switch.unique_id == expected
 
-    async def test_name_includes_coordinator_name(
+    async def test_name_uses_entity_translation(
         self,
         hass: HomeAssistant,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test name includes the coordinator name and 'Early Checkout Expiry'."""
+        """Test entity uses translation-based naming."""
         coordinator = _make_coordinator(hass)
         switch = _create_early_expiry_switch(
             hass, coordinator, mock_checkin_config_entry
         )
 
-        assert "Test Rental" in switch.name
-        assert "Early Checkout Expiry" in switch.name
+        assert switch.has_entity_name is True
+        assert switch.translation_key == "early_checkout_expiry"
 
     async def test_device_info_links_to_existing_device(
         self,
