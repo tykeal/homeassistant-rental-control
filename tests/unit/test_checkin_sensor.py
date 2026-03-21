@@ -702,6 +702,12 @@ class TestPostCheckoutLinger:
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
         assert sensor._transition_target_time is not None
+        assert sensor._checkout_time is not None
+        # Half-gap between checkout and next event start
+        gap = next_event.start - sensor._checkout_time
+        expected_linger = sensor._checkout_time + gap / 2
+        delta = sensor._transition_target_time - expected_linger
+        assert abs(delta.total_seconds()) < 1
 
     async def test_no_followon_cleaning_window_linger(
         self,
@@ -778,6 +784,13 @@ class TestPostCheckoutLinger:
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
         assert sensor._transition_target_time is not None
+        assert sensor._checkout_time is not None
+        # FR-006c: should transition at midnight boundary
+        expected_midnight = dt_util.start_of_local_day(
+            sensor._checkout_time + timedelta(days=1)
+        )
+        delta = sensor._transition_target_time - expected_midnight
+        assert abs(delta.total_seconds()) < 1
 
     async def test_auto_checkin_timer_scheduled_for_future_event(
         self,

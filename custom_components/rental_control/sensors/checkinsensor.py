@@ -304,9 +304,11 @@ class CheckinTrackingSensor(
                     # re-transition even if end time changed
                     self.async_write_ha_state()
                 else:
-                    # Genuinely new event — will be handled by linger
-                    # timer or coordinator update cycle
-                    self.async_write_ha_state()
+                    # Genuinely new follow-on event while checked out:
+                    # cancel any existing linger timer and recompute
+                    # linger timing based on the updated coordinator data.
+                    self._cancel_timer()
+                    self._compute_linger_timing()
             else:
                 self.async_write_ha_state()
 
@@ -580,7 +582,15 @@ class CheckinTrackingSensor(
         _LOGGER.debug("Linger-to-awaiting timer fired for %s", self.name)
         self._unsub_timer = None
         if self._state == CHECKIN_STATE_CHECKED_OUT:
+            # Pick the next event, skipping the one we checked out from
             event = self._get_relevant_event()
+            if (
+                event is not None
+                and self._checked_out_event_key is not None
+                and self._event_key(event.summary, event.start)
+                == self._checked_out_event_key
+            ):
+                event = self._get_next_event()
             if event is not None:
                 self._transition_to_awaiting(event)
             else:
@@ -601,7 +611,11 @@ class CheckinTrackingSensor(
             self._transition_to_no_reservation()
 
     async def async_added_to_hass(self) -> None:
-        """Register listener and process existing coordinator data."""
+        """Register listener and process existing coordinator data.
+
+        Note: RestoreEntity state restoration (async_get_last_state) is
+        planned for a later phase. Currently state resets on HA restart.
+        """
         await super().async_added_to_hass()
         # Process existing coordinator data on first load
         if self.coordinator.last_update_success and self.coordinator.data is not None:
