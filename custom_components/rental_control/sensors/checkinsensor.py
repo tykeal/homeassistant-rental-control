@@ -289,7 +289,7 @@ class CheckinTrackingSensor(
         """Return the configured cleaning window in hours.
 
         Returns:
-            The cleaning window duration from config options,
+            The cleaning window duration from config data,
             or the default value.
         """
         return float(
