@@ -216,8 +216,9 @@ class EarlyCheckoutExpirySwitch(SwitchEntity, RestoreEntity):
             self._attr_is_on = last_state.state == "on"
 
         # Store entity reference in hass.data for the sensor to look up
-        entry_data = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id, {})
-        entry_data[EARLY_CHECKOUT_EXPIRY_SWITCH] = self
+        self.hass.data.setdefault(DOMAIN, {}).setdefault(
+            self._config_entry.entry_id, {}
+        )[EARLY_CHECKOUT_EXPIRY_SWITCH] = self
 
         _LOGGER.debug(
             "Early checkout expiry switch restored: is_on=%s, entity_id=%s",
