@@ -112,8 +112,8 @@ class TestAsyncSetupEntry:
         await async_setup_entry(hass, config_entry, async_add_entities)
 
         assert async_add_entities.called
-        assert len(added_entities) == 3
-        for i, sensor in enumerate(added_entities):
+        assert len(added_entities) == 4  # 3 cal sensors + 1 checkin sensor
+        for i, sensor in enumerate(added_entities[:3]):
             assert isinstance(sensor, RentalControlCalSensor)
             assert sensor._event_number == i
 

@@ -150,15 +150,15 @@ async def test_entities_created(
     ent_reg = er.async_get(hass)
     entities = er.async_entries_for_config_entry(ent_reg, mock_config_entry.entry_id)
 
-    # 1 calendar + max_events (3) sensors
-    assert len(entities) == 4
+    # 1 calendar + max_events (3) sensors + 1 checkin tracking sensor
+    assert len(entities) == 5
 
     domains = {e.domain for e in entities}
     assert "calendar" in domains
     assert "sensor" in domains
 
     sensor_entities = [e for e in entities if e.domain == "sensor"]
-    assert len(sensor_entities) == 3
+    assert len(sensor_entities) == 4
 
 
 # ---------------------------------------------------------------------------
@@ -340,10 +340,12 @@ async def test_sensor_entity_unique_id_format(
     sensor_entities = [e for e in entities if e.domain == "sensor"]
 
     max_events = mock_config_entry.data["max_events"]
-    assert len(sensor_entities) == max_events
+    assert len(sensor_entities) == max_events + 1  # +1 for checkin tracking sensor
     expected_uids = {
         gen_uuid(f"{mock_config_entry.unique_id} sensor {i}") for i in range(max_events)
     }
+    # Add the checkin tracking sensor unique_id
+    expected_uids.add(gen_uuid(f"{mock_config_entry.unique_id} checkin_tracking"))
     actual_uids = {e.unique_id for e in sensor_entities}
     assert actual_uids == expected_uids
 
@@ -403,11 +405,12 @@ async def test_entity_names_match_expected_format(
     assert len(calendar_entities) == 1
     assert calendar_entities[0].original_name == f"{NAME} {rental_name}"
 
-    # Sensor entity names: '{NAME} {rental_name} Event {N}'
+    # Sensor entity names: '{NAME} {rental_name} Event {N}' + '{rental_name} Check-in'
     max_events = mock_config_entry.data["max_events"]
     expected_sensor_names = {
         f"{NAME} {rental_name} Event {i}" for i in range(max_events)
     }
+    expected_sensor_names.add(f"{rental_name} Check-in")
     actual_sensor_names = {e.original_name for e in sensor_entities}
     assert actual_sensor_names == expected_sensor_names
 

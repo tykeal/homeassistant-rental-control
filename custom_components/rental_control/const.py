@@ -38,7 +38,7 @@ UNSUB_LISTENERS = "unsub_listeners"
 CALENDAR = "calendar"
 SENSOR = "sensor"
 SWITCH = "switch"
-PLATFORMS = [CALENDAR, SENSOR]
+PLATFORMS = [CALENDAR, SENSOR, SWITCH]
 
 # Events
 EVENT_RENTAL_CONTROL_CHECKIN = "rental_control_checkin"
