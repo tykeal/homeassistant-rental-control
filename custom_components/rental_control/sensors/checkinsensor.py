@@ -22,6 +22,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE
 from homeassistant.core import HomeAssistant
 from homeassistant.core import callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.restore_state import ExtraStoredData
@@ -751,6 +752,46 @@ class CheckinTrackingSensor(
         self._unsub_timer = None
         if self._state == CHECKIN_STATE_CHECKED_OUT:
             self._transition_to_no_reservation()
+
+    async def async_checkout(self) -> None:
+        """Handle manual checkout service call.
+
+        Validates guard conditions per FR-019 and specs/004-checkin-tracking/contracts/checkout-service.md:
+        1. Sensor must be in ``checked_in`` state
+        2. Current datetime must be within ``[start, end)`` of the active
+           reservation window
+
+        On success, calls ``_transition_to_checked_out(source="manual")``.
+
+        Raises:
+            ServiceValidationError: If guard conditions are not met.
+        """
+        # Guard 1: State must be checked_in
+        if self._state != CHECKIN_STATE_CHECKED_IN:
+            raise ServiceValidationError(
+                f"Checkout is only available when the guest is checked in "
+                f"(current state: {self._state})"
+            )
+
+        # Guard 2: Current datetime within active reservation window [start, end)
+        now = dt_util.now()
+        start = self._tracked_event_start
+        end = self._tracked_event_end
+
+        if start is not None and end is not None:
+            if now < start or now >= end:
+                raise ServiceValidationError(
+                    f"Checkout is only available during the active reservation "
+                    f"window (current: {now.isoformat()}, "
+                    f"allowed: {start.isoformat()} to {end.isoformat()})"
+                )
+        elif start is None or end is None:
+            raise ServiceValidationError(
+                "Checkout is only available during the active reservation "
+                "window (reservation boundaries are not set)"
+            )
+
+        self._transition_to_checked_out(source="manual")
 
     async def async_added_to_hass(self) -> None:
         """Restore persisted state and validate against current time/data.

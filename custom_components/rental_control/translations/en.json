@@ -70,5 +70,11 @@
         }
       }
     }
+  },
+  "services": {
+    "checkout": {
+      "name": "Checkout",
+      "description": "Manually check out the current guest."
+    }
   }
 }

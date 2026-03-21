@@ -9,6 +9,7 @@ Tests cover:
 - T009: HA event bus firing
 - T016: State restoration (RestoreEntity)
 - T017: Stale state validation after restore
+- T027: Manual checkout action (async_checkout)
 - T046: Event cancelled/removed
 - T048: FR-030 auto check-out rescheduling
 - T022: Keymaster event handling
@@ -25,7 +26,9 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from homeassistant.components.calendar import CalendarEvent
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.util import dt as dt_util
+import pytest
 
 from custom_components.rental_control.const import CHECKIN_STATE_AWAITING
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
@@ -2451,3 +2454,308 @@ class TestEventBusListenerFiltering:
         await hass.async_block_till_done()
 
         sensor.async_handle_keymaster_unlock.assert_not_called()
+        assert sensor._unsub_timer is not None
+
+
+# ===========================================================================
+# T027: Manual checkout action (async_checkout)
+# ===========================================================================
+
+
+class TestManualCheckout:
+    """Tests for manual checkout action / async_checkout (T027)."""
+
+    async def test_checkout_success_when_checked_in_within_window(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test successful checkout when checked_in and within reservation window.
+
+        Verifies:
+        - State transitions to checked_out
+        - rental_control_checkout fires with source: manual
+        - checkout_time is recorded
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        start = now - timedelta(hours=2)
+        end = now + timedelta(hours=48)
+
+        # Set sensor to checked_in state with active reservation window
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = start
+        sensor._tracked_event_end = end
+        sensor._tracked_event_slot_name = "John Smith"
+        sensor._checkin_source = "automatic"
+
+        # No follow-on events
+        mock_checkin_coordinator.data = []
+
+        # Collect fired events
+        fired_events: list = []
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKOUT,
+            lambda e: fired_events.append(e),
+        )
+
+        await sensor.async_checkout()
+        await hass.async_block_till_done()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._checkout_source == "manual"
+        assert sensor._checkout_time is not None
+
+        # Verify checkout event fired with source: manual
+        assert len(fired_events) == 1
+        event_data = fired_events[0].data
+        assert event_data["entity_id"] == "sensor.test_rental_checkin"
+        assert event_data["source"] == "manual"
+        assert event_data["summary"] == "Reserved - John Smith"
+        assert event_data["start"] == start.isoformat()
+        assert event_data["end"] == end.isoformat()
+        assert event_data["guest_name"] == "John Smith"
+
+    async def test_checkout_raises_when_not_checked_in(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test ServiceValidationError raised when state is not checked_in (FR-019).
+
+        Tests all non-checked_in states: no_reservation, awaiting_checkin,
+        checked_out.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        for state in [
+            CHECKIN_STATE_NO_RESERVATION,
+            CHECKIN_STATE_AWAITING,
+            CHECKIN_STATE_CHECKED_OUT,
+        ]:
+            sensor._state = state
+            with pytest.raises(ServiceValidationError, match="current state"):
+                await sensor.async_checkout()
+
+    async def test_checkout_raises_when_before_reservation_start(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test ServiceValidationError when current time is before event start (FR-019).
+
+        Guard condition: current datetime must be >= start_datetime.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        # Event starts in the future — shouldn't normally be checked_in,
+        # but we force the state to test the guard condition
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now + timedelta(hours=2)
+        sensor._tracked_event_end = now + timedelta(hours=48)
+
+        with pytest.raises(ServiceValidationError, match="active reservation window"):
+            await sensor.async_checkout()
+
+    async def test_checkout_raises_when_at_or_after_reservation_end(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test ServiceValidationError when current time is at or after event end (FR-019).
+
+        Guard condition: current datetime must be strictly before end_datetime.
+        Tests both at-end and after-end scenarios.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+
+        # Case 1: exactly at end time
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(hours=48)
+        sensor._tracked_event_end = now  # End is exactly now
+
+        with pytest.raises(ServiceValidationError, match="active reservation window"):
+            await sensor.async_checkout()
+
+        # Case 2: after end time
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_end = now - timedelta(hours=1)
+
+        with pytest.raises(ServiceValidationError, match="active reservation window"):
+            await sensor.async_checkout()
+
+    async def test_checkout_error_message_includes_state(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test that guard error message includes current state per contract."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        sensor._state = CHECKIN_STATE_AWAITING
+
+        with pytest.raises(ServiceValidationError) as exc_info:
+            await sensor.async_checkout()
+
+        assert CHECKIN_STATE_AWAITING in str(exc_info.value)
+
+    async def test_checkout_error_message_includes_datetime_info(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test that reservation window error includes datetime info per contract."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        start = now + timedelta(hours=2)
+        end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = start
+        sensor._tracked_event_end = end
+
+        with pytest.raises(ServiceValidationError) as exc_info:
+            await sensor.async_checkout()
+
+        error_msg = str(exc_info.value)
+        # Per contract: message should reference the allowed window
+        assert "active reservation window" in error_msg
+        assert start.isoformat() in error_msg
+        assert end.isoformat() in error_msg
+
+    async def test_checkout_no_state_change_on_guard_failure(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test no state change or events when guard conditions fail."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        sensor._state = CHECKIN_STATE_NO_RESERVATION
+        original_state = sensor._state
+
+        fired_events: list = []
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKOUT,
+            lambda e: fired_events.append(e),
+        )
+
+        with pytest.raises(ServiceValidationError):
+            await sensor.async_checkout()
+
+        await hass.async_block_till_done()
+
+        # No state change, no events fired
+        assert sensor._state == original_state
+        assert len(fired_events) == 0
+
+    async def test_checkout_linger_timing_uses_actual_checkout_time(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test post-checkout linger is computed from actual checkout time.
+
+        When manual checkout occurs mid-reservation, linger timing should
+        be based on the actual checkout time (dt_util.now()), not the
+        event end time.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        start = now - timedelta(hours=2)
+        # Event still has 48 hours to go
+        end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = start
+        sensor._tracked_event_end = end
+        sensor._tracked_event_slot_name = "John Smith"
+
+        # No follow-on events → FR-006b cleaning window
+        mock_checkin_coordinator.data = []
+
+        await sensor.async_checkout()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._checkout_time is not None
+        assert sensor._transition_target_time is not None
+
+        # Linger should be based on checkout_time (≈now), not event end
+        expected_linger = sensor._checkout_time + timedelta(
+            hours=DEFAULT_CLEANING_WINDOW
+        )
+        delta = sensor._transition_target_time - expected_linger
+        assert abs(delta.total_seconds()) < 1
+
+        # Verify checkout_time is approximately now (not event end)
+        assert abs((sensor._checkout_time - now).total_seconds()) < 2
+        # Event end is 48 hours away — if linger used event end,
+        # transition_target_time would be ~54 hours from now
+        assert sensor._transition_target_time < now + timedelta(hours=12)
+
+    async def test_checkout_at_start_boundary_succeeds(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test checkout succeeds when current time equals event start (inclusive).
+
+        Guard: current datetime must be >= start (inclusive boundary).
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        # Start is exactly now or slightly in the past to ensure boundary
+        start = now - timedelta(seconds=1)
+        end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = start
+        sensor._tracked_event_end = end
+        sensor._tracked_event_slot_name = "John Smith"
+
+        mock_checkin_coordinator.data = []
+
+        # Should NOT raise — start boundary is inclusive
+        await sensor.async_checkout()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT

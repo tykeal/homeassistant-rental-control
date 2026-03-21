@@ -1,74 +1,80 @@
 {
   "config": {
     "error": {
-      "bad_code_length": "La longueur du code de verrouillage doit être paire et >= 4",
+      "bad_code_length": "La longueur du code de verrouillage doit \u00eatre paire et >= 4",
       "bad_ics": "L'URL n'a pas fourni un calendrier valide",
-      "bad_minimum": "La valeur doit être de 1 ou plus",
-      "bad_refresh": "Le rafraîchissement doit être compris entre 0 et 1440.",
-      "bad_time": "L'heure d'arrivée/départ est invalide. Utilisez le format 24 heures",
-      "https_required": "HTTPS requis lorsque la vérification SSL est activée",
-      "invalid_path": "Le chemin doit être un chemin relatif, non absolu",
-      "invalid_url": "L'URL est mal formée ou invalide",
-      "same_name": "Nom déjà utilisé",
-      "unknown": "Erreur inattendue, vérifiez les journaux pour plus de détails"
+      "bad_minimum": "La valeur doit \u00eatre de 1 ou plus",
+      "bad_refresh": "Le rafra\u00eechissement doit \u00eatre compris entre 0 et 1440.",
+      "bad_time": "L'heure d'arriv\u00e9e/d\u00e9part est invalide. Utilisez le format 24 heures",
+      "https_required": "HTTPS requis lorsque la v\u00e9rification SSL est activ\u00e9e",
+      "invalid_path": "Le chemin doit \u00eatre un chemin relatif, non absolu",
+      "invalid_url": "L'URL est mal form\u00e9e ou invalide",
+      "same_name": "Nom d\u00e9j\u00e0 utilis\u00e9",
+      "unknown": "Erreur inattendue, v\u00e9rifiez les journaux pour plus de d\u00e9tails"
     },
     "step": {
       "user": {
         "data": {
-          "checkin": "Heure d'arrivée par défaut",
-          "checkout": "Heure de départ par défaut",
-          "code_generation": "Générateur de code de porte",
+          "checkin": "Heure d'arriv\u00e9e par d\u00e9faut",
+          "checkout": "Heure de d\u00e9part par d\u00e9faut",
+          "code_generation": "G\u00e9n\u00e9rateur de code de porte",
           "code_length": "Longueur du code de porte (>= 4 et un nombre pair)",
-          "days": "Nombre maximum de jours à l'avance à récupérer",
-          "event_prefix": "Préfixe pour tous les événements (utile si vous liez plus d'une location)",
-          "ignore_non_reserved": "Ignorer les événements qui ne sont pas des réservations standard",
-          "keymaster_entry_id": "Configuration du Keymaster à gérer",
-          "max_events": "Nombre de capteurs d'événements à créer",
+          "days": "Nombre maximum de jours \u00e0 l'avance \u00e0 r\u00e9cup\u00e9rer",
+          "event_prefix": "Pr\u00e9fixe pour tous les \u00e9v\u00e9nements (utile si vous liez plus d'une location)",
+          "ignore_non_reserved": "Ignorer les \u00e9v\u00e9nements qui ne sont pas des r\u00e9servations standard",
+          "keymaster_entry_id": "Configuration du Keymaster \u00e0 g\u00e9rer",
+          "max_events": "Nombre de capteurs d'\u00e9v\u00e9nements \u00e0 cr\u00e9er",
           "name": "Nom du calendrier",
-          "refresh_frequency": "Rafraîchir le calendrier en minutes. 0 - 1440",
-          "start_slot": "Slot de départ pour la gestion",
-          "should_update_code": "Pour les codes basés sur la date, mettez à jour le code si les événements futurs changent les dates de début ou de fin",
+          "refresh_frequency": "Rafra\u00eechir le calendrier en minutes. 0 - 1440",
+          "start_slot": "Slot de d\u00e9part pour la gestion",
+          "should_update_code": "Pour les codes bas\u00e9s sur la date, mettez \u00e0 jour le code si les \u00e9v\u00e9nements futurs changent les dates de d\u00e9but ou de fin",
           "timezone": "Fuseau horaire du calendrier",
           "url": "URL du calendrier",
-          "verify_ssl": "Vérifier les certificats SSL"
+          "verify_ssl": "V\u00e9rifier les certificats SSL"
         }
       }
     }
   },
   "options": {
     "error": {
-      "bad_code_length": "La longueur du code de verrouillage doit être paire et >= 4",
+      "bad_code_length": "La longueur du code de verrouillage doit \u00eatre paire et >= 4",
       "bad_ics": "L'URL n'a pas fourni un calendrier valide",
-      "bad_minimum": "La valeur doit être de 1 ou plus",
-      "bad_refresh": "Le rafraîchissement doit être compris entre 0 et 1440.",
-      "bad_time": "L'heure d'arrivée/départ est invalide. Utilisez le format 24 heures",
-      "https_required": "HTTPS requis lorsque la vérification SSL est activée",
-      "invalid_path": "Le chemin doit être un chemin relatif, non absolu",
-      "invalid_url": "L'URL est mal formée ou invalide",
-      "same_name": "Nom déjà utilisé",
-      "unknown": "Erreur inattendue, vérifiez les journaux pour plus de détails"
+      "bad_minimum": "La valeur doit \u00eatre de 1 ou plus",
+      "bad_refresh": "Le rafra\u00eechissement doit \u00eatre compris entre 0 et 1440.",
+      "bad_time": "L'heure d'arriv\u00e9e/d\u00e9part est invalide. Utilisez le format 24 heures",
+      "https_required": "HTTPS requis lorsque la v\u00e9rification SSL est activ\u00e9e",
+      "invalid_path": "Le chemin doit \u00eatre un chemin relatif, non absolu",
+      "invalid_url": "L'URL est mal form\u00e9e ou invalide",
+      "same_name": "Nom d\u00e9j\u00e0 utilis\u00e9",
+      "unknown": "Erreur inattendue, v\u00e9rifiez les journaux pour plus de d\u00e9tails"
     },
     "step": {
       "init": {
         "data": {
-          "checkin": "Heure d'arrivée par défaut",
-          "checkout": "Heure de départ par défaut",
-          "code_generation": "Générateur de code de porte",
+          "checkin": "Heure d'arriv\u00e9e par d\u00e9faut",
+          "checkout": "Heure de d\u00e9part par d\u00e9faut",
+          "code_generation": "G\u00e9n\u00e9rateur de code de porte",
           "code_length": "Longueur du code de porte (>= 4 et un nombre pair)",
-          "days": "Nombre maximum de jours à l'avance à récupérer",
-          "event_prefix": "Préfixe pour tous les événements (utile si vous liez plus d'une location)",
-          "ignore_non_reserved": "Ignorer les événements qui ne sont pas des réservations standard",
-          "keymaster_entry_id": "Configuration du Keymaster à gérer",
-          "max_events": "Nombre de capteurs d'événements à créer",
+          "days": "Nombre maximum de jours \u00e0 l'avance \u00e0 r\u00e9cup\u00e9rer",
+          "event_prefix": "Pr\u00e9fixe pour tous les \u00e9v\u00e9nements (utile si vous liez plus d'une location)",
+          "ignore_non_reserved": "Ignorer les \u00e9v\u00e9nements qui ne sont pas des r\u00e9servations standard",
+          "keymaster_entry_id": "Configuration du Keymaster \u00e0 g\u00e9rer",
+          "max_events": "Nombre de capteurs d'\u00e9v\u00e9nements \u00e0 cr\u00e9er",
           "name": "Nom du calendrier",
-          "refresh_frequency": "Rafraîchir le calendrier en minutes. 0 - 1440",
-          "start_slot": "Slot de départ pour la gestion",
-          "should_update_code": "Pour les codes basés sur la date, mettez à jour le code si les événements futurs changent les dates de début ou de fin",
+          "refresh_frequency": "Rafra\u00eechir le calendrier en minutes. 0 - 1440",
+          "start_slot": "Slot de d\u00e9part pour la gestion",
+          "should_update_code": "Pour les codes bas\u00e9s sur la date, mettez \u00e0 jour le code si les \u00e9v\u00e9nements futurs changent les dates de d\u00e9but ou de fin",
           "timezone": "Fuseau horaire du calendrier",
           "url": "URL du calendrier",
-          "verify_ssl": "Vérifier les certificats SSL"
+          "verify_ssl": "V\u00e9rifier les certificats SSL"
         }
       }
+    }
+  },
+  "services": {
+    "checkout": {
+      "name": "Départ",
+      "description": "Enregistrer manuellement le départ du client actuel."
     }
   }
 }
