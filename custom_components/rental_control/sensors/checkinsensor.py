@@ -1036,5 +1036,4 @@ class CheckinTrackingSensor(
             code_slot_num,
             self._tracked_event_summary,
         )
-        self._cancel_timer()
         self._transition_to_checked_in(source="keymaster")
