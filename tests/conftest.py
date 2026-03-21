@@ -5,13 +5,17 @@
 
 from __future__ import annotations
 
+from datetime import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 from aioresponses import aioresponses
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.rental_control.const import CONF_CLEANING_WINDOW
+from custom_components.rental_control.const import DEFAULT_CLEANING_WINDOW
 from custom_components.rental_control.const import DOMAIN
 
 from tests.fixtures import calendar_data
@@ -175,3 +179,71 @@ def mock_calendar_url(mock_aiohttp_session: aioresponses) -> aioresponses:
         body=calendar_data.AIRBNB_ICS_CALENDAR,
     )
     return mock_aiohttp_session
+
+
+@pytest.fixture
+def mock_checkin_coordinator(
+    hass: HomeAssistant,
+) -> MagicMock:
+    """Return a mock coordinator for checkin sensor tests.
+
+    The coordinator has configurable event data, lockname, start_slot,
+    max_events, checkin/checkout times, and unique_id. Event data
+    defaults to an empty list.
+
+    Args:
+        hass: Home Assistant instance.
+
+    Returns:
+        MagicMock: Mock coordinator with sensible defaults.
+    """
+    coordinator = MagicMock()
+    coordinator.hass = hass
+    coordinator.data = []
+    coordinator.last_update_success = True
+    coordinator.lockname = None
+    coordinator.start_slot = 10
+    coordinator.max_events = 3
+    coordinator.checkin = time(16, 0)
+    coordinator.checkout = time(11, 0)
+    coordinator.event_prefix = ""
+    coordinator.unique_id = "test-checkin-unique-id"
+    coordinator.name = "Test Rental"
+    coordinator.device_info = {
+        "identifiers": {(DOMAIN, "test-checkin-unique-id")},
+        "name": "Test Rental",
+        "sw_version": "0.0.0",
+    }
+    return coordinator
+
+
+@pytest.fixture
+def mock_checkin_config_entry() -> MockConfigEntry:
+    """Return a mock config entry with cleaning window in options.
+
+    Returns:
+        MockConfigEntry: Mock configuration entry for checkin testing.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        title="Test Rental",
+        version=7,
+        unique_id="test-checkin-unique-id",
+        data={
+            "name": "Test Rental",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "America/New_York",
+            "checkin": "16:00",
+            "checkout": "11:00",
+            "start_slot": 10,
+            "max_events": 3,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+        },
+        options={
+            "refresh_frequency": 5,
+            CONF_CLEANING_WINDOW: DEFAULT_CLEANING_WINDOW,
+        },
+        entry_id="test_checkin_entry_id",
+    )

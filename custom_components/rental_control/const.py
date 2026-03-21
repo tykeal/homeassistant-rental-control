@@ -37,9 +37,12 @@ UNSUB_LISTENERS = "unsub_listeners"
 # Platforms
 CALENDAR = "calendar"
 SENSOR = "sensor"
+SWITCH = "switch"
 PLATFORMS = [CALENDAR, SENSOR]
 
 # Events
+EVENT_RENTAL_CONTROL_CHECKIN = "rental_control_checkin"
+EVENT_RENTAL_CONTROL_CHECKOUT = "rental_control_checkout"
 EVENT_RENTAL_CONTROL_CLEAR_CODE = "rental_control_clear_code"
 EVENT_RENTAL_CONTROL_REFRESH = "rental_control_refresh"
 EVENT_RENTAL_CONTROL_SET_CODE = "rental_control_set_code"
@@ -55,6 +58,7 @@ ATTR_SLOT_NAME = "slot_name"
 # Config
 CONF_CHECKIN = "checkin"
 CONF_CHECKOUT = "checkout"
+CONF_CLEANING_WINDOW = "cleaning_window"
 CONF_CODE_GENERATION = "code_generation"
 CONF_CODE_LENGTH = "code_length"
 CONF_CREATION_DATETIME = "creation_datetime"
@@ -74,6 +78,7 @@ CONF_TIMEZONE = "timezone"
 # Defaults
 DEFAULT_CHECKIN = "16:00"
 DEFAULT_CHECKOUT = "11:00"
+DEFAULT_CLEANING_WINDOW = 6.0
 DEFAULT_CODE_GENERATION = "date_based"
 DEFAULT_CODE_LENGTH = 4
 DEFAULT_DAYS = 365
@@ -102,3 +107,12 @@ If you have any issues with this you need to open an issue here:
 {ISSUE_URL}
 -------------------------------------------------------------------
 """
+
+# Check-in tracking state constants
+CHECKIN_STATE_NO_RESERVATION = "no_reservation"
+CHECKIN_STATE_AWAITING = "awaiting_checkin"
+CHECKIN_STATE_CHECKED_IN = "checked_in"
+CHECKIN_STATE_CHECKED_OUT = "checked_out"
+
+# Early checkout grace period in minutes
+EARLY_CHECKOUT_GRACE_MINUTES = 15
