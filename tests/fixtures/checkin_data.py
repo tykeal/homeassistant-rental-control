@@ -112,23 +112,30 @@ def same_day_turnover_pair(
     gap_hours: int = 4,
     first_summary: str = "Reserved - Alice",
     second_summary: str = "Reserved - Bob",
+    base_date: datetime | None = None,
 ) -> list[CalendarEvent]:
     """Return coordinator data with a same-day turnover pair.
 
-    Event 0 ends today; event 1 starts the same day.
+    Event 0 ends today; event 1 starts the same day. Times are
+    anchored to the start of the local day so results are
+    deterministic regardless of when tests run.
 
     Args:
-        first_ends_in_hours: Hours until the first event ends.
-        gap_hours: Hours between first event end and second event start.
+        first_ends_in_hours: Hours from start of local day until
+            the first event ends.
+        gap_hours: Hours between first event end and second event
+            start.
         first_summary: Summary for the first event.
         second_summary: Summary for the second event.
+        base_date: Optional datetime whose local day is used as
+            anchor. Defaults to the current local day.
 
     Returns:
         List of two CalendarEvents representing a same-day turnover.
     """
-    now = dt_util.now()
-    first_start = now - timedelta(hours=48)
-    first_end = now + timedelta(hours=first_ends_in_hours)
+    day_start = dt_util.start_of_local_day(base_date or dt_util.now())
+    first_end = day_start + timedelta(hours=first_ends_in_hours)
+    first_start = first_end - timedelta(hours=48)
     second_start = first_end + timedelta(hours=gap_hours)
     second_end = second_start + timedelta(hours=120)
     return [
@@ -152,23 +159,28 @@ def different_day_followon_pair(
     days_until_second: int = 3,
     first_summary: str = "Reserved - Carol",
     second_summary: str = "Reserved - Dave",
+    base_date: datetime | None = None,
 ) -> list[CalendarEvent]:
     """Return coordinator data with a different-day follow-on pair.
 
-    Event 0 ends today; event 1 starts on a different day.
+    Event 0 ends today; event 1 starts on a different day. Times
+    are anchored to the start of the local day for determinism.
 
     Args:
-        first_ends_in_hours: Hours until the first event ends.
+        first_ends_in_hours: Hours from start of local day until
+            the first event ends.
         days_until_second: Days until the second event starts.
         first_summary: Summary for the first event.
         second_summary: Summary for the second event.
+        base_date: Optional datetime whose local day is used as
+            anchor. Defaults to the current local day.
 
     Returns:
         List of two CalendarEvents on different days.
     """
-    now = dt_util.now()
-    first_start = now - timedelta(hours=48)
-    first_end = now + timedelta(hours=first_ends_in_hours)
+    day_start = dt_util.start_of_local_day(base_date or dt_util.now())
+    first_end = day_start + timedelta(hours=first_ends_in_hours)
+    first_start = first_end - timedelta(hours=48)
     second_start = first_end + timedelta(days=days_until_second)
     second_end = second_start + timedelta(hours=120)
     return [

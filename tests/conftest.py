@@ -9,7 +9,6 @@ from datetime import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
-from unittest.mock import PropertyMock
 
 from aioresponses import aioresponses
 import pytest
@@ -208,7 +207,7 @@ def mock_checkin_coordinator(
     coordinator.checkin = time(16, 0)
     coordinator.checkout = time(11, 0)
     coordinator.event_prefix = ""
-    type(coordinator).unique_id = PropertyMock(return_value="test-checkin-unique-id")
+    coordinator.unique_id = "test-checkin-unique-id"
     coordinator.name = "Test Rental"
     coordinator.device_info = {
         "identifiers": {(DOMAIN, "test-checkin-unique-id")},
