@@ -1626,11 +1626,12 @@ class TestKeymasterEventHandling:
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test matching unlock event transitions from awaiting to checked_in.
+        """Test sensor transitions from awaiting to checked_in on unlock.
 
-        When sensor is awaiting_checkin, the keymaster monitoring switch
-        is on, and a valid unlock event arrives, the sensor should
-        transition to checked_in with source='keymaster'.
+        Calls async_handle_keymaster_unlock directly (the event bus
+        listener validates lockname, state, slot range, and switch
+        before forwarding).  Verifies the sensor transitions correctly
+        and fires the check-in event with source='keymaster'.
         """
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
@@ -1687,7 +1688,8 @@ class TestKeymasterEventHandling:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_AWAITING
 
-        # Mock switch ON
+        # Switch gating is handled by the event bus listener;
+        # this test only checks that code_slot_num=0 is ignored.
 
         # Call with code_slot_num=0 — should be ignored
         sensor.async_handle_keymaster_unlock(
