@@ -110,7 +110,14 @@ class TestAsyncSetupEntry:
         added_entities = []
         async_add_entities = MagicMock(side_effect=lambda e: added_entities.extend(e))
 
-        await async_setup_entry(hass, config_entry, async_add_entities)
+        # Mock the entity platform context for service registration
+        mock_platform = MagicMock()
+        with patch(
+            "custom_components.rental_control.sensor.entity_platform"
+            ".async_get_current_platform",
+            return_value=mock_platform,
+        ):
+            await async_setup_entry(hass, config_entry, async_add_entities)
 
         assert async_add_entities.called
         assert len(added_entities) == 4  # 3 cal sensors + 1 checkin sensor
@@ -118,6 +125,10 @@ class TestAsyncSetupEntry:
             assert isinstance(sensor, RentalControlCalSensor)
             assert sensor._event_number == i
         assert isinstance(added_entities[3], CheckinTrackingSensor)
+        # Verify checkout service was registered
+        mock_platform.async_register_entity_service.assert_called_once_with(
+            "checkout", {}, "async_checkout"
+        )
 
     async def test_returns_false_when_calendar_is_none(self, hass) -> None:
         """Verify async_setup_entry returns False when calendar fetch fails."""

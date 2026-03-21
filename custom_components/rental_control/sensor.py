@@ -10,6 +10,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.typing import DiscoveryInfoType
@@ -74,5 +75,13 @@ async def async_setup_entry(
     hass.data[DOMAIN][config_entry.entry_id][CHECKIN_SENSOR] = checkin_sensor
 
     async_add_entities(sensors)
+
+    # Register checkout entity service (per contracts/checkout-service.md)
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        "checkout",
+        {},  # Empty schema — no parameters
+        "async_checkout",  # Method name on CheckinTrackingSensor
+    )
 
     return True
