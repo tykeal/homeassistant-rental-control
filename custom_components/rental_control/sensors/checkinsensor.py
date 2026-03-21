@@ -849,6 +849,9 @@ class CheckinTrackingSensor(
                 if self._tracked_event_end is not None:
                     self._cancel_timer()
                     self._schedule_auto_checkout(self._tracked_event_end)
+                else:
+                    self._cancel_timer()
+                    self._transition_target_time = None
                 self.async_write_ha_state()
 
         elif current_state == CHECKIN_STATE_AWAITING:
@@ -866,7 +869,25 @@ class CheckinTrackingSensor(
                 self._state = CHECKIN_STATE_CHECKED_IN
                 self._checkin_source = "automatic"
                 self._cancel_timer()
-                if self._tracked_event_end is not None:
+                self._transition_target_time = None
+                if (
+                    self._tracked_event_end is not None
+                    and self._tracked_event_end <= now
+                ):
+                    # Event also ended — silent checkout too
+                    self._state = CHECKIN_STATE_CHECKED_OUT
+                    self._checkout_source = "automatic"
+                    self._checkout_time = self._tracked_event_end
+                    if (
+                        self._tracked_event_summary is not None
+                        and self._tracked_event_start is not None
+                    ):
+                        self._checked_out_event_key = self._event_key(
+                            self._tracked_event_summary,
+                            self._tracked_event_start,
+                        )
+                    self._compute_linger_timing()
+                elif self._tracked_event_end is not None:
                     self._schedule_auto_checkout(self._tracked_event_end)
                 self.async_write_ha_state()
             else:
@@ -879,6 +900,9 @@ class CheckinTrackingSensor(
                         self._async_auto_checkin_callback,
                         self._tracked_event_start,
                     )
+                else:
+                    self._cancel_timer()
+                    self._transition_target_time = None
                 self.async_write_ha_state()
 
         elif current_state == CHECKIN_STATE_CHECKED_OUT:
@@ -923,8 +947,7 @@ class CheckinTrackingSensor(
                 and self.coordinator.data is not None
             ):
                 # Reschedule linger timer based on restored checkout time
-                # and current coordinator data. _handle_coordinator_update
-                # does not schedule linger transitions for checked_out.
+                # and current coordinator data.
                 self._compute_linger_timing()
                 self.async_write_ha_state()
             else:
@@ -935,14 +958,9 @@ class CheckinTrackingSensor(
                 self.async_write_ha_state()
 
         elif current_state == CHECKIN_STATE_NO_RESERVATION:
-            # Process current coordinator data
-            if (
-                self.coordinator.last_update_success
-                and self.coordinator.data is not None
-            ):
-                self._handle_coordinator_update()
-            else:
-                self.async_write_ha_state()
+            # No action needed — async_added_to_hass will reconcile
+            # with coordinator data after this method returns.
+            self.async_write_ha_state()
 
         else:
             # Unknown or corrupted state — reset to no_reservation
