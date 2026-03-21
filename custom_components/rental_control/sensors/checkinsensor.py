@@ -119,10 +119,13 @@ class CheckinExtraStoredData(ExtraStoredData):
             """Parse an ISO 8601 string to datetime or return None."""
             if value is None:
                 return None
-            result: datetime | None = dt_util.parse_datetime(value)
-            if result is None:
+            try:
+                result: datetime | None = dt_util.parse_datetime(value)
+            except (TypeError, ValueError):
                 _LOGGER.warning("Failed to parse stored datetime: %s", value)
                 return None
+            if result is None:
+                _LOGGER.warning("Failed to parse stored datetime: %s", value)
             return result
 
         return cls(
@@ -821,21 +824,26 @@ class CheckinTrackingSensor(
 
         if current_state == CHECKIN_STATE_CHECKED_IN:
             if self._tracked_event_end is not None and self._tracked_event_end <= now:
-                # Event has ended while we were down → auto checkout
+                # Event has ended while we were down → silent checkout
+                # (no HA bus event to avoid triggering automations on
+                # restart catch-up).
                 _LOGGER.debug(
                     "Stale restore: checked_in but event ended, "
-                    "transitioning to checked_out"
+                    "transitioning to checked_out (silent)"
                 )
-                self._transition_to_checked_out(source="automatic")
-                # Use the event's end time as the effective checkout time
-                # so the post-checkout linger window is anchored correctly
-                # rather than to the restore time.
+                self._state = CHECKIN_STATE_CHECKED_OUT
+                self._checkout_source = "automatic"
                 self._checkout_time = self._tracked_event_end
-                # Recompute linger timing anchored to the corrected
-                # checkout time (replaces the stale timers that the
-                # transition scheduled based on restore time).
-                self._cancel_timer()
+                if (
+                    self._tracked_event_summary is not None
+                    and self._tracked_event_start is not None
+                ):
+                    self._checked_out_event_key = self._event_key(
+                        self._tracked_event_summary,
+                        self._tracked_event_start,
+                    )
                 self._compute_linger_timing()
+                self.async_write_ha_state()
             else:
                 # Still valid checked_in — reschedule auto-checkout timer
                 if self._tracked_event_end is not None:
@@ -848,12 +856,19 @@ class CheckinTrackingSensor(
                 self._tracked_event_start is not None
                 and self._tracked_event_start <= now
             ):
-                # Event start passed while we were down → auto checkin
+                # Event start passed while we were down → silent checkin
+                # (no HA bus event to avoid triggering automations on
+                # restart catch-up).
                 _LOGGER.debug(
                     "Stale restore: awaiting_checkin but start passed, "
-                    "transitioning to checked_in"
+                    "transitioning to checked_in (silent)"
                 )
-                self._transition_to_checked_in(source="automatic")
+                self._state = CHECKIN_STATE_CHECKED_IN
+                self._checkin_source = "automatic"
+                self._cancel_timer()
+                if self._tracked_event_end is not None:
+                    self._schedule_auto_checkout(self._tracked_event_end)
+                self.async_write_ha_state()
             else:
                 # Still valid awaiting — reschedule auto-checkin timer
                 if self._tracked_event_start is not None:
@@ -935,14 +950,7 @@ class CheckinTrackingSensor(
                 "Unknown restored state '%s', resetting to no_reservation",
                 current_state,
             )
-            self._state = CHECKIN_STATE_NO_RESERVATION
-            if (
-                self.coordinator.last_update_success
-                and self.coordinator.data is not None
-            ):
-                self._handle_coordinator_update()
-            else:
-                self.async_write_ha_state()
+            self._transition_to_no_reservation()
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up when entity is being removed."""
