@@ -1175,6 +1175,20 @@ class CheckinTrackingSensor(
 
         # Early checkout expiry: unlock while checked_in with switch on
         if self._state == CHECKIN_STATE_CHECKED_IN:
+            # Validate the unlock slot matches the tracked event
+            tracked_slot = 0
+            if self._tracked_event_slot_name and self.coordinator.event_overrides:
+                tracked_slot = self.coordinator.event_overrides.get_slot_key_by_name(
+                    self._tracked_event_slot_name
+                )
+            if tracked_slot and tracked_slot != code_slot_num:
+                _LOGGER.debug(
+                    "Ignoring keymaster unlock: code_slot_num %d "
+                    "does not match tracked event slot %d",
+                    code_slot_num,
+                    tracked_slot,
+                )
+                return
             self._handle_early_checkout_expiry()
             return
 

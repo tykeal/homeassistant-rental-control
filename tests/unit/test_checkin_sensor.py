@@ -2827,6 +2827,9 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_slot_name = "John Smith"
         sensor._checkin_source = "keymaster"
 
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
         # Set up early expiry switch as ON
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
 
@@ -2860,6 +2863,9 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_end = original_end
         sensor._tracked_event_slot_name = "John Smith"
         sensor._checkin_source = "keymaster"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         # Set up early expiry switch as OFF
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=False)
@@ -2895,6 +2901,9 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_end = original_end
         sensor._tracked_event_slot_name = "John Smith"
         sensor._checkin_source = "keymaster"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         # Set an existing timer that would fire at original_end
         old_unsub = MagicMock()
@@ -2943,6 +2952,9 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_end = original_end
         sensor._tracked_event_slot_name = "John Smith"
         sensor._checkin_source = "keymaster"
+
+        # Map slot name to slot number matching code_slot_num
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         # No follow-on events → FR-006b cleaning window
         mock_checkin_coordinator.data = []
@@ -3179,3 +3191,42 @@ class TestEarlyCheckoutExpiry:
             await hass.async_block_till_done()
 
             mock_add_call.assert_not_called()
+
+    async def test_different_slot_unlock_does_not_trigger_early_expiry(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test unlock from different slot skips early expiry.
+
+        A maintenance or housekeeping code in the managed range
+        must not prematurely shorten the guest reservation when
+        its slot number differs from the tracked event slot.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        original_end = now + timedelta(hours=48)
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(hours=2)
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        sensor._checkin_source = "keymaster"
+
+        # Tracked event is in slot 10
+        mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+
+        _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
+
+        # Unlock from slot 11 (different — e.g. maintenance)
+        sensor.async_handle_keymaster_unlock(code_slot_num=11)
+
+        # End time must remain unchanged
+        assert sensor._tracked_event_end == original_end
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+        sensor.async_write_ha_state.assert_not_called()
