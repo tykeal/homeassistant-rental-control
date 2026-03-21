@@ -30,11 +30,8 @@ The service handler validates the following before executing:
 1. **State check**: Sensor must be in `checked_in` state
    - Error: `"Checkout is only available when the guest is checked in (current state: {state})"`
 
-2. **Date check**: Current date must be within the tracked event's date range (inclusive)
-   - Error: `"Checkout is only available during the reservation dates (current date: {current_date}, allowed: {start_date}–{end_date})"`
-
-3. **Time check**: Current time must be before the tracked event's end time
-   - Error: `"Checkout is not available after the event end time; automatic checkout should have occurred"`
+2. **Reservation window check**: Current datetime must be within the active reservation window — on or after the event start datetime and strictly before the event end datetime (FR-019)
+   - Error: `"Checkout is only available during the active reservation window (current: {current_datetime}, allowed: {start_datetime} to {end_datetime})"`
 
 ## Success Response
 
