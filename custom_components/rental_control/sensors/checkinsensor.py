@@ -119,12 +119,11 @@ class CheckinExtraStoredData(ExtraStoredData):
             """Parse an ISO 8601 string to datetime or return None."""
             if value is None:
                 return None
-            try:
-                result: datetime | None = dt_util.parse_datetime(value)
-                return result
-            except ValueError:
+            result: datetime | None = dt_util.parse_datetime(value)
+            if result is None:
                 _LOGGER.warning("Failed to parse stored datetime: %s", value)
                 return None
+            return result
 
         return cls(
             state=data.get("state", CHECKIN_STATE_NO_RESERVATION),
@@ -785,6 +784,15 @@ class CheckinTrackingSensor(
 
             # --- T020: Stale-state validation ---
             self._validate_restored_state()
+
+            # After restoration and stale-state correction, reconcile with
+            # current coordinator data so restored state is immediately
+            # consistent with the latest calendar events.
+            if (
+                self.coordinator.last_update_success
+                and self.coordinator.data is not None
+            ):
+                self._handle_coordinator_update()
         else:
             _LOGGER.debug(
                 "No prior state for %s, starting as %s",
@@ -823,6 +831,10 @@ class CheckinTrackingSensor(
                 # so the post-checkout linger window is anchored correctly
                 # rather than to the restore time.
                 self._checkout_time = self._tracked_event_end
+                # Timers scheduled during the transition were anchored to
+                # restore time and are no longer valid.
+                self._cancel_timer()
+                self._transition_target_time = None
             else:
                 # Still valid checked_in — reschedule auto-checkout timer
                 if self._tracked_event_end is not None:
