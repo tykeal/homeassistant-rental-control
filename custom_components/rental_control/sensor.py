@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.typing import DiscoveryInfoType
 
+from .const import CHECKIN_SENSOR
 from .const import CONF_MAX_EVENTS
 from .const import COORDINATOR
 from .const import DOMAIN
@@ -62,13 +63,15 @@ async def async_setup_entry(
         )
 
     # Add check-in tracking sensor (FR-028: created for every instance)
-    sensors.append(
-        CheckinTrackingSensor(
-            hass,
-            coordinator,
-            config_entry,
-        )
+    checkin_sensor = CheckinTrackingSensor(
+        hass,
+        coordinator,
+        config_entry,
     )
+    sensors.append(checkin_sensor)
+
+    # Store sensor reference for keymaster event bus listener (T026)
+    hass.data[DOMAIN][config_entry.entry_id][CHECKIN_SENSOR] = checkin_sensor
 
     async_add_entities(sensors)
 

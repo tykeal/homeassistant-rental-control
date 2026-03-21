@@ -33,6 +33,8 @@ MAP_ICON = "mdi:map-search"
 # hass.data attributes
 COORDINATOR = "coordinator"
 UNSUB_LISTENERS = "unsub_listeners"
+CHECKIN_SENSOR = "checkin_sensor"
+KEYMASTER_MONITORING_SWITCH = "keymaster_monitoring_switch"
 
 # Platforms
 CALENDAR = "calendar"

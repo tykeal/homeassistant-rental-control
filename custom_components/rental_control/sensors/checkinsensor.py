@@ -974,3 +974,55 @@ class CheckinTrackingSensor(
         """Clean up when entity is being removed."""
         self._cancel_timer()
         await super().async_will_remove_from_hass()
+
+    @callback
+    def async_handle_keymaster_unlock(
+        self,
+        code_slot_num: int,
+    ) -> None:
+        """Handle a keymaster unlock event.
+
+        Called by the event bus listener after validating lockname,
+        state, slot range, and monitoring switch is on.  This method
+        performs remaining sensor-level checks:
+
+        - ``code_slot_num != 0`` (FR-017: ignore manual/RF unlocks)
+        - ``code_slot_num`` is within the managed slot range
+        - Sensor is in ``awaiting_checkin`` state
+
+        Args:
+            code_slot_num: The keymaster code slot number that was used.
+        """
+        # FR-017: Ignore manual/RF unlocks (code_slot_num == 0)
+        if code_slot_num == 0:
+            _LOGGER.debug("Ignoring keymaster unlock: code_slot_num == 0 (manual/RF)")
+            return
+
+        # Validate code slot is in managed range
+        start_slot = self.coordinator.start_slot
+        max_events = self.coordinator.max_events
+        if not (start_slot <= code_slot_num < start_slot + max_events):
+            _LOGGER.debug(
+                "Ignoring keymaster unlock: code_slot_num %d outside "
+                "managed range [%d, %d)",
+                code_slot_num,
+                start_slot,
+                start_slot + max_events,
+            )
+            return
+
+        # Only process when in awaiting_checkin state
+        if self._state != CHECKIN_STATE_AWAITING:
+            _LOGGER.debug(
+                "Ignoring keymaster unlock: sensor state is %s, not awaiting_checkin",
+                self._state,
+            )
+            return
+
+        # All conditions met — transition to checked_in
+        _LOGGER.info(
+            "Keymaster unlock detected for slot %d, transitioning to checked_in for %s",
+            code_slot_num,
+            self._tracked_event_summary,
+        )
+        self._transition_to_checked_in(source="keymaster")
