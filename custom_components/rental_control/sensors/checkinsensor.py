@@ -68,6 +68,7 @@ class CheckinExtraStoredData(ExtraStoredData):
         checkout_time: datetime | None,
         transition_target_time: datetime | None,
         checked_out_event_key: str | None,
+        next_event_start_day: datetime | None = None,
     ) -> None:
         """Initialise from typed field values."""
         self.state = state
@@ -80,6 +81,7 @@ class CheckinExtraStoredData(ExtraStoredData):
         self.checkout_time = checkout_time
         self.transition_target_time = transition_target_time
         self.checked_out_event_key = checked_out_event_key
+        self.next_event_start_day = next_event_start_day
 
     def as_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable dict representation."""
@@ -106,6 +108,11 @@ class CheckinExtraStoredData(ExtraStoredData):
                 else None
             ),
             "checked_out_event_key": self.checked_out_event_key,
+            "next_event_start_day": (
+                self.next_event_start_day.isoformat()
+                if self.next_event_start_day
+                else None
+            ),
         }
 
     @classmethod
@@ -140,6 +147,7 @@ class CheckinExtraStoredData(ExtraStoredData):
             checkout_time=_parse_dt(data.get("checkout_time")),
             transition_target_time=_parse_dt(data.get("transition_target_time")),
             checked_out_event_key=data.get("checked_out_event_key"),
+            next_event_start_day=_parse_dt(data.get("next_event_start_day")),
         )
 
 
@@ -252,6 +260,7 @@ class CheckinTrackingSensor(
             checkout_time=self._checkout_time,
             transition_target_time=self._transition_target_time,
             checked_out_event_key=self._checked_out_event_key,
+            next_event_start_day=self._next_event_start_day,
         )
 
     @staticmethod
@@ -780,8 +789,7 @@ class CheckinTrackingSensor(
 
             # T039: FR-006c follow-up timer for midnight-to-awaiting
             if followon_start_day is not None:
-                now = dt_util.now()
-                if followon_start_day > now:
+                if followon_start_day > _now:
                     self._transition_target_time = followon_start_day
                     self._next_event_start_day = followon_start_day
                     self._unsub_timer = async_track_point_in_time(
@@ -822,6 +830,7 @@ class CheckinTrackingSensor(
         )
         self._unsub_timer = None
         self._next_event_start_day = None
+        self._transition_target_time = None
 
         if self._state != CHECKIN_STATE_NO_RESERVATION:
             return
@@ -906,6 +915,7 @@ class CheckinTrackingSensor(
             self._checkout_time = restored.checkout_time
             self._transition_target_time = restored.transition_target_time
             self._checked_out_event_key = restored.checked_out_event_key
+            self._next_event_start_day = restored.next_event_start_day
 
             _LOGGER.debug("Restored state '%s' for %s", self._state, self.name)
 
@@ -1082,8 +1092,27 @@ class CheckinTrackingSensor(
                 self.async_write_ha_state()
 
         elif current_state == CHECKIN_STATE_NO_RESERVATION:
-            # No action needed — async_added_to_hass will reconcile
-            # with coordinator data after this method returns.
+            # FR-006c: Reschedule follow-up timer if pending
+            if (
+                self._next_event_start_day is not None
+                and self._next_event_start_day > now
+            ):
+                self._cancel_timer()
+                self._transition_target_time = self._next_event_start_day
+                self._unsub_timer = async_track_point_in_time(
+                    self._hass,
+                    self._async_no_reservation_to_awaiting_callback,
+                    self._next_event_start_day,
+                )
+                _LOGGER.debug(
+                    "Restored FR-006c follow-up timer at %s for %s",
+                    self._next_event_start_day.isoformat(),
+                    self.name,
+                )
+            elif self._next_event_start_day is not None:
+                # Follow-up time already passed — clear stale data
+                self._next_event_start_day = None
+                self._transition_target_time = None
             self.async_write_ha_state()
 
         else:

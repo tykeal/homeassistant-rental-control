@@ -581,32 +581,28 @@ class TestDifferentDayFollowOnFR006c:
         # value since the sensor uses the same calculation.
         event1_start_day_local = dt_util.start_of_local_day(event1_start)
 
-        if sensor._transition_target_time is not None:
-            # T039 is implemented
-            delta = abs(
-                (
-                    sensor._transition_target_time - event1_start_day_local
-                ).total_seconds()
-            )
-            assert delta < 2, (
-                f"Expected follow-up at {event1_start_day_local}, "
-                f"got {sensor._transition_target_time}"
-            )
+        # T039 must be implemented: a follow-up timer is required
+        assert sensor._transition_target_time is not None, (
+            "Expected follow-up timer for T039 to be scheduled, "
+            "but _transition_target_time is None"
+        )
+        delta = abs(
+            (sensor._transition_target_time - event1_start_day_local).total_seconds()
+        )
+        assert delta < 2, (
+            f"Expected follow-up at {event1_start_day_local}, "
+            f"got {sensor._transition_target_time}"
+        )
 
-            # Make event 1 available for the callback
-            coordinator.data = [event1]
+        # Make event 1 available for the callback
+        coordinator.data = [event1]
 
-            # Fire the follow-up timer
-            async_fire_time_changed(hass, sensor._transition_target_time)
-            await hass.async_block_till_done()
+        # Fire the follow-up timer
+        async_fire_time_changed(hass, sensor._transition_target_time)
+        await hass.async_block_till_done()
 
-            assert sensor._state == CHECKIN_STATE_AWAITING
-            assert sensor._tracked_event_summary == "Reserved - Dave"
-        else:
-            # T039 not yet implemented — fall back to coordinator update
-            coordinator.data = [event1]
-            sensor._handle_coordinator_update()
-            assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_summary == "Reserved - Dave"
 
     @freeze_time("2025-06-15T11:00:00+00:00")
     async def test_different_day_coordinator_update_during_linger(
