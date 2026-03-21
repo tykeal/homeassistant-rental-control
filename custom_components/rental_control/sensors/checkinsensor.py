@@ -189,6 +189,8 @@ class CheckinTrackingSensor(
         super().__init__(coordinator)
         self._hass = hass
         self._config_entry = config_entry
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "checkin"
         self._state: str = CHECKIN_STATE_NO_RESERVATION
 
         # Tracked event fields (from data-model.md)

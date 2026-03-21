@@ -6,6 +6,7 @@
 Tests cover:
 - T036: Same-day turnover (FR-006a) full lifecycle with mocked time
 - T037: Different-day (FR-006c) and no-follow-on (FR-006b) full lifecycle
+- T043: Full lifecycle integration tests (setup → all states → cleanup)
 """
 
 from __future__ import annotations
@@ -939,3 +940,458 @@ class TestTurnoverEdgeCases:
 
         assert sensor._state == CHECKIN_STATE_AWAITING
         assert sensor._tracked_event_summary == "Reserved - Bob"
+
+
+# ===========================================================================
+# T043: Full lifecycle integration tests
+# ===========================================================================
+
+
+class TestFullLifecycleT043:
+    """Full lifecycle integration tests.
+
+    Tests the complete flow from setup through all state transitions
+    and back to no_reservation, verifying HA events and sensor attributes
+    at each stage.
+    """
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_full_lifecycle_automatic_no_keymaster(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Test full automatic lifecycle without keymaster.
+
+        Flow: no_reservation → awaiting_checkin (coordinator update with
+        future event) → checked_in (auto at event start) → checked_out
+        (auto at event end) → no_reservation (linger expiry).
+
+        Verifies all HA events fired with correct payloads and all sensor
+        attributes at each state.
+        """
+        coordinator = _make_coordinator(hass)
+        config_entry = _make_config_entry()
+        sensor = _create_sensor(hass, coordinator, config_entry)
+
+        event_start = datetime(2025, 7, 1, 16, 0, 0, tzinfo=dt_util.UTC)
+        event_end = datetime(2025, 7, 5, 11, 0, 0, tzinfo=dt_util.UTC)
+        event = _make_event("Reserved - Guest1", event_start, event_end)
+
+        checkin_events: list[dict] = []
+        checkout_events: list[dict] = []
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKIN,
+            lambda e: checkin_events.append(e.data),
+        )
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKOUT,
+            lambda e: checkout_events.append(e.data),
+        )
+
+        # ---- Step 1: no_reservation (initial state) ----
+        assert sensor._state == CHECKIN_STATE_NO_RESERVATION
+        assert sensor._tracked_event_summary is None
+        attrs = sensor.extra_state_attributes
+        assert attrs["checkin_state"] == CHECKIN_STATE_NO_RESERVATION
+        assert attrs["summary"] is None
+        assert attrs["start"] is None
+        assert attrs["end"] is None
+        assert attrs["guest_name"] is None
+        assert attrs["checkin_source"] is None
+        assert attrs["checkout_source"] is None
+        assert attrs["checkout_time"] is None
+        assert attrs["next_transition"] is None
+
+        # ---- Step 2: coordinator update → awaiting_checkin ----
+        coordinator.data = [event]
+        sensor._handle_coordinator_update()
+
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_summary == "Reserved - Guest1"
+        assert sensor._tracked_event_start == event_start
+        assert sensor._tracked_event_end == event_end
+        assert sensor._transition_target_time == event_start
+        assert sensor._unsub_timer is not None
+        assert sensor._checkin_source is None
+        assert sensor._checkout_source is None
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["checkin_state"] == CHECKIN_STATE_AWAITING
+        assert attrs["summary"] == "Reserved - Guest1"
+        assert attrs["start"] == event_start
+        assert attrs["end"] == event_end
+        assert attrs["checkin_source"] is None
+        assert attrs["checkout_source"] is None
+        assert attrs["checkout_time"] is None
+        assert attrs["next_transition"] == event_start
+
+        # No events fired yet
+        assert len(checkin_events) == 0
+        assert len(checkout_events) == 0
+
+        # ---- Step 3: auto check-in at event start ----
+        async_fire_time_changed(hass, event_start)
+        await hass.async_block_till_done()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+        assert sensor._checkin_source == "automatic"
+        assert sensor._tracked_event_summary == "Reserved - Guest1"
+        assert sensor._transition_target_time == event_end
+        assert sensor._unsub_timer is not None
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["checkin_state"] == CHECKIN_STATE_CHECKED_IN
+        assert attrs["checkin_source"] == "automatic"
+        assert attrs["checkout_source"] is None
+        assert attrs["checkout_time"] is None
+
+        # Check-in event fired
+        assert len(checkin_events) == 1
+        assert checkin_events[0]["summary"] == "Reserved - Guest1"
+        assert checkin_events[0]["source"] == "automatic"
+        assert checkin_events[0]["entity_id"] == "sensor.test_rental_checkin"
+        assert checkin_events[0]["start"] == event_start.isoformat()
+        assert checkin_events[0]["end"] == event_end.isoformat()
+
+        # ---- Step 4: auto check-out at event end ----
+        async_fire_time_changed(hass, event_end)
+        await hass.async_block_till_done()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._checkout_source == "automatic"
+        assert sensor._checkout_time is not None
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["checkin_state"] == CHECKIN_STATE_CHECKED_OUT
+        assert attrs["checkout_source"] == "automatic"
+        assert attrs["checkout_time"] is not None
+
+        # Checkout event fired
+        assert len(checkout_events) == 1
+        assert checkout_events[0]["summary"] == "Reserved - Guest1"
+        assert checkout_events[0]["source"] == "automatic"
+        assert checkout_events[0]["entity_id"] == "sensor.test_rental_checkin"
+
+        # ---- Step 5: linger expiry → no_reservation ----
+        # No follow-on event → FR-006b cleaning window
+        linger_target = sensor._transition_target_time
+        assert linger_target is not None
+
+        async_fire_time_changed(hass, linger_target)
+        await hass.async_block_till_done()
+
+        assert sensor._state == CHECKIN_STATE_NO_RESERVATION
+        assert sensor._tracked_event_summary is None
+        assert sensor._tracked_event_start is None
+        assert sensor._tracked_event_end is None
+        assert sensor._checkout_time is None
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["checkin_state"] == CHECKIN_STATE_NO_RESERVATION
+        assert attrs["summary"] is None
+        assert attrs["checkin_source"] is None
+        assert attrs["checkout_source"] is None
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_full_lifecycle_with_keymaster_checkin(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Test lifecycle with keymaster-triggered check-in.
+
+        Flow: no_reservation → awaiting_checkin → checked_in
+        (keymaster unlock) → checked_out (auto) → no_reservation
+        (linger expiry).
+        """
+        coordinator = _make_coordinator(hass)
+        coordinator.lockname = "front_door"
+        config_entry = _make_config_entry()
+        sensor = _create_sensor(hass, coordinator, config_entry)
+
+        event_start = datetime(2025, 7, 1, 16, 0, 0, tzinfo=dt_util.UTC)
+        event_end = datetime(2025, 7, 5, 11, 0, 0, tzinfo=dt_util.UTC)
+        event = _make_event("Reserved - Guest2", event_start, event_end)
+
+        checkin_events: list[dict] = []
+        checkout_events: list[dict] = []
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKIN,
+            lambda e: checkin_events.append(e.data),
+        )
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKOUT,
+            lambda e: checkout_events.append(e.data),
+        )
+
+        # ---- Step 1: coordinator update → awaiting_checkin ----
+        coordinator.data = [event]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_summary == "Reserved - Guest2"
+
+        # ---- Step 2: keymaster unlock → checked_in ----
+        # Simulate keymaster unlock at slot 10 (start_slot)
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+        await hass.async_block_till_done()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+        assert sensor._checkin_source == "keymaster"
+
+        # Check-in event fired with keymaster source
+        assert len(checkin_events) == 1
+        assert checkin_events[0]["source"] == "keymaster"
+        assert checkin_events[0]["summary"] == "Reserved - Guest2"
+
+        # ---- Step 3: auto check-out at event end ----
+        async_fire_time_changed(hass, event_end)
+        await hass.async_block_till_done()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._checkout_source == "automatic"
+        assert len(checkout_events) == 1
+        assert checkout_events[0]["source"] == "automatic"
+
+        # ---- Step 4: linger expiry → no_reservation ----
+        linger_target = sensor._transition_target_time
+        assert linger_target is not None
+        async_fire_time_changed(hass, linger_target)
+        await hass.async_block_till_done()
+
+        assert sensor._state == CHECKIN_STATE_NO_RESERVATION
+
+    @freeze_time("2025-07-01T08:00:00+00:00")
+    async def test_full_lifecycle_event_already_started(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Test lifecycle when event start is in the past.
+
+        When a coordinator update brings an event whose start time has
+        already passed, the sensor should skip awaiting_checkin and go
+        directly to checked_in.
+        """
+        coordinator = _make_coordinator(hass)
+        config_entry = _make_config_entry()
+        sensor = _create_sensor(hass, coordinator, config_entry)
+
+        # Event started yesterday
+        event_start = datetime(2025, 6, 30, 16, 0, 0, tzinfo=dt_util.UTC)
+        event_end = datetime(2025, 7, 5, 11, 0, 0, tzinfo=dt_util.UTC)
+        event = _make_event("Reserved - EarlyGuest", event_start, event_end)
+
+        checkin_events: list[dict] = []
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKIN,
+            lambda e: checkin_events.append(e.data),
+        )
+
+        coordinator.data = [event]
+        sensor._handle_coordinator_update()
+        await hass.async_block_till_done()
+
+        # Should have gone straight to checked_in
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+        assert sensor._checkin_source == "automatic"
+        assert len(checkin_events) == 1
+        assert checkin_events[0]["source"] == "automatic"
+
+        # Verify auto-checkout is scheduled
+        assert sensor._transition_target_time == event_end
+        assert sensor._unsub_timer is not None
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_keymaster_unlock_ignored_in_wrong_state(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Keymaster unlock is ignored when sensor is not in awaiting_checkin."""
+        coordinator = _make_coordinator(hass)
+        coordinator.lockname = "front_door"
+        config_entry = _make_config_entry()
+        sensor = _create_sensor(hass, coordinator, config_entry)
+
+        # Sensor is in no_reservation — unlock should be ignored
+        assert sensor._state == CHECKIN_STATE_NO_RESERVATION
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+        assert sensor._state == CHECKIN_STATE_NO_RESERVATION
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_keymaster_unlock_ignored_for_manual_rf(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Keymaster unlock with slot 0 (manual/RF) is ignored."""
+        coordinator = _make_coordinator(hass)
+        coordinator.lockname = "front_door"
+        config_entry = _make_config_entry()
+        sensor = _create_sensor(hass, coordinator, config_entry)
+
+        event_start = datetime(2025, 7, 1, 16, 0, 0, tzinfo=dt_util.UTC)
+        event_end = datetime(2025, 7, 5, 11, 0, 0, tzinfo=dt_util.UTC)
+        event = _make_event("Reserved - Guest3", event_start, event_end)
+
+        coordinator.data = [event]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+
+        # Manual/RF unlock (slot 0) should be ignored
+        sensor.async_handle_keymaster_unlock(code_slot_num=0)
+        assert sensor._state == CHECKIN_STATE_AWAITING
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_keymaster_unlock_out_of_slot_range(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Keymaster unlock with slot outside managed range is ignored."""
+        coordinator = _make_coordinator(hass)
+        coordinator.lockname = "front_door"
+        config_entry = _make_config_entry()
+        sensor = _create_sensor(hass, coordinator, config_entry)
+
+        event_start = datetime(2025, 7, 1, 16, 0, 0, tzinfo=dt_util.UTC)
+        event_end = datetime(2025, 7, 5, 11, 0, 0, tzinfo=dt_util.UTC)
+        event = _make_event("Reserved - Guest4", event_start, event_end)
+
+        coordinator.data = [event]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+
+        # Slot 99 is outside managed range [10, 13)
+        sensor.async_handle_keymaster_unlock(code_slot_num=99)
+        assert sensor._state == CHECKIN_STATE_AWAITING
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_full_lifecycle_sensor_attributes_complete(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Verify all sensor attributes are correctly populated at each state."""
+        coordinator = _make_coordinator(hass)
+        config_entry = _make_config_entry()
+        sensor = _create_sensor(hass, coordinator, config_entry)
+
+        event_start = datetime(2025, 7, 1, 16, 0, 0, tzinfo=dt_util.UTC)
+        event_end = datetime(2025, 7, 5, 11, 0, 0, tzinfo=dt_util.UTC)
+        event = _make_event(
+            "Reserved - AttrGuest",
+            event_start,
+            event_end,
+            description="Guest: Attr Test",
+        )
+
+        coordinator.data = [event]
+        sensor._handle_coordinator_update()
+
+        # Verify awaiting attributes
+        assert sensor.state == CHECKIN_STATE_AWAITING
+        attrs = sensor.extra_state_attributes
+        assert attrs["summary"] == "Reserved - AttrGuest"
+        assert attrs["start"] == event_start
+        assert attrs["end"] == event_end
+        assert attrs["next_transition"] == event_start
+
+        # Fire auto check-in
+        async_fire_time_changed(hass, event_start)
+        await hass.async_block_till_done()
+
+        # Verify checked_in attributes
+        assert sensor.state == CHECKIN_STATE_CHECKED_IN
+        attrs = sensor.extra_state_attributes
+        assert attrs["checkin_source"] == "automatic"
+        assert attrs["summary"] == "Reserved - AttrGuest"
+        assert attrs["next_transition"] == event_end
+
+        # Fire auto check-out
+        async_fire_time_changed(hass, event_end)
+        await hass.async_block_till_done()
+
+        # Verify checked_out attributes
+        assert sensor.state == CHECKIN_STATE_CHECKED_OUT
+        attrs = sensor.extra_state_attributes
+        assert attrs["checkout_source"] == "automatic"
+        assert attrs["checkout_time"] is not None
+        assert attrs["next_transition"] is not None
+
+    @freeze_time("2025-07-03T08:00:00+00:00")
+    async def test_full_lifecycle_multiple_events_sequential(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Test lifecycle across two sequential events.
+
+        After the first event completes its full lifecycle (including
+        linger), a second event should start a new awaiting cycle.
+
+        Frozen at July 3 08:00 so that checkout_time (dt_util.now()) is on
+        July 3, the same day as event 1 start → FR-006a same-day turnover.
+        """
+        coordinator = _make_coordinator(hass)
+        config_entry = _make_config_entry()
+        sensor = _create_sensor(hass, coordinator, config_entry)
+
+        event0_start = datetime(2025, 7, 1, 16, 0, 0, tzinfo=dt_util.UTC)
+        event0_end = datetime(2025, 7, 3, 11, 0, 0, tzinfo=dt_util.UTC)
+        event1_start = datetime(2025, 7, 3, 16, 0, 0, tzinfo=dt_util.UTC)
+        event1_end = datetime(2025, 7, 7, 11, 0, 0, tzinfo=dt_util.UTC)
+
+        event0 = _make_event("Reserved - First", event0_start, event0_end)
+        event1 = _make_event("Reserved - Second", event1_start, event1_end)
+
+        checkin_events: list[dict] = []
+        checkout_events: list[dict] = []
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKIN,
+            lambda e: checkin_events.append(e.data),
+        )
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKOUT,
+            lambda e: checkout_events.append(e.data),
+        )
+
+        # ---- Event 0 lifecycle ----
+        coordinator.data = [event0, event1]
+        sensor._handle_coordinator_update()
+        # Event0 start is in the past at frozen time (July 3 08:00)
+        # so sensor skips awaiting and goes directly to checked_in
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+        assert sensor._tracked_event_summary == "Reserved - First"
+
+        # Auto check-out at event0_end
+        async_fire_time_changed(hass, event0_end)
+        await hass.async_block_till_done()
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert len(checkout_events) == 1
+
+        # Same-day turnover linger → awaiting for event 1
+        linger_target = sensor._transition_target_time
+        assert linger_target is not None
+        async_fire_time_changed(hass, linger_target)
+        await hass.async_block_till_done()
+
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_summary == "Reserved - Second"
+
+        # ---- Event 1 lifecycle ----
+        # Auto check-in for event 1
+        async_fire_time_changed(hass, event1_start)
+        await hass.async_block_till_done()
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+        # 2 checkin events total: event0 auto-checkin + event1 auto-checkin
+        assert len(checkin_events) == 2
+        assert checkin_events[1]["summary"] == "Reserved - Second"
+
+        # Auto check-out for event 1
+        # Remove event0 from coordinator (it would be filtered out by now)
+        coordinator.data = [event1]
+        async_fire_time_changed(hass, event1_end)
+        await hass.async_block_till_done()
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert len(checkout_events) == 2
+
+        # Final linger → no_reservation (no follow-on)
+        final_linger = sensor._transition_target_time
+        assert final_linger is not None
+        async_fire_time_changed(hass, final_linger)
+        await hass.async_block_till_done()
+        assert sensor._state == CHECKIN_STATE_NO_RESERVATION

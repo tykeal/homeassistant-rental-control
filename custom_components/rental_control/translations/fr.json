@@ -17,6 +17,7 @@
         "data": {
           "checkin": "Heure d'arriv\u00e9e par d\u00e9faut",
           "checkout": "Heure de d\u00e9part par d\u00e9faut",
+          "cleaning_window": "Fen\u00eatre de m\u00e9nage (heures)",
           "code_generation": "G\u00e9n\u00e9rateur de code de porte",
           "code_length": "Longueur du code de porte (>= 4 et un nombre pair)",
           "days": "Nombre maximum de jours \u00e0 l'avance \u00e0 r\u00e9cup\u00e9rer",
@@ -31,6 +32,9 @@
           "timezone": "Fuseau horaire du calendrier",
           "url": "URL du calendrier",
           "verify_ssl": "V\u00e9rifier les certificats SSL"
+        },
+        "data_description": {
+          "cleaning_window": "Heures de maintien du statut de d\u00e9part avant le retour \u00e0 aucune r\u00e9servation (0,5\u201348)"
         }
       }
     }
@@ -53,6 +57,7 @@
         "data": {
           "checkin": "Heure d'arriv\u00e9e par d\u00e9faut",
           "checkout": "Heure de d\u00e9part par d\u00e9faut",
+          "cleaning_window": "Fen\u00eatre de m\u00e9nage (heures)",
           "code_generation": "G\u00e9n\u00e9rateur de code de porte",
           "code_length": "Longueur du code de porte (>= 4 et un nombre pair)",
           "days": "Nombre maximum de jours \u00e0 l'avance \u00e0 r\u00e9cup\u00e9rer",
@@ -67,14 +72,38 @@
           "timezone": "Fuseau horaire du calendrier",
           "url": "URL du calendrier",
           "verify_ssl": "V\u00e9rifier les certificats SSL"
+        },
+        "data_description": {
+          "cleaning_window": "Heures de maintien du statut de d\u00e9part avant le retour \u00e0 aucune r\u00e9servation (0,5\u201348)"
         }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "checkin": {
+        "name": "Suivi d'arriv\u00e9e",
+        "state": {
+          "no_reservation": "Aucune r\u00e9servation",
+          "awaiting_checkin": "En attente d'arriv\u00e9e",
+          "checked_in": "Arriv\u00e9",
+          "checked_out": "Parti"
+        }
+      }
+    },
+    "switch": {
+      "keymaster_monitoring": {
+        "name": "Surveillance Keymaster"
+      },
+      "early_checkout_expiry": {
+        "name": "Expiration anticip\u00e9e du code de serrure"
       }
     }
   },
   "services": {
     "checkout": {
-      "name": "Départ",
-      "description": "Enregistrer manuellement le départ du client actuel."
+      "name": "D\u00e9part",
+      "description": "Enregistrer manuellement le d\u00e9part du client actuel."
     }
   }
 }

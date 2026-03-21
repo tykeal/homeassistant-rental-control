@@ -83,6 +83,8 @@ class KeymasterMonitoringSwitch(SwitchEntity, RestoreEntity):
         """
         self._coordinator = coordinator
         self._config_entry = config_entry
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "keymaster_monitoring"
         self._attr_is_on: bool = False
         self._unique_id = gen_uuid(f"{coordinator.unique_id} keymaster_monitoring")
 
@@ -167,6 +169,8 @@ class EarlyCheckoutExpirySwitch(SwitchEntity, RestoreEntity):
         """
         self._coordinator = coordinator
         self._config_entry = config_entry
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "early_checkout_expiry"
         self._attr_is_on: bool = False
         self._unique_id = gen_uuid(f"{coordinator.unique_id} early_checkout_expiry")
 
