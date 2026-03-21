@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 | `_attr_native_value` | `str` | Current state: `no_reservation`, `awaiting_checkin`, `checked_in`, `checked_out` |
 | `_tracked_event_summary` | `str \| None` | Summary of the currently tracked event |
 | `_tracked_event_start` | `datetime \| None` | Start time of tracked event |
-| `_tracked_event_end` | `datetime \| None` | Original end time of tracked event (frozen at association) |
+| `_tracked_event_end` | `datetime \| None` | End time of tracked event; updates dynamically from coordinator data while in `checked_in` (e.g., host extends checkout). Not part of the event identity key (FR-007 uses only summary and start), so updates do not affect identity or re-transition logic. |
 | `_tracked_event_slot_name` | `str \| None` | Guest name/reservation ID from slot extraction |
 | `_checkin_source` | `str \| None` | How check-in occurred: `keymaster`, `automatic`, or `None` |
 | `_checkout_source` | `str \| None` | How check-out occurred: `manual`, `automatic`, or `None` |
@@ -54,7 +54,7 @@ SPDX-License-Identifier: Apache-2.0
 | `state` | `str` | Last known state |
 | `tracked_event_summary` | `str \| None` | Event being tracked |
 | `tracked_event_start` | `str \| None` | ISO 8601 start time |
-| `tracked_event_end` | `str \| None` | ISO 8601 original end time |
+| `tracked_event_end` | `str \| None` | ISO 8601 end time; persists the latest known end time at shutdown (reflects any dynamic updates from FR-030 while `checked_in`). On restore, used as the initial `_tracked_event_end` value; the next coordinator update may further update it if the calendar event's end time has changed. |
 | `tracked_event_slot_name` | `str \| None` | Guest name |
 | `checkin_source` | `str \| None` | Last checkin source |
 | `checkout_source` | `str \| None` | Last checkout source |
@@ -164,24 +164,24 @@ SPDX-License-Identifier: Apache-2.0
 Events are identified by a composite key for FR-007 tracking:
 
 ```python
-def _event_key(
-    summary: str, start: datetime, end: datetime
-) -> str:
+def _event_key(summary: str, start: datetime) -> str:
     """Generate a unique identity key for an event.
 
-    The original end time is included so that extensions
-    (same summary + start but later end) are detected as
-    the same event rather than a new one.
+    Only summary and start are used for identity. The end time
+    is deliberately excluded so that post-checkout event
+    extensions (same summary + start but later end) are
+    detected as the SAME event rather than a new one, satisfying
+    FR-007.
     """
-    return (
-        f"{summary}|{start.isoformat()}"
-        f"|{end.isoformat()}"
-    )
+    return f"{summary}|{start.isoformat()}"
 ```
 
-The `end` parameter captures the **original** end time at first
-association. This key is stored when the sensor first associates
-with an event and is used to:
+The key deliberately excludes the end time. This ensures that
+extending an event's checkout time does not change its identity,
+which is critical for FR-007: once the sensor has checked out from
+an event, it must not re-transition even if the end time changes.
+This key is stored when the sensor first associates with an event
+and is used to:
 - Detect the same event with a modified end time (key matches → no re-transition)
 - Detect a genuinely new event (key differs → allow new cycle)
 

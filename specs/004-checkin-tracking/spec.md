@@ -193,6 +193,7 @@ As a property manager with back-to-back bookings, I want the sensor to correctly
 #### Same-Day Turnover
 
 - **FR-029**: During same-day turnovers, the sensor MUST continue tracking the departing guest until their event end time before shifting to the arriving guest's event
+- **FR-030**: System MUST reschedule the auto-checkout timer when the tracked event's end time changes while the sensor is in `checked_in` state. The event identity key MUST NOT change (only summary and start are used for identity per FR-007).
 
 ### Key Entities
 
@@ -234,3 +235,4 @@ As a property manager with back-to-back bookings, I want the sensor to correctly
 - Q: How long should the sensor linger in `checked_out` during a same-day turnover? → A: Half the time gap between the checkout time and the next event's start time (FR-006a).
 - Q: How long should the sensor linger in `checked_out` when no follow-on reservation exists? → A: A configurable "cleaning window" in hours after checkout time, then transition to `no_reservation` (FR-006b, FR-008).
 - Q: How should `checked_out` transition work when the next reservation is on a different day? → A: Linger until the post-checkout midnight boundary (00:00 immediately following the checkout day) → `no_reservation`, then transition to `awaiting_checkin` at 00:00 on the next event's start day (FR-006c).
+- Q: If a guest's event end time is extended while the sensor is in `checked_in` (before checkout), should the auto-checkout timer update? → A: Yes. The auto-checkout timer MUST reschedule to the new end time when the coordinator provides updated event data while in `checked_in`. The event identity key (summary|start) is frozen at association to prevent re-transitions per FR-007, but the tracked end time updates dynamically until checkout occurs.
