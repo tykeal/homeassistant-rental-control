@@ -309,6 +309,7 @@ class CheckinTrackingSensor(
                     # linger timing based on the updated coordinator data.
                     self._cancel_timer()
                     self._compute_linger_timing()
+                    self.async_write_ha_state()
             else:
                 self.async_write_ha_state()
 
