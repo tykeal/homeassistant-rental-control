@@ -82,7 +82,7 @@
   "entity": {
     "sensor": {
       "checkin": {
-        "name": "Suivi d'arriv\u00e9e",
+        "name": "Arriv\u00e9e",
         "state": {
           "no_reservation": "Aucune r\u00e9servation",
           "awaiting_checkin": "En attente d'arriv\u00e9e",
@@ -96,7 +96,7 @@
         "name": "Surveillance Keymaster"
       },
       "early_checkout_expiry": {
-        "name": "Expiration anticip\u00e9e du code de serrure"
+        "name": "Expiration anticip\u00e9e de d\u00e9part"
       }
     }
   },

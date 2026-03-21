@@ -82,7 +82,7 @@
   "entity": {
     "sensor": {
       "checkin": {
-        "name": "Check-in Tracking",
+        "name": "Check-in",
         "state": {
           "no_reservation": "No Reservation",
           "awaiting_checkin": "Awaiting Check-in",
@@ -96,7 +96,7 @@
         "name": "Keymaster Monitoring"
       },
       "early_checkout_expiry": {
-        "name": "Early Checkout Lock Expiry"
+        "name": "Early Checkout Expiry"
       }
     }
   },
