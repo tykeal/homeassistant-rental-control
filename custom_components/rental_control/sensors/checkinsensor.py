@@ -24,6 +24,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_point_in_time
+from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -43,6 +44,100 @@ if TYPE_CHECKING:
     from ..coordinator import RentalControlCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class CheckinExtraStoredData(ExtraStoredData):
+    """Extra stored data for persisting CheckinTrackingSensor state.
+
+    Serialises all sensor instance variables to a dict of JSON-safe
+    values.  Datetime fields are stored as ISO 8601 strings (or
+    ``None``).  The companion ``from_dict`` class-method rebuilds an
+    instance from the dict produced by ``as_dict``.
+    """
+
+    def __init__(
+        self,
+        state: str,
+        tracked_event_summary: str | None,
+        tracked_event_start: datetime | None,
+        tracked_event_end: datetime | None,
+        tracked_event_slot_name: str | None,
+        checkin_source: str | None,
+        checkout_source: str | None,
+        checkout_time: datetime | None,
+        transition_target_time: datetime | None,
+        checked_out_event_key: str | None,
+    ) -> None:
+        """Initialise from typed field values."""
+        self.state = state
+        self.tracked_event_summary = tracked_event_summary
+        self.tracked_event_start = tracked_event_start
+        self.tracked_event_end = tracked_event_end
+        self.tracked_event_slot_name = tracked_event_slot_name
+        self.checkin_source = checkin_source
+        self.checkout_source = checkout_source
+        self.checkout_time = checkout_time
+        self.transition_target_time = transition_target_time
+        self.checked_out_event_key = checked_out_event_key
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable dict representation."""
+        return {
+            "state": self.state,
+            "tracked_event_summary": self.tracked_event_summary,
+            "tracked_event_start": (
+                self.tracked_event_start.isoformat()
+                if self.tracked_event_start
+                else None
+            ),
+            "tracked_event_end": (
+                self.tracked_event_end.isoformat() if self.tracked_event_end else None
+            ),
+            "tracked_event_slot_name": self.tracked_event_slot_name,
+            "checkin_source": self.checkin_source,
+            "checkout_source": self.checkout_source,
+            "checkout_time": (
+                self.checkout_time.isoformat() if self.checkout_time else None
+            ),
+            "transition_target_time": (
+                self.transition_target_time.isoformat()
+                if self.transition_target_time
+                else None
+            ),
+            "checked_out_event_key": self.checked_out_event_key,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CheckinExtraStoredData:
+        """Reconstruct an instance from a dict (as produced by ``as_dict``).
+
+        ISO 8601 date-time strings are parsed back to ``datetime``
+        objects; ``None`` values pass through unchanged.
+        """
+
+        def _parse_dt(value: str | None) -> datetime | None:
+            """Parse an ISO 8601 string to datetime or return None."""
+            if value is None:
+                return None
+            try:
+                result: datetime | None = dt_util.parse_datetime(value)
+                return result
+            except ValueError:
+                _LOGGER.warning("Failed to parse stored datetime: %s", value)
+                return None
+
+        return cls(
+            state=data.get("state", CHECKIN_STATE_NO_RESERVATION),
+            tracked_event_summary=data.get("tracked_event_summary"),
+            tracked_event_start=_parse_dt(data.get("tracked_event_start")),
+            tracked_event_end=_parse_dt(data.get("tracked_event_end")),
+            tracked_event_slot_name=data.get("tracked_event_slot_name"),
+            checkin_source=data.get("checkin_source"),
+            checkout_source=data.get("checkout_source"),
+            checkout_time=_parse_dt(data.get("checkout_time")),
+            transition_target_time=_parse_dt(data.get("transition_target_time")),
+            checked_out_event_key=data.get("checked_out_event_key"),
+        )
 
 
 class CheckinTrackingSensor(
@@ -132,6 +227,26 @@ class CheckinTrackingSensor(
             "checkout_time": self._checkout_time,
             "next_transition": self._transition_target_time,
         }
+
+    @property
+    def extra_restore_state_data(self) -> CheckinExtraStoredData:
+        """Return entity-specific state data for RestoreEntity persistence.
+
+        Returns a ``CheckinExtraStoredData`` instance containing all
+        sensor fields that must survive an HA restart.
+        """
+        return CheckinExtraStoredData(
+            state=self._state,
+            tracked_event_summary=self._tracked_event_summary,
+            tracked_event_start=self._tracked_event_start,
+            tracked_event_end=self._tracked_event_end,
+            tracked_event_slot_name=self._tracked_event_slot_name,
+            checkin_source=self._checkin_source,
+            checkout_source=self._checkout_source,
+            checkout_time=self._checkout_time,
+            transition_target_time=self._transition_target_time,
+            checked_out_event_key=self._checked_out_event_key,
+        )
 
     @staticmethod
     def _event_key(summary: str, start: datetime) -> str:
@@ -636,15 +751,158 @@ class CheckinTrackingSensor(
             self._transition_to_no_reservation()
 
     async def async_added_to_hass(self) -> None:
-        """Register listener and process existing coordinator data.
+        """Restore persisted state and validate against current time/data.
 
-        Note: RestoreEntity state restoration (async_get_last_state) is
-        planned for a later phase. Currently state resets on HA restart.
+        Retrieves the last stored extra data (if any) via
+        ``async_get_last_extra_data``, repopulates all instance fields,
+        then runs stale-state validation to auto-correct outdated state
+        and reschedule timers.
+
+        If no prior state exists the sensor starts in
+        ``no_reservation`` and falls through to normal coordinator
+        processing.
         """
         await super().async_added_to_hass()
-        # Process existing coordinator data on first load
-        if self.coordinator.last_update_success and self.coordinator.data is not None:
-            self._handle_coordinator_update()
+
+        # --- T018: Restore persisted state ---
+        last_extra = await self.async_get_last_extra_data()
+        if last_extra is not None:
+            data = last_extra.as_dict()
+            restored = CheckinExtraStoredData.from_dict(data)
+
+            self._state = restored.state
+            self._tracked_event_summary = restored.tracked_event_summary
+            self._tracked_event_start = restored.tracked_event_start
+            self._tracked_event_end = restored.tracked_event_end
+            self._tracked_event_slot_name = restored.tracked_event_slot_name
+            self._checkin_source = restored.checkin_source
+            self._checkout_source = restored.checkout_source
+            self._checkout_time = restored.checkout_time
+            self._transition_target_time = restored.transition_target_time
+            self._checked_out_event_key = restored.checked_out_event_key
+
+            _LOGGER.debug("Restored state '%s' for %s", self._state, self.name)
+
+            # --- T020: Stale-state validation ---
+            self._validate_restored_state()
+        else:
+            _LOGGER.debug(
+                "No prior state for %s, starting as %s",
+                self.name,
+                CHECKIN_STATE_NO_RESERVATION,
+            )
+            # Fall through: process any current coordinator data
+            if (
+                self.coordinator.last_update_success
+                and self.coordinator.data is not None
+            ):
+                self._handle_coordinator_update()
+
+    def _validate_restored_state(self) -> None:
+        """Validate restored state against current time and coordinator data.
+
+        Auto-corrects stale state and reschedules timers:
+
+        * ``checked_in`` with ended event → ``checked_out``
+        * ``awaiting_checkin`` with passed start (time-based) → ``checked_in``
+        * ``checked_out`` with expired linger / new event → reprocess
+        * Valid state with pending transition → reschedule timer
+        """
+        now = dt_util.now()
+        current_state = self._state
+
+        if current_state == CHECKIN_STATE_CHECKED_IN:
+            if self._tracked_event_end is not None and self._tracked_event_end <= now:
+                # Event has ended while we were down → auto checkout
+                _LOGGER.debug(
+                    "Stale restore: checked_in but event ended, "
+                    "transitioning to checked_out"
+                )
+                self._transition_to_checked_out(source="automatic")
+            else:
+                # Still valid checked_in — reschedule auto-checkout timer
+                if self._tracked_event_end is not None:
+                    self._cancel_timer()
+                    self._schedule_auto_checkout(self._tracked_event_end)
+                self.async_write_ha_state()
+
+        elif current_state == CHECKIN_STATE_AWAITING:
+            if (
+                self._tracked_event_start is not None
+                and self._tracked_event_start <= now
+            ):
+                # Event start passed while we were down → auto checkin
+                _LOGGER.debug(
+                    "Stale restore: awaiting_checkin but start passed, "
+                    "transitioning to checked_in"
+                )
+                self._transition_to_checked_in(source="automatic")
+            else:
+                # Still valid awaiting — reschedule auto-checkin timer
+                if self._tracked_event_start is not None:
+                    self._cancel_timer()
+                    self._transition_target_time = self._tracked_event_start
+                    self._unsub_timer = async_track_point_in_time(
+                        self._hass,
+                        self._async_auto_checkin_callback,
+                        self._tracked_event_start,
+                    )
+                self.async_write_ha_state()
+
+        elif current_state == CHECKIN_STATE_CHECKED_OUT:
+            # Per spec acceptance scenario US2-4: if a genuinely new
+            # event is now relevant (different from the checked-out
+            # event), skip linger and transition to awaiting for it.
+            event = self._get_relevant_event()
+            if event is not None:
+                event_key = self._event_key(event.summary, event.start)
+                if event_key != self._checked_out_event_key:
+                    _LOGGER.debug(
+                        "Stale restore: checked_out but new event "
+                        "available, transitioning to awaiting_checkin"
+                    )
+                    self._transition_to_awaiting(event)
+                    return
+
+            # No new event (or same checked-out event). Check if the
+            # linger period has expired while HA was down.
+            linger_expired = False
+            if (
+                self._transition_target_time is not None
+                and self._transition_target_time <= now
+            ):
+                linger_expired = True
+            elif self._checkout_time is not None:
+                # No stored transition target — conservatively use the
+                # cleaning window to determine expiry.
+                cleaning_hours = self._get_cleaning_window()
+                linger_expired = (
+                    self._checkout_time + timedelta(hours=cleaning_hours)
+                ) <= now
+
+            if linger_expired:
+                _LOGGER.debug(
+                    "Stale restore: checked_out and linger expired, "
+                    "transitioning to no_reservation"
+                )
+                self._transition_to_no_reservation()
+            elif (
+                self.coordinator.last_update_success
+                and self.coordinator.data is not None
+            ):
+                self._handle_coordinator_update()
+            else:
+                self.async_write_ha_state()
+
+        elif current_state == CHECKIN_STATE_NO_RESERVATION:
+            # Process current coordinator data
+            if (
+                self.coordinator.last_update_success
+                and self.coordinator.data is not None
+            ):
+                self._handle_coordinator_update()
+            else:
+                self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up when entity is being removed."""
