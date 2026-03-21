@@ -35,6 +35,7 @@ COORDINATOR = "coordinator"
 UNSUB_LISTENERS = "unsub_listeners"
 CHECKIN_SENSOR = "checkin_sensor"
 KEYMASTER_MONITORING_SWITCH = "keymaster_monitoring_switch"
+EARLY_CHECKOUT_EXPIRY_SWITCH = "early_checkout_expiry_switch"
 
 # Platforms
 CALENDAR = "calendar"

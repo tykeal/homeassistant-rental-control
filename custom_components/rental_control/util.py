@@ -18,6 +18,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 from collections.abc import Sequence
+from datetime import datetime
+from datetime import timedelta
 import hashlib
 import logging
 from pathlib import Path
@@ -44,6 +46,7 @@ from .const import CONF_PATH
 from .const import COORDINATOR
 from .const import DEFAULT_PATH
 from .const import DOMAIN
+from .const import EARLY_CHECKOUT_GRACE_MINUTES
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
@@ -302,6 +305,30 @@ def gen_uuid(created: str) -> str:
     """Generation a UUID from the NAME and creation time."""
     m = hashlib.md5(f"{NAME} {created}".encode("utf-8"))
     return str(uuid.UUID(m.hexdigest()))
+
+
+def compute_early_expiry_time(
+    now: datetime,
+    original_end: datetime,
+    grace_minutes: int = EARLY_CHECKOUT_GRACE_MINUTES,
+) -> datetime:
+    """Compute the earliest safe lock-code expiry time after early checkout.
+
+    Returns ``now + grace_minutes`` when more than *grace_minutes*
+    remain before *original_end*, otherwise returns *original_end*
+    unchanged (the reservation is already about to expire naturally).
+
+    Args:
+        now: Current wall-clock time.
+        original_end: The originally scheduled reservation end time.
+        grace_minutes: Number of minutes to keep the code active after
+            early checkout (default from ``EARLY_CHECKOUT_GRACE_MINUTES``).
+
+    Returns:
+        The computed expiry time, which is
+        ``min(now + timedelta(minutes=grace_minutes), original_end)``.
+    """
+    return min(now + timedelta(minutes=grace_minutes), original_end)
 
 
 def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
