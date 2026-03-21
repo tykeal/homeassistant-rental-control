@@ -2647,6 +2647,8 @@ class TestManualCheckout:
         error_msg = str(exc_info.value)
         # Per contract: message should reference the allowed window
         assert "active reservation window" in error_msg
+        assert start.isoformat() in error_msg
+        assert end.isoformat() in error_msg
 
     async def test_checkout_no_state_change_on_guard_failure(
         self,
