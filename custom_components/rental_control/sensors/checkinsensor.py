@@ -192,6 +192,30 @@ class CheckinTrackingSensor(
             return self.coordinator.data[1]
         return None
 
+    def _find_followon_event(self, checkout_time: datetime) -> CalendarEvent | None:
+        """Find the first follow-on event after checkout.
+
+        Scans coordinator data for the first event that is not the
+        checked-out event and starts at or after checkout time. This
+        avoids hardcoding an index, which would break if the
+        checked-out event has already been filtered from the data.
+
+        Args:
+            checkout_time: The checkout time to compare against.
+
+        Returns:
+            The follow-on CalendarEvent, or None if none found.
+        """
+        events = self.coordinator.data or []
+        for event in events:
+            if self._checked_out_event_key is not None:
+                event_key = self._event_key(event.summary, event.start)
+                if event_key == self._checked_out_event_key:
+                    continue
+            if event.start >= checkout_time:
+                return event
+        return None
+
     def _extract_slot_name(self, event: CalendarEvent) -> str | None:
         """Extract guest/slot name from a calendar event.
 
@@ -477,7 +501,7 @@ class CheckinTrackingSensor(
         event's timing and schedules the appropriate transition.
         """
         checkout_time = self._checkout_time or dt_util.now()
-        next_event = self._get_next_event()
+        next_event = self._find_followon_event(checkout_time)
 
         if next_event is not None:
             # Check if next event starts on same calendar day
