@@ -726,10 +726,10 @@ class TestNoFollowOnFR006b:
                 "days": 90,
                 "verify_ssl": True,
                 "ignore_non_reserved": False,
+                CONF_CLEANING_WINDOW: 2.0,
             },
             options={
                 "refresh_frequency": 5,
-                CONF_CLEANING_WINDOW: 2.0,
             },
             entry_id="test_custom_cw_entry_id",
         )

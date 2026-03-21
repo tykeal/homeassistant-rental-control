@@ -293,9 +293,7 @@ class CheckinTrackingSensor(
             or the default value.
         """
         return float(
-            self._config_entry.options.get(
-                CONF_CLEANING_WINDOW, DEFAULT_CLEANING_WINDOW
-            )
+            self._config_entry.data.get(CONF_CLEANING_WINDOW, DEFAULT_CLEANING_WINDOW)
         )
 
     def _cancel_timer(self) -> None:
