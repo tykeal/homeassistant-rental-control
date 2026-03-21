@@ -756,7 +756,7 @@ class CheckinTrackingSensor(
     async def async_checkout(self) -> None:
         """Handle manual checkout service call.
 
-        Validates guard conditions per FR-019 and contracts/checkout-service.md:
+        Validates guard conditions per FR-019 and specs/004-checkin-tracking/contracts/checkout-service.md:
         1. Sensor must be in ``checked_in`` state
         2. Current datetime must be within ``[start, end)`` of the active
            reservation window

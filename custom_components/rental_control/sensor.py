@@ -76,7 +76,7 @@ async def async_setup_entry(
 
     async_add_entities(sensors)
 
-    # Register checkout entity service (per contracts/checkout-service.md)
+    # Register checkout entity service (see specs/004-checkin-tracking/contracts/checkout-service.md)
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
         "checkout",

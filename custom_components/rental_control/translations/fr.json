@@ -73,8 +73,8 @@
   },
   "services": {
     "checkout": {
-      "name": "Checkout",
-      "description": "Manually check out the current guest."
+      "name": "Départ",
+      "description": "Enregistrer manuellement le départ du client actuel."
     }
   }
 }
