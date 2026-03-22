@@ -115,13 +115,13 @@ tests/
 
 ### Tests for User Story 3
 
-- [ ] T019 [P] [US3] Write unit tests for `verify_slot_ownership()` — match returns True, mismatch returns False, empty slot returns False; write unit tests for `async_check_overrides()` under lock — expired slot cleared with `async_fire_clear_code()`, clear-failure keeps slot occupied in `tests/unit/test_event_overrides.py`
-- [ ] T020 [P] [US3] Write unit tests for pre-execution verification abort (ownership mismatch → operation aborted, logged) and retry/escalation (3 failures → `record_retry_failure` returns True → `persistent_notification` created; success → counter reset, notification dismissed) in `tests/unit/test_util.py`
+- [x] T019 [P] [US3] Write unit tests for `verify_slot_ownership()` — match returns True, mismatch returns False, empty slot returns False; write unit tests for `async_check_overrides()` under lock — expired slot cleared with `async_fire_clear_code()`, clear-failure keeps slot occupied in `tests/unit/test_event_overrides.py`
+- [x] T020 [P] [US3] Write unit tests for pre-execution verification abort (ownership mismatch → operation aborted, logged) and retry/escalation (3 failures → `record_retry_failure` returns True → `persistent_notification` created; success → counter reset, notification dismissed) in `tests/unit/test_util.py`
 
 ### Implementation for User Story 3
 
-- [ ] T021 [P] [US3] Add pre-execution slot verification at the start of `async_fire_set_code()`, `async_fire_clear_code()`, and `async_fire_update_times()`: call `coordinator.event_overrides.verify_slot_ownership(slot, expected_name)`, if False log warning and return early without executing Keymaster commands in `custom_components/rental_control/util.py`
-- [ ] T022 [US3] Add try/except around Keymaster service calls in `async_fire_set_code()` and `async_fire_clear_code()`: on success call `record_retry_success(slot)` and if `_escalated[slot]` was True call `persistent_notification.async_dismiss(hass, notification_id=...)` to clear the escalation notification; on failure call `record_retry_failure(slot)` and if it returns True create `persistent_notification.async_create()` with stable `notification_id` (`rental_control_slot_{slot}_failure` / `rental_control_slot_{slot}_clear_failure`); do NOT release slot on failure; re-raise the exception after recording retry failure so `async_check_overrides` can detect the failure and keep the slot occupied (cross-ref T009) in `custom_components/rental_control/util.py`
+- [x] T021 [P] [US3] Add pre-execution slot verification at the start of `async_fire_set_code()`, `async_fire_clear_code()`, and `async_fire_update_times()`: call `coordinator.event_overrides.verify_slot_ownership(slot, expected_name)`, if False log warning and return early without executing Keymaster commands in `custom_components/rental_control/util.py`
+- [x] T022 [US3] Add try/except around Keymaster service calls in `async_fire_set_code()` and `async_fire_clear_code()`: on success call `record_retry_success(slot)` and if `_escalated[slot]` was True call `persistent_notification.async_dismiss(hass, notification_id=...)` to clear the escalation notification; on failure call `record_retry_failure(slot)` and if it returns True create `persistent_notification.async_create()` with stable `notification_id` (`rental_control_slot_{slot}_failure` / `rental_control_slot_{slot}_clear_failure`); do NOT release slot on failure; re-raise the exception after recording retry failure so `async_check_overrides` can detect the failure and keep the slot occupied (cross-ref T009) in `custom_components/rental_control/util.py`
 
 **Checkpoint**: Cleanup, pre-verification, and retry/escalation fully functional. Failed lock commands retry automatically with admin notification.
 
@@ -137,9 +137,9 @@ tests/
 
 > Note: The dedup enforcement implementation is in T006 (foundational phase). This phase validates it exhaustively.
 
-- [ ] T023 [US4] Write unit tests for dedup redirect: guest "Alice" in slot 3 Mon–Fri, `async_update()` attempts "Alice" in slot 5 Wed–Sun → slot 3 times updated to Mon–Sun, slot 5 unchanged, warning logged in `tests/unit/test_event_overrides.py`
-- [ ] T024 [US4] Write unit tests for back-to-back stays: guest "Alice" in slot 3 Mon–Fri, `async_update()` writes "Alice" to slot 5 following Mon–Fri → both slots active, no warning (non-overlapping times = distinct reservations) in `tests/unit/test_event_overrides.py`
-- [ ] T025 [US4] Write unit tests for UID tiebreaker: "Alice" in slot 3 Mon–Fri uid="AAA", `async_reserve_or_get_slot()` with "Alice" Mon–Fri uid="BBB" → new slot reserved (different UIDs prove distinct reservations despite name+overlap) in `tests/unit/test_event_overrides.py`
+- [x] T023 [US4] Write unit tests for dedup redirect: guest "Alice" in slot 3 Mon–Fri, `async_update()` attempts "Alice" in slot 5 Wed–Sun → slot 3 times updated to Mon–Sun, slot 5 unchanged, warning logged in `tests/unit/test_event_overrides.py`
+- [x] T024 [US4] Write unit tests for back-to-back stays: guest "Alice" in slot 3 Mon–Fri, `async_update()` writes "Alice" to slot 5 following Mon–Fri → both slots active, no warning (non-overlapping times = distinct reservations) in `tests/unit/test_event_overrides.py`
+- [x] T025 [US4] Write unit tests for UID tiebreaker: "Alice" in slot 3 Mon–Fri uid="AAA", `async_reserve_or_get_slot()` with "Alice" Mon–Fri uid="BBB" → new slot reserved (different UIDs prove distinct reservations despite name+overlap) in `tests/unit/test_event_overrides.py`
 
 **Checkpoint**: Storage-layer identity invariant exhaustively validated. Defense-in-depth confirmed.
 

@@ -30,6 +30,8 @@ import uuid
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
 from homeassistant.components.button import DOMAIN as BUTTON
 from homeassistant.components.datetime import DOMAIN as DATETIME
+from homeassistant.components.persistent_notification import async_create as pn_create
+from homeassistant.components.persistent_notification import async_dismiss as pn_dismiss
 from homeassistant.components.switch import DOMAIN as SWITCH
 from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
@@ -74,6 +76,17 @@ def check_gather_results(
                 result,
                 exc_info=(type(result), result, result.__traceback__),
             )
+
+
+def _raise_first_gather_exception(results: Sequence[object]) -> None:
+    """Re-raise the first Exception captured by gather.
+
+    Called after ``check_gather_results`` when the caller needs
+    failures to propagate (e.g. for retry tracking).
+    """
+    for result in results:
+        if isinstance(result, Exception):
+            raise result
 
 
 def add_call(
@@ -126,7 +139,9 @@ def delete_folder(absolute_path: str | Path, *relative_paths: str) -> None:
         path.rmdir()
 
 
-async def async_fire_clear_code(coordinator, slot: int) -> None:
+async def async_fire_clear_code(
+    coordinator, slot: int, expected_name: str | None = None
+) -> None:
     """Fire a clear_code signal."""
     _LOGGER.debug(
         "In async_fire_clear_code - slot: %s, name: %s", slot, coordinator.name
@@ -137,13 +152,44 @@ async def async_fire_clear_code(coordinator, slot: int) -> None:
     if not coordinator.lockname:
         return
 
-    # Reset the slot
-    await hass.services.async_call(
-        domain=BUTTON,
-        service="press",
-        target={"entity_id": reset_entity},
-        blocking=True,
-    )
+    if (
+        expected_name is not None
+        and not coordinator.event_overrides.verify_slot_ownership(slot, expected_name)
+    ):
+        _LOGGER.warning(
+            "Slot %d ownership verification failed for '%s'; aborting clear_code",
+            slot,
+            expected_name,
+        )
+        return
+
+    try:
+        # Reset the slot
+        await hass.services.async_call(
+            domain=BUTTON,
+            service="press",
+            target={"entity_id": reset_entity},
+            blocking=True,
+        )
+    except Exception:
+        escalated = coordinator.event_overrides.record_retry_failure(slot)
+        if escalated:
+            pn_create(
+                hass,
+                f"Slot {slot} clear command failed after repeated "
+                f"retries. Manual intervention may be required.",
+                title="Rental Control: Lock Command Failure",
+                notification_id=f"rental_control_slot_{slot}_clear_failure",
+            )
+        raise
+
+    was_escalated = coordinator.event_overrides._escalated.get(slot, False)
+    coordinator.event_overrides.record_retry_success(slot)
+    if was_escalated:
+        pn_dismiss(
+            hass,
+            notification_id=f"rental_control_slot_{slot}_clear_failure",
+        )
 
 
 async def async_fire_set_code(coordinator, event, slot: int) -> None:
@@ -165,85 +211,119 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
 
     slot_name = f"{prefix}{event.extra_state_attributes['slot_name']}"
 
-    # Disable the slot, this should help avoid notices from Keymaster about
-    # pin changes
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        SWITCH,
-        "turn_off",
-        f"{SWITCH}.{lockname}_code_slot_{slot}_enabled",
-        {},
-    )
-    results = await asyncio.gather(*coro, return_exceptions=True)
-    check_gather_results(results, "Lock slot operation")
+    expected_name = event.extra_state_attributes["slot_name"]
+    if not coordinator.event_overrides.verify_slot_ownership(slot, expected_name):
+        _LOGGER.warning(
+            "Slot %d ownership verification failed for '%s'; aborting set_code",
+            slot,
+            expected_name,
+        )
+        return
 
-    coro.clear()
+    try:
+        # Disable the slot, this should help avoid notices from Keymaster
+        # about pin changes
+        coro = add_call(
+            coordinator.hass,
+            coro,
+            SWITCH,
+            "turn_off",
+            f"{SWITCH}.{lockname}_code_slot_{slot}_enabled",
+            {},
+        )
+        results = await asyncio.gather(*coro, return_exceptions=True)
+        check_gather_results(results, "Lock slot operation")
+        _raise_first_gather_exception(results)
 
-    # Load the slot data
-    # The new Keymaster requires that we enable date before we can set
-    # anything
-    await coordinator.hass.services.async_call(
-        domain=SWITCH,
-        service="turn_on",
-        target={
-            "entity_id": f"{SWITCH}.{lockname}_code_slot_{slot}_use_date_range_limits"
-        },
-        blocking=True,
-    )
+        coro.clear()
 
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        DATETIME,
-        "set_value",
-        f"{DATETIME}.{lockname}_code_slot_{slot}_date_range_end",
-        {"datetime": event.extra_state_attributes["end"]},
-    )
+        # Load the slot data
+        # The new Keymaster requires that we enable date before we can set
+        # anything
+        await coordinator.hass.services.async_call(
+            domain=SWITCH,
+            service="turn_on",
+            target={
+                "entity_id": (
+                    f"{SWITCH}.{lockname}_code_slot_{slot}_use_date_range_limits"
+                )
+            },
+            blocking=True,
+        )
 
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        DATETIME,
-        "set_value",
-        f"{DATETIME}.{lockname}_code_slot_{slot}_date_range_start",
-        {"datetime": event.extra_state_attributes["start"]},
-    )
+        coro = add_call(
+            coordinator.hass,
+            coro,
+            DATETIME,
+            "set_value",
+            f"{DATETIME}.{lockname}_code_slot_{slot}_date_range_end",
+            {"datetime": event.extra_state_attributes["end"]},
+        )
 
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        TEXT,
-        "set_value",
-        f"{TEXT}.{lockname}_code_slot_{slot}_pin",
-        {"value": event.extra_state_attributes["slot_code"]},
-    )
+        coro = add_call(
+            coordinator.hass,
+            coro,
+            DATETIME,
+            "set_value",
+            f"{DATETIME}.{lockname}_code_slot_{slot}_date_range_start",
+            {"datetime": event.extra_state_attributes["start"]},
+        )
 
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        TEXT,
-        "set_value",
-        f"{TEXT}.{lockname}_code_slot_{slot}_name",
-        {"value": slot_name},
-    )
-    # Update the slot details
-    results = await asyncio.gather(*coro, return_exceptions=True)
-    check_gather_results(results, "Lock slot operation")
+        coro = add_call(
+            coordinator.hass,
+            coro,
+            TEXT,
+            "set_value",
+            f"{TEXT}.{lockname}_code_slot_{slot}_pin",
+            {"value": event.extra_state_attributes["slot_code"]},
+        )
 
-    # Turn on the slot
-    coro.clear()
-    coro = add_call(
-        coordinator.hass,
-        coro,
-        SWITCH,
-        "turn_on",
-        f"{SWITCH}.{lockname}_code_slot_{slot}_enabled",
-        {},
-    )
+        coro = add_call(
+            coordinator.hass,
+            coro,
+            TEXT,
+            "set_value",
+            f"{TEXT}.{lockname}_code_slot_{slot}_name",
+            {"value": slot_name},
+        )
+        # Update the slot details
+        results = await asyncio.gather(*coro, return_exceptions=True)
+        check_gather_results(results, "Lock slot operation")
+        _raise_first_gather_exception(results)
 
-    results = await asyncio.gather(*coro, return_exceptions=True)
-    check_gather_results(results, "Lock slot operation")
+        # Turn on the slot
+        coro.clear()
+        coro = add_call(
+            coordinator.hass,
+            coro,
+            SWITCH,
+            "turn_on",
+            f"{SWITCH}.{lockname}_code_slot_{slot}_enabled",
+            {},
+        )
+
+        results = await asyncio.gather(*coro, return_exceptions=True)
+        check_gather_results(results, "Lock slot operation")
+        _raise_first_gather_exception(results)
+    except Exception:
+        escalated = coordinator.event_overrides.record_retry_failure(slot)
+        if escalated:
+            pn_create(
+                coordinator.hass,
+                f"Slot {slot} set command failed after repeated "
+                f"retries. Manual intervention may be required.",
+                title="Rental Control: Lock Command Failure",
+                notification_id=f"rental_control_slot_{slot}_failure",
+            )
+        raise
+
+    was_escalated = coordinator.event_overrides._escalated.get(slot, False)
+    coordinator.event_overrides.record_retry_success(slot)
+    if was_escalated:
+        pn_dismiss(
+            coordinator.hass,
+            notification_id=f"rental_control_slot_{slot}_failure",
+        )
 
 
 async def async_fire_update_times(coordinator, event) -> None:
@@ -255,6 +335,14 @@ async def async_fire_update_times(coordinator, event) -> None:
     slot = coordinator.event_overrides.get_slot_key_by_name(slot_name)
 
     if not slot or not lockname:
+        return
+
+    if not coordinator.event_overrides.verify_slot_ownership(slot, slot_name):
+        _LOGGER.warning(
+            "Slot %d ownership verification failed for '%s'; aborting update_times",
+            slot,
+            slot_name,
+        )
         return
 
     coro = add_call(
