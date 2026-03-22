@@ -53,11 +53,11 @@ consecutive failures.
 
 | File | Change Type | Summary |
 |------|-------------|---------|
-| `event_overrides.py` | **Major** | Add `asyncio.Lock`, `async_reserve_or_get_slot()`, `async_update()`, dedup enforcement, retry tracking, `verify_slot_ownership()` |
-| `sensors/calsensor.py` | **Moderate** | Replace check-then-act with `async_create_task(_async_handle_slot_assignment())` |
-| `util.py` | **Moderate** | Add pre-execution verification, retry tracking, persistent_notification escalation |
-| `coordinator.py` | **Minor** | Adapt `update_event_overrides()` to call `async_update()` |
-| `const.py` | **Minor** | Add `DEFAULT_MAX_RETRY_CYCLES = 3` |
+| `custom_components/rental_control/event_overrides.py` | **Major** | Add `asyncio.Lock`, `async_reserve_or_get_slot()`, `async_update()`, dedup enforcement, retry tracking, `verify_slot_ownership()` |
+| `custom_components/rental_control/sensors/calsensor.py` | **Moderate** | Replace check-then-act with `async_create_task(_async_handle_slot_assignment())` |
+| `custom_components/rental_control/util.py` | **Moderate** | Add pre-execution verification, retry tracking, persistent_notification escalation |
+| `custom_components/rental_control/coordinator.py` | **Minor** | Adapt `update_event_overrides()` to call `async_update()` |
+| `custom_components/rental_control/const.py` | **Minor** | Add `DEFAULT_MAX_RETRY_CYCLES = 3` |
 
 ## Key Design Decisions
 

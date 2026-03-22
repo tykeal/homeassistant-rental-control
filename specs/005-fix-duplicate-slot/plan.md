@@ -35,17 +35,19 @@ functions, and retry/escalation for failed lock commands (3 cycles then
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
+<!-- REUSE-IgnoreStart -->
+
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | **I: Code Quality & Testing** | ✅ PASS | Plan includes unit tests for every new async method, integration tests for concurrency scenarios. Type hints required on all new code. 100% docstring coverage enforced. |
 | **II: Atomic Commit Discipline** | ✅ PASS | Implementation will be split into atomic commits: (1) add lock + async reserve method, (2) dedup enforcement, (3) calsensor adaptation, (4) util pre-verification, (5) retry/escalation, (6) tests. Each commit compiles and passes independently. |
-<!-- REUSE-IgnoreStart -->
 | **III: Licensing & Attribution** | ✅ PASS | All modified files already have SPDX headers. New files (if any) will include `SPDX-License-Identifier: Apache-2.0` and `SPDX-FileCopyrightText`. |
-<!-- REUSE-IgnoreEnd -->
 | **IV: Pre-Commit Integrity** | ✅ PASS | All commits must pass ruff, mypy, interrogate, reuse-tool, gitlint before push. |
 | **V: Agent Co-Authorship & DCO** | ✅ PASS | Agent-authored commits will include `Co-authored-by` trailer and `Signed-off-by` via `git commit -s`. |
 | **VI: UX Consistency** | ✅ PASS | No user-facing entity changes. Sensor naming, state attributes, and behavior remain backward-compatible (SC-007). Persistent notification for escalation follows HA patterns. |
 | **VII: Performance** | ✅ PASS | `asyncio.Lock` contention is minimal (single event loop, short critical sections). Lock acquired/released within microseconds for in-memory operations. Service calls (Keymaster) already async. No new blocking I/O. |
+
+<!-- REUSE-IgnoreEnd -->
 
 **Gate result: PASS** — no violations, no complexity tracking entries needed.
 
