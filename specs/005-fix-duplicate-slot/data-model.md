@@ -117,7 +117,7 @@ def times_overlap(start_a: datetime, end_a: datetime,
 CONSTRAINT: count(slot for slot in _overrides.values() if slot is not None)
             <= _max_slots
 
-When violated: log overflow warning, return (None, False) from reserve.
+When violated: log overflow warning, return ReserveResult(None, False, False) from reserve.
 ```
 
 ### Retry Threshold (FR-011, FR-012)

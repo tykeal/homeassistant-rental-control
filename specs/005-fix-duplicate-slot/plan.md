@@ -29,7 +29,7 @@ functions, and retry/escalation for failed lock commands (3 cycles then
 **Project Type**: Single HA custom integration
 **Performance Goals**: All slot mutations must complete within the coordinator refresh cycle (default 2 min, minimum 30s); no event-loop blocking
 **Constraints**: Single-threaded asyncio — concurrency from interleaved coroutines at `await` points only; `@callback`-decorated methods are synchronous (no `await`); Keymaster does not persist custom metadata (UIDs lost on restart)
-**Scale/Scope**: 5 managed slots (default), up to ~20 calendar events per refresh; 4 source files modified, ~300 net new LOC estimated
+**Scale/Scope**: 5 managed slots (default), up to ~20 calendar events per refresh; 5 source files modified, ~300 net new LOC estimated
 
 ## Constitution Check
 
