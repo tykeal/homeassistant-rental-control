@@ -43,8 +43,8 @@ tests/
 
 **Purpose**: Add new constants and the `ReserveResult` return type needed by all subsequent phases.
 
-- [ ] T001 Add `DEFAULT_MAX_RETRY_CYCLES = 3` constant to `custom_components/rental_control/const.py`
-- [ ] T002 [P] Define `ReserveResult` NamedTuple with fields `slot: int | None`, `is_new: bool`, `times_updated: bool` at module level in `custom_components/rental_control/event_overrides.py`
+- [x] T001 Add `DEFAULT_MAX_RETRY_CYCLES = 3` constant to `custom_components/rental_control/const.py`
+- [x] T002 [P] Define `ReserveResult` NamedTuple with fields `slot: int | None`, `is_new: bool`, `times_updated: bool` at module level in `custom_components/rental_control/event_overrides.py`
 
 ---
 
