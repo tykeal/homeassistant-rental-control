@@ -17,6 +17,7 @@ import pytest
 
 from custom_components.rental_control.event_overrides import EventOverride
 from custom_components.rental_control.event_overrides import EventOverrides
+from custom_components.rental_control.event_overrides import ReserveResult
 
 # ---------------------------------------------------------------------------
 # Helpers / Fixtures
@@ -846,3 +847,76 @@ class TestEdgeCases:
             # "Current Guest" at index 0 stays
             assert eo.overrides[1] is not None
             assert eo.overrides[1]["slot_name"] == "Current Guest"
+
+
+# ---------------------------------------------------------------------------
+# Idempotent reservation (US2: async_reserve_or_get_slot)
+# ---------------------------------------------------------------------------
+
+
+class TestIdempotentReservation:
+    """Tests for idempotent reservation updates via async_reserve_or_get_slot."""
+
+    @pytest.mark.asyncio
+    async def test_time_update_returns_times_updated_true(self) -> None:
+        """Re-reserving with changed times updates the slot.
+
+        Guest in slot 10 with Mon-Fri, reserve again with Mon-Sat.
+        Expected: ReserveResult(10, False, True) and stored times
+        reflect the new end time.
+        """
+        eo = EventOverrides(start_slot=10, max_slots=3)
+        now = dt_util.now()
+        # Bootstrap all slots so next_slot is computed
+        for s in (10, 11, 12):
+            eo.update(s, "", "", now, now)
+
+        mon = _make_dt(2025, 7, 7)
+        fri = _make_dt(2025, 7, 11)
+        sat = _make_dt(2025, 7, 12)
+
+        # Initial reservation: Mon-Fri
+        first = await eo.async_reserve_or_get_slot("Alice", "1234", mon, fri)
+        assert first == ReserveResult(10, True, False)
+
+        # Re-deliver with extended end: Mon-Sat
+        second = await eo.async_reserve_or_get_slot("Alice", "1234", mon, sat)
+        assert second == ReserveResult(10, False, True)
+
+        # Stored times reflect the update
+        override = eo.overrides[10]
+        assert override is not None
+        assert override["start_time"] == mon
+        assert override["end_time"] == sat
+
+    @pytest.mark.asyncio
+    async def test_identical_reservation_is_noop(self) -> None:
+        """Re-reserving with identical times is a no-op.
+
+        Guest in slot 10 with Mon-Fri, reserve again with Mon-Fri.
+        Expected: ReserveResult(10, False, False) and no state changes.
+        """
+        eo = EventOverrides(start_slot=10, max_slots=3)
+        now = dt_util.now()
+        # Bootstrap all slots so next_slot is computed
+        for s in (10, 11, 12):
+            eo.update(s, "", "", now, now)
+
+        mon = _make_dt(2025, 7, 7)
+        fri = _make_dt(2025, 7, 11)
+
+        # Initial reservation: Mon-Fri
+        first = await eo.async_reserve_or_get_slot("Alice", "1234", mon, fri)
+        assert first == ReserveResult(10, True, False)
+
+        # Snapshot state before re-delivery
+        override_10 = eo.overrides[10]
+        assert override_10 is not None
+        before = override_10.copy()
+
+        # Re-deliver with identical times
+        second = await eo.async_reserve_or_get_slot("Alice", "1234", mon, fri)
+        assert second == ReserveResult(10, False, False)
+
+        # No state changes
+        assert eo.overrides[10] == before
