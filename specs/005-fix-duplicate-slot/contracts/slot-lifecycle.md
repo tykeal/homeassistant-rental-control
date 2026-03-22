@@ -44,7 +44,7 @@ async _async_handle_slot_assignment():
         await async_fire_set_code(coordinator, self, result.slot)
     elif result.times_updated:
         # times changed — may need code update or time update
-        await async_fire_update_times(coordinator, self)
+        await async_fire_update_times(coordinator, self, result.slot)
 ```
 
 **Contract**:

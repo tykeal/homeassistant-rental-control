@@ -104,19 +104,24 @@ range = same reservation. UID is a runtime-only tiebreaker.
 slot for a guest or reserves a new one.
 
 **Decision**: `async_reserve_or_get_slot(slot_name, slot_code, start_time,
-end_time, uid=None)` → returns `(slot_number, is_new)`.
+end_time, uid=None)` → returns `ReserveResult(slot, is_new,
+times_updated)`.
 
 **Rationale**:
 - Acquires `_lock`, then:
   1. Calls `_find_overlapping_slot(slot_name, start_time, end_time, uid)`.
-  2. If found: updates times if changed, returns `(existing_slot, False)`.
+  2. If found: determines whether `start_time`/`end_time` differ from
+     stored values; if so, updates them. Returns
+     `ReserveResult(existing_slot, False, times_updated)` where
+     `times_updated` is `True` iff stored times were changed.
   3. If not found and `_next_slot is not None`: writes to `_next_slot`,
-     recalculates next, returns `(new_slot, True)`.
+     recalculates next, returns `ReserveResult(new_slot, True, True)`.
   4. If not found and no slot available: logs overflow (FR-010), returns
-     `(None, False)`.
+     `ReserveResult(None, False, False)`.
 - Releases `_lock`.
-- The caller (`calsensor.py`) receives the slot number and only proceeds to
-  Keymaster service calls if `is_new` is True (or if times were updated).
+- The caller (`calsensor.py`) receives the `ReserveResult` and only
+  proceeds to Keymaster service calls if `is_new` is True or
+  `times_updated` is True.
 - This eliminates the check-then-act race: no window between checking
   `next_slot` and writing to it.
 

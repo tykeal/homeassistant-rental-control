@@ -74,8 +74,8 @@ consecutive failures.
 ### Prerequisites
 
 ```bash
-# Ensure you're in the worktree
-cd /home/tykeal/repos/personal/homeassistant/worktrees/slot-fix-plan
+# Ensure you're in the repository root (or desired worktree)
+cd /path/to/homeassistant-rental-control
 
 # Install dependencies
 uv sync

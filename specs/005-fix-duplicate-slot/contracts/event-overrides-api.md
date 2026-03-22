@@ -200,7 +200,7 @@ def verify_slot_ownership(self, slot: int, expected_name: str) -> bool:
 
 | Condition | Method | Behavior |
 |-----------|--------|----------|
-| All slots occupied | `async_reserve_or_get_slot` | Returns `(None, False, False)`, logs warning |
+| All slots occupied | `async_reserve_or_get_slot` | Returns `ReserveResult` with `slot=None` and both flags `False`, logs warning |
 | Duplicate name+overlap | `async_update` | Redirects to existing slot, logs warning |
 | Slot ownership mismatch | `verify_slot_ownership` | Returns `False`, caller aborts + logs |
 | Retry threshold reached | `record_retry_failure` | Returns `True`, caller creates notification |
