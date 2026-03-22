@@ -21,6 +21,7 @@ from datetime import time
 import logging
 import re
 from typing import TYPE_CHECKING
+from typing import NamedTuple
 from typing import TypedDict
 
 from homeassistant.util import dt
@@ -32,6 +33,14 @@ if TYPE_CHECKING:
     from homeassistant.components.calendar import CalendarEvent
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class ReserveResult(NamedTuple):
+    """Result of a slot reservation attempt."""
+
+    slot: int | None
+    is_new: bool
+    times_updated: bool
 
 
 class EventOverride(TypedDict):
