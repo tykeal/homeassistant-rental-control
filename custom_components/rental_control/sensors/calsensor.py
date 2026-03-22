@@ -376,6 +376,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
                         end_time=event.end,
                         uid=uid,
                         prefix=self.coordinator.event_prefix or "",
+                        eta_days=eta_days,
                     )
                 )
 
@@ -416,6 +417,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         end_time: datetime,
         uid: str | None,
         prefix: str,
+        eta_days: int | None,
     ) -> None:
         """Atomically reserve or locate an existing slot for the current event.
 
@@ -472,8 +474,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             self.async_write_ha_state()
 
         if result.times_updated:
-            td = start_time - datetime.now(start_time.tzinfo)
-            eta_days = td.days if td.total_seconds() >= 0 else None
             if (
                 self.coordinator.code_generator == "date_based"
                 and self.coordinator.should_update_code
