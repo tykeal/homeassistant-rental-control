@@ -407,7 +407,9 @@ class EventOverrides:
                 if clear_code:
                     _LOGGER.debug("Firing clear code for slot %s", slot)
                     try:
-                        await async_fire_clear_code(coordinator, slot)
+                        await async_fire_clear_code(
+                            coordinator, slot, expected_name=self.get_slot_name(slot)
+                        )
                     except Exception:
                         _LOGGER.exception(
                             "Failed to fire clear code for slot %d; "
