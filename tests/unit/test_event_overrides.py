@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
+import logging
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -17,6 +18,7 @@ import pytest
 
 from custom_components.rental_control.event_overrides import EventOverride
 from custom_components.rental_control.event_overrides import EventOverrides
+from custom_components.rental_control.event_overrides import ReserveResult
 
 # ---------------------------------------------------------------------------
 # Helpers / Fixtures
@@ -846,3 +848,207 @@ class TestEdgeCases:
             # "Current Guest" at index 0 stays
             assert eo.overrides[1] is not None
             assert eo.overrides[1]["slot_name"] == "Current Guest"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — async_reserve_or_get_slot & _find_overlapping_slot Tests
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncReserveOrGetSlotNewReservation:
+    """T011: Tests for async_reserve_or_get_slot() new-reservation path."""
+
+    async def test_single_reservation_gets_slot(
+        self, populated_eo: EventOverrides
+    ) -> None:
+        """A single new reservation should receive a valid slot."""
+        result = await populated_eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 5),
+        )
+        assert result.slot is not None
+        assert result.is_new is True
+        assert result.times_updated is False
+        override = populated_eo.overrides[result.slot]
+        assert override is not None
+        assert override["slot_name"] == "Alice"
+
+    async def test_two_sequential_reservations_get_different_slots(
+        self, populated_eo: EventOverrides
+    ) -> None:
+        """Two distinct reservations must receive different slots."""
+        r1 = await populated_eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 5),
+        )
+        r2 = await populated_eo.async_reserve_or_get_slot(
+            slot_name="Bob",
+            slot_code="5678",
+            start_time=_make_dt(2025, 8, 6),
+            end_time=_make_dt(2025, 8, 10),
+        )
+        assert r1.slot is not None
+        assert r2.slot is not None
+        assert r1.slot != r2.slot
+        assert r1.is_new is True
+        assert r2.is_new is True
+
+    async def test_next_slot_recalculated_after_each_reservation(
+        self, populated_eo: EventOverrides
+    ) -> None:
+        """_next_slot should advance after each successful reservation."""
+        initial_next = populated_eo.next_slot
+        assert initial_next is not None
+
+        r1 = await populated_eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 5),
+        )
+        after_first = populated_eo.next_slot
+        assert after_first != initial_next
+
+        r2 = await populated_eo.async_reserve_or_get_slot(
+            slot_name="Bob",
+            slot_code="5678",
+            start_time=_make_dt(2025, 8, 6),
+            end_time=_make_dt(2025, 8, 10),
+        )
+        after_second = populated_eo.next_slot
+        assert after_second != after_first
+        assert r1.slot != r2.slot
+
+
+class TestFindOverlappingSlot:
+    """T012: Tests for _find_overlapping_slot() identity matching."""
+
+    async def test_same_name_overlapping_times_returns_existing(
+        self, populated_eo: EventOverrides
+    ) -> None:
+        """Same guest name with overlapping dates returns the existing slot."""
+        r1 = await populated_eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 10),
+        )
+        assert r1.is_new is True
+
+        # Same name, overlapping range
+        r2 = await populated_eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 5),
+            end_time=_make_dt(2025, 8, 15),
+        )
+        assert r2.slot == r1.slot
+        assert r2.is_new is False
+
+    async def test_different_name_returns_none_reserves_new(
+        self, populated_eo: EventOverrides
+    ) -> None:
+        """Different guest name should not match existing slot."""
+        r1 = await populated_eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 10),
+        )
+        r2 = await populated_eo.async_reserve_or_get_slot(
+            slot_name="Bob",
+            slot_code="5678",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 10),
+        )
+        assert r2.slot != r1.slot
+        assert r2.is_new is True
+
+    async def test_same_name_non_overlapping_returns_none_reserves_new(
+        self, populated_eo: EventOverrides
+    ) -> None:
+        """Same name with non-overlapping (back-to-back) stays gets new slot."""
+        r1 = await populated_eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 5),
+        )
+        # Back-to-back: starts exactly when previous ends
+        r2 = await populated_eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="5678",
+            start_time=_make_dt(2025, 8, 5),
+            end_time=_make_dt(2025, 8, 10),
+        )
+        assert r2.slot != r1.slot
+        assert r2.is_new is True
+
+
+class TestSlotOverflow:
+    """T013: Tests for slot overflow when all slots are occupied."""
+
+    async def test_overflow_returns_none(self) -> None:
+        """All slots occupied returns ReserveResult(None, False, False)."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+        now = dt_util.now()
+        # Initialize all slots as empty (system ready)
+        eo.update(1, "", "", now, now)
+        eo.update(2, "", "", now, now)
+
+        # Fill both slots
+        r1 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 5),
+        )
+        r2 = await eo.async_reserve_or_get_slot(
+            slot_name="Bob",
+            slot_code="5678",
+            start_time=_make_dt(2025, 8, 6),
+            end_time=_make_dt(2025, 8, 10),
+        )
+        assert r1.is_new is True
+        assert r2.is_new is True
+
+        # Third reservation should overflow
+        r3 = await eo.async_reserve_or_get_slot(
+            slot_name="Charlie",
+            slot_code="9012",
+            start_time=_make_dt(2025, 8, 11),
+            end_time=_make_dt(2025, 8, 15),
+        )
+        assert r3 == ReserveResult(None, False, False)
+
+    async def test_overflow_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Overflow should log a warning with guest name."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = dt_util.now()
+        eo.update(1, "", "", now, now)
+
+        # Fill the single slot
+        await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 5),
+        )
+
+        # Attempt overflow
+        with caplog.at_level(logging.WARNING):
+            result = await eo.async_reserve_or_get_slot(
+                slot_name="Bob",
+                slot_code="5678",
+                start_time=_make_dt(2025, 8, 6),
+                end_time=_make_dt(2025, 8, 10),
+            )
+        assert result.slot is None
+        assert "Bob" in caplog.text
+        assert "occupied" in caplog.text
