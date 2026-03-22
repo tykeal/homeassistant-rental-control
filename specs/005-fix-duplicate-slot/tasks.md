@@ -96,12 +96,12 @@ tests/
 
 ### Tests for User Story 2
 
-- [ ] T016 [US2] Write unit tests for time-update path: guest in slot 10 with Mon–Fri, reserve again with Mon–Sat → `ReserveResult(10, False, True)` and stored times updated in `tests/unit/test_event_overrides.py`
-- [ ] T017 [US2] Write unit tests for identical-reservation no-op: guest in slot 10 with Mon–Fri, reserve again with Mon–Fri → `ReserveResult(10, False, False)` and no state changes in `tests/unit/test_event_overrides.py`
+- [x] T016 [US2] Write unit tests for time-update path: guest in slot 10 with Mon–Fri, reserve again with Mon–Sat → `ReserveResult(10, False, True)` and stored times updated in `tests/unit/test_event_overrides.py`
+- [x] T017 [US2] Write unit tests for identical-reservation no-op: guest in slot 10 with Mon–Fri, reserve again with Mon–Fri → `ReserveResult(10, False, False)` and no state changes in `tests/unit/test_event_overrides.py`
 
 ### Implementation for User Story 2
 
-- [ ] T018 [P] [US2] Adapt `update_event_overrides()` to be async and call `await self.event_overrides.async_update()` instead of sync `self.event_overrides.update()`; update all callers of `update_event_overrides()` (e.g., `handle_state_change` listener in `util.py`) to await it in `custom_components/rental_control/coordinator.py`
+- [x] T018 [P] [US2] Adapt `update_event_overrides()` to be async and call `await self.event_overrides.async_update()` instead of sync `self.event_overrides.update()`; update all callers of `update_event_overrides()` (e.g., `handle_state_change` listener in `util.py`) to await it in `custom_components/rental_control/coordinator.py`
 
 **Checkpoint**: Time updates and re-deliveries handled idempotently. Coordinator state-change path uses async_update.
 
