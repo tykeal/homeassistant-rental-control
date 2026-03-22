@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
+import logging
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -850,6 +851,7 @@ class TestEdgeCases:
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Idempotent reservation (US2: async_reserve_or_get_slot)
 # ---------------------------------------------------------------------------
 
@@ -920,3 +922,257 @@ class TestIdempotentReservation:
 
         # No state changes
         assert eo.overrides[10] == before
+
+
+# ---------------------------------------------------------------------------
+# Dedup redirect, back-to-back stays, UID tiebreaker (T023-T025)
+# ---------------------------------------------------------------------------
+
+
+def _make_ready_eo(max_slots: int = 5, start_slot: int = 1) -> EventOverrides:
+    """Return a ready EventOverrides with all slots initialised as empty."""
+    eo = EventOverrides(start_slot=start_slot, max_slots=max_slots)
+    now = dt_util.now()
+    for slot in range(start_slot, start_slot + max_slots):
+        eo.update(slot, "", "", now, now)
+    return eo
+
+
+class TestDedupRedirect:
+    """T023 — async_update dedup redirect on name+overlap conflict."""
+
+    async def test_redirect_merges_into_existing_slot(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Overlapping write for same guest redirects to existing slot.
+
+        Setup: "Alice" in slot 3 Mon–Fri.
+        Action: async_update(slot=5, "Alice", Wed–Sun).
+        Expected: slot 3 updated to Wed–Sun, slot 5 unchanged (None),
+                  warning logged about the redirect.
+        """
+        eo = _make_ready_eo()
+        mon = _make_dt(2025, 7, 7)
+        fri = _make_dt(2025, 7, 11)
+        wed = _make_dt(2025, 7, 9)
+        sun = _make_dt(2025, 7, 13)
+
+        # Pre-populate slot 3 with Alice Mon-Fri
+        eo.update(3, "code3", "Alice", mon, fri)
+
+        with caplog.at_level(logging.WARNING):
+            await eo.async_update(
+                slot=5,
+                slot_code="code5",
+                slot_name="Alice",
+                start_time=wed,
+                end_time=sun,
+            )
+
+        # Slot 3 received the redirected write (times overwritten)
+        assert eo.overrides[3] is not None
+        assert eo.overrides[3]["slot_name"] == "Alice"
+        assert eo.overrides[3]["start_time"] == wed
+        assert eo.overrides[3]["end_time"] == sun
+
+        # Slot 5 was never touched — still None
+        assert eo.overrides[5] is None
+
+        # Warning about the redirect was logged
+        assert any(
+            "Duplicate slot_name 'Alice'" in rec.message
+            and "slot 3" in rec.message
+            and "slot 5" in rec.message
+            for rec in caplog.records
+        )
+
+    async def test_redirect_preserves_code_from_new_write(self) -> None:
+        """Redirected write carries the new slot_code to the target."""
+        eo = _make_ready_eo()
+        mon = _make_dt(2025, 7, 7)
+        fri = _make_dt(2025, 7, 11)
+        wed = _make_dt(2025, 7, 9)
+        sun = _make_dt(2025, 7, 13)
+
+        eo.update(3, "old_code", "Alice", mon, fri)
+
+        await eo.async_update(
+            slot=5,
+            slot_code="new_code",
+            slot_name="Alice",
+            start_time=wed,
+            end_time=sun,
+        )
+
+        assert eo.overrides[3] is not None
+        assert eo.overrides[3]["slot_code"] == "new_code"
+
+
+class TestBackToBackStays:
+    """T024 — non-overlapping stays for same guest are independent."""
+
+    async def test_back_to_back_stays_both_active(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Adjacent non-overlapping stays create separate slots.
+
+        Setup: "Alice" in slot 3 Mon(Jul 7)–Fri(Jul 11).
+        Action: async_update(slot=5, "Alice", Mon(Jul 14)–Fri(Jul 18)).
+        Expected: both slots active, no dedup warning.
+        """
+        eo = _make_ready_eo()
+        mon1 = _make_dt(2025, 7, 7)
+        fri1 = _make_dt(2025, 7, 11)
+        mon2 = _make_dt(2025, 7, 14)
+        fri2 = _make_dt(2025, 7, 18)
+
+        eo.update(3, "code3", "Alice", mon1, fri1)
+
+        with caplog.at_level(logging.WARNING):
+            await eo.async_update(
+                slot=5,
+                slot_code="code5",
+                slot_name="Alice",
+                start_time=mon2,
+                end_time=fri2,
+            )
+
+        # Slot 3 unchanged
+        assert eo.overrides[3] is not None
+        assert eo.overrides[3]["slot_name"] == "Alice"
+        assert eo.overrides[3]["start_time"] == mon1
+        assert eo.overrides[3]["end_time"] == fri1
+
+        # Slot 5 independently populated
+        assert eo.overrides[5] is not None
+        assert eo.overrides[5]["slot_name"] == "Alice"
+        assert eo.overrides[5]["start_time"] == mon2
+        assert eo.overrides[5]["end_time"] == fri2
+
+        # No dedup warning
+        assert not any("Duplicate slot_name" in rec.message for rec in caplog.records)
+
+    async def test_abutting_stays_no_redirect(self) -> None:
+        """Stays where end_a == start_b are strictly non-overlapping."""
+        eo = _make_ready_eo()
+        mon = _make_dt(2025, 7, 7)
+        fri = _make_dt(2025, 7, 11)
+        # Second stay starts exactly when first ends
+        fri_same = _make_dt(2025, 7, 11)
+        tue = _make_dt(2025, 7, 15)
+
+        eo.update(3, "code3", "Alice", mon, fri)
+
+        await eo.async_update(
+            slot=5,
+            slot_code="code5",
+            slot_name="Alice",
+            start_time=fri_same,
+            end_time=tue,
+        )
+
+        # Both slots independently populated
+        assert eo.overrides[3] is not None
+        assert eo.overrides[3]["start_time"] == mon
+        assert eo.overrides[5] is not None
+        assert eo.overrides[5]["start_time"] == fri_same
+
+
+class TestUidTiebreaker:
+    """T025 — different UIDs distinguish same-name overlapping stays."""
+
+    async def test_different_uid_reserves_new_slot(self) -> None:
+        """Same name+overlap but different UIDs create separate slots.
+
+        Setup: "Alice" reserved with uid="AAA".
+        Action: async_reserve_or_get_slot("Alice", same times, uid="BBB").
+        Expected: new slot reserved (UIDs prove distinct reservations).
+        """
+        eo = _make_ready_eo()
+        mon = _make_dt(2025, 7, 7)
+        fri = _make_dt(2025, 7, 11)
+
+        # Seed first reservation to store uid
+        result1 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="code3",
+            start_time=mon,
+            end_time=fri,
+            uid="AAA",
+        )
+        assert result1.slot is not None
+        assert result1.is_new is True
+
+        # Reserve again with different UID
+        result2 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="code4",
+            start_time=mon,
+            end_time=fri,
+            uid="BBB",
+        )
+
+        assert result2.slot is not None
+        assert result2.slot != result1.slot
+        assert result2.is_new is True
+
+        # Both slots independently populated
+        override1 = eo.overrides[result1.slot]
+        assert override1 is not None
+        assert override1["slot_name"] == "Alice"
+        override2 = eo.overrides[result2.slot]
+        assert override2 is not None
+        assert override2["slot_name"] == "Alice"
+
+    async def test_same_uid_returns_existing_slot(self) -> None:
+        """Same name+overlap+UID returns existing slot, not new."""
+        eo = _make_ready_eo()
+        mon = _make_dt(2025, 7, 7)
+        fri = _make_dt(2025, 7, 11)
+
+        result1 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="code3",
+            start_time=mon,
+            end_time=fri,
+            uid="AAA",
+        )
+        assert result1.is_new is True
+
+        result2 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="code3",
+            start_time=mon,
+            end_time=fri,
+            uid="AAA",
+        )
+
+        assert result2.slot == result1.slot
+        assert result2.is_new is False
+
+    async def test_no_uid_stored_matches_any_incoming_uid(self) -> None:
+        """Slot without stored UID matches any incoming UID.
+
+        When the existing slot has no UID (seeded via sync update),
+        _find_overlapping_slot matches regardless of incoming UID
+        because the UID tiebreaker only skips when both are non-None
+        and differ.
+        """
+        eo = _make_ready_eo()
+        mon = _make_dt(2025, 7, 7)
+        fri = _make_dt(2025, 7, 11)
+
+        # Seed via sync update (no UID stored)
+        eo.update(3, "code3", "Alice", mon, fri)
+
+        result = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="code_new",
+            start_time=mon,
+            end_time=fri,
+            uid="BBB",
+        )
+
+        # Matches existing slot 3 (no stored UID → no tiebreaker skip)
+        assert result.slot == 3
+        assert result.is_new is False
