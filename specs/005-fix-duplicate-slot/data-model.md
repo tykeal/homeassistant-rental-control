@@ -37,6 +37,7 @@ class EventOverrides:
     _lock: asyncio.Lock                          # FR-002: serialization lock
     _retry_counts: dict[int, int]                # FR-011/012: per-slot failure counter
     _escalated: dict[int, bool]                  # FR-011/012: per-slot escalation flag
+    _slot_uids: dict[int, str | None]             # FR-001: runtime UID tiebreaker
 ```
 
 **Field details**:
@@ -46,6 +47,7 @@ class EventOverrides:
 | `_lock` | `asyncio.Lock` | `asyncio.Lock()` | Serializes all slot read-modify-write operations (FR-002) |
 | `_retry_counts` | `dict[int, int]` | `{}` | Tracks consecutive failed set-code/clear-code attempts per slot number. Reset to 0 on success. |
 | `_escalated` | `dict[int, bool]` | `{}` | Tracks whether a persistent_notification has been sent for a slot. Prevents duplicate notifications. Reset when retry succeeds. |
+| `_slot_uids` | `dict[int, str \| None]` | `{}` | Runtime-only UID storage for tiebreaker comparison. NOT persisted — lost on restart. Populated when `async_reserve_or_get_slot()` assigns a slot with a UID. Cleared when slot is released. |
 
 ### ReserveResult (new — return type)
 
@@ -75,8 +77,11 @@ RentalControlCoordinator (1)
     │       ├── _lock: asyncio.Lock
     │       │     Scope: all slot mutations after bootstrap
     │       │
-    │       └── _retry_counts / _escalated: dict[int, int/bool]
-    │             Scope: per-slot failure tracking
+    │       ├── _retry_counts / _escalated: dict[int, int/bool]
+    │       │     Scope: per-slot failure tracking
+    │       │
+    │       └── _slot_uids: dict[int, str | None]
+    │             Scope: runtime-only UID tiebreaker (lost on restart)
     │
     ├── data: list[CalendarEvent] (N)
     │     Updated each coordinator refresh cycle
@@ -190,7 +195,7 @@ async_reserve_or_get_slot(name, code, start, end, uid=None):
     ├── _find_overlapping_slot(name, start, end, uid)
     │       │
     │       ├── Found existing slot S with same name + overlapping times
-    │       │   └── Same UID or UID unavailable?
+    │       │   └── Same UID (via _slot_uids) or UID unavailable?
     │       │       ├── YES → Same reservation
     │       │       │   ├── Times changed? → Update times, return (S, False, True)
     │       │       │   └── Times same? → No-op, return (S, False, False)
@@ -199,8 +204,8 @@ async_reserve_or_get_slot(name, code, start, end, uid=None):
     │       │
     │       └── Not found (no name+overlap match)
     │           ├── _next_slot is not None?
-    │           │   ├── YES → Write to _next_slot, recalculate next
-    │           │   │         return (new_slot, True, False)
+    │           │   ├── YES → Write to _next_slot, store uid in _slot_uids[slot],
+    │           │   │         recalculate next, return (new_slot, True, False)
     │           │   └── NO → All slots occupied
     │           │            Log overflow (FR-010)
     │           │            return (None, False, False)

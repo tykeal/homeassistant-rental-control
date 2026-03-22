@@ -115,7 +115,7 @@ times_updated)`.
      `ReserveResult(existing_slot, False, times_updated)` where
      `times_updated` is `True` iff stored times were changed.
   3. If not found and `_next_slot is not None`: writes to `_next_slot`,
-     recalculates next, returns `ReserveResult(new_slot, True, True)`.
+     recalculates next, returns `ReserveResult(new_slot, True, False)`.
   4. If not found and no slot available: logs overflow (FR-010), returns
      `ReserveResult(None, False, False)`.
 - Releases `_lock`.
