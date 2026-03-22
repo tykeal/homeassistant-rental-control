@@ -17,7 +17,6 @@ from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt
 
 from ..const import ICON
 from ..const import SECONDS_PER_HOUR
@@ -281,10 +280,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             self.async_write_ha_state()
             return
 
-        set_code = False
-        update_times = False
-        overrides = self.coordinator.event_overrides
-
         self._code_generator = self.coordinator.code_generator
         self._code_length = self.coordinator.code_length
         event_list = self.coordinator.data
@@ -329,28 +324,16 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             )
             self._event_attributes["slot_name"] = slot_name
 
-            override = None
+            slot_code = self._generate_door_code()
+
+            # Read-only lookup for display: show existing override code
+            # immediately rather than the generated fallback.  This is
+            # safe because it is not used for slot-assignment decisions.
+            overrides = self.coordinator.event_overrides
             if overrides and slot_name is not None:
-                override = overrides.get_slot_with_name(slot_name)
-            if override is None:
-                set_code = True
-
-            if (
-                not set_code
-                and override
-                and (
-                    dt.as_utc(override["start_time"]).date()
-                    != dt.as_utc(event.start).date()
-                    or dt.as_utc(override["end_time"]).date()
-                    != dt.as_utc(event.end).date()
-                )
-            ):
-                update_times = True
-
-            if override and override["slot_code"]:
-                slot_code = str(override["slot_code"])
-            else:
-                slot_code = self._generate_door_code()
+                existing = overrides.get_slot_with_name(slot_name)
+                if existing and existing["slot_code"]:
+                    slot_code = str(existing["slot_code"])
             self._event_attributes["slot_code"] = slot_code
 
             # attributes parsed from description
@@ -378,38 +361,24 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
 
             self._parsed_attributes = parsed_attributes
 
-            # Schedule async Keymaster side effects
-            if overrides and set_code and overrides.next_slot is not None:
+            # Schedule atomic slot assignment with a snapshot of
+            # event data so the async task is immune to subsequent
+            # coordinator updates mutating self._event_attributes.
+            # Gate on overrides.ready to avoid spurious overflow
+            # warnings during bootstrap when _next_slot is still None.
+            if overrides and overrides.ready and slot_name is not None:
+                uid: str | None = event.uid if hasattr(event, "uid") else None
                 self.hass.async_create_task(
-                    async_fire_set_code(
-                        self.coordinator,
-                        self,
-                        overrides.next_slot,
+                    self._async_handle_slot_assignment(
+                        slot_name=slot_name,
+                        slot_code=slot_code,
+                        start_time=event.start,
+                        end_time=event.end,
+                        uid=uid,
+                        prefix=self.coordinator.event_prefix or "",
+                        eta_days=eta_days,
                     )
                 )
-
-            if update_times:
-                if (
-                    self.coordinator.code_generator == "date_based"
-                    and self.coordinator.should_update_code
-                    and eta_days
-                    and eta_days > 0
-                ):
-                    assert overrides is not None
-                    assert slot_name is not None
-                    slot_key = overrides.get_slot_key_by_name(slot_name)
-                    _LOGGER.debug(
-                        "Clearing slot %s for sensor %s due to date shift",
-                        slot_key,
-                        self.name,
-                    )
-                    self.hass.async_create_task(
-                        async_fire_clear_code(self.coordinator, slot_key)
-                    )
-                else:
-                    self.hass.async_create_task(
-                        async_fire_update_times(self.coordinator, self)
-                    )
 
         else:
             # No reservations
@@ -438,3 +407,84 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             self._state = summary
 
         self.async_write_ha_state()
+
+    async def _async_handle_slot_assignment(
+        self,
+        *,
+        slot_name: str,
+        slot_code: str,
+        start_time: datetime,
+        end_time: datetime,
+        uid: str | None,
+        prefix: str,
+        eta_days: int | None,
+    ) -> None:
+        """Atomically reserve or locate an existing slot for the current event.
+
+        All event data is captured at call-time so the coroutine is
+        immune to subsequent coordinator updates that could mutate
+        ``self._event_attributes`` before execution.
+
+        Uses ``async_reserve_or_get_slot`` to eliminate the
+        check-then-act race that previously existed between
+        ``get_slot_with_name`` and ``next_slot`` reads.
+        """
+        overrides = self.coordinator.event_overrides
+        if overrides is None:
+            return
+
+        result = await overrides.async_reserve_or_get_slot(
+            slot_name=slot_name,
+            slot_code=slot_code,
+            start_time=start_time,
+            end_time=end_time,
+            uid=uid,
+            prefix=prefix,
+        )
+
+        if result.slot is None:
+            return
+
+        # Staleness guard: a subsequent coordinator update may have
+        # changed this sensor to a different event.  The reservation
+        # itself is still valid, but Keymaster side effects must not
+        # fire for a stale event.
+        current_attrs = self._event_attributes
+        if (
+            current_attrs.get("slot_name") != slot_name
+            or current_attrs.get("start") != start_time
+            or current_attrs.get("end") != end_time
+        ):
+            _LOGGER.debug(
+                "Slot assignment for '%s' is stale, skipping "
+                "Keymaster side effects for sensor %s",
+                slot_name,
+                self.name,
+            )
+            return
+
+        if result.is_new:
+            await async_fire_set_code(self.coordinator, self, result.slot)
+            return
+
+        # Existing slot — update displayed code from the override
+        override = overrides.overrides.get(result.slot)
+        if override and override["slot_code"]:
+            self._event_attributes["slot_code"] = str(override["slot_code"])
+            self.async_write_ha_state()
+
+        if result.times_updated:
+            if (
+                self.coordinator.code_generator == "date_based"
+                and self.coordinator.should_update_code
+                and eta_days
+                and eta_days > 0
+            ):
+                _LOGGER.debug(
+                    "Clearing slot %s for sensor %s due to date shift",
+                    result.slot,
+                    self.name,
+                )
+                await async_fire_clear_code(self.coordinator, result.slot)
+            else:
+                await async_fire_update_times(self.coordinator, self)

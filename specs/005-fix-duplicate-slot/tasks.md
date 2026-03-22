@@ -75,14 +75,14 @@ tests/
 
 ### Tests for User Story 1
 
-- [ ] T011 [US1] Write unit tests for `async_reserve_or_get_slot()` new-reservation path: single reservation gets slot, two sequential reservations get different slots, verify `_next_slot` recalculated after each in `tests/unit/test_event_overrides.py`
-- [ ] T012 [US1] Write unit tests for `_find_overlapping_slot()`: same name + overlapping times returns existing slot; different name returns None; same name + non-overlapping times returns None (back-to-back stays) in `tests/unit/test_event_overrides.py`
-- [ ] T013 [US1] Write unit tests for slot overflow: all slots occupied → `async_reserve_or_get_slot()` returns `ReserveResult(None, False, False)` and logs warning in `tests/unit/test_event_overrides.py`
+- [x] T011 [US1] Write unit tests for `async_reserve_or_get_slot()` new-reservation path: single reservation gets slot, two sequential reservations get different slots, verify `_next_slot` recalculated after each in `tests/unit/test_event_overrides.py`
+- [x] T012 [US1] Write unit tests for `_find_overlapping_slot()`: same name + overlapping times returns existing slot; different name returns None; same name + non-overlapping times returns None (back-to-back stays) in `tests/unit/test_event_overrides.py`
+- [x] T013 [US1] Write unit tests for slot overflow: all slots occupied → `async_reserve_or_get_slot()` returns `ReserveResult(None, False, False)` and logs warning in `tests/unit/test_event_overrides.py`
 
 ### Implementation for User Story 1
 
-- [ ] T014 [P] [US1] Implement `async _async_handle_slot_assignment(self)` coroutine in `RentalControlCalSensor`: extract slot_name/code/times/uid from current event, call `await overrides.async_reserve_or_get_slot(...)`, if `result.is_new` call `await async_fire_set_code()`, if `result.times_updated` call `await async_fire_update_times()`, if `result.slot is None` return silently in `custom_components/rental_control/sensors/calsensor.py`
-- [ ] T015 [US1] Refactor `_handle_coordinator_update()` to remove direct `next_slot` reads and `get_slot_with_name()` slot-assignment decisions; instead extract event data and schedule `self.hass.async_create_task(self._async_handle_slot_assignment())` for slot operations in `custom_components/rental_control/sensors/calsensor.py`
+- [x] T014 [P] [US1] Implement `async _async_handle_slot_assignment(self)` coroutine in `RentalControlCalSensor`: extract slot_name/code/times/uid from current event, call `await overrides.async_reserve_or_get_slot(...)`, if `result.is_new` call `await async_fire_set_code()`, if `result.times_updated` call `await async_fire_update_times()`, if `result.slot is None` return silently in `custom_components/rental_control/sensors/calsensor.py`
+- [x] T015 [US1] Refactor `_handle_coordinator_update()` to remove direct `next_slot` reads and `get_slot_with_name()` slot-assignment decisions; instead extract event data and schedule `self.hass.async_create_task(self._async_handle_slot_assignment())` for slot operations in `custom_components/rental_control/sensors/calsensor.py`
 
 **Checkpoint**: Core race condition fix is functional. Concurrent sensors serialize through the lock; each guest gets a unique slot.
 
