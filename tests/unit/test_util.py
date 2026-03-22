@@ -959,6 +959,7 @@ class TestHandleStateChangeSlotExtraction:
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
         mock_coordinator.event_overrides = MagicMock()
+        mock_coordinator.event_overrides.async_update = AsyncMock()
 
         hass = MagicMock()
         hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
@@ -972,8 +973,8 @@ class TestHandleStateChangeSlotExtraction:
         with patch("custom_components.rental_control.util.asyncio.sleep"):
             await handle_state_change(hass, config_entry, event)
 
-        mock_coordinator.event_overrides.update.assert_called_once()
-        call_args = mock_coordinator.event_overrides.update.call_args
+        mock_coordinator.event_overrides.async_update.assert_awaited_once()
+        call_args = mock_coordinator.event_overrides.async_update.call_args
         assert call_args[0][0] == expected_slot
 
 
@@ -1381,7 +1382,7 @@ class TestSlugifiedLocknameEntityIds:
 
         await handle_state_change(hass, config_entry, event)
 
-        mock_coordinator.event_overrides.update.assert_not_called()
+        mock_coordinator.event_overrides.async_update.assert_not_called()
 
     async def test_state_change_returns_early_when_no_event_overrides(
         self,

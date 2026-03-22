@@ -399,6 +399,7 @@ async def test_coordinator_update_event_overrides_with_overrides(
 
     mock_overrides = MagicMock()
     mock_overrides.ready = True
+    mock_overrides.async_update = AsyncMock()
     coordinator.event_overrides = mock_overrides
     coordinator.async_request_refresh = AsyncMock()
 
@@ -411,7 +412,7 @@ async def test_coordinator_update_event_overrides_with_overrides(
         end_time=now + timedelta(days=2),
     )
 
-    mock_overrides.update.assert_called_once()
+    mock_overrides.async_update.assert_awaited_once()
     assert coordinator.async_request_refresh.called
 
 

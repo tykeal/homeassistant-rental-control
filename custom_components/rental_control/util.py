@@ -430,7 +430,7 @@ async def handle_state_change(
 
     if "_reset" in entity_id:
         _LOGGER.debug("Resetting overrides %s for %s.", slot_num, lockname)
-        coordinator.event_overrides.update(
+        await coordinator.event_overrides.async_update(
             slot_num, "", "", dt.start_of_local_day(), dt.start_of_local_day()
         )
         return

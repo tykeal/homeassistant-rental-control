@@ -447,7 +447,7 @@ Please update Keymaster to at least v0.1.0-b0
         _LOGGER.debug("In update_event_overrides")
 
         if self.event_overrides:
-            self.event_overrides.update(
+            await self.event_overrides.async_update(
                 slot,
                 slot_code,
                 slot_name,
