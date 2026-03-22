@@ -325,6 +325,15 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             self._event_attributes["slot_name"] = slot_name
 
             slot_code = self._generate_door_code()
+
+            # Read-only lookup for display: show existing override code
+            # immediately rather than the generated fallback.  This is
+            # safe because it is not used for slot-assignment decisions.
+            overrides = self.coordinator.event_overrides
+            if overrides and slot_name is not None:
+                existing = overrides.get_slot_with_name(slot_name)
+                if existing and existing["slot_code"]:
+                    slot_code = str(existing["slot_code"])
             self._event_attributes["slot_code"] = slot_code
 
             # attributes parsed from description
@@ -352,10 +361,21 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
 
             self._parsed_attributes = parsed_attributes
 
-            # Schedule atomic slot assignment
-            overrides = self.coordinator.event_overrides
+            # Schedule atomic slot assignment with a snapshot of
+            # event data so the async task is immune to subsequent
+            # coordinator updates mutating self._event_attributes.
             if overrides and slot_name is not None:
-                self.hass.async_create_task(self._async_handle_slot_assignment())
+                uid: str | None = event.uid if hasattr(event, "uid") else None
+                self.hass.async_create_task(
+                    self._async_handle_slot_assignment(
+                        slot_name=slot_name,
+                        slot_code=slot_code,
+                        start_time=event.start,
+                        end_time=event.end,
+                        uid=uid,
+                        prefix=self.coordinator.event_prefix or "",
+                    )
+                )
 
         else:
             # No reservations
@@ -385,8 +405,21 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
 
         self.async_write_ha_state()
 
-    async def _async_handle_slot_assignment(self) -> None:
+    async def _async_handle_slot_assignment(
+        self,
+        *,
+        slot_name: str,
+        slot_code: str,
+        start_time: datetime,
+        end_time: datetime,
+        uid: str | None,
+        prefix: str,
+    ) -> None:
         """Atomically reserve or locate an existing slot for the current event.
+
+        All event data is captured at call-time so the coroutine is
+        immune to subsequent coordinator updates that could mutate
+        ``self._event_attributes`` before execution.
 
         Uses ``async_reserve_or_get_slot`` to eliminate the
         check-then-act race that previously existed between
@@ -395,22 +428,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         overrides = self.coordinator.event_overrides
         if overrides is None:
             return
-
-        slot_name: str | None = self._event_attributes.get("slot_name")
-        if slot_name is None:
-            return
-
-        slot_code: str = self._event_attributes.get("slot_code", "")
-        start_time: datetime = self._event_attributes["start"]
-        end_time: datetime = self._event_attributes["end"]
-
-        # Retrieve UID from the calendar event if still available
-        uid: str | None = None
-        event_list = self.coordinator.data
-        if event_list and self._event_number < len(event_list):
-            uid = event_list[self._event_number].uid
-
-        prefix = self.coordinator.event_prefix or ""
 
         result = await overrides.async_reserve_or_get_slot(
             slot_name=slot_name,

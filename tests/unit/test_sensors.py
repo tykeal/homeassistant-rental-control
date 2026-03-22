@@ -990,6 +990,7 @@ class TestHandleCoordinatorUpdateOverrides:
         """Verify async_fire_set_code is called when slot is newly reserved."""
         event = _make_event()
         overrides = MagicMock()
+        overrides.get_slot_with_name.return_value = None
         overrides.async_reserve_or_get_slot = AsyncMock(
             return_value=ReserveResult(10, True, False)
         )
@@ -1009,29 +1010,32 @@ class TestHandleCoordinatorUpdateOverrides:
 
     @freeze_time("2025-03-10T12:00:00+00:00")
     async def test_uses_override_slot_code(self, hass) -> None:
-        """Verify slot_code from override takes precedence after async reservation."""
+        """Verify slot_code from override is displayed immediately in sync path."""
         event = _make_event()
+        override = {
+            "slot_code": "5555",
+            "start_time": event.start,
+            "end_time": event.end,
+        }
         overrides = MagicMock()
+        overrides.get_slot_with_name.return_value = override
         overrides.async_reserve_or_get_slot = AsyncMock(
             return_value=ReserveResult(10, False, False)
         )
-        overrides.overrides = {
-            10: {
-                "slot_code": "5555",
-                "start_time": event.start,
-                "end_time": event.end,
-            }
-        }
+        overrides.overrides = {10: override}
         coordinator = _make_coordinator(data=[event], event_overrides=overrides)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
         sensor.async_write_ha_state = MagicMock()
 
         sensor._handle_coordinator_update()
+
+        # Code is available immediately from the sync read-only lookup
+        assert sensor.extra_state_attributes["slot_code"] == "5555"
+
+        # Await the scheduled task to avoid unawaited coroutine warning
         coro = sensor.hass.async_create_task.call_args[0][0]
         await coro
-
-        assert sensor.extra_state_attributes["slot_code"] == "5555"
 
     @freeze_time("2025-03-10T12:00:00+00:00")
     def test_generates_code_when_no_override(self, hass) -> None:
@@ -1057,17 +1061,17 @@ class TestHandleCoordinatorUpdateOverrides:
             start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
             end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
         )
+        override = {
+            "slot_code": "1234",
+            "start_time": event.start,
+            "end_time": event.end,
+        }
         overrides = MagicMock()
+        overrides.get_slot_with_name.return_value = override
         overrides.async_reserve_or_get_slot = AsyncMock(
             return_value=ReserveResult(10, False, True)
         )
-        overrides.overrides = {
-            10: {
-                "slot_code": "1234",
-                "start_time": event.start,
-                "end_time": event.end,
-            }
-        }
+        overrides.overrides = {10: override}
         coordinator = _make_coordinator(
             data=[event],
             event_overrides=overrides,
@@ -1093,17 +1097,17 @@ class TestHandleCoordinatorUpdateOverrides:
             start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
             end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
         )
+        override = {
+            "slot_code": "1234",
+            "start_time": event.start,
+            "end_time": event.end,
+        }
         overrides = MagicMock()
+        overrides.get_slot_with_name.return_value = override
         overrides.async_reserve_or_get_slot = AsyncMock(
             return_value=ReserveResult(10, False, True)
         )
-        overrides.overrides = {
-            10: {
-                "slot_code": "1234",
-                "start_time": event.start,
-                "end_time": event.end,
-            }
-        }
+        overrides.overrides = {10: override}
         coordinator = _make_coordinator(
             data=[event],
             event_overrides=overrides,
@@ -1143,17 +1147,17 @@ class TestHandleCoordinatorUpdateOverrides:
     async def test_no_set_code_when_existing_reservation(self, hass) -> None:
         """Verify set_code is not called when reservation already has a slot."""
         event = _make_event()
+        override = {
+            "slot_code": "1234",
+            "start_time": event.start,
+            "end_time": event.end,
+        }
         overrides = MagicMock()
+        overrides.get_slot_with_name.return_value = override
         overrides.async_reserve_or_get_slot = AsyncMock(
             return_value=ReserveResult(10, False, False)
         )
-        overrides.overrides = {
-            10: {
-                "slot_code": "1234",
-                "start_time": event.start,
-                "end_time": event.end,
-            }
-        }
+        overrides.overrides = {10: override}
         coordinator = _make_coordinator(data=[event], event_overrides=overrides)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
@@ -1180,17 +1184,17 @@ class TestHandleCoordinatorUpdateOverrides:
             start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
             end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
         )
+        override = {
+            "slot_code": "1234",
+            "start_time": event.start,
+            "end_time": event.end,
+        }
         overrides = MagicMock()
+        overrides.get_slot_with_name.return_value = override
         overrides.async_reserve_or_get_slot = AsyncMock(
             return_value=ReserveResult(10, False, True)
         )
-        overrides.overrides = {
-            10: {
-                "slot_code": "1234",
-                "start_time": event.start,
-                "end_time": event.end,
-            }
-        }
+        overrides.overrides = {10: override}
         coordinator = _make_coordinator(
             data=[event],
             event_overrides=overrides,
