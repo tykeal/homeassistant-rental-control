@@ -20,8 +20,6 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 import logging
-from unittest.mock import AsyncMock
-from unittest.mock import MagicMock
 
 from homeassistant.util import dt as dt_util
 import pytest
@@ -39,23 +37,6 @@ def _make_dt(
 ) -> datetime:
     """Build a timezone-aware datetime in UTC."""
     return datetime(year, month, day, hour, minute, tzinfo=dt_util.UTC)
-
-
-def _make_coordinator(
-    max_events: int = 5,
-    lockname: str = "test_lock",
-) -> MagicMock:
-    """Build a mock coordinator suitable for integration tests."""
-    coordinator = MagicMock()
-    coordinator.name = "Test Rental"
-    coordinator.lockname = lockname
-    coordinator.hass = MagicMock()
-    coordinator.hass.services = MagicMock()
-    coordinator.hass.services.async_call = AsyncMock()
-    coordinator.max_events = max_events
-    coordinator.event_prefix = ""
-    coordinator.data = []
-    return coordinator
 
 
 def _populated_eo(start_slot: int, max_slots: int) -> EventOverrides:
@@ -120,32 +101,36 @@ class TestConcurrentReservation:
         """Concurrent reservations must never overwrite each other.
 
         Validates SC-001: after 5 concurrent reservations on 5 slots,
-        each slot's stored name must match exactly one guest.
+        each slot's stored data must match exactly the guest that got it.
         """
         eo = _populated_eo(start_slot=1, max_slots=5)
 
-        async def reserve(i: int) -> ReserveResult:
-            """Reserve a slot for guest *i*."""
-            return await eo.async_reserve_or_get_slot(
+        async def reserve(i: int) -> tuple[int, ReserveResult]:
+            """Reserve a slot for guest *i* and return (i, result)."""
+            result = await eo.async_reserve_or_get_slot(
                 slot_name=f"Guest {i}",
                 slot_code=f"{2000 + i}",
                 start_time=_make_dt(2025, 9, 1),
                 end_time=_make_dt(2025, 9, 5),
                 uid=f"uid-concurrent-{i}",
             )
+            return i, result
 
         results = await asyncio.gather(*[reserve(i) for i in range(5)])
 
         # All 5 should get unique slots
-        slots = [r.slot for r in results]
+        slots = [r.slot for _, r in results]
         assert len(set(slots)) == 5
 
-        # Verify each slot's stored name matches the guest that got it
-        for r in results:
+        # Verify each slot's stored data matches the guest that got it
+        for i, r in results:
             assert r.slot is not None
-            stored_name = eo.get_slot_name(r.slot)
-            # The slot name should be one of the 5 guest names
-            assert stored_name.startswith("Guest ")
+            assert eo.get_slot_name(r.slot) == f"Guest {i}"
+            override = eo.overrides[r.slot]
+            assert override is not None
+            assert override["slot_code"] == f"{2000 + i}"
+            assert override["start_time"] == _make_dt(2025, 9, 1)
+            assert override["end_time"] == _make_dt(2025, 9, 5)
 
 
 # ---------------------------------------------------------------------------
