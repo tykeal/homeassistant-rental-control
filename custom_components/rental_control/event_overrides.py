@@ -20,7 +20,6 @@ from datetime import date
 from datetime import datetime
 from datetime import time
 import logging
-import re
 from typing import TYPE_CHECKING
 from typing import NamedTuple
 from typing import TypedDict
@@ -35,6 +34,18 @@ if TYPE_CHECKING:
     from homeassistant.components.calendar import CalendarEvent
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _strip_prefix(slot_name: str, prefix: str) -> str:
+    """Remove a leading prefix and space from slot_name.
+
+    Uses ``str.removeprefix`` for deterministic matching that is safe
+    regardless of regex metacharacters in *prefix*.
+    """
+    candidate = prefix + " "
+    if slot_name.startswith(candidate):
+        return slot_name[len(candidate) :]
+    return slot_name
 
 
 class ReserveResult(NamedTuple):
@@ -204,10 +215,8 @@ class EventOverrides:
         async with self._lock:
             if prefix is None:
                 prefix = ""
-            if slot_name:
-                regex = r"^(" + prefix + " )?(.*)$"
-                matches = re.findall(regex, slot_name)
-                slot_name = matches[0][1] if matches else slot_name
+            if slot_name and prefix:
+                slot_name = _strip_prefix(slot_name, prefix)
 
             existing = self._find_overlapping_slot(slot_name, start_time, end_time, uid)
             if existing is not None:
@@ -263,9 +272,8 @@ class EventOverrides:
             if prefix is None:
                 prefix = ""
             if slot_name:
-                regex = r"^(" + prefix + " )?(.*)$"
-                matches = re.findall(regex, slot_name)
-                slot_name = matches[0][1] if matches else slot_name
+                if prefix:
+                    slot_name = _strip_prefix(slot_name, prefix)
 
                 dup = self._find_overlapping_slot(
                     slot_name,
@@ -504,10 +512,13 @@ class EventOverrides:
         end_time: datetime,
         prefix: str | None = None,
     ) -> None:
-        """Update overrides.
+        """Synchronously update overrides for a slot.
 
-        WARNING: Bootstrap-only. Must not be called after listeners are
-        registered. Use async_update() for post-bootstrap mutations.
+        This method mutates internal state without acquiring
+        ``_lock``.  It is safe during bootstrap (before any async
+        listeners are registered) but **must** be replaced by
+        ``async_update()`` in post-bootstrap code paths once
+        callers are migrated (see Phase 3+).
         """
 
         _LOGGER.debug("In EventOverrides.update")
@@ -518,9 +529,8 @@ class EventOverrides:
             prefix = ""
 
         if slot_name:
-            regex = r"^(" + prefix + " )?(.*)$"
-            matches = re.findall(regex, slot_name)
-            slot_name = matches[0][1] if matches else slot_name
+            if prefix:
+                slot_name = _strip_prefix(slot_name, prefix)
             override: EventOverride = {
                 "slot_name": slot_name,
                 "slot_code": slot_code,
