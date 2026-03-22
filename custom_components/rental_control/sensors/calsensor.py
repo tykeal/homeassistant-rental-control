@@ -364,7 +364,9 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             # Schedule atomic slot assignment with a snapshot of
             # event data so the async task is immune to subsequent
             # coordinator updates mutating self._event_attributes.
-            if overrides and slot_name is not None:
+            # Gate on overrides.ready to avoid spurious overflow
+            # warnings during bootstrap when _next_slot is still None.
+            if overrides and overrides.ready and slot_name is not None:
                 uid: str | None = event.uid if hasattr(event, "uid") else None
                 self.hass.async_create_task(
                     self._async_handle_slot_assignment(
@@ -439,6 +441,24 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         )
 
         if result.slot is None:
+            return
+
+        # Staleness guard: a subsequent coordinator update may have
+        # changed this sensor to a different event.  The reservation
+        # itself is still valid, but Keymaster side effects must not
+        # fire for a stale event.
+        current_attrs = self._event_attributes
+        if (
+            current_attrs.get("slot_name") != slot_name
+            or current_attrs.get("start") != start_time
+            or current_attrs.get("end") != end_time
+        ):
+            _LOGGER.debug(
+                "Slot assignment for '%s' is stale, skipping "
+                "Keymaster side effects for sensor %s",
+                slot_name,
+                self.name,
+            )
             return
 
         if result.is_new:
