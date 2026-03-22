@@ -137,9 +137,9 @@ tests/
 
 > Note: The dedup enforcement implementation is in T006 (foundational phase). This phase validates it exhaustively.
 
-- [ ] T023 [US4] Write unit tests for dedup redirect: guest "Alice" in slot 3 Mon–Fri, `async_update()` attempts "Alice" in slot 5 Wed–Sun → slot 3 times updated to Mon–Sun, slot 5 unchanged, warning logged in `tests/unit/test_event_overrides.py`
-- [ ] T024 [US4] Write unit tests for back-to-back stays: guest "Alice" in slot 3 Mon–Fri, `async_update()` writes "Alice" to slot 5 following Mon–Fri → both slots active, no warning (non-overlapping times = distinct reservations) in `tests/unit/test_event_overrides.py`
-- [ ] T025 [US4] Write unit tests for UID tiebreaker: "Alice" in slot 3 Mon–Fri uid="AAA", `async_reserve_or_get_slot()` with "Alice" Mon–Fri uid="BBB" → new slot reserved (different UIDs prove distinct reservations despite name+overlap) in `tests/unit/test_event_overrides.py`
+- [x] T023 [US4] Write unit tests for dedup redirect: guest "Alice" in slot 3 Mon–Fri, `async_update()` attempts "Alice" in slot 5 Wed–Sun → slot 3 times updated to Mon–Sun, slot 5 unchanged, warning logged in `tests/unit/test_event_overrides.py`
+- [x] T024 [US4] Write unit tests for back-to-back stays: guest "Alice" in slot 3 Mon–Fri, `async_update()` writes "Alice" to slot 5 following Mon–Fri → both slots active, no warning (non-overlapping times = distinct reservations) in `tests/unit/test_event_overrides.py`
+- [x] T025 [US4] Write unit tests for UID tiebreaker: "Alice" in slot 3 Mon–Fri uid="AAA", `async_reserve_or_get_slot()` with "Alice" Mon–Fri uid="BBB" → new slot reserved (different UIDs prove distinct reservations despite name+overlap) in `tests/unit/test_event_overrides.py`
 
 **Checkpoint**: Storage-layer identity invariant exhaustively validated. Defense-in-depth confirmed.
 
