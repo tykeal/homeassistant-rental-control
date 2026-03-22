@@ -149,16 +149,16 @@ tests/
 
 **Purpose**: End-to-end integration tests, quality gates, and compliance verification.
 
-- [ ] T026 Create `tests/integration/test_slot_concurrency.py` with test fixtures (mock coordinator, mock EventOverrides with slots, mock Keymaster service calls) and shared helpers
-- [ ] T027 Write concurrent-reservation integration test: simulate 10 sensors scheduling `_async_handle_slot_assignment()` near-simultaneously with 5 managed slots, verify the first 5 each get a unique slot and the remaining 5 hit overflow gracefully with zero duplicates or overwrites (validates SC-001 and partially SC-004) in `tests/integration/test_slot_concurrency.py`
-- [ ] T028 Write idempotent re-delivery integration test: assign guest then re-deliver same event with changed times and identical times, verify update-then-noop behavior end-to-end (validates SC-002/SC-003) in `tests/integration/test_slot_concurrency.py`
-- [ ] T029 Write cleanup-during-assignment integration test: schedule slot clear and new assignment concurrently, verify both complete correctly with no cross-contamination (validates SC-005) in `tests/integration/test_slot_concurrency.py`
-- [ ] T030 Write overflow integration test: fill all managed slots then attempt additional reservation, verify graceful handling with zero overwrites (validates SC-004) in `tests/integration/test_slot_concurrency.py`
-- [ ] T030b Write dedup-rejection integration test: pre-populate slot 3 with "Alice" Mon–Fri, then invoke `async_update()` targeting slot 5 with "Alice" Wed–Sun, verify redirect to slot 3 with updated times and warning logged end-to-end (validates SC-006) in `tests/integration/test_slot_concurrency.py`
-- [ ] T030c Write single-reservation regression test: assign one guest to one slot, update times, then clear — verify full lifecycle works identically to pre-fix behavior end-to-end (validates SC-007) in `tests/integration/test_slot_concurrency.py`
-- [ ] T031 Run full test suite with `uv run pytest tests/ -v` and fix any failures
-- [ ] T032 [P] Run pre-commit hooks (`ruff`, `mypy`, `interrogate`, `reuse-tool`, `gitlint`) on all modified files and fix issues
-- [ ] T033 [P] Verify SPDX-FileCopyrightText and SPDX-License-Identifier headers on all new and modified files per REUSE.toml and project constitution
+- [x] T026 Create `tests/integration/test_slot_concurrency.py` with test fixtures (mock coordinator, mock EventOverrides with slots, mock Keymaster service calls) and shared helpers
+- [x] T027 Write concurrent-reservation integration test: simulate 10 sensors scheduling `_async_handle_slot_assignment()` near-simultaneously with 5 managed slots, verify the first 5 each get a unique slot and the remaining 5 hit overflow gracefully with zero duplicates or overwrites (validates SC-001 and partially SC-004) in `tests/integration/test_slot_concurrency.py`
+- [x] T028 Write idempotent re-delivery integration test: assign guest then re-deliver same event with changed times and identical times, verify update-then-noop behavior end-to-end (validates SC-002/SC-003) in `tests/integration/test_slot_concurrency.py`
+- [x] T029 Write cleanup-during-assignment integration test: schedule slot clear and new assignment concurrently, verify both complete correctly with no cross-contamination (validates SC-005) in `tests/integration/test_slot_concurrency.py`
+- [x] T030 Write overflow integration test: fill all managed slots then attempt additional reservation, verify graceful handling with zero overwrites (validates SC-004) in `tests/integration/test_slot_concurrency.py`
+- [x] T030b Write dedup-rejection integration test: pre-populate slot 3 with "Alice" Mon–Fri, then invoke `async_update()` targeting slot 5 with "Alice" Wed–Sun, verify redirect to slot 3 with updated times and warning logged end-to-end (validates SC-006) in `tests/integration/test_slot_concurrency.py`
+- [x] T030c Write single-reservation regression test: assign one guest to one slot, update times, then clear — verify full lifecycle works identically to pre-fix behavior end-to-end (validates SC-007) in `tests/integration/test_slot_concurrency.py`
+- [x] T031 Run full test suite with `uv run pytest tests/ -v` and fix any failures
+- [x] T032 [P] Run pre-commit hooks (`ruff`, `mypy`, `interrogate`, `reuse-tool`, `gitlint`) on all modified files and fix issues
+- [x] T033 [P] Verify SPDX-FileCopyrightText and SPDX-License-Identifier headers on all new and modified files per REUSE.toml and project constitution
 
 ---
 
