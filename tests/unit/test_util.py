@@ -1127,34 +1127,30 @@ class TestAsyncFireSetCode:
         ]
         assert len(name_calls) == 1
 
-    async def test_gather_exception_logged_not_raised(
+    async def test_gather_exception_propagates_for_retry(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Verify a failing gather call is logged but does not crash."""
+        """Verify a failing gather call is logged and re-raised for retry."""
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides.record_retry_failure.return_value = False
 
-        call_count = 0
         error = ServiceNotFound("switch", "turn_off")
-
-        async def side_effect(**kwargs: object) -> None:
-            """Fail only on gather-dispatched calls (phase 1)."""
-            nonlocal call_count
-            call_count += 1
-            # Phase 1 gather call is the first call
-            if call_count == 1:
-                raise error
-
-        coordinator.hass.services.async_call = AsyncMock(side_effect=side_effect)
+        coordinator.hass.services.async_call = AsyncMock(side_effect=error)
 
         event = self._make_event()
-        with caplog.at_level(
-            logging.ERROR, logger="custom_components.rental_control.util"
+        with (
+            caplog.at_level(
+                logging.ERROR, logger="custom_components.rental_control.util"
+            ),
+            pytest.raises(ServiceNotFound),
         ):
             await async_fire_set_code(coordinator, event, 10)
 
         assert "Lock slot operation" in caplog.text
+        coordinator.event_overrides.record_retry_failure.assert_called_once_with(10)
 
 
 # ---------------------------------------------------------------------------
@@ -1236,6 +1232,292 @@ class TestAsyncFireUpdateTimes:
             await async_fire_update_times(coordinator, self._make_event())
 
         assert "Lock slot operation" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Pre-execution verification abort tests (T020)
+# ---------------------------------------------------------------------------
+
+
+class TestPreExecutionVerification:
+    """Tests for ownership verification before lock commands."""
+
+    async def test_set_code_aborts_on_ownership_mismatch(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify async_fire_set_code returns early when ownership fails."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = False
+
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "slot_code": "1234",
+            "start": "2025-01-15T16:00:00",
+            "end": "2025-01-17T11:00:00",
+        }
+
+        with caplog.at_level(
+            logging.WARNING, logger="custom_components.rental_control.util"
+        ):
+            await async_fire_set_code(coordinator, event, 10)
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+        assert "ownership" in caplog.text.lower()
+
+    async def test_clear_code_aborts_on_ownership_mismatch(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify async_fire_clear_code returns early when ownership fails."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = False
+
+        with caplog.at_level(
+            logging.WARNING, logger="custom_components.rental_control.util"
+        ):
+            await async_fire_clear_code(coordinator, 10, expected_name="Guest")
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+        assert "ownership" in caplog.text.lower()
+
+    async def test_update_times_aborts_on_ownership_mismatch(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify async_fire_update_times returns early when ownership fails."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_overrides.get_slot_key_by_name.return_value = 10
+        coordinator.event_overrides.verify_slot_ownership.return_value = False
+        coordinator.hass.services.async_call = AsyncMock()
+
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "start": "2025-01-15T16:00:00",
+            "end": "2025-01-17T11:00:00",
+        }
+
+        with caplog.at_level(
+            logging.WARNING, logger="custom_components.rental_control.util"
+        ):
+            await async_fire_update_times(coordinator, event)
+
+        coordinator.hass.services.async_call.assert_not_awaited()
+        assert "ownership" in caplog.text.lower()
+
+    async def test_set_code_proceeds_when_ownership_matches(self) -> None:
+        """Verify async_fire_set_code executes when ownership passes."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "slot_code": "1234",
+            "start": "2025-01-15T16:00:00",
+            "end": "2025-01-17T11:00:00",
+        }
+
+        await async_fire_set_code(coordinator, event, 10)
+
+        coordinator.hass.services.async_call.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Retry escalation tests (T020)
+# ---------------------------------------------------------------------------
+
+
+class TestRetryEscalation:
+    """Tests for retry tracking and persistent notification escalation."""
+
+    async def test_set_code_records_success_and_dismisses_notification(
+        self,
+    ) -> None:
+        """Verify success path resets retry and dismisses notification."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides._escalated = {10: True}
+
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "slot_code": "1234",
+            "start": "2025-01-15T16:00:00",
+            "end": "2025-01-17T11:00:00",
+        }
+
+        with patch(
+            "custom_components.rental_control.util.pn_dismiss",
+        ) as mock_dismiss:
+            await async_fire_set_code(coordinator, event, 10)
+
+        coordinator.event_overrides.record_retry_success.assert_called_once_with(10)
+        mock_dismiss.assert_called_once_with(
+            coordinator.hass,
+            notification_id="rental_control_slot_10_failure",
+        )
+
+    async def test_set_code_no_dismiss_when_not_escalated(self) -> None:
+        """Verify no dismiss call when slot was not escalated."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides._escalated = {}
+
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "slot_code": "1234",
+            "start": "2025-01-15T16:00:00",
+            "end": "2025-01-17T11:00:00",
+        }
+
+        with patch(
+            "custom_components.rental_control.util.pn_dismiss",
+        ) as mock_dismiss:
+            await async_fire_set_code(coordinator, event, 10)
+
+        coordinator.event_overrides.record_retry_success.assert_called_once_with(10)
+        mock_dismiss.assert_not_called()
+
+    async def test_set_code_failure_records_and_escalates(self) -> None:
+        """Verify failure creates persistent notification on escalation."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides.record_retry_failure.return_value = True
+        coordinator.event_overrides._escalated = {}
+
+        error = Exception("service unavailable")
+        coordinator.hass.services.async_call = AsyncMock(side_effect=error)
+
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "slot_code": "1234",
+            "start": "2025-01-15T16:00:00",
+            "end": "2025-01-17T11:00:00",
+        }
+
+        with (
+            patch(
+                "custom_components.rental_control.util.pn_create",
+            ) as mock_create,
+            pytest.raises(Exception, match="service unavailable"),
+        ):
+            await async_fire_set_code(coordinator, event, 10)
+
+        coordinator.event_overrides.record_retry_failure.assert_called_once_with(10)
+        mock_create.assert_called_once()
+        call_kwargs = mock_create.call_args
+        assert call_kwargs[1]["notification_id"] == "rental_control_slot_10_failure"
+
+    async def test_set_code_failure_no_notification_below_threshold(self) -> None:
+        """Verify no notification when below escalation threshold."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides.record_retry_failure.return_value = False
+
+        error = Exception("service unavailable")
+        coordinator.hass.services.async_call = AsyncMock(side_effect=error)
+
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "slot_code": "1234",
+            "start": "2025-01-15T16:00:00",
+            "end": "2025-01-17T11:00:00",
+        }
+
+        with (
+            patch(
+                "custom_components.rental_control.util.pn_create",
+            ) as mock_create,
+            pytest.raises(Exception, match="service unavailable"),
+        ):
+            await async_fire_set_code(coordinator, event, 10)
+
+        coordinator.event_overrides.record_retry_failure.assert_called_once_with(10)
+        mock_create.assert_not_called()
+
+    async def test_clear_code_records_success_and_dismisses(self) -> None:
+        """Verify clear_code success resets retry and dismisses notification."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides._escalated = {10: True}
+
+        with patch(
+            "custom_components.rental_control.util.pn_dismiss",
+        ) as mock_dismiss:
+            await async_fire_clear_code(coordinator, 10, expected_name="Guest")
+
+        coordinator.event_overrides.record_retry_success.assert_called_once_with(10)
+        mock_dismiss.assert_called_once_with(
+            coordinator.hass,
+            notification_id="rental_control_slot_10_clear_failure",
+        )
+
+    async def test_clear_code_failure_escalates(self) -> None:
+        """Verify clear_code failure creates notification on escalation."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides.record_retry_failure.return_value = True
+        coordinator.event_overrides._escalated = {}
+
+        error = Exception("lock offline")
+        coordinator.hass.services.async_call = AsyncMock(side_effect=error)
+
+        with (
+            patch(
+                "custom_components.rental_control.util.pn_create",
+            ) as mock_create,
+            pytest.raises(Exception, match="lock offline"),
+        ):
+            await async_fire_clear_code(coordinator, 10, expected_name="Guest")
+
+        coordinator.event_overrides.record_retry_failure.assert_called_once_with(10)
+        mock_create.assert_called_once()
+        call_kwargs = mock_create.call_args
+        assert (
+            call_kwargs[1]["notification_id"] == "rental_control_slot_10_clear_failure"
+        )
+
+    async def test_clear_code_failure_reraises(self) -> None:
+        """Verify exception is re-raised after recording failure."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides.record_retry_failure.return_value = False
+
+        error = RuntimeError("hardware fault")
+        coordinator.hass.services.async_call = AsyncMock(side_effect=error)
+
+        with pytest.raises(RuntimeError, match="hardware fault"):
+            await async_fire_clear_code(coordinator, 10, expected_name="Guest")
 
 
 # ---------------------------------------------------------------------------

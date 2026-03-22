@@ -499,8 +499,9 @@ class TestAsyncCheckOverrides:
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
             await eo.async_check_overrides(coordinator)
-            mock_fire.assert_called_once_with(coordinator, 1)
-            # Slot should be cleared
+            mock_fire.assert_called_once_with(
+                coordinator, 1, expected_name="Departed Guest"
+            )
             assert eo.overrides[1] is None
 
     async def test_clears_overrides_when_calendar_empty(self) -> None:
@@ -542,7 +543,7 @@ class TestAsyncCheckOverrides:
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
             await eo.async_check_overrides(coordinator)
-            mock_fire.assert_called_once_with(coordinator, 1)
+            mock_fire.assert_called_once_with(coordinator, 1, expected_name="Bad Guest")
 
     async def test_clears_when_end_before_today(self) -> None:
         """Verify slot is cleared when end_date < current date."""
@@ -565,7 +566,9 @@ class TestAsyncCheckOverrides:
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
             await eo.async_check_overrides(coordinator)
-            mock_fire.assert_called_once_with(coordinator, 1)
+            mock_fire.assert_called_once_with(
+                coordinator, 1, expected_name="Past Guest"
+            )
 
     async def test_clears_when_start_after_last_calendar_event(self) -> None:
         """Verify slot is cleared when start is beyond last calendar event end."""
@@ -589,7 +592,9 @@ class TestAsyncCheckOverrides:
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
             await eo.async_check_overrides(coordinator)
-            mock_fire.assert_called_once_with(coordinator, 1)
+            mock_fire.assert_called_once_with(
+                coordinator, 1, expected_name="Future Guest"
+            )
 
     async def test_uses_max_events_index_for_last_end(self) -> None:
         """Verify last_end uses max_events index when calendar >= max_events."""
@@ -619,7 +624,7 @@ class TestAsyncCheckOverrides:
         ):
             await eo.async_check_overrides(coordinator)
             # start (July 20) > last_end (July 15) => cleared
-            mock_fire.assert_called_once_with(coordinator, 1)
+            mock_fire.assert_called_once_with(coordinator, 1, expected_name="Guest")
 
     async def test_does_not_clear_valid_override(self) -> None:
         """Verify a valid override is NOT cleared."""
@@ -684,6 +689,41 @@ class TestAsyncCheckOverrides:
             # Slots 1 and 3 should be cleared
             assert eo.overrides[1] is None
             assert eo.overrides[3] is None
+
+
+# ---------------------------------------------------------------------------
+# verify_slot_ownership
+# ---------------------------------------------------------------------------
+
+
+class TestVerifySlotOwnership:
+    """Tests for verify_slot_ownership read-only check."""
+
+    def test_match_returns_true(self) -> None:
+        """Verify True when slot name matches expected_name."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = dt_util.now()
+        eo.update(1, "c", "Guest A", now, now + timedelta(days=1))
+        assert eo.verify_slot_ownership(1, "Guest A") is True
+
+    def test_mismatch_returns_false(self) -> None:
+        """Verify False when slot name does not match expected_name."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = dt_util.now()
+        eo.update(1, "c", "Guest A", now, now + timedelta(days=1))
+        assert eo.verify_slot_ownership(1, "Guest B") is False
+
+    def test_empty_slot_returns_false(self) -> None:
+        """Verify False when slot is empty (None override)."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = dt_util.now()
+        eo.update(1, "", "", now, now)
+        assert eo.verify_slot_ownership(1, "Guest A") is False
+
+    def test_nonexistent_slot_returns_false(self) -> None:
+        """Verify False when slot key does not exist."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        assert eo.verify_slot_ownership(99, "Guest A") is False
 
 
 # ---------------------------------------------------------------------------
@@ -794,6 +834,34 @@ class TestEdgeCases:
             await eo.async_check_overrides(coordinator)
             mock_fire.assert_not_called()
 
+    async def test_clear_failure_keeps_slot_occupied(self) -> None:
+        """Verify slot remains occupied when async_fire_clear_code raises."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        start = _make_dt(2025, 6, 1)
+        end = _make_dt(2025, 6, 5)
+        eo.update(1, "c", "Past Guest", start, end)
+
+        coordinator = _make_coordinator(
+            calendar_events=[_make_event(_make_dt(2025, 8, 1), "Past Guest")],
+        )
+
+        frozen = _make_dt(2025, 6, 10)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+                side_effect=Exception("lock command failed"),
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            mock_fire.assert_called_once_with(
+                coordinator, 1, expected_name="Past Guest"
+            )
+            # Slot must remain occupied after clear failure
+            assert eo.overrides[1] is not None
+            assert eo.overrides[1]["slot_name"] == "Past Guest"
+
     async def test_clears_slot_beyond_max_events_boundary(self) -> None:
         """Verify slot is cleared when its event is beyond max_events.
 
@@ -843,7 +911,7 @@ class TestEdgeCases:
         ):
             await eo.async_check_overrides(coordinator)
             # "Old Guest" at index 2 is beyond max_events=2, clear it
-            mock_fire.assert_called_once_with(coordinator, 2)
+            mock_fire.assert_called_once_with(coordinator, 2, expected_name="Old Guest")
             assert eo.overrides[2] is None
             # "Current Guest" at index 0 stays
             assert eo.overrides[1] is not None
