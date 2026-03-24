@@ -887,6 +887,25 @@ class CheckinTrackingSensor(
                 "window (reservation boundaries are not set)"
             )
 
+        # Early expiry: shorten lock code if switch is on (FR-022)
+        entry_data = self._hass.data.get(DOMAIN, {}).get(
+            self._config_entry.entry_id, {}
+        )
+        early_expiry_switch = entry_data.get(EARLY_CHECKOUT_EXPIRY_SWITCH)
+
+        if early_expiry_switch is not None and early_expiry_switch.is_on:
+            if self._tracked_event_end is not None:
+                new_end = compute_early_expiry_time(now, self._tracked_event_end)
+                if new_end < self._tracked_event_end:
+                    _LOGGER.info(
+                        "Early checkout expiry: shortening end time from %s to %s for %s",
+                        self._tracked_event_end,
+                        new_end,
+                        self._tracked_event_summary,
+                    )
+                    self._tracked_event_end = new_end
+                    await self._async_update_lock_code_expiry(new_end)
+
         self._transition_to_checked_out(source="manual")
 
     async def async_added_to_hass(self) -> None:
@@ -1148,8 +1167,8 @@ class CheckinTrackingSensor(
         - ``code_slot_num != 0`` (FR-017: ignore manual/RF unlocks)
         - ``code_slot_num`` is within the managed slot range
         - Sensor is in ``awaiting_checkin`` state → transition to checked_in
-        - Sensor is in ``checked_in`` state → apply early checkout expiry
-          if the switch is enabled
+        - Sensor is in ``checked_in`` state → ignored (early checkout
+          expiry is handled by ``async_checkout`` per FR-022/FR-023)
 
         Args:
             code_slot_num: The keymaster code slot number that was used.
@@ -1172,7 +1191,8 @@ class CheckinTrackingSensor(
             )
             return
 
-        # Early checkout expiry: unlock while checked_in with switch on
+        # Unlock while checked_in is ignored — early expiry is handled
+        # by async_checkout per FR-022/FR-023
         if self._state == CHECKIN_STATE_CHECKED_IN:
             # Validate the unlock slot matches the tracked event
             tracked_slot = 0
@@ -1188,7 +1208,6 @@ class CheckinTrackingSensor(
                     tracked_slot,
                 )
                 return
-            self._handle_early_checkout_expiry()
             return
 
         # Only process check-in when in awaiting_checkin state
@@ -1206,47 +1225,6 @@ class CheckinTrackingSensor(
             self._tracked_event_summary,
         )
         self._transition_to_checked_in(source="keymaster")
-
-    def _handle_early_checkout_expiry(self) -> None:
-        """Handle early checkout expiry when unlock occurs while checked_in.
-
-        When the ``EarlyCheckoutExpirySwitch`` is on and a keymaster
-        unlock occurs while the sensor is in ``checked_in`` state,
-        the tracked event end time is shortened to
-        ``now + EARLY_CHECKOUT_GRACE_MINUTES`` (if that is sooner
-        than the original end) and the auto-checkout timer is
-        rescheduled accordingly.
-        """
-        entry_data = self._hass.data.get(DOMAIN, {}).get(
-            self._config_entry.entry_id, {}
-        )
-        early_expiry_switch = entry_data.get(EARLY_CHECKOUT_EXPIRY_SWITCH)
-
-        if early_expiry_switch is None or not early_expiry_switch.is_on:
-            _LOGGER.debug(
-                "Early checkout expiry switch is off or missing; "
-                "ignoring unlock while checked_in"
-            )
-            return
-
-        if self._tracked_event_end is None:
-            return
-
-        now = dt_util.now()
-        new_end = compute_early_expiry_time(now, self._tracked_event_end)
-
-        if new_end < self._tracked_event_end:
-            _LOGGER.info(
-                "Early checkout expiry: shortening end time from %s to %s for %s",
-                self._tracked_event_end,
-                new_end,
-                self._tracked_event_summary,
-            )
-            self._tracked_event_end = new_end
-            self._cancel_timer()
-            self._schedule_auto_checkout(new_end)
-            self.async_write_ha_state()
-            self._hass.async_create_task(self._async_update_lock_code_expiry(new_end))
 
     async def _async_update_lock_code_expiry(self, new_end: datetime) -> None:
         """Update keymaster lock code expiry after early checkout.
