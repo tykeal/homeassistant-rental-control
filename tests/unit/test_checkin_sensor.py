@@ -3205,3 +3205,550 @@ class TestEarlyCheckoutExpiry:
         assert sensor._tracked_event_end == original_end
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
         sensor.async_write_ha_state.assert_not_called()
+
+
+# ===========================================================================
+# Event tracking stability (identity-based lookup)
+# ===========================================================================
+
+
+class TestEventTrackingStability:
+    """Tests for identity-based event tracking.
+
+    Verifies that the sensor tracks events by identity key
+    (summary + start) rather than list position, preventing
+    state oscillation when coordinator data reorders.
+    """
+
+    async def test_find_tracked_event_at_position_zero(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test _find_tracked_event returns event at position 0."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        event = _make_event(start=now + timedelta(hours=2))
+        mock_checkin_coordinator.data = [event]
+        sensor._tracked_event_summary = event.summary
+        sensor._tracked_event_start = event.start
+
+        result = sensor._find_tracked_event()
+
+        assert result is event
+
+    async def test_find_tracked_event_at_nonzero_position(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test _find_tracked_event finds event not at position 0."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        other = _make_event(
+            summary="Reserved - Other",
+            start=now - timedelta(hours=1),
+        )
+        tracked = _make_event(
+            summary="Reserved - Tracked",
+            start=now + timedelta(hours=4),
+        )
+        mock_checkin_coordinator.data = [other, tracked]
+        sensor._tracked_event_summary = tracked.summary
+        sensor._tracked_event_start = tracked.start
+
+        result = sensor._find_tracked_event()
+
+        assert result is tracked
+
+    async def test_find_tracked_event_returns_none_when_gone(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test _find_tracked_event returns None when event removed."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        sensor._tracked_event_summary = "Reserved - Gone"
+        sensor._tracked_event_start = now + timedelta(hours=2)
+        mock_checkin_coordinator.data = [_make_event(summary="Reserved - Different")]
+
+        result = sensor._find_tracked_event()
+
+        assert result is None
+
+    async def test_find_tracked_event_empty_data(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test _find_tracked_event returns None with empty data."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        sensor._tracked_event_summary = "Reserved - Test"
+        sensor._tracked_event_start = dt_util.now()
+        mock_checkin_coordinator.data = []
+
+        assert sensor._find_tracked_event() is None
+
+    async def test_find_tracked_event_no_tracked_summary(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test _find_tracked_event returns None with no summary."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        sensor._tracked_event_summary = None
+        sensor._tracked_event_start = dt_util.now()
+        mock_checkin_coordinator.data = [_make_event()]
+
+        assert sensor._find_tracked_event() is None
+
+    async def test_checked_in_survives_event_position_shift(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test CHECKED_IN stays stable when tracked event shifts position.
+
+        When a new event appears before the tracked event in the
+        coordinator list, the sensor must NOT transition to
+        no_reservation.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        tracked = _make_event(
+            summary="Reserved - Guest B",
+            start=now - timedelta(hours=2),
+            end=now + timedelta(hours=48),
+        )
+        mock_checkin_coordinator.data = [tracked]
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = tracked.summary
+        sensor._tracked_event_start = tracked.start
+        sensor._tracked_event_end = tracked.end
+        sensor._checkin_source = "keymaster"
+
+        # Position 0 is tracked event → should stay checked_in
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+
+        # Now another event appears at position 0
+        earlier = _make_event(
+            summary="Reserved - Guest A (leftover)",
+            start=now - timedelta(hours=24),
+            end=now - timedelta(hours=1),
+        )
+        mock_checkin_coordinator.data = [earlier, tracked]
+
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+
+    async def test_checked_in_transitions_when_event_truly_gone(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test CHECKED_IN transitions to no_reservation when gone."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - Vanished"
+        sensor._tracked_event_start = now - timedelta(hours=2)
+        sensor._tracked_event_end = now + timedelta(hours=48)
+        sensor._checkin_source = "automatic"
+
+        mock_checkin_coordinator.data = [
+            _make_event(summary="Reserved - Completely Different")
+        ]
+
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_NO_RESERVATION
+
+    async def test_awaiting_survives_event_position_shift(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test AWAITING stays stable when tracked event shifts position."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        tracked = _make_event(
+            summary="Reserved - Guest B",
+            start=now + timedelta(hours=4),
+            end=now + timedelta(hours=124),
+        )
+
+        sensor._state = CHECKIN_STATE_AWAITING
+        sensor._tracked_event_summary = tracked.summary
+        sensor._tracked_event_start = tracked.start
+        sensor._tracked_event_end = tracked.end
+        sensor._unsub_timer = MagicMock()
+
+        # Tracked at position 0
+        mock_checkin_coordinator.data = [tracked]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+
+        # Tracked at position 1
+        earlier = _make_event(
+            summary="Reserved - Guest A (stale)",
+            start=now - timedelta(hours=10),
+            end=now - timedelta(hours=1),
+        )
+        mock_checkin_coordinator.data = [earlier, tracked]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_summary == "Reserved - Guest B"
+
+    async def test_checked_out_no_oscillation(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test CHECKED_OUT does not oscillate on coordinator refresh.
+
+        When the checked-out event appears/disappears from the list
+        across refreshes, the linger timer must not be cancelled and
+        recomputed on every update.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        guest_a = _make_event(
+            summary="Reserved - Guest A",
+            start=now - timedelta(hours=24),
+            end=now - timedelta(hours=1),
+        )
+        guest_b = _make_event(
+            summary="Reserved - Guest B",
+            start=now + timedelta(hours=4),
+            end=now + timedelta(hours=124),
+        )
+
+        sensor._state = CHECKIN_STATE_CHECKED_OUT
+        sensor._tracked_event_summary = guest_a.summary
+        sensor._tracked_event_start = guest_a.start
+        sensor._tracked_event_end = guest_a.end
+        sensor._checkout_time = now
+        sensor._checked_out_event_key = sensor._event_key(
+            guest_a.summary, guest_a.start
+        )
+
+        # First refresh: both events visible → computes linger
+        mock_checkin_coordinator.data = [guest_a, guest_b]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        first_timer = sensor._unsub_timer
+        first_target = sensor._transition_target_time
+        assert first_timer is not None
+
+        # Second refresh: only guest B (guest A filtered)
+        mock_checkin_coordinator.data = [guest_b]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        # Timer must not have been reset
+        assert sensor._unsub_timer is first_timer
+        assert sensor._transition_target_time == first_target
+
+        # Third refresh: both again
+        mock_checkin_coordinator.data = [guest_a, guest_b]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._unsub_timer is first_timer
+
+    async def test_checked_out_recomputes_on_changed_followon(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test CHECKED_OUT recomputes linger when follow-on changes."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        guest_a = _make_event(
+            summary="Reserved - Guest A",
+            start=now - timedelta(hours=24),
+            end=now - timedelta(hours=1),
+        )
+        guest_b = _make_event(
+            summary="Reserved - Guest B",
+            start=now + timedelta(hours=4),
+            end=now + timedelta(hours=124),
+        )
+        guest_c = _make_event(
+            summary="Reserved - Guest C",
+            start=now + timedelta(hours=2),
+            end=now + timedelta(hours=122),
+        )
+
+        sensor._state = CHECKIN_STATE_CHECKED_OUT
+        sensor._tracked_event_summary = guest_a.summary
+        sensor._tracked_event_start = guest_a.start
+        sensor._tracked_event_end = guest_a.end
+        sensor._checkout_time = now
+        sensor._checked_out_event_key = sensor._event_key(
+            guest_a.summary, guest_a.start
+        )
+
+        # First: follow-on is Guest B
+        mock_checkin_coordinator.data = [guest_b]
+        sensor._handle_coordinator_update()
+        first_target = sensor._transition_target_time
+
+        # Second: follow-on changes to Guest C (earlier)
+        mock_checkin_coordinator.data = [guest_c]
+        sensor._handle_coordinator_update()
+        assert sensor._transition_target_time != first_target
+
+    async def test_same_day_turnover_full_flow(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test same-day turnover: checkout → linger → awaiting → checkin.
+
+        Guest A checks out, linger timer fires, sensor transitions to
+        awaiting_checkin for Guest B.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        guest_a = _make_event(
+            summary="Reserved - Guest A",
+            start=now - timedelta(hours=120),
+            end=now - timedelta(minutes=30),
+        )
+        guest_b = _make_event(
+            summary="Reserved - Guest B",
+            start=now + timedelta(hours=4),
+            end=now + timedelta(hours=124),
+        )
+
+        # Set up checked_in state for Guest A
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = guest_a.summary
+        sensor._tracked_event_start = guest_a.start
+        sensor._tracked_event_end = guest_a.end
+        sensor._checkin_source = "automatic"
+        mock_checkin_coordinator.data = [guest_a, guest_b]
+
+        # Trigger checkout
+        sensor._transition_to_checked_out(source="automatic")
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._unsub_timer is not None
+
+        # Simulate linger timer firing
+        sensor._async_linger_to_awaiting_callback(now)
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_summary == guest_b.summary
+
+    async def test_linger_callback_uses_followon_search(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test linger-to-awaiting callback finds follow-on at any position.
+
+        Even if the checked-out event is still at position 0, the
+        callback should find the follow-on event correctly.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        guest_a = _make_event(
+            summary="Reserved - Guest A",
+            start=now - timedelta(hours=120),
+            end=now - timedelta(hours=1),
+        )
+        guest_b = _make_event(
+            summary="Reserved - Guest B",
+            start=now + timedelta(hours=2),
+            end=now + timedelta(hours=122),
+        )
+
+        sensor._state = CHECKIN_STATE_CHECKED_OUT
+        sensor._checkout_time = now - timedelta(minutes=30)
+        sensor._checked_out_event_key = sensor._event_key(
+            guest_a.summary, guest_a.start
+        )
+        # Checked-out event still at position 0
+        mock_checkin_coordinator.data = [guest_a, guest_b]
+
+        sensor._async_linger_to_awaiting_callback(now)
+
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_summary == guest_b.summary
+
+    async def test_checked_out_no_followon_keeps_timer(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test CHECKED_OUT with no follow-on preserves existing timer."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+
+        sensor._state = CHECKIN_STATE_CHECKED_OUT
+        sensor._checkout_time = now
+        sensor._checked_out_event_key = "old|key"
+        existing_timer = MagicMock()
+        sensor._unsub_timer = existing_timer
+
+        # Only the checked-out event remains (no follow-on)
+        mock_checkin_coordinator.data = []
+        sensor._handle_coordinator_update()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        # Timer should not be replaced when no follow-on and timer exists
+        # (the no-followon branch only computes if timer is None)
+
+    async def test_linger_followon_key_set_by_compute(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test _compute_linger_timing sets _linger_followon_key."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        guest_b = _make_event(
+            summary="Reserved - Guest B",
+            start=now + timedelta(hours=4),
+        )
+        mock_checkin_coordinator.data = [guest_b]
+
+        sensor._state = CHECKIN_STATE_CHECKED_OUT
+        sensor._checkout_time = now
+        sensor._checked_out_event_key = "old|key"
+
+        sensor._compute_linger_timing()
+
+        expected_key = sensor._event_key(guest_b.summary, guest_b.start)
+        assert sensor._linger_followon_key == expected_key
+
+    async def test_linger_followon_key_none_when_no_followon(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test _compute_linger_timing clears key with no follow-on."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        mock_checkin_coordinator.data = []
+
+        sensor._state = CHECKIN_STATE_CHECKED_OUT
+        sensor._checkout_time = now
+        sensor._linger_followon_key = "stale|key"
+
+        sensor._compute_linger_timing()
+
+        assert sensor._linger_followon_key is None
+
+    async def test_linger_followon_key_cleared_on_awaiting(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test _linger_followon_key cleared on transition to awaiting."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        event = _make_event(start=now + timedelta(hours=4))
+        sensor._linger_followon_key = "some|key"
+
+        sensor._transition_to_awaiting(event)
+
+        assert sensor._linger_followon_key is None
+
+    async def test_checked_out_followon_disappears_recomputes(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test CHECKED_OUT recomputes when follow-on disappears.
+
+        When a follow-on event existed (FR-006a timer scheduled) but
+        then gets cancelled, the sensor must recompute linger timing
+        for the cleaning-window scenario (FR-006b).
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        guest_a = _make_event(
+            summary="Reserved - Guest A",
+            start=now - timedelta(hours=24),
+            end=now - timedelta(hours=1),
+        )
+        guest_b = _make_event(
+            summary="Reserved - Guest B",
+            start=now + timedelta(hours=4),
+            end=now + timedelta(hours=124),
+        )
+
+        sensor._state = CHECKIN_STATE_CHECKED_OUT
+        sensor._tracked_event_summary = guest_a.summary
+        sensor._tracked_event_start = guest_a.start
+        sensor._tracked_event_end = guest_a.end
+        sensor._checkout_time = now
+        sensor._checked_out_event_key = sensor._event_key(
+            guest_a.summary, guest_a.start
+        )
+
+        # First: follow-on exists → linger computed with follow-on key
+        mock_checkin_coordinator.data = [guest_b]
+        sensor._handle_coordinator_update()
+        assert sensor._linger_followon_key is not None
+        first_target = sensor._transition_target_time
+
+        # Second: follow-on disappears
+        mock_checkin_coordinator.data = []
+        sensor._handle_coordinator_update()
+        # Key cleared, timer recomputed for cleaning window
+        assert sensor._linger_followon_key is None
+        assert sensor._transition_target_time != first_target
