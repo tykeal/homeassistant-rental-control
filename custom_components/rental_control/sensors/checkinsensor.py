@@ -207,6 +207,9 @@ class CheckinTrackingSensor(
         # FR-006c: Start day of the follow-on event for midnight-to-awaiting
         self._next_event_start_day: datetime | None = None
 
+        # Follow-on event key for linger guard (not persisted)
+        self._linger_followon_key: str | None = None
+
         # Internal timer unsubscribe handle
         self._unsub_timer: CALLBACK_TYPE | None = None
 
@@ -348,6 +351,29 @@ class CheckinTrackingSensor(
                 return event
         return None
 
+    def _find_tracked_event(self) -> CalendarEvent | None:
+        """Find the currently tracked event in coordinator data by identity key.
+
+        Searches all events, not just position 0, to handle event
+        list reordering during coordinator refreshes.
+
+        Returns:
+            The tracked CalendarEvent, or None if not found.
+        """
+        if (
+            not self.coordinator.data
+            or self._tracked_event_summary is None
+            or self._tracked_event_start is None
+        ):
+            return None
+        tracked_key = self._event_key(
+            self._tracked_event_summary, self._tracked_event_start
+        )
+        for event in self.coordinator.data:
+            if self._event_key(event.summary, event.start) == tracked_key:
+                return event
+        return None
+
     def _extract_slot_name(self, event: CalendarEvent) -> str | None:
         """Extract guest/slot name from a calendar event.
 
@@ -381,92 +407,76 @@ class CheckinTrackingSensor(
             self.async_write_ha_state()
             return
 
-        event = self._get_relevant_event()
         current_state = self._state
 
         if current_state == CHECKIN_STATE_NO_RESERVATION:
+            event = self._get_relevant_event()
             if event is not None:
                 self._transition_to_awaiting(event)
             else:
                 self.async_write_ha_state()
 
         elif current_state == CHECKIN_STATE_AWAITING:
-            if event is None:
-                # Event disappeared (cancelled)
-                self._transition_to_no_reservation()
+            tracked = self._find_tracked_event()
+            if tracked is not None:
+                # Same event still in coordinator — update mutable fields
+                self._tracked_event_end = tracked.end
+                self._tracked_event_slot_name = self._extract_slot_name(tracked)
+                self.async_write_ha_state()
             else:
-                # Check if event identity changed (e.g., cancellation
-                # shifted a different event to position 0)
-                event_key = self._event_key(event.summary, event.start)
-                tracked_key = None
-                if (
-                    self._tracked_event_summary is not None
-                    and self._tracked_event_start is not None
-                ):
-                    tracked_key = self._event_key(
-                        self._tracked_event_summary,
-                        self._tracked_event_start,
-                    )
-
-                if event_key != tracked_key:
-                    # Different event — full re-transition to reschedule
+                # Tracked event gone — pick up next available or clear
+                event = self._get_relevant_event()
+                if event is not None:
                     self._transition_to_awaiting(event)
                 else:
-                    # Same event — update mutable fields only
-                    self._tracked_event_end = event.end
-                    self._tracked_event_slot_name = self._extract_slot_name(event)
-                    self.async_write_ha_state()
-
-        elif current_state == CHECKIN_STATE_CHECKED_IN:
-            if event is None:
-                # Event disappeared while checked in
-                self._transition_to_no_reservation()
-            else:
-                # FR-030: Check if event end time changed for the same event
-                event_key = self._event_key(event.summary, event.start)
-                tracked_key = None
-                if (
-                    self._tracked_event_summary is not None
-                    and self._tracked_event_start is not None
-                ):
-                    tracked_key = self._event_key(
-                        self._tracked_event_summary, self._tracked_event_start
-                    )
-
-                if event_key == tracked_key:
-                    # Same event - check if end time changed
-                    if event.end != self._tracked_event_end:
-                        _LOGGER.debug(
-                            "Event end time changed from %s to %s, "
-                            "rescheduling auto check-out",
-                            self._tracked_event_end,
-                            event.end,
-                        )
-                        self._tracked_event_end = event.end
-                        self._cancel_timer()
-                        self._schedule_auto_checkout(event.end)
-                    # Update slot name in case it changed
-                    self._tracked_event_slot_name = self._extract_slot_name(event)
-                    self.async_write_ha_state()
-                else:
-                    # Different event while checked in - transition out
                     self._transition_to_no_reservation()
 
+        elif current_state == CHECKIN_STATE_CHECKED_IN:
+            tracked = self._find_tracked_event()
+            if tracked is not None:
+                # FR-030: Check if event end time changed
+                if tracked.end != self._tracked_event_end:
+                    _LOGGER.debug(
+                        "Event end time changed from %s to %s, "
+                        "rescheduling auto check-out",
+                        self._tracked_event_end,
+                        tracked.end,
+                    )
+                    self._tracked_event_end = tracked.end
+                    self._cancel_timer()
+                    self._schedule_auto_checkout(tracked.end)
+                # Update slot name in case it changed
+                self._tracked_event_slot_name = self._extract_slot_name(tracked)
+                self.async_write_ha_state()
+            else:
+                # Tracked event genuinely gone
+                self._transition_to_no_reservation()
+
         elif current_state == CHECKIN_STATE_CHECKED_OUT:
-            if event is not None:
-                event_key = self._event_key(event.summary, event.start)
-                if event_key == self._checked_out_event_key:
-                    # FR-007: Same event we checked out from, do NOT
-                    # re-transition even if end time changed
+            checkout_time = self._checkout_time or dt_util.now()
+            followon = self._find_followon_event(checkout_time)
+            if followon is not None:
+                followon_key = self._event_key(followon.summary, followon.start)
+                if (
+                    self._unsub_timer is not None
+                    and self._linger_followon_key == followon_key
+                ):
+                    # Same follow-on, timer already scheduled
                     self.async_write_ha_state()
                 else:
-                    # Genuinely new follow-on event while checked out:
-                    # cancel any existing linger timer and recompute
-                    # linger timing based on the updated coordinator data.
+                    # New or changed follow-on event
                     self._cancel_timer()
                     self._compute_linger_timing()
                     self.async_write_ha_state()
             else:
+                # No follow-on event
+                if self._linger_followon_key is not None:
+                    # Follow-on was removed — recompute for FR-006b
+                    self._cancel_timer()
+                    self._linger_followon_key = None
+                    self._compute_linger_timing()
+                elif self._unsub_timer is None:
+                    self._compute_linger_timing()
                 self.async_write_ha_state()
 
     def _transition_to_awaiting(self, event: CalendarEvent) -> None:
@@ -492,6 +502,7 @@ class CheckinTrackingSensor(
         self._checkout_time = None
         self._checked_out_event_key = None
         self._next_event_start_day = None
+        self._linger_followon_key = None
 
         # Schedule auto check-in at event start time
         self._cancel_timer()
@@ -641,6 +652,9 @@ class CheckinTrackingSensor(
         next_event = self._find_followon_event(checkout_time)
 
         if next_event is not None:
+            self._linger_followon_key = self._event_key(
+                next_event.summary, next_event.start
+            )
             # Compare dates in the HA-configured local timezone (T038)
             local_checkout = dt_util.as_local(checkout_time)
             local_next_start = dt_util.as_local(next_event.start)
@@ -682,6 +696,7 @@ class CheckinTrackingSensor(
                     self._next_event_start_day.isoformat(),
                 )
         else:
+            self._linger_followon_key = None
             # FR-006b: No follow-on reservation
             # Transition after cleaning window
             cleaning_hours = self._get_cleaning_window()
@@ -717,6 +732,7 @@ class CheckinTrackingSensor(
         self._checkout_time = None
         self._transition_target_time = None
         self._checked_out_event_key = None
+        self._linger_followon_key = None
 
         self._cancel_timer()
         self.async_write_ha_state()
@@ -757,15 +773,8 @@ class CheckinTrackingSensor(
         _LOGGER.debug("Linger-to-awaiting timer fired for %s", self.coordinator.name)
         self._unsub_timer = None
         if self._state == CHECKIN_STATE_CHECKED_OUT:
-            # Pick the next event, skipping the one we checked out from
-            event = self._get_relevant_event()
-            if (
-                event is not None
-                and self._checked_out_event_key is not None
-                and self._event_key(event.summary, event.start)
-                == self._checked_out_event_key
-            ):
-                event = self._get_next_event()
+            checkout_time = self._checkout_time or _now
+            event = self._find_followon_event(checkout_time)
             if event is not None:
                 self._transition_to_awaiting(event)
             else:
