@@ -51,3 +51,12 @@ ignore:
     package:
       name: pyOpenSSL
       type: python
+
+  # pygments transitive dependency via homeassistant —
+  # ReDoS in AdlLexer (CVE-2026-4539), no fix version
+  # available yet. We cannot pin pygments directly
+  # because it comes from homeassistant.
+  - vulnerability: CVE-2026-4539
+    package:
+      name: pygments
+      type: python

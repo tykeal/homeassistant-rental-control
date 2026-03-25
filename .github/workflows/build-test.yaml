@@ -140,9 +140,11 @@ jobs:
         with:
           python_version: "${{ matrix.python-version }}"
           # pillow transitive dep CVEs (via homeassistant)
+          # pygments ReDoS in AdlLexer (CVE-2026-4539)
           ignore_vulns: >-
             GHSA-4xh5-x5gv-qwph
             GHSA-cfh3-3jmp-rvhc
+            CVE-2026-4539
 
   sbom:
     name: 'Generate SBOM'
