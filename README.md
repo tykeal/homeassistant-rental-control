@@ -5,12 +5,21 @@
 
 [![pre-commit.ci status](https://results.pre-commit.ci/badge/github/tykeal/homeassistant-rental-control/main.svg)](https://results.pre-commit.ci/latest/github/tykeal/homeassistant-rental-control/main)
 
-Home Assistant Rental Manager is designed to handle the need for custom
-calendars and sensors to go with them related to managing rental properties.
+Rental Control is a Home Assistant integration that handles custom calendars
+and sensors for managing rental properties.
 
 # Table of Contents
 
 - [Features](#features)
+    - [Calendar Management](#calendar-management)
+    - [Entities Created](#entities-created)
+    - [Check-in Tracking](#check-in-tracking)
+    - [Keymaster Monitoring Switch](#keymaster-monitoring-switch)
+    - [Early Checkout Expiry Switch](#early-checkout-expiry-switch)
+    - [Manual Checkout Action](#manual-checkout-action)
+    - [Home Assistant Events](#home-assistant-events)
+    - [Door Code Generation](#door-code-generation)
+    - [Keymaster Integration](#keymaster-integration)
 - [Installation](#installation)
     - [MANUAL INSTALLATION](#manual-installation)
     - [INSTALLATION VIA Home Assistant Community Store (HACS)](#installation-via-home-assistant-community-store-hacs)
@@ -26,85 +35,177 @@ calendars and sensors to go with them related to managing rental properties.
 
 ## Features
 
-- Ingests ICS calendars from any HTTPS source as long as it's a text/calendar
-  file
+### Calendar Management
+
+- Ingests ICS calendars from any HTTPS source that serves a text/calendar file
 - Configurable refresh rate from as often as possible to once per day (default
   every 2 minutes)
-- Define checkin/checkout times which will be added to all calendar entries
-  that are all day events
+- Define checkin/checkout times that apply to all-day calendar entries
 - Ability to ignore 'Blocked' and 'Not available' events
-- Creates a customizable number of event sensors that are the current and
-  upcoming events
+- Calendars can have their own timezone definition that is separate from the
+  Home Assistant instance itself. This is useful for managing properties that
+  are in a different timezone from where Home Assistant is
+- Events can have a custom prefix to help differentiate between entities if
+  you track more than one calendar in an instance
+- Submitting a configuration change forces a calendar refresh
+- Calendar fetch failure resilience: if a fetch fails the integration
+  serves the last good data; if a fetch returns an empty calendar when
+  events existed before, it tolerates up to 2 consecutive empty
+  responses before allowing the event list to clear
+
+### Entities Created
+
+- Creates a customizable number of event sensors for the current and upcoming
+  events
     - sensor.rental_control_my_calendar_event_0
     - sensor.rental_control_my_calendar_event_1
     - sensor.rental_control_my_calendar_event_2
     - (...)
-- Creates a calendar-entry that can be used with calendar cards
+- Creates a calendar entry for use with calendar cards
     - calendar.rental_control_my_calendar
-- Calendars can have their own timezone definition that is separate from the
-  Home Assitant instance itself. This is useful for managing properties that are
-  in a different timezone from where Home Assistant is
-- Events can have a custom prefix added to them to help differentiate between
-  entities if more than one calendar is being tracked in an instance
-- Forcing a calendar refresh is currently possible by submitting a
-  configuration change
+- Each event sensor has dynamically added attributes extracted from the event
+  description when available:
+    - `last_four` -- the last 4 digits of the phone number of the booking guest
+    - `number_of_guests` -- the number of guests in the reservation
+    - `guest_email` -- the email address of the booking guest
+    - `phone_number` -- the phone number of the booking guest
+    - `reservation_url` -- the URL to the reservation
+
+### Check-in Tracking
+
+The integration creates a **check-in tracking sensor** for each configured
+rental that monitors guest occupancy through a four-state state machine.
+Configuring a Keymaster lock enables lock-related transitions and behaviors:
+
+| State | Description |
+| --- | --- |
+| `no_reservation` | No relevant calendar event |
+| `awaiting_checkin` | Event identified, waiting for guest arrival |
+| `checked_in` | Guest has arrived |
+| `checked_out` | Guest has departed, post-checkout linger active |
+
+The sensor declares the **enum** device class so Home Assistant and other
+integrations know the full set of valid states.
+
+**Automatic transitions:**
+
+- `no_reservation` → `awaiting_checkin`: when the coordinator picks up a new
+  calendar event
+- `awaiting_checkin` → `checked_in`: at the configured check-in time
+  (automatic) **or** when the guest uses their door code (requires keymaster
+  monitoring)
+- `checked_in` → `checked_out`: at the configured check-out time (automatic)
+  **or** via the manual checkout action
+- `checked_out` → `no_reservation` / `awaiting_checkin`: after the cleaning
+  window expires (transitions to `awaiting_checkin` if a same-day follow-on
+  reservation exists)
+
+**Sensor attributes:**
+
+- `checkin_state`, `summary`, `start`, `end`, `guest_name`
+- `checkin_source` (`automatic` or `keymaster`)
+- `checkout_source` (`automatic` or `manual`)
+- `checkout_time`, `next_transition`
+
+The check-in sensor state **persists across Home Assistant restarts** and
+the integration validates stale states on startup automatically.
+
+### Keymaster Monitoring Switch
+
+When you configure a Keymaster lock the integration creates a **Keymaster
+Monitoring** switch entity. Turning it **on** makes Keymaster unlock events on
+the configured lock trigger an immediate check-in transition (the sensor moves
+from `awaiting_checkin` to `checked_in` the moment the guest uses their door
+code). When **off** (the default), time-based automatic check-in applies.
+
+### Early Checkout Expiry Switch
+
+When you configure a Keymaster lock the integration also creates an **Early
+Checkout Expiry** switch entity. Turning it **on** and then performing a
+manual checkout via the checkout action shortens the lock code expiry time to
+the current time plus a 15-minute grace period instead of the original
+reservation end time. This prevents a departed guest from re-entering the
+property.
+
+### Manual Checkout Action
+
+The integration provides a `rental_control.checkout` service action for use
+in automations or the developer tools. It transitions the check-in sensor
+from `checked_in` to `checked_out`. The sensor must be in the `checked_in`
+state and the current time must fall within the active reservation window.
+
+### Home Assistant Events
+
+The integration fires events on the Home Assistant event bus for use in
+automations:
+
+| Event | Fired When |
+| --- | --- |
+| `rental_control_checkin` | Guest transitions to checked-in |
+| `rental_control_checkout` | Guest transitions to checked-out |
+
+Both events include attributes: `summary`, `guest_name`, `entity_id`, `start`,
+`end`, and `source`.
+
+### Door Code Generation
+
 - Optional code length starting at 4 digits (requires even number of digits)
 - 3 door code generators are available:
     - A check-in/out date based 4 digit (or greater) code using the check-in
       day combined with the check-out day (default and fallback in the case
       another generator fails to produce a code)
-        - Codes can can optionally be regenerated if the reservation start or
-          end dates are at least 1 day in future
+        - Codes optionally regenerate when the reservation start or end
+          dates are at least 1 day in the future
     - A random 4 digit (or greater) code based on the event description
-    - The last 4 digits of the phone number. This only works properly if the
-      event description contains '(Last 4 Digits): ' or 'Last 4 Digits: '
-      followed quickly by a 4 digit number. This is the most stable, but only
-      works if the event descriptions have the needed data. The previous two
-      methods can have the codes change if the event makes changes to length
-      or to the description.
-- All events will get a code associated with it. In the case that the criteria
-  to create the code are not fulfilled, then the check-in/out date based
-  method will be used as a fallback
-- Each event has dynamically added attributes which consist of extracted
-  information if available in the event description. The following attributes
-  now get added:
-    - Last four -- the last 4 digits of the phone number of the booking guest
-    - Number of guests -- the number of guests in the reservation
-    - Guest email -- the email of the booking guest
-    - Phone number -- the phone number of the booking guest
-    - Reservation url -- the URL to the reservation
+    - The last 4 digits of the phone number. This works when the event
+      description contains '(Last 4 Digits): ' or 'Last 4 Digits: ' followed
+      by a 4 digit number. This is the most stable generator, but requires
+      the event descriptions to have the needed data. The previous two methods
+      can have the codes change if the event makes changes to length or to
+      the description.
+- All events get a code associated with them. If the criteria to create the
+  code are not fulfilled, the check-in/out date based method serves as
+  a fallback
+
+### Keymaster Integration
+
 - Integration with [Keymaster](https://github.com/FutureTense/keymaster) to
-  control door codes matched to the number of events being tracked
-- Custom calendars are supported as long as they provide a valid ICS file via
-  an HTTPS connection.
-    - Rental Events should be created as all day events (which is how all of
-      the rental platforms provide events)
-    - Maintenance style events should be created with start and end times
-    - The event Summary (aka event title) _may_ contiain the word Reserved.
-      This will cause the slot name to be generated in one of two ways:
-        - The word Reserved is followed by ' - ' and then something else, the
-          something else will be used
-        - The word Reserved is _not_ followed by ' - ' then the full slot will
-          be used
-        - The Summary contains nothing else _and_ the Details contain
+  control door codes matched to the number of events tracked
+- Automatic slot assignment with **deduplication**: the same guest reservation
+  never occupies more than one lock code slot even when calendar data shifts
+  between refreshes
+- Slot command retry with escalation: if a lock code set/clear command fails
+  after 3 attempts the integration creates a persistent notification alerting
+  the user to take manual action
+- Custom calendars work as long as they provide a valid ICS file via an HTTPS
+  connection.
+    - Create rental events as all-day events (the way rental platforms provide
+      them)
+    - Create maintenance style events with explicit start and end times
+    - The event Summary (aka event title) _may_ contain the word Reserved.
+      This causes the slot name to generate in one of two ways:
+        - When Reserved appears followed by ' - ' and then something else, the
+          integration uses the part after the dash
+        - When Reserved is _not_ followed by ' - ' then the full summary
+          becomes the slot name
+        - When the Summary contains nothing else _and_ the Details contain
           something that matches an Airbnb reservation identifier of
           `[A-Z][A-Z0-9]{9}` that is a capital alphabet letter followed by 9
           more characters that are either capital alphabet letters or numbers,
           then the slot will get this
-        - If the the Summary is _just_ Reserved and there is no Airbnb code in
-          the Description, then the event will be ignored for purposes of
+        - If the Summary is _just_ Reserved and there is no Airbnb code in the
+          Description, then the integration ignores the event for purposes of
           managing a lock code.
-        - Technically any of the othe supported platform event styles for the
-          Summary can be used and as long as the Summary conforms to it.
-        - The best Summary on a manual calendar is to use your guest name. The
-          entries do need to be unique over the sensor count worth of events
-          or Rental Control will run into issues.
-    - Additional information can be provided in the Description of the event
-      and it will fill in the extra details in the sensor.
-        - Phone numbers for use in generating door codes can be provided in
-          one of two ways
+        - Any of the other supported platform event styles for the Summary
+          work as long as the Summary conforms to the pattern.
+        - The best Summary on a manual calendar is your guest name. The entries
+          need unique names over the sensor count worth of events or Rental
+          Control will run into issues.
+    - The Description of the event can include extra details that the
+      integration extracts into sensor attributes.
+        - Phone numbers for generating door codes in one of two ways
             - A line in the Description matching this regular expression:
-              `\(?Last 4 Digits\)?:\s+(\d{4})` -- This line will always take
+              `\(?Last 4 Digits\)?:\s+(\d{4})` -- This line always takes
               precedence for generating a door code based on last 4 digits.
             - A line in the Description matching this regular expression:
               `Phone(?: Number)?:\s+(\+?[\d\. \-\(\)]{9,})` which will then
@@ -112,14 +213,12 @@ calendars and sensors to go with them related to managing rental properties.
               in the number
         - Number of guests
             - A line in the Description that matches: `Guests:\s+(\d+)$`
-            - Alternatively, the following lines will be added together to get
-              the data:
+            - The following lines also work and their values sum together:
                 - `Adults:\s+(\d+)$`
                 - `Children:\s+(\d+)$`
-        - Email addresses can be extracted from the Description by matching
-          against: `Email:\s+(\S+@\S+)`
-        - Reservation URLS will match against the first (and hopefully only)
-          URL in the Description
+        - The integration extracts email addresses from the Description by
+          matching against: `Email:\s+(\S+@\S+)`
+        - Reservation URLs match against the first URL in the Description
 
 ## Installation
 
@@ -139,7 +238,7 @@ depends upon it.
 
 ### INSTALLATION VIA Home Assistant Community Store (HACS)
 
-1. Ensure that [HACS](https://hacs.xyz/) is installed
+1. Ensure that [HACS](https://hacs.xyz/) is present
 1. Then press the following button [![Open your Home Assistant instance and open
 a repository inside the Home Assistant Community
 Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tykeal&repository=homeassistant-rental-control&category=Integration)
@@ -149,7 +248,7 @@ Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.hom
 
 ## Setup
 
-The integration is set up using the GUI.
+Set up the integration through the GUI.
 
 - Press the following button to install the `Rental Control` integration
   [![Open your Home Assistant instance and start setting up a new
@@ -157,43 +256,45 @@ integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https:
 - Follow the prompts and then press `OK` on the question about installing
   `Rental Control`
 - Enter a name for the calendar, and the calendar's `ics` URL (see FAQ)
-- By default it will set up 5 sensors for the 5 nex upcoming events
+- By default the integration creates 5 sensors for the 5 next upcoming events
   (sensor.rental_control\_\<calendar_name\>\_event_0 ~ 4). You can adjust this
   to add more or fewer sensors
-- The calendar refresh rate defaults to every 2 minutes but can be set to 0
-  for as often as possible (roughly every 30 seconds) to once per day (1440).
-  This is adjustable in minute increments
-- The integration will only consider events with a start time 365 days (1 year)
-  into the future by default. This can also be adjusted when adding a new
+- The calendar refresh rate defaults to every 2 minutes but you can set it to
+  0 for as often as possible (about every 30 seconds) or up to once per day
+  (1440). This adjusts in minute increments
+- The integration considers events with a start time up to 365 days (1 year)
+  into the future by default. You can also adjust this when adding a new
   calendar
-- Set your checkin and checkout times. All times are in 24 hour format. These
-  times will be added to the calendar events. If the events come in with times
-  already attached they _will_ be overwritten (most rental hosting platforms
-  only provide day in / day out in the events)
+- Set your checkin and checkout times. All times use 24 hour format. These
+  times apply to the calendar events. If the events come in with times already
+  attached they _will_ get overwritten (most rental hosting platforms provide
+  day in / day out in the events)
+- The cleaning window (default 6 hours) controls how long the check-in sensor
+  stays in the `checked_out` state after a guest departs before transitioning
+  to `no_reservation` or `awaiting_checkin` for the next guest. You can set
+  this from 0.5 to 48 hours
 - For configuration managing a Keymaster controlled lock, make sure that you
   have defined the lock during initial setup and that you have the starting
-  slot set correctly for the integration.
+  slot set for the integration.
 
-    - It is _very_ important that you have Keymaster fully working before
-      trying to utilize the slot management component of Rental Control.
-    - **NOTE:** The Keymaster slots that are defined as being managed will be
-      completely taken control of by Rental Control. Any data in the slots
-      will be overwritten by Rental Control when it takes over the slot unless
-      it matches event data for the calendar.
+    - Make sure you have Keymaster fully working before trying to use the slot
+      management component of Rental Control.
+    - **NOTE:** Rental Control takes full control of the Keymaster slots
+      defined for management. Any data in the slots gets overwritten by Rental
+      Control when it takes over the slot unless it matches event data for the
+      calendar.
     - The following portions of a Keymaster slot will influence (that is
       override) data in the calendar or event sensor:
         - Checkin/out TIME (not date) will update the calendar event and also
-          the sensor tracked information. **NOTE:** If you are using a
-          timezone that is _not_ the system timezone on your calendar, you
-          will likely run into weird and unexpected issues as that is not
-          presently supported!
-        - Door code - by default when the slot is updated by the integration
-          the code that is extracted / created by the sensor will be used. If,
-          however, you have a need to override the code you may do so after
-          the slot has been updated. This is useful if you have a non-managed
-          slot that has the same door code (or starting code, typically first
-          4 digits) that is the generated code and thus causing the slot to
-          not function properly
+          the sensor tracked information. **NOTE:** If you use a timezone that
+          is _not_ the system timezone on your calendar, you will run into
+          weird and unexpected issues as that combination has no support yet!
+        - Door code - by default when the integration updates the slot it uses
+          the code that the sensor extracted / created. If you need to override
+          the code you may do so after the slot update. This is useful if you
+          have a non-managed slot that has the same door code (or starting
+          code, typically first 4 digits) as the generated code and thus
+          causes the slot to not function properly
 
 ## Reconfiguration
 
@@ -204,24 +305,24 @@ integration.](https://my.home-assistant.io/badges/integration.svg)](https://my.h
 - Select the calendar and then select `Configure`
 - Reconfigure as if you were setting it up for the first time
 
-**NOTE:** Changes may not be picked up right away. The default update cycle of
-the calendar is to check for updates every 2 minutes and events are refreshed
-around every 30 seconds. If you want to force a full update right away, select
-the `...` menu next to `Configure` and select `Reload`
+**NOTE:** Changes may not appear right away. The default update cycle checks
+for updates every 2 minutes and events refresh around every 30 seconds. To
+force a full update right away, select the `...` menu next to `Configure` and
+select `Reload`
 
 ## Known issues
 
-While the integration supports reconfiguration a few things may not fully update
-after a reconfiguration. If you are having issues with reconfigured options
-not being picked up properly try reloading the particular integration
-installation or restart Home Assistant.
+While the integration supports reconfiguration, some options may not fully
+update after a change. If you have issues with reconfigured options not taking
+effect, try reloading the particular integration installation or restart Home
+Assistant.
 
 ## Frequently Asked Questions
 
 ### Why does my calendar events say `Reserved` instead of the guest's name?
 
-AirBnB does not include guest or booking details in the invite. What is included
-in the `ics` data varies by provider. Calendar `ics` URLs from some 3rd party
+AirBnB does not include guest or booking details in the invite. What the `ics`
+data includes varies by provider. Calendar `ics` URLs from some 3rd party
 tools (e.g. Host Tools and Guesty) do include guest information and will show
 that rather than `Reserved` in calendar events.
 
@@ -235,36 +336,35 @@ Each provider has slightly different instructions:
 
 ### How do I use custom calendars?
 
-Custom calendars can be used as long as they provide a valid ICS file via an
-HTTPS connection. The events on the calendar can be done in multiple ways.
+Custom calendars work as long as they provide a valid ICS file via an HTTPS
+connection. You can structure the events on the calendar in different ways.
 
-It is recommended that the event Summary (aka event title) contain the guest's
-name and not the word `Reserved`. It is strongly recommended that any calendar
-entries across the sensor count worth of events be unique. If the entries are not
-unique, Rental Control may run into issues as the event Summary is used in the
-slot management.
+We recommend that the event Summary (aka event title) contain the guest's name
+and not the word `Reserved`. We also strongly recommend that any calendar
+entries across the sensor count worth of events have unique names. If the
+entries are not unique, Rental Control may run into issues as the event Summary
+drives the slot management.
 
-Data that will be pulled from the Description of the event (and the match keys):
+The integration extracts the following data from the Description of the event
+(and the match keys):
 
-- Phone numbers for use in generating door codes can be provided in one of two
-  ways
+- Phone numbers for generating door codes in one of two ways
     - A line in the Description matching this regular expression:
-      `\(?Last 4 Digits\)?:\s+(\d{4})` -- This line will always take
-      precedence for generating a door code based on last 4 digits.
+      `\(?Last 4 Digits\)?:\s+(\d{4})` -- This line always takes precedence
+      for generating a door code based on last 4 digits.
     - A line in the Description matching this regular expression:
       `Phone(?: Number)?:\s+(\+?[\d\. \-\(\)]{9,})` which will then have the
       "air" squeezed out of it to extract the last 4 digits in the number
 - Number of guests
     - A line in the Description that matches: `Guests:\s+(\d+)$`
-    - Alternatively, the following lines will be added together to get the data:
+    - The following lines also work and their values sum together:
         - `Adults:\s+(\d+)$`
         - `Children:\s+(\d+)$`
-- Email addresses can be extracted from the Description by matching against:
-  `Email:\s+(\S+@\S+)`
-- Reservation URLS will match against the first (and hopefully only) URL in
-  the Description
+- The integration extracts email addresses from the Description by matching
+  against: `Email:\s+(\S+@\S+)`
+- Reservation URLs match against the first URL in the Description
 
-An example calendar entry with all of this data might look like this:
+An example calendar entry with this data might look like this:
 
 ```
 Title: John and Jane Doe
@@ -275,7 +375,7 @@ Description:
     https://www.example.com/reservation/123456789
 ```
 
-The following information would be extracted from this event:
+The integration extracts the following information from this event:
 
 ```
 Slot name: John and Jane Doe
@@ -288,7 +388,7 @@ Reservation URL: https://www.example.com/reservation/123456789
 
 ### Automation Examples
 
-Here are some examples of automations that can be done with Rental Control
+Here are some examples of automations that work with Rental Control
 
 - Manage thermostat for guests and between guests
     ```yaml
@@ -374,10 +474,10 @@ python -m pytest tests/
 # Run with coverage report
 python -m pytest tests/ --cov=custom_components.rental_control --cov-report=term-missing
 
-# Run only unit tests
+# Run unit tests
 python -m pytest -m unit
 
-# Run only integration tests
+# Run integration tests
 python -m pytest -m integration
 
 # Run a specific test file
