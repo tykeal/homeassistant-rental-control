@@ -79,3 +79,11 @@ repos:
     rev: 393031adb9afb225ee52ae2ccd7a5af5525e03e8  # frozen: v1.7.11
     hooks:
       - id: actionlint
+
+  - repo: https://github.com/btford/write-good
+    rev: ab66ce10136dfad5146e69e70f82a3efac8842c1  # frozen: v1.0.8
+    hooks:
+      - id: write-good
+        files: "\\.(rst|md|markdown|mdown|mkdn)$"
+        exclude: "^\\.specify/|^specs/|^\\.github/|^code-reviews/|^info\\.md$|^AGENTS\\.md$|^UV_USAGE\\.md$"
+        args: [--no-adverb]
