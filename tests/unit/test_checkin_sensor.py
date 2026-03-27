@@ -41,6 +41,7 @@ from custom_components.rental_control.const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from custom_components.rental_control.const import EARLY_CHECKOUT_GRACE_MINUTES
 from custom_components.rental_control.const import EVENT_RENTAL_CONTROL_CHECKIN
 from custom_components.rental_control.const import EVENT_RENTAL_CONTROL_CHECKOUT
+from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
 from custom_components.rental_control.const import UNSUB_LISTENERS
 from custom_components.rental_control.sensors.checkinsensor import CheckinTrackingSensor
 
@@ -1255,6 +1256,60 @@ class TestStaleStateValidation:
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
         assert sensor._checkin_source == "automatic"
 
+    async def test_awaiting_stays_awaiting_on_restore_with_monitoring(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test restored awaiting stays awaiting when monitoring is on.
+
+        When keymaster monitoring is enabled and HA restarts with
+        awaiting_checkin state whose start has already passed, the
+        sensor must NOT silently transition to checked_in.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        # Monitoring switch is ON
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
+        }
+
+        now = dt_util.now()
+        start = now - timedelta(hours=2)
+        end = now + timedelta(hours=48)
+
+        data_dict = _make_extra_data_dict(
+            state=CHECKIN_STATE_AWAITING,
+            summary="Reserved - John Smith",
+            start=start,
+            end=end,
+            slot_name="John Smith",
+            checkin_source=None,
+            transition_target_time=start,
+        )
+
+        event = _make_event(
+            summary="Reserved - John Smith",
+            start=start,
+            end=end,
+        )
+        mock_checkin_coordinator.data = [event]
+        mock_checkin_coordinator.last_update_success = True
+
+        with patch.object(
+            sensor,
+            "async_get_last_extra_data",
+            new=AsyncMock(return_value=_mock_extra_data(data_dict)),
+        ):
+            await sensor.async_added_to_hass()
+
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._checkin_source is None
+
     async def test_checked_out_transitions_to_awaiting_when_new_event(
         self,
         hass: HomeAssistant,
@@ -1943,12 +1998,11 @@ class TestToggleMidEvent:
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test time-based fallback fires at event start regardless of toggle.
+        """Test time-based auto check-in fires when monitoring is off.
 
-        The auto check-in timer is always scheduled at event start
-        regardless of monitoring switch state.  When monitoring is off,
-        the listener blocks keymaster events, and only the time-based
-        callback fires.
+        When keymaster monitoring is explicitly disabled the auto
+        check-in timer callback should transition to checked_in at
+        event start time.
         """
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
@@ -1956,6 +2010,12 @@ class TestToggleMidEvent:
         mock_checkin_coordinator.lockname = "test_lock"
         mock_checkin_coordinator.start_slot = 10
         mock_checkin_coordinator.max_events = 3
+
+        # Explicitly register monitoring switch as OFF
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=False),
+        }
 
         # Set up sensor in awaiting state with future event
         future_start = dt_util.now() + timedelta(hours=2)
@@ -1973,6 +2033,125 @@ class TestToggleMidEvent:
         sensor._async_auto_checkin_callback(future_start)
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
         assert sensor._checkin_source == "automatic"
+
+    async def test_monitoring_on_blocks_auto_checkin_callback(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test auto check-in callback is suppressed when monitoring on.
+
+        When keymaster monitoring is enabled the timer callback must
+        NOT transition to checked_in — the sensor should remain in
+        awaiting_checkin until the guest actually uses their door code.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        mock_checkin_coordinator.lockname = "test_lock"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        # Monitoring switch is ON
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
+        }
+
+        # Set up sensor in awaiting state with future event
+        future_start = dt_util.now() + timedelta(hours=2)
+        event = _make_event(start=future_start)
+        mock_checkin_coordinator.data = [event]
+        mock_checkin_coordinator.last_update_success = True
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+
+        # Timer fires — but monitoring is on so no transition
+        sensor._async_auto_checkin_callback(future_start)
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._checkin_source is None
+
+    async def test_monitoring_on_blocks_immediate_auto_checkin(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test past-start event stays awaiting when monitoring is on.
+
+        When a new event whose start time has already passed is picked
+        up by the coordinator update, _transition_to_awaiting should
+        NOT immediately transition to checked_in if keymaster
+        monitoring is enabled.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        mock_checkin_coordinator.lockname = "test_lock"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        # Monitoring switch is ON
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
+        }
+
+        # Event whose start has already passed
+        event = _make_event(
+            start=dt_util.now() - timedelta(hours=1),
+            end=dt_util.now() + timedelta(hours=48),
+        )
+        mock_checkin_coordinator.data = [event]
+        mock_checkin_coordinator.last_update_success = True
+
+        sensor._handle_coordinator_update()
+
+        # Should stay in awaiting, not auto-checkin
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._checkin_source is None
+
+    async def test_monitoring_on_then_keymaster_unlock_checks_in(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test full flow: monitoring on, timer suppressed, unlock works.
+
+        With monitoring enabled and event start passed, the sensor
+        stays in awaiting_checkin.  A subsequent keymaster unlock
+        transitions to checked_in with source ``keymaster``.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        mock_checkin_coordinator.lockname = "test_lock"
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        # Monitoring switch is ON
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
+        }
+
+        # Event whose start has already passed
+        event = _make_event(
+            start=dt_util.now() - timedelta(hours=1),
+            end=dt_util.now() + timedelta(hours=48),
+        )
+        mock_checkin_coordinator.data = [event]
+        mock_checkin_coordinator.last_update_success = True
+
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+
+        # Guest uses their door code
+        sensor.async_handle_keymaster_unlock(code_slot_num=11)
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+        assert sensor._checkin_source == "keymaster"
 
     async def test_toggle_while_checked_in_no_effect(
         self,

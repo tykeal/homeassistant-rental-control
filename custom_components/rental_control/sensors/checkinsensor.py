@@ -42,6 +42,7 @@ from ..const import DOMAIN
 from ..const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from ..const import EVENT_RENTAL_CONTROL_CHECKIN
 from ..const import EVENT_RENTAL_CONTROL_CHECKOUT
+from ..const import KEYMASTER_MONITORING_SWITCH
 from ..util import add_call
 from ..util import check_gather_results
 from ..util import compute_early_expiry_time
@@ -391,6 +392,19 @@ class CheckinTrackingSensor(
             self.coordinator.event_prefix or "",
         )
 
+    def _is_keymaster_monitoring_enabled(self) -> bool:
+        """Return True when keymaster monitoring is switched on.
+
+        Looks up the :class:`KeymasterMonitoringSwitch` stored in
+        ``hass.data`` for this config entry.  Returns ``False`` when
+        the switch entity is missing or turned off.
+        """
+        entry_data = self._hass.data.get(DOMAIN, {}).get(
+            self._config_entry.entry_id, {}
+        )
+        monitoring_switch = entry_data.get(KEYMASTER_MONITORING_SWITCH)
+        return monitoring_switch is not None and monitoring_switch.is_on
+
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator.
@@ -515,10 +529,13 @@ class CheckinTrackingSensor(
                 event.start,
             )
         else:
-            # Event start already passed - auto check-in immediately
+            # Event start already passed — auto check-in only if
+            # keymaster monitoring is disabled; otherwise stay in
+            # awaiting_checkin until the guest uses their code.
             self._transition_target_time = None
-            self._transition_to_checked_in(source="automatic")
-            return
+            if not self._is_keymaster_monitoring_enabled():
+                self._transition_to_checked_in(source="automatic")
+                return
 
         self.async_write_ha_state()
 
@@ -741,13 +758,27 @@ class CheckinTrackingSensor(
     def _async_auto_checkin_callback(self, _now: datetime) -> None:
         """Timer callback for automatic check-in at event start time.
 
+        When keymaster monitoring is enabled the sensor must stay in
+        ``awaiting_checkin`` until the guest actually uses their door
+        code, so the automatic transition is skipped.
+
         Args:
             _now: The current time when the callback fires.
         """
         _LOGGER.debug("Auto check-in timer fired for %s", self.coordinator.name)
         self._unsub_timer = None
-        if self._state == CHECKIN_STATE_AWAITING:
-            self._transition_to_checked_in(source="automatic")
+        if self._state != CHECKIN_STATE_AWAITING:
+            return
+        if self._is_keymaster_monitoring_enabled():
+            _LOGGER.debug(
+                "Keymaster monitoring is on; staying in awaiting_checkin "
+                "until door code is used for %s",
+                self.coordinator.name,
+            )
+            self._transition_target_time = None
+            self.async_write_ha_state()
+            return
+        self._transition_to_checked_in(source="automatic")
 
     @callback
     def _async_auto_checkout_callback(self, _now: datetime) -> None:
@@ -1026,10 +1057,12 @@ class CheckinTrackingSensor(
             if (
                 self._tracked_event_start is not None
                 and self._tracked_event_start <= now
+                and not self._is_keymaster_monitoring_enabled()
             ):
                 # Event start passed while we were down → silent checkin
                 # (no HA bus event to avoid triggering automations on
-                # restart catch-up).
+                # restart catch-up).  Skipped when keymaster monitoring
+                # is enabled — the guest must use their door code.
                 _LOGGER.debug(
                     "Stale restore: awaiting_checkin but start passed, "
                     "transitioning to checked_in (silent)"
