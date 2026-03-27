@@ -21,6 +21,7 @@ from typing import Any
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.components.datetime import DOMAIN as DATETIME
 from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE
 from homeassistant.core import HomeAssistant
@@ -162,6 +163,7 @@ class CheckinExtraStoredData(ExtraStoredData):
 
 class CheckinTrackingSensor(
     CoordinatorEntity["RentalControlCoordinator"],
+    SensorEntity,
     RestoreEntity,
 ):
     """Sensor that tracks guest check-in/check-out state.

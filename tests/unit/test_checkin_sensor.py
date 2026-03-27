@@ -121,7 +121,7 @@ class TestSensorEntityProperties:
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
-        assert sensor._attr_device_class == SensorDeviceClass.ENUM
+        assert sensor.device_class == SensorDeviceClass.ENUM
 
     async def test_options_lists_all_states(
         self,
@@ -133,7 +133,7 @@ class TestSensorEntityProperties:
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
-        assert sensor._attr_options == [
+        assert sensor.options == [
             CHECKIN_STATE_NO_RESERVATION,
             CHECKIN_STATE_AWAITING,
             CHECKIN_STATE_CHECKED_IN,
