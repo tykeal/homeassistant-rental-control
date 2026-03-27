@@ -102,6 +102,46 @@ def _create_sensor(
 
 
 # ===========================================================================
+# Sensor entity properties
+# ===========================================================================
+
+
+class TestSensorEntityProperties:
+    """Tests for CheckinTrackingSensor entity configuration."""
+
+    async def test_device_class_is_enum(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test sensor declares ENUM device class."""
+        from homeassistant.components.sensor import SensorDeviceClass
+
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        assert sensor.device_class == SensorDeviceClass.ENUM
+
+    async def test_options_lists_all_states(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test sensor options contain all four states."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        assert sensor.options == [
+            CHECKIN_STATE_NO_RESERVATION,
+            CHECKIN_STATE_AWAITING,
+            CHECKIN_STATE_CHECKED_IN,
+            CHECKIN_STATE_CHECKED_OUT,
+        ]
+
+
+# ===========================================================================
 # T007: State machine transitions
 # ===========================================================================
 
