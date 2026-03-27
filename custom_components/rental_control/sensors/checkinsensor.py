@@ -20,6 +20,7 @@ from typing import Any
 
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.components.datetime import DOMAIN as DATETIME
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE
 from homeassistant.core import HomeAssistant
@@ -192,6 +193,13 @@ class CheckinTrackingSensor(
         self._config_entry = config_entry
         self._attr_has_entity_name = True
         self._attr_translation_key = "checkin"
+        self._attr_device_class = SensorDeviceClass.ENUM
+        self._attr_options = [
+            CHECKIN_STATE_NO_RESERVATION,
+            CHECKIN_STATE_AWAITING,
+            CHECKIN_STATE_CHECKED_IN,
+            CHECKIN_STATE_CHECKED_OUT,
+        ]
         self._state: str = CHECKIN_STATE_NO_RESERVATION
 
         # Tracked event fields (from data-model.md)
