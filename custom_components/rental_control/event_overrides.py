@@ -303,6 +303,8 @@ class EventOverrides:
                 self._slot_uids.pop(slot, None)
 
             self.__assign_next_slot()
+            if len(self._overrides) == self.max_slots:
+                self._ready = True
 
     def verify_slot_ownership(self, slot: int, expected_name: str) -> bool:
         """Check if slot is still assigned to expected_name.

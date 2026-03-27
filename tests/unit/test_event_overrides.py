@@ -119,6 +119,17 @@ class TestEventOverridesInit:
         eo.update(1, "", "", now, now)
         assert eo.ready is True
 
+    @pytest.mark.asyncio
+    async def test_async_update_sets_ready(self) -> None:
+        """Verify async_update sets ready once all slots are populated."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+        now = dt_util.now()
+        assert eo.ready is False
+        await eo.async_update(1, "code1", "Guest A", now, now)
+        assert eo.ready is False
+        await eo.async_update(2, "code2", "Guest B", now, now)
+        assert eo.ready is True
+
 
 # ---------------------------------------------------------------------------
 # EventOverride TypedDict
