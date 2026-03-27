@@ -1,7 +1,7 @@
 {
   "name": "Rental Control",
-  "hacs": "1.32.1",
   "zip_release": true,
   "filename": "rental_control.zip",
-  "homeassistant": "2025.8.0"
+  "homeassistant": "2025.8.0",
+  "render_readme": true
 }
