@@ -30,8 +30,11 @@ The service handler validates the following before executing:
 1. **State check**: Sensor must be in `checked_in` state
    - Error: `"Checkout is only available when the guest is checked in (current state: {state})"`
 
-2. **Reservation window check**: Current datetime must be within the active reservation window — on or after the event start datetime and strictly before the event end datetime (FR-019)
-   - Error: `"Checkout is only available during the active reservation window (current: {current_datetime}, allowed: {start_datetime} to {end_datetime})"`
+2. **Reservation boundaries check**: Both `start` and `end` must be known
+   - Error: `"Checkout requires known reservation boundaries"`
+
+3. **Calendar-day check**: Current local date must be on or after the last calendar day of the reservation (the date of the event end time in the HA-configured local timezone)
+   - Error: `"Checkout is only available on the last day of the reservation or later (current: {current_date}, checkout day: {end_date})"`
 
 ## Success Response
 

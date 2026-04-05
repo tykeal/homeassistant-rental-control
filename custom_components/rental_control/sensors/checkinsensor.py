@@ -221,6 +221,11 @@ class CheckinTrackingSensor(
         # Follow-on event key for linger guard (not persisted)
         self._linger_followon_key: str | None = None
 
+        # Effective baseline for follow-on event lookups (not persisted).
+        # Set by _transition_to_checked_out to preserve the correct
+        # reference point across subsequent coordinator updates.
+        self._linger_baseline: datetime | None = None
+
         # Internal timer unsubscribe handle
         self._unsub_timer: CALLBACK_TYPE | None = None
 
@@ -458,8 +463,25 @@ class CheckinTrackingSensor(
         elif current_state == CHECKIN_STATE_CHECKED_IN:
             tracked = self._find_tracked_event()
             if tracked is not None:
-                # FR-030: Check if event end time changed
-                if tracked.end != self._tracked_event_end:
+                now = dt_util.now()
+                if tracked.end <= now:
+                    # Event has ended — force checkout as safety net
+                    # in case the auto-checkout timer failed to fire.
+                    _LOGGER.debug(
+                        "Event end time %s has passed, forcing "
+                        "automatic checkout for %s",
+                        tracked.end,
+                        self.coordinator.name,
+                    )
+                    self._tracked_event_end = tracked.end
+                    self._tracked_event_slot_name = self._extract_slot_name(tracked)
+                    self._cancel_timer()
+                    self._transition_to_checked_out(
+                        source="automatic",
+                        linger_baseline=tracked.end,
+                    )
+                elif tracked.end != self._tracked_event_end:
+                    # FR-030: Check if event end time changed
                     _LOGGER.debug(
                         "Event end time changed from %s to %s, "
                         "rescheduling auto check-out",
@@ -469,15 +491,20 @@ class CheckinTrackingSensor(
                     self._tracked_event_end = tracked.end
                     self._cancel_timer()
                     self._schedule_auto_checkout(tracked.end)
-                # Update slot name in case it changed
-                self._tracked_event_slot_name = self._extract_slot_name(tracked)
-                self.async_write_ha_state()
+                    self._tracked_event_slot_name = self._extract_slot_name(tracked)
+                    self.async_write_ha_state()
+                else:
+                    # Update slot name in case it changed
+                    self._tracked_event_slot_name = self._extract_slot_name(tracked)
+                    self.async_write_ha_state()
             else:
                 # Tracked event genuinely gone
                 self._transition_to_no_reservation()
 
         elif current_state == CHECKIN_STATE_CHECKED_OUT:
-            checkout_time = self._checkout_time or dt_util.now()
+            checkout_time = (
+                self._linger_baseline or self._checkout_time or dt_util.now()
+            )
             followon = self._find_followon_event(checkout_time)
             if followon is not None:
                 followon_key = self._event_key(followon.summary, followon.start)
@@ -527,6 +554,7 @@ class CheckinTrackingSensor(
         self._checked_out_event_key = None
         self._next_event_start_day = None
         self._linger_followon_key = None
+        self._linger_baseline = None
 
         # Schedule auto check-in at event start time
         self._cancel_timer()
@@ -612,9 +640,16 @@ class CheckinTrackingSensor(
         else:
             # End time already passed - checkout immediately
             self._transition_target_time = None
-            self._transition_to_checked_out(source="automatic")
+            self._transition_to_checked_out(
+                source="automatic",
+                linger_baseline=end_time,
+            )
 
-    def _transition_to_checked_out(self, source: str) -> None:
+    def _transition_to_checked_out(
+        self,
+        source: str,
+        linger_baseline: datetime | None = None,
+    ) -> None:
         """Transition to checked_out state.
 
         Records checkout details, fires checkout event, stores event
@@ -622,6 +657,11 @@ class CheckinTrackingSensor(
 
         Args:
             source: How check-out occurred (``manual`` or ``automatic``).
+            linger_baseline: Reference time for follow-on event lookup
+                and linger scheduling.  Defaults to ``dt_util.now()``.
+                Pass the event end time when the reservation has already
+                ended so that follow-on events starting between ``end``
+                and ``now`` are not skipped.
         """
         _LOGGER.debug(
             "Transitioning to checked_out (source=%s) for event: %s",
@@ -661,11 +701,13 @@ class CheckinTrackingSensor(
 
         # Compute post-checkout linger timing
         self._cancel_timer()
-        self._compute_linger_timing()
+        effective_baseline = linger_baseline or self._checkout_time
+        self._linger_baseline = effective_baseline
+        self._compute_linger_timing(baseline=effective_baseline)
 
         self.async_write_ha_state()
 
-    def _compute_linger_timing(self) -> None:
+    def _compute_linger_timing(self, baseline: datetime | None = None) -> None:
         """Compute and schedule post-checkout linger timing.
 
         Determines which FR-006 scenario applies based on the next
@@ -674,8 +716,15 @@ class CheckinTrackingSensor(
         Date comparisons use the HA-configured local timezone so that
         "same calendar day" is evaluated from the user's perspective,
         not raw UTC dates.
+
+        Args:
+            baseline: Reference time for follow-on event lookup and
+                gap calculations.  Falls back to ``_linger_baseline``,
+                then ``_checkout_time``, then ``dt_util.now()``.
         """
-        checkout_time = self._checkout_time or dt_util.now()
+        checkout_time = (
+            baseline or self._linger_baseline or self._checkout_time or dt_util.now()
+        )
         next_event = self._find_followon_event(checkout_time)
 
         if next_event is not None:
@@ -760,6 +809,7 @@ class CheckinTrackingSensor(
         self._transition_target_time = None
         self._checked_out_event_key = None
         self._linger_followon_key = None
+        self._linger_baseline = None
 
         self._cancel_timer()
         self.async_write_ha_state()
@@ -814,7 +864,7 @@ class CheckinTrackingSensor(
         _LOGGER.debug("Linger-to-awaiting timer fired for %s", self.coordinator.name)
         self._unsub_timer = None
         if self._state == CHECKIN_STATE_CHECKED_OUT:
-            checkout_time = self._checkout_time or _now
+            checkout_time = self._linger_baseline or self._checkout_time or _now
             event = self._find_followon_event(checkout_time)
             if event is not None:
                 self._transition_to_awaiting(event)
@@ -902,10 +952,11 @@ class CheckinTrackingSensor(
     async def async_checkout(self) -> None:
         """Handle manual checkout service call.
 
-        Validates guard conditions per FR-019 and specs/004-checkin-tracking/contracts/checkout-service.md:
+        Validates guard conditions:
         1. Sensor must be in ``checked_in`` state
-        2. Current datetime must be within ``[start, end)`` of the active
-           reservation window
+        2. Reservation boundaries must be known
+        3. Current date must be on or after the last day of the
+           reservation (the calendar date of the event end time)
 
         On success, calls ``_transition_to_checked_out(source="manual")``.
 
@@ -915,26 +966,28 @@ class CheckinTrackingSensor(
         # Guard 1: State must be checked_in
         if self._state != CHECKIN_STATE_CHECKED_IN:
             raise ServiceValidationError(
-                f"Checkout is only available when the guest is checked in "
-                f"(current state: {self._state})"
+                f"Checkout is only available when the guest is "
+                f"checked in (current state: {self._state})"
             )
 
-        # Guard 2: Current datetime within active reservation window [start, end)
+        # Guard 2: Reservation boundaries must be known
         now = dt_util.now()
-        start = self._tracked_event_start
         end = self._tracked_event_end
 
-        if start is not None and end is not None:
-            if now < start or now >= end:
-                raise ServiceValidationError(
-                    f"Checkout is only available during the active reservation "
-                    f"window (current: {now.isoformat()}, "
-                    f"allowed: {start.isoformat()} to {end.isoformat()})"
-                )
-        elif start is None or end is None:
+        if self._tracked_event_start is None or end is None:
             raise ServiceValidationError(
-                "Checkout is only available during the active reservation "
-                "window (reservation boundaries are not set)"
+                "Checkout requires known reservation boundaries"
+            )
+
+        # Guard 3: Must be on or after the last day of the reservation
+        local_now = dt_util.as_local(now)
+        local_end = dt_util.as_local(end)
+        if local_now.date() < local_end.date():
+            raise ServiceValidationError(
+                f"Checkout is only available on the last day of "
+                f"the reservation or later "
+                f"(current: {local_now.date().isoformat()}, "
+                f"checkout day: {local_end.date().isoformat()})"
             )
 
         # Early expiry: shorten lock code if switch is on (FR-022)
@@ -956,7 +1009,12 @@ class CheckinTrackingSensor(
                     self._tracked_event_end = new_end
                     await self._async_update_lock_code_expiry(new_end)
 
-        self._transition_to_checked_out(source="manual")
+        # Use event end as linger baseline when past end so that
+        # follow-on event detection uses the correct reference point.
+        effective_baseline = min(now, end)
+        self._transition_to_checked_out(
+            source="manual", linger_baseline=effective_baseline
+        )
 
     async def async_added_to_hass(self) -> None:
         """Restore persisted state and validate against current time/data.
