@@ -1042,7 +1042,7 @@ requires-dist = [
     { name = "aioresponses", marker = "extra == 'test'" },
     { name = "homeassistant", marker = "extra == 'dev'", specifier = ">=2026.4.0" },
     { name = "homeassistant", marker = "extra == 'test'", specifier = ">=2026.4.0" },
-    { name = "icalendar", specifier = ">=6.1.0" },
+    { name = "icalendar", specifier = ">=7.0.0" },
     { name = "pytest-homeassistant-custom-component", marker = "extra == 'test'" },
     { name = "x-wr-timezone", specifier = ">=2.0.0" },
 ]
