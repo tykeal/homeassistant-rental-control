@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 from aioresponses import aioresponses
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.helpers import entity_registry as er
 import homeassistant.util.dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -371,7 +372,15 @@ async def test_sensors_available_on_fetch_failure(
         await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    sensor_state = hass.states.get("sensor.rental_control_test_rental_event_0")
+    registry = er.async_get(hass)
+    entries = er.async_entries_for_config_entry(registry, mock_config_entry.entry_id)
+    event_0 = next(
+        (e for e in entries if e.domain == "sensor" and "event_0" in e.entity_id),
+        None,
+    )
+    assert event_0 is not None, "event_0 sensor not found in entity registry"
+
+    sensor_state = hass.states.get(event_0.entity_id)
     assert sensor_state is not None
     assert sensor_state.state != "unavailable"
     original_state = sensor_state.state
@@ -389,7 +398,7 @@ async def test_sensors_available_on_fetch_failure(
 
     assert coordinator.last_update_success is True
 
-    sensor_state = hass.states.get("sensor.rental_control_test_rental_event_0")
+    sensor_state = hass.states.get(event_0.entity_id)
     assert sensor_state is not None
     assert sensor_state.state != "unavailable"
     assert sensor_state.state == original_state

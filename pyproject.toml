@@ -6,7 +6,7 @@ name = "homeassistant-rental-control"
 dynamic = ["version"]
 description = "Home Assistant integration for managing rental properties with calendar and door code management"
 readme = "README.md"
-requires-python = ">=3.13.2"
+requires-python = ">=3.14.2"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Andrew Grimberg", email = "tykeal@bardicgrove.org"}
@@ -18,7 +18,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Home Automation",
 ]
 
@@ -29,12 +29,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "homeassistant>=2025.8.0",
+    "homeassistant>=2026.4.0",
 ]
 
 test = [
     "aioresponses",
-    "homeassistant>=2025.8.0",
+    "homeassistant>=2026.4.0",
     "pytest-homeassistant-custom-component",
 ]
 
@@ -57,7 +57,7 @@ packages = ["custom_components"]
 
 [dependency-groups]
 dev = [
-    "homeassistant>=2025.8.0",
+    "homeassistant>=2026.4.0",
 ]
 
 [tool.pytest.ini_options]
@@ -89,7 +89,7 @@ ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 88
-target-version = "py313"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = [

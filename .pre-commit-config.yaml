@@ -12,6 +12,14 @@ ci:
     Chore: pre-commit autoupdate
 
     Signed-off-by: pre-commit-ci[bot] <66853113+pre-commit-ci[bot]@users.noreply.github.com>
+  # pre-commit.ci runs Python 3.12 which cannot parse Python 3.14
+  # syntax (PEP 758 unparenthesized except) emitted by ruff format
+  # targeting py314. These hooks still run locally and in GitHub
+  # Actions on Python 3.14.
+  skip:
+    - ruff-format
+    - interrogate
+    - mypy
 
 
 repos:
