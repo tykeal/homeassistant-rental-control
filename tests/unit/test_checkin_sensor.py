@@ -3700,13 +3700,13 @@ class TestEventTrackingStability:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
 
-    async def test_checked_in_preserved_when_event_truly_gone(
+    async def test_checked_in_preserved_when_event_mismatched(
         self,
         hass: HomeAssistant,
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test checked_in preserved even with different event in data."""
+        """Test checked_in preserved when different event in data."""
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
