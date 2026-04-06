@@ -229,6 +229,9 @@ class CheckinTrackingSensor(
         # Internal timer unsubscribe handle
         self._unsub_timer: CALLBACK_TYPE | None = None
 
+        # Guard against repeated warnings when tracked event is missing
+        self._event_missing_warned: bool = False
+
         # Unique ID
         self._unique_id = gen_uuid(f"{self.coordinator.unique_id} checkin_tracking")
 
@@ -463,6 +466,7 @@ class CheckinTrackingSensor(
         elif current_state == CHECKIN_STATE_CHECKED_IN:
             tracked = self._find_tracked_event()
             if tracked is not None:
+                self._event_missing_warned = False
                 now = dt_util.now()
                 if tracked.end <= now:
                     # Event has ended — force checkout as safety net
@@ -498,8 +502,41 @@ class CheckinTrackingSensor(
                     self._tracked_event_slot_name = self._extract_slot_name(tracked)
                     self.async_write_ha_state()
             else:
-                # Tracked event genuinely gone
-                self._transition_to_no_reservation()
+                # Tracked event not found in coordinator data.
+                # If the stored end time has already passed, force
+                # checkout as a safety net (mirrors the tracked-event
+                # end-time check above).  Otherwise, preserve
+                # checked_in for transient data mismatches.
+                fallback_end = self._tracked_event_end
+                if fallback_end is not None and fallback_end <= dt_util.now():
+                    _LOGGER.warning(
+                        "Tracked event not found in coordinator data "
+                        "while checked_in for %s and stored end "
+                        "time %s has passed; forcing checkout",
+                        self.coordinator.name,
+                        fallback_end,
+                    )
+                    self._cancel_timer()
+                    self._transition_to_checked_out(
+                        source="automatic",
+                        linger_baseline=fallback_end,
+                    )
+                else:
+                    if not self._event_missing_warned:
+                        _LOGGER.warning(
+                            "Tracked event not found in coordinator "
+                            "data while checked_in for %s; "
+                            "preserving state",
+                            self.coordinator.name,
+                        )
+                        self._event_missing_warned = True
+                    else:
+                        _LOGGER.debug(
+                            "Tracked event still missing for %s; "
+                            "preserving checked_in state",
+                            self.coordinator.name,
+                        )
+                    self.async_write_ha_state()
 
         elif current_state == CHECKIN_STATE_CHECKED_OUT:
             checkout_time = (
@@ -555,6 +592,7 @@ class CheckinTrackingSensor(
         self._next_event_start_day = None
         self._linger_followon_key = None
         self._linger_baseline = None
+        self._event_missing_warned = False
 
         # Schedule auto check-in at event start time
         self._cancel_timer()
@@ -594,6 +632,7 @@ class CheckinTrackingSensor(
         self._state = CHECKIN_STATE_CHECKED_IN
         self._checkin_source = source
         self._transition_target_time = None
+        self._event_missing_warned = False
 
         # Fire check-in event (per contracts/events.md)
         self._hass.bus.async_fire(
@@ -671,6 +710,7 @@ class CheckinTrackingSensor(
         self._state = CHECKIN_STATE_CHECKED_OUT
         self._checkout_source = source
         self._checkout_time = dt_util.now()
+        self._event_missing_warned = False
 
         # Store event identity key for FR-007
         if self._tracked_event_summary and self._tracked_event_start:
@@ -810,6 +850,7 @@ class CheckinTrackingSensor(
         self._checked_out_event_key = None
         self._linger_followon_key = None
         self._linger_baseline = None
+        self._event_missing_warned = False
 
         self._cancel_timer()
         self.async_write_ha_state()

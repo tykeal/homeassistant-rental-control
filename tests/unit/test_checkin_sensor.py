@@ -538,31 +538,35 @@ class TestEventCancelled:
 
         assert sensor._state == CHECKIN_STATE_NO_RESERVATION
 
-    async def test_checked_in_to_no_reservation_on_event_removed(
+    async def test_checked_in_preserved_when_event_disappears(
         self,
         hass: HomeAssistant,
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test checked_in → no_reservation when tracked event disappears."""
+        """Test checked_in is preserved when tracked event disappears.
+
+        The checked_in state represents a physical guest in the
+        property.  A transient coordinator data mismatch must not
+        drop the state to no_reservation.
+        """
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
 
         now = dt_util.now()
-        # Put sensor in checked_in state
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._tracked_event_summary = "Reserved - John Smith"
         sensor._tracked_event_start = now - timedelta(hours=2)
-        sensor._tracked_event_end = now + timedelta(hours=48)
+        sensor._tracked_event_end = now + timedelta(hours=4)
         sensor._tracked_event_slot_name = "John Smith"
 
-        # Event disappears
+        # Event disappears from coordinator data
         mock_checkin_coordinator.data = []
         mock_checkin_coordinator.last_update_success = True
         sensor._handle_coordinator_update()
 
-        assert sensor._state == CHECKIN_STATE_NO_RESERVATION
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
 
     async def test_awaiting_shifts_to_next_event_on_cancel(
         self,
@@ -3696,13 +3700,13 @@ class TestEventTrackingStability:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
 
-    async def test_checked_in_transitions_when_event_truly_gone(
+    async def test_checked_in_preserved_when_event_mismatched(
         self,
         hass: HomeAssistant,
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Test CHECKED_IN transitions to no_reservation when gone."""
+        """Test checked_in preserved when different event in data."""
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
@@ -3711,7 +3715,7 @@ class TestEventTrackingStability:
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._tracked_event_summary = "Reserved - Vanished"
         sensor._tracked_event_start = now - timedelta(hours=2)
-        sensor._tracked_event_end = now + timedelta(hours=48)
+        sensor._tracked_event_end = now + timedelta(hours=4)
         sensor._checkin_source = "automatic"
 
         mock_checkin_coordinator.data = [
@@ -3719,7 +3723,30 @@ class TestEventTrackingStability:
         ]
 
         sensor._handle_coordinator_update()
-        assert sensor._state == CHECKIN_STATE_NO_RESERVATION
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+
+    async def test_checked_in_force_checkout_when_event_gone_past_end(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test checked_in forces checkout when event gone and end passed."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - Vanished"
+        sensor._tracked_event_start = now - timedelta(hours=6)
+        sensor._tracked_event_end = now - timedelta(hours=1)
+        sensor._checkin_source = "automatic"
+
+        mock_checkin_coordinator.data = []
+
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
 
     async def test_awaiting_survives_event_position_shift(
         self,
