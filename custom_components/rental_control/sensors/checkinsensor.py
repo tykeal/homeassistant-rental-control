@@ -498,8 +498,18 @@ class CheckinTrackingSensor(
                     self._tracked_event_slot_name = self._extract_slot_name(tracked)
                     self.async_write_ha_state()
             else:
-                # Tracked event genuinely gone
-                self._transition_to_no_reservation()
+                # Tracked event not found in coordinator data.
+                # Preserve checked_in — a real guest is in the
+                # property.  The auto-checkout timer or end-time
+                # safety net will handle the transition; dropping
+                # to no_reservation here would lose physical state
+                # due to a transient data mismatch.
+                _LOGGER.warning(
+                    "Tracked event not found in coordinator data "
+                    "while checked_in for %s; preserving state",
+                    self.coordinator.name,
+                )
+                self.async_write_ha_state()
 
         elif current_state == CHECKIN_STATE_CHECKED_OUT:
             checkout_time = (
