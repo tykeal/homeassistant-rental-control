@@ -2,31 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 ---
 ignore:
-  # pillow transitive dependency via homeassistant — PSD
-  # out-of-bounds write (CVE-2026-25990), fixed in 12.1.1.
-  # We cannot pin pillow directly because it comes from
-  # homeassistant.
-  # pillow transitive dependency via homeassistant —
-  # buffer over-read in PcxDecode (CVE-2025-2312).
-  - vulnerability: GHSA-4xh5-x5gv-qwph
-    package:
-      name: pillow
-      type: python
-
-  - vulnerability: GHSA-cfh3-3jmp-rvhc
-    package:
-      name: pillow
-      type: python
-
-  # orjson transitive dependency via homeassistant —
-  # unlimited recursion depth in orjson.dumps, fixed in
-  # 3.11.6. We cannot pin orjson directly because it
-  # comes from homeassistant.
-  - vulnerability: GHSA-hx9q-6w63-j58v
-    package:
-      name: orjson
-      type: python
-
   # PyJWT transitive dependency via homeassistant —
   # accepts unknown crit header extensions
   # (CVE-2026-32597). We cannot pin PyJWT directly
@@ -34,29 +9,4 @@ ignore:
   - vulnerability: GHSA-752w-5fwx-jx9f
     package:
       name: PyJWT
-      type: python
-
-  # pyOpenSSL transitive dependency via homeassistant —
-  # use-after-free on connection shutdown
-  # (GHSA-5pwr-322w-8jr4) and low-severity issue
-  # (GHSA-vp96-hxj8-p424), fixed in 26.0.0. We cannot
-  # pin pyOpenSSL directly because it comes from
-  # homeassistant.
-  - vulnerability: GHSA-5pwr-322w-8jr4
-    package:
-      name: pyOpenSSL
-      type: python
-
-  - vulnerability: GHSA-vp96-hxj8-p424
-    package:
-      name: pyOpenSSL
-      type: python
-
-  # pygments transitive dependency via homeassistant —
-  # ReDoS in AdlLexer (CVE-2026-4539), no fix version
-  # available yet. We cannot pin pygments directly
-  # because it comes from homeassistant.
-  - vulnerability: CVE-2026-4539
-    package:
-      name: pygments
       type: python
