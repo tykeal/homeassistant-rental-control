@@ -3725,6 +3725,29 @@ class TestEventTrackingStability:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
 
+    async def test_checked_in_force_checkout_when_event_gone_past_end(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test checked_in forces checkout when event gone and end passed."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - Vanished"
+        sensor._tracked_event_start = now - timedelta(hours=6)
+        sensor._tracked_event_end = now - timedelta(hours=1)
+        sensor._checkin_source = "automatic"
+
+        mock_checkin_coordinator.data = []
+
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+
     async def test_awaiting_survives_event_position_shift(
         self,
         hass: HomeAssistant,

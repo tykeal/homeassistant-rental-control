@@ -503,25 +503,40 @@ class CheckinTrackingSensor(
                     self.async_write_ha_state()
             else:
                 # Tracked event not found in coordinator data.
-                # Preserve checked_in — a real guest is in the
-                # property.  The auto-checkout timer or end-time
-                # safety net will handle the transition; dropping
-                # to no_reservation here would lose physical state
-                # due to a transient data mismatch.
-                if not self._event_missing_warned:
+                # If the stored end time has already passed, force
+                # checkout as a safety net (mirrors the tracked-event
+                # end-time check above).  Otherwise, preserve
+                # checked_in for transient data mismatches.
+                fallback_end = self._tracked_event_end
+                if fallback_end is not None and fallback_end <= dt_util.now():
                     _LOGGER.warning(
                         "Tracked event not found in coordinator data "
-                        "while checked_in for %s; preserving state",
+                        "while checked_in for %s and stored end "
+                        "time %s has passed; forcing checkout",
                         self.coordinator.name,
+                        fallback_end,
                     )
-                    self._event_missing_warned = True
+                    self._cancel_timer()
+                    self._transition_to_checked_out(
+                        source="automatic",
+                        linger_baseline=fallback_end,
+                    )
                 else:
-                    _LOGGER.debug(
-                        "Tracked event still missing for %s; "
-                        "preserving checked_in state",
-                        self.coordinator.name,
-                    )
-                self.async_write_ha_state()
+                    if not self._event_missing_warned:
+                        _LOGGER.warning(
+                            "Tracked event not found in coordinator "
+                            "data while checked_in for %s; "
+                            "preserving state",
+                            self.coordinator.name,
+                        )
+                        self._event_missing_warned = True
+                    else:
+                        _LOGGER.debug(
+                            "Tracked event still missing for %s; "
+                            "preserving checked_in state",
+                            self.coordinator.name,
+                        )
+                    self.async_write_ha_state()
 
         elif current_state == CHECKIN_STATE_CHECKED_OUT:
             checkout_time = (
@@ -577,6 +592,7 @@ class CheckinTrackingSensor(
         self._next_event_start_day = None
         self._linger_followon_key = None
         self._linger_baseline = None
+        self._event_missing_warned = False
 
         # Schedule auto check-in at event start time
         self._cancel_timer()
@@ -616,6 +632,7 @@ class CheckinTrackingSensor(
         self._state = CHECKIN_STATE_CHECKED_IN
         self._checkin_source = source
         self._transition_target_time = None
+        self._event_missing_warned = False
 
         # Fire check-in event (per contracts/events.md)
         self._hass.bus.async_fire(
@@ -693,6 +710,7 @@ class CheckinTrackingSensor(
         self._state = CHECKIN_STATE_CHECKED_OUT
         self._checkout_source = source
         self._checkout_time = dt_util.now()
+        self._event_missing_warned = False
 
         # Store event identity key for FR-007
         if self._tracked_event_summary and self._tracked_event_start:
