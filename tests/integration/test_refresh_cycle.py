@@ -189,8 +189,10 @@ async def test_sensor_updates_on_refresh(
     registry = er.async_get(hass)
     entries = er.async_entries_for_config_entry(registry, mock_config_entry.entry_id)
     event_0 = next(
-        e for e in entries if e.domain == "sensor" and "event_0" in e.entity_id
+        (e for e in entries if e.domain == "sensor" and "event_0" in e.entity_id),
+        None,
     )
+    assert event_0 is not None, "event_0 sensor not found in entity registry"
 
     sensor_state = hass.states.get(event_0.entity_id)
     assert sensor_state is not None
@@ -317,8 +319,10 @@ async def test_door_code_generation_on_refresh(
     registry = er.async_get(hass)
     entries = er.async_entries_for_config_entry(registry, entry.entry_id)
     event_0 = next(
-        e for e in entries if e.domain == "sensor" and "event_0" in e.entity_id
+        (e for e in entries if e.domain == "sensor" and "event_0" in e.entity_id),
+        None,
     )
+    assert event_0 is not None, "event_0 sensor not found in entity registry"
 
     sensor_state = hass.states.get(event_0.entity_id)
     assert sensor_state is not None
