@@ -1047,22 +1047,19 @@ class CheckinTrackingSensor(
             )
 
         # Guard 3: Must be on or after the last day of the reservation
-        if end is not None and not force:
+        if end is not None:
             local_now = dt_util.as_local(now)
             local_end = dt_util.as_local(end)
             if local_now.date() < local_end.date():
-                raise ServiceValidationError(
-                    f"Checkout is only available on the last day "
-                    f"of the reservation or later "
-                    f"(current: {local_now.date().isoformat()}, "
-                    f"checkout day: "
-                    f"{local_end.date().isoformat()})"
-                )
-
-        if force and end is not None:
-            local_now = dt_util.as_local(now)
-            local_end = dt_util.as_local(end)
-            if local_now.date() < local_end.date():
+                if not force:
+                    raise ServiceValidationError(
+                        f"Checkout is only available on the last "
+                        f"day of the reservation or later "
+                        f"(current: "
+                        f"{local_now.date().isoformat()}, "
+                        f"checkout day: "
+                        f"{local_end.date().isoformat()})"
+                    )
                 _LOGGER.warning(
                     "Force checkout: overriding last-day guard "
                     "for %s (current: %s, checkout day: %s)",
