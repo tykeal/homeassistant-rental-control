@@ -3096,10 +3096,122 @@ class TestManualCheckout:
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
 
+    async def test_force_checkout_bypasses_last_day_guard(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test force=True bypasses the last-day guard (Guard 3).
 
-# ===========================================================================
-# T032: Early checkout expiry integration tests
-# ===========================================================================
+        When the upstream calendar modifies the event end to a
+        future date after the guest has physically left, the
+        admin must be able to force checkout.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(days=2)
+        sensor._tracked_event_end = now + timedelta(days=3)
+        sensor._tracked_event_slot_name = "John Smith"
+        mock_checkin_coordinator.data = []
+
+        # Without force, this would raise (before last day)
+        with pytest.raises(ServiceValidationError, match="last day"):
+            await sensor.async_checkout()
+
+        # With force, it succeeds
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        await sensor.async_checkout(force=True)
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._checkout_source == "manual"
+
+    async def test_force_checkout_bypasses_unknown_boundaries(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test force=True bypasses unknown boundaries guard (Guard 2).
+
+        When tracking data is lost (e.g. upgrade from older version),
+        forced checkout must still succeed.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - Jane Doe"
+        sensor._tracked_event_start = None
+        sensor._tracked_event_end = None
+        mock_checkin_coordinator.data = []
+
+        # Without force, raises for unknown boundaries
+        with pytest.raises(ServiceValidationError, match="reservation boundaries"):
+            await sensor.async_checkout()
+
+        # With force, succeeds despite missing boundaries
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        await sensor.async_checkout(force=True)
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._checkout_source == "manual"
+
+    async def test_force_checkout_guard1_never_bypassed(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test that force=True does NOT bypass Guard 1 (state check).
+
+        Even with force, checkout only works from checked_in state.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        for state in [
+            CHECKIN_STATE_NO_RESERVATION,
+            CHECKIN_STATE_AWAITING,
+            CHECKIN_STATE_CHECKED_OUT,
+        ]:
+            sensor._state = state
+            with pytest.raises(ServiceValidationError, match="current state"):
+                await sensor.async_checkout(force=True)
+
+    async def test_force_checkout_uses_now_as_baseline_when_end_unknown(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test linger baseline falls back to now when end is unknown.
+
+        When force checkout is used with unknown boundaries, the
+        linger baseline should use now() since event end is None.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - Jane Doe"
+        sensor._tracked_event_start = None
+        sensor._tracked_event_end = None
+        mock_checkin_coordinator.data = []
+
+        with patch("homeassistant.util.dt.now", return_value=now):
+            await sensor.async_checkout(force=True)
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._checkout_time is not None
+        assert abs((sensor._checkout_time - now).total_seconds()) < 2
 
 
 def _setup_early_expiry_switch(
@@ -3747,6 +3859,33 @@ class TestEventTrackingStability:
 
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+
+    async def test_checked_in_resets_when_all_tracking_data_lost(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test checked_in resets to no_reservation when all data lost.
+
+        When the tracked event is gone from coordinator data and all
+        tracking metadata is None, the sensor cannot recover
+        automatically and should reset to no_reservation.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = None
+        sensor._tracked_event_start = None
+        sensor._tracked_event_end = None
+        sensor._checkin_source = "automatic"
+
+        mock_checkin_coordinator.data = []
+
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_NO_RESERVATION
 
     async def test_awaiting_survives_event_position_shift(
         self,

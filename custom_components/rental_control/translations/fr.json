@@ -103,7 +103,13 @@
   "services": {
     "checkout": {
       "name": "D\u00e9part",
-      "description": "Enregistrer manuellement le d\u00e9part du client actuel."
+      "description": "Enregistrer manuellement le d\u00e9part du client actuel.",
+      "fields": {
+        "force": {
+          "name": "Forcer",
+          "description": "Ignorer les gardes de date et de limites. Utiliser lorsque le capteur est bloqu\u00e9 et que vous devez forcer le d\u00e9part."
+        }
+      }
     }
   }
 }

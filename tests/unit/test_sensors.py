@@ -126,9 +126,14 @@ class TestAsyncSetupEntry:
             assert isinstance(sensor, RentalControlCalSensor)
             assert sensor._event_number == i
         assert isinstance(added_entities[3], CheckinTrackingSensor)
-        # Verify checkout service was registered
+        # Verify checkout service was registered with force parameter
+        from homeassistant.helpers import config_validation as cv
+        import voluptuous as vol
+
         mock_platform.async_register_entity_service.assert_called_once_with(
-            "checkout", {}, "async_checkout"
+            "checkout",
+            {vol.Optional("force", default=False): cv.boolean},
+            "async_checkout",
         )
 
     async def test_returns_false_when_calendar_is_none(self, hass) -> None:

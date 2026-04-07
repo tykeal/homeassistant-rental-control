@@ -10,10 +10,12 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.typing import DiscoveryInfoType
+import voluptuous as vol
 
 from .const import CHECKIN_SENSOR
 from .const import CONF_MAX_EVENTS
@@ -80,8 +82,8 @@ async def async_setup_entry(
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
         "checkout",
-        {},  # Empty schema — no parameters
-        "async_checkout",  # Method name on CheckinTrackingSensor
+        {vol.Optional("force", default=False): cv.boolean},
+        "async_checkout",
     )
 
     return True

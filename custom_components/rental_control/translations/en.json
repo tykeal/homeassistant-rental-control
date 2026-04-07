@@ -103,7 +103,13 @@
   "services": {
     "checkout": {
       "name": "Checkout",
-      "description": "Manually check out the current guest."
+      "description": "Manually check out the current guest.",
+      "fields": {
+        "force": {
+          "name": "Force",
+          "description": "Bypass date and boundary guards. Use when the sensor is stuck and you need to override."
+        }
+      }
     }
   }
 }

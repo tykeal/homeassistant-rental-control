@@ -139,7 +139,7 @@ class CheckinExtraStoredData(ExtraStoredData):
                 return None
             try:
                 result: datetime | None = dt_util.parse_datetime(value)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # fmt: skip
                 _LOGGER.warning("Failed to parse stored datetime: %s", value)
                 return None
             if result is None:
@@ -521,6 +521,21 @@ class CheckinTrackingSensor(
                         source="automatic",
                         linger_baseline=fallback_end,
                     )
+                elif (
+                    fallback_end is None
+                    and self._tracked_event_start is None
+                    and self._tracked_event_summary is None
+                ):
+                    # All tracking data lost — cannot recover.
+                    # Transition to no_reservation so the next
+                    # coordinator update can pick up fresh events.
+                    _LOGGER.warning(
+                        "All tracking data lost while checked_in "
+                        "for %s; resetting to no_reservation",
+                        self.coordinator.name,
+                    )
+                    self._cancel_timer()
+                    self._transition_to_no_reservation()
                 else:
                     if not self._event_missing_warned:
                         _LOGGER.warning(
@@ -990,46 +1005,68 @@ class CheckinTrackingSensor(
                 "follow-up time, staying in no_reservation",
             )
 
-    async def async_checkout(self) -> None:
+    async def async_checkout(self, force: bool = False) -> None:
         """Handle manual checkout service call.
 
         Validates guard conditions:
         1. Sensor must be in ``checked_in`` state
-        2. Reservation boundaries must be known
+        2. Reservation boundaries must be known (skipped when
+           *force* is ``True``)
         3. Current date must be on or after the last day of the
-           reservation (the calendar date of the event end time)
+           reservation (skipped when *force* is ``True``)
 
         On success, calls ``_transition_to_checked_out(source="manual")``.
+
+        Args:
+            force: Bypass guards 2 and 3.  Use when the sensor is
+                stuck and the admin needs to override.
 
         Raises:
             ServiceValidationError: If guard conditions are not met.
         """
-        # Guard 1: State must be checked_in
+        # Guard 1: State must be checked_in (never bypassed)
         if self._state != CHECKIN_STATE_CHECKED_IN:
             raise ServiceValidationError(
                 f"Checkout is only available when the guest is "
                 f"checked in (current state: {self._state})"
             )
 
-        # Guard 2: Reservation boundaries must be known
         now = dt_util.now()
         end = self._tracked_event_end
 
+        # Guard 2: Reservation boundaries must be known
         if self._tracked_event_start is None or end is None:
-            raise ServiceValidationError(
-                "Checkout requires known reservation boundaries"
+            if not force:
+                raise ServiceValidationError(
+                    "Checkout requires known reservation boundaries"
+                )
+            _LOGGER.warning(
+                "Force checkout: reservation boundaries unknown "
+                "for %s, proceeding anyway",
+                self.coordinator.name,
             )
 
         # Guard 3: Must be on or after the last day of the reservation
-        local_now = dt_util.as_local(now)
-        local_end = dt_util.as_local(end)
-        if local_now.date() < local_end.date():
-            raise ServiceValidationError(
-                f"Checkout is only available on the last day of "
-                f"the reservation or later "
-                f"(current: {local_now.date().isoformat()}, "
-                f"checkout day: {local_end.date().isoformat()})"
-            )
+        if end is not None:
+            local_now = dt_util.as_local(now)
+            local_end = dt_util.as_local(end)
+            if local_now.date() < local_end.date():
+                if not force:
+                    raise ServiceValidationError(
+                        f"Checkout is only available on the last "
+                        f"day of the reservation or later "
+                        f"(current: "
+                        f"{local_now.date().isoformat()}, "
+                        f"checkout day: "
+                        f"{local_end.date().isoformat()})"
+                    )
+                _LOGGER.warning(
+                    "Force checkout: overriding last-day guard "
+                    "for %s (current: %s, checkout day: %s)",
+                    self.coordinator.name,
+                    local_now.date().isoformat(),
+                    local_end.date().isoformat(),
+                )
 
         # Early expiry: shorten lock code if switch is on (FR-022)
         entry_data = self._hass.data.get(DOMAIN, {}).get(
@@ -1042,7 +1079,8 @@ class CheckinTrackingSensor(
                 new_end = compute_early_expiry_time(now, self._tracked_event_end)
                 if new_end < self._tracked_event_end:
                     _LOGGER.info(
-                        "Early checkout expiry: shortening end time from %s to %s for %s",
+                        "Early checkout expiry: shortening end "
+                        "time from %s to %s for %s",
                         self._tracked_event_end,
                         new_end,
                         self._tracked_event_summary,
@@ -1051,8 +1089,9 @@ class CheckinTrackingSensor(
                     await self._async_update_lock_code_expiry(new_end)
 
         # Use event end as linger baseline when past end so that
-        # follow-on event detection uses the correct reference point.
-        effective_baseline = min(now, end)
+        # follow-on event detection uses the correct reference
+        # point.  When boundaries are unknown fall back to now.
+        effective_baseline = min(now, end) if end is not None else now
         self._transition_to_checked_out(
             source="manual", linger_baseline=effective_baseline
         )

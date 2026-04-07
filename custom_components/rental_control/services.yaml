@@ -6,3 +6,9 @@ checkout:
     entity:
       integration: rental_control
       domain: sensor
+  fields:
+    force:
+      required: false
+      default: false
+      selector:
+        boolean:
