@@ -455,6 +455,44 @@ class TestExtractLastFour:
         sensor._event_attributes["description"] = None
         assert sensor._extract_last_four() is None
 
+    def test_extracts_phone_last_four_format(self, hass) -> None:
+        """Verify extraction from 'Phone (last 4): NNNN' format."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = "Phone (last 4): 5098"
+        assert sensor._extract_last_four() == "5098"
+
+    def test_extracts_phone_last_four_case_insensitive(self, hass) -> None:
+        """Verify extraction from 'Phone (Last 4): NNNN' format."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = "Phone (Last 4): 9012"
+        assert sensor._extract_last_four() == "9012"
+
+    def test_phone_last_four_with_booking_id(self, hass) -> None:
+        """Verify extraction when description has both phone and booking ID."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = (
+            "Phone (last 4): 5098\n"
+            "Booking ID: 69b9b2479bed480014536503::69b96feb583a880013ba1713"
+        )
+        assert sensor._extract_last_four() == "5098"
+
+    def test_phone_last_four_rejects_five_digits(self, hass) -> None:
+        """Verify Phone (last 4) pattern rejects 5+ digit sequences."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = "Phone (last 4): 12345"
+        assert sensor._extract_last_four() is None
+
+    def test_last_4_digits_rejects_five_digits(self, hass) -> None:
+        """Verify legacy Last 4 Digits pattern rejects 5+ digit sequences."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = "Last 4 Digits: 12345"
+        assert sensor._extract_last_four() is None
+
 
 class TestExtractUrl:
     """Tests for _extract_url parsing."""
@@ -488,6 +526,52 @@ class TestExtractUrl:
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor._event_attributes["description"] = None
         assert sensor._extract_url() is None
+
+
+class TestExtractBookingId:
+    """Tests for _extract_booking_id parsing."""
+
+    def test_extracts_booking_id(self, hass) -> None:
+        """Verify extraction of Booking ID from description."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = (
+            "Booking ID: 69b9b2479bed480014536503::69b96feb583a880013ba1713"
+        )
+        assert (
+            sensor._extract_booking_id()
+            == "69b9b2479bed480014536503::69b96feb583a880013ba1713"
+        )
+
+    def test_extracts_booking_id_multiline(self, hass) -> None:
+        """Verify extraction when booking ID is among other fields."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = (
+            "Phone (last 4): 5098\nBooking ID: abc123::def456"
+        )
+        assert sensor._extract_booking_id() == "abc123::def456"
+
+    def test_returns_none_when_no_booking_id(self, hass) -> None:
+        """Verify None returned when no booking ID in description."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = "No booking here"
+        assert sensor._extract_booking_id() is None
+
+    def test_returns_none_when_description_none(self, hass) -> None:
+        """Verify None returned when description is None."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = None
+        assert sensor._extract_booking_id() is None
+
+    def test_returns_none_when_booking_id_empty(self, hass) -> None:
+        """Verify None returned when Booking ID value is empty."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = "Booking ID:   "
+        assert sensor._extract_booking_id() is None
 
 
 # ---------------------------------------------------------------------------
@@ -815,6 +899,22 @@ class TestHandleCoordinatorUpdateWithEvents:
         assert attrs["number_of_guests"] == "6"
         assert attrs["last_four"] == "6543"
         assert attrs["reservation_url"] == "https://airbnb.com/reservations/abc"
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_parses_phone_last_four_and_booking_id(self, hass) -> None:
+        """Verify extraction of Phone (last 4) and Booking ID fields."""
+        description = "Phone (last 4): 5098\nBooking ID: 69b9b247::69b96feb"
+        event = _make_event(description=description)
+        coordinator = _make_coordinator(data=[event])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["last_four"] == "5098"
+        assert attrs["booking_id"] == "69b9b247::69b96feb"
 
     @freeze_time("2025-03-10T12:00:00+00:00")
     def test_generates_slot_code(self, hass) -> None:
