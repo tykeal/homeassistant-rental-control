@@ -20,6 +20,7 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt
 import homeassistant.util.dt as dt_util
 import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import CONF_MAX_EVENTS
@@ -31,7 +32,6 @@ from tests.fixtures import calendar_data
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
 async def test_coordinator_initialization(
@@ -1330,3 +1330,443 @@ class TestLocknameSlugification:
         call_args = mock_update.call_args[0]
         assert call_args[1] == "1234"
         assert call_args[2] == "Guest"
+
+
+class TestChildLockDiscovery:
+    """Tests for child lock discovery (spec 006, T001/T002)."""
+
+    async def test_find_parent_entry_id_matches_lockname(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test _find_parent_entry_id returns correct entry_id.
+
+        When a keymaster config entry has a lockname matching the
+        coordinator's lockname, its entry_id is returned.
+        """
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_parent_123",
+        )
+        parent_entry.add_to_hass(hass)
+
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-child-lock-id",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="rc_test_entry",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        assert coordinator.lockname == "front_door"
+        assert coordinator._parent_entry_id == "km_parent_123"
+
+    async def test_find_parent_entry_id_non_slugified(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test _find_parent_entry_id normalizes locknames.
+
+        When a keymaster config entry has a non-slugified lockname that
+        normalizes to the coordinator's lockname, its entry_id is returned.
+        """
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "Front Door"},
+            entry_id="km_nonslugged",
+        )
+        parent_entry.add_to_hass(hass)
+
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-nonslugged-id",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="rc_nonslugged",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        assert coordinator.lockname == "front_door"
+        assert coordinator._parent_entry_id == "km_nonslugged"
+
+    async def test_find_parent_entry_id_no_match(self, hass: HomeAssistant) -> None:
+        """Test _find_parent_entry_id returns None when no match.
+
+        When no keymaster entry has a matching lockname, None is
+        returned and child discovery produces an empty set.
+        """
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-no-match-id",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "nonexistent_lock",
+            },
+            entry_id="rc_no_match",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        assert coordinator.lockname == "nonexistent_lock"
+        assert coordinator._parent_entry_id is None
+        assert coordinator._child_locknames == set()
+
+    async def test_discover_child_locks_finds_children(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test _discover_child_locks finds entries with parent_entry_id.
+
+        Child keymaster entries referencing the parent entry_id are
+        discovered and their locknames collected.
+        """
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_parent_456",
+        )
+        parent_entry.add_to_hass(hass)
+
+        child_entry = MockConfigEntry(
+            domain="keymaster",
+            data={
+                "lockname": "back_door",
+                "parent_entry_id": "km_parent_456",
+            },
+            entry_id="km_child_789",
+        )
+        child_entry.add_to_hass(hass)
+
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-child-disc-id",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="rc_disc_entry",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        children = coordinator._discover_child_locks()
+        assert children == {"back_door"}
+
+    async def test_discover_child_locks_multiple_children(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test _discover_child_locks handles multiple children.
+
+        Multiple keymaster entries referencing the same parent are
+        all discovered.
+        """
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_parent_multi",
+        )
+        parent_entry.add_to_hass(hass)
+
+        for name, eid in [
+            ("back_door", "km_child_a"),
+            ("garage_door", "km_child_b"),
+        ]:
+            child = MockConfigEntry(
+                domain="keymaster",
+                data={
+                    "lockname": name,
+                    "parent_entry_id": "km_parent_multi",
+                },
+                entry_id=eid,
+            )
+            child.add_to_hass(hass)
+
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-multi-child-id",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="rc_multi_entry",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        children = coordinator._discover_child_locks()
+        assert children == {"back_door", "garage_door"}
+
+    async def test_discover_child_locks_no_children(self, hass: HomeAssistant) -> None:
+        """Test _discover_child_locks returns empty when no children.
+
+        When no keymaster entries reference the parent, an empty set
+        is returned.
+        """
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_parent_alone",
+        )
+        parent_entry.add_to_hass(hass)
+
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-no-child-id",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="rc_no_child_entry",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        children = coordinator._discover_child_locks()
+        assert children == set()
+
+    async def test_monitored_locknames_includes_parent_and_children(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test monitored_locknames returns parent + children.
+
+        The frozenset should include the parent lockname and all
+        discovered child locknames.
+        """
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_parent_mon",
+        )
+        parent_entry.add_to_hass(hass)
+
+        child_entry = MockConfigEntry(
+            domain="keymaster",
+            data={
+                "lockname": "side_door",
+                "parent_entry_id": "km_parent_mon",
+            },
+            entry_id="km_child_mon",
+        )
+        child_entry.add_to_hass(hass)
+
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-mon-id",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="rc_mon_entry",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        result = coordinator.monitored_locknames
+        assert isinstance(result, frozenset)
+        assert result == frozenset({"front_door", "side_door"})
+
+    async def test_monitored_locknames_no_lock_configured(
+        self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
+    ) -> None:
+        """Test monitored_locknames returns empty when no lock.
+
+        When no keymaster lock is configured, the property returns
+        an empty frozenset.
+        """
+        mock_config_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+
+        assert coordinator.lockname is None
+        assert coordinator.monitored_locknames == frozenset()
+
+    async def test_monitored_locknames_parent_only(self, hass: HomeAssistant) -> None:
+        """Test monitored_locknames with parent only (no children).
+
+        When only the parent lock exists, the frozenset contains
+        just the parent lockname.
+        """
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_parent_only",
+        )
+        parent_entry.add_to_hass(hass)
+
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-parent-only-id",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="rc_parent_only_entry",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        assert coordinator.monitored_locknames == frozenset({"front_door"})
+
+    async def test_child_discovery_refresh_in_update_data(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test child locks are re-discovered each update cycle.
+
+        When _async_update_data runs, child locknames are refreshed
+        and changes are detected.
+        """
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_parent_refresh",
+        )
+        parent_entry.add_to_hass(hass)
+
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-refresh-id",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="rc_refresh_entry",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        # Initially no children
+        assert coordinator._child_locknames == set()
+
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+
+        # Add a child lock entry dynamically
+        child_entry = MockConfigEntry(
+            domain="keymaster",
+            data={
+                "lockname": "patio_door",
+                "parent_entry_id": "km_parent_refresh",
+            },
+            entry_id="km_child_dynamic",
+        )
+        child_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=calendar_data.AIRBNB_ICS_CALENDAR,
+            )
+
+            await coordinator._async_update_data()
+
+        assert coordinator._child_locknames == {"patio_door"}
+        assert coordinator.monitored_locknames == frozenset(
+            {"front_door", "patio_door"}
+        )

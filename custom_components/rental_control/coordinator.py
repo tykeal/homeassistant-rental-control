@@ -67,6 +67,7 @@ from .const import DEFAULT_MAX_MISSES
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DOMAIN
 from .const import EVENT_AGE_THRESHOLD_DAYS
+from .const import LOCK_MANAGER
 from .const import REQUEST_TIMEOUT
 from .const import VERSION
 from .event_overrides import EventOverrides
@@ -117,6 +118,10 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
         self.created: str = config.get(CONF_CREATION_DATETIME, str(dt.now()))
         self._version: str = VERSION
 
+        # Child lock discovery (spec 006)
+        self._parent_entry_id: str | None = None
+        self._child_locknames: set[str] = set()
+
         super().__init__(
             hass=hass,
             logger=_LOGGER,
@@ -124,6 +129,12 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
             config_entry=config_entry,
             update_interval=timedelta(minutes=self.refresh_frequency),
         )
+
+        # Discover parent entry after super().__init__ sets self.hass
+        if self.lockname:
+            self._parent_entry_id = self._find_parent_entry_id()
+            if self._parent_entry_id is not None:
+                self._child_locknames = self._discover_child_locks()
 
         # setup device
         device_registry = dr.async_get(hass)
@@ -149,6 +160,59 @@ Please update Keymaster to at least v0.1.0-b0
                     error_msg,
                     title="Keymaster Incompatible Version",
                 )
+
+    def _find_parent_entry_id(self) -> str | None:
+        """Find the keymaster config entry ID for the parent lock.
+
+        Iterates over keymaster config entries and returns the
+        ``entry_id`` whose slugified ``data["lockname"]`` matches
+        ``self.lockname``.
+
+        Returns:
+            The parent keymaster entry_id, or None if not found.
+        """
+        for entry in self.hass.config_entries.async_entries(LOCK_MANAGER):
+            raw = entry.data.get("lockname")
+            if isinstance(raw, str) and raw.strip() and slugify(raw) == self.lockname:
+                result: str = entry.entry_id
+                return result
+        return None
+
+    def _discover_child_locks(self) -> set[str]:
+        """Discover child lock locknames for the parent entry.
+
+        Iterates keymaster config entries looking for entries whose
+        ``data["parent_entry_id"]`` matches ``self._parent_entry_id``.
+        Returns the set of child locknames (slugified).
+
+        Returns:
+            Set of child locknames (may be empty).
+        """
+        if self._parent_entry_id is None:
+            return set()
+
+        children: set[str] = set()
+        for entry in self.hass.config_entries.async_entries(LOCK_MANAGER):
+            if entry.data.get("parent_entry_id") == self._parent_entry_id:
+                child_lockname = entry.data.get("lockname")
+                if isinstance(child_lockname, str) and child_lockname.strip():
+                    children.add(slugify(child_lockname))
+        return children
+
+    @property
+    def monitored_locknames(self) -> frozenset[str]:
+        """Return the set of all monitored locknames.
+
+        Includes the parent lockname and all discovered child
+        locknames.  Returns an empty frozenset when no lock is
+        configured.
+
+        Returns:
+            Frozenset of monitored lockname strings.
+        """
+        if self.lockname is None:
+            return frozenset()
+        return frozenset({self.lockname} | self._child_locknames)
 
     @property
     def device_info(self) -> dr.DeviceInfo:
@@ -387,6 +451,18 @@ Please update Keymaster to at least v0.1.0-b0
                 self, calendar=new_calendar
             )
 
+        # Refresh child lock discovery each cycle
+        if self.lockname:
+            self._parent_entry_id = self._find_parent_entry_id()
+            previous_children = self._child_locknames
+            self._child_locknames = self._discover_child_locks()
+            if self._child_locknames != previous_children:
+                _LOGGER.info(
+                    "Child locknames updated for %s: %s",
+                    self.lockname,
+                    self._child_locknames or "(none)",
+                )
+
         return new_calendar
 
     async def update_config(self, config: Mapping[str, Any]) -> None:
@@ -412,18 +488,31 @@ Please update Keymaster to at least v0.1.0-b0
         self.max_events = int(str(config.get(CONF_MAX_EVENTS)))
         self.start_slot = int(str(config.get(CONF_START_SLOT)))
         # Keep event_overrides in sync with config changes
+        lockname_changed = self.lockname != previous_lockname
         if self.lockname:
+            # Reset child lock discovery before any awaits to avoid
+            # stale parent/children during concurrent refreshes.
+            if lockname_changed:
+                self._parent_entry_id = None
+                self._child_locknames = set()
             overrides_stale = (
                 self.event_overrides is None
-                or self.lockname != previous_lockname
+                or lockname_changed
                 or self.max_events != previous_max_events
                 or self.start_slot != previous_start_slot
             )
             if overrides_stale:
                 self.event_overrides = EventOverrides(self.start_slot, self.max_events)
                 await self.async_setup_keymaster_overrides()
+            # Re-discover parent entry and children on lockname change
+            if lockname_changed:
+                self._parent_entry_id = self._find_parent_entry_id()
+                if self._parent_entry_id is not None:
+                    self._child_locknames = self._discover_child_locks()
         else:
             self.event_overrides = None
+            self._parent_entry_id = None
+            self._child_locknames = set()
         self.days = config[CONF_DAYS]
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.should_update_code = bool(config.get(CONF_SHOULD_UPDATE_CODE))
@@ -488,14 +577,14 @@ Please update Keymaster to at least v0.1.0-b0
                         "DTEND"
                     ].dt < from_date.date() - timedelta(days=EVENT_AGE_THRESHOLD_DAYS):
                         continue
-                except (AttributeError, TypeError):
+                except (AttributeError, TypeError):  # fmt: skip
                     pass
 
                 try:
                     # Ignore dates that are too far in the future
                     if "DTSTART" in event and event["DTSTART"].dt > to_date.date():
                         continue
-                except (AttributeError, TypeError):
+                except (AttributeError, TypeError):  # fmt: skip
                     pass
 
                 # Ignore Blocked or Not available by default, but if false,
