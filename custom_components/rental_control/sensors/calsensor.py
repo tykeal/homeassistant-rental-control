@@ -109,11 +109,20 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         """Extract the last 4 digits from a description."""
         if self._event_attributes["description"] is None:
             return None
-        p = re.compile(r"""\(?Last 4 Digits\)?:\s+(\d{4})""")
+
+        # Match "Last 4 Digits: NNNN" with optional parens
+        p = re.compile(r"""\(?Last 4 Digits\)?:\s+(\d{4})(?!\d)""")
         ret = p.findall(self._event_attributes["description"])
         if ret:
             return str(ret[0])
-        elif "Phone" in self._event_attributes["description"]:
+
+        # Match "Phone (last 4): NNNN" variant
+        p2 = re.compile(r"""Phone\s*\(last\s*4\):\s*(\d{4})(?!\d)""", re.I)
+        ret = p2.findall(self._event_attributes["description"])
+        if ret:
+            return str(ret[0])
+
+        if "Phone" in self._event_attributes["description"]:
             phone = self._extract_phone_number()
             if phone:
                 phone = phone.replace(" ", "")
@@ -168,6 +177,19 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             return str(ret[0])
         else:
             return None
+
+    def _extract_booking_id(self) -> str | None:
+        """Extract booking ID from a description."""
+        if self._event_attributes["description"] is None:
+            return None
+        p = re.compile(r"""Booking ID:\s*(.+)$""", re.M)
+        ret = p.findall(self._event_attributes["description"])
+        if ret:
+            for match in ret:
+                booking_id = str(match).strip()
+                if booking_id:
+                    return booking_id
+        return None
 
     def _generate_door_code(self) -> str:
         """Generate a door code based upon the selected type."""
@@ -358,6 +380,10 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             reservation_url = self._extract_url()
             if reservation_url is not None:
                 parsed_attributes["reservation_url"] = reservation_url
+
+            booking_id = self._extract_booking_id()
+            if booking_id is not None:
+                parsed_attributes["booking_id"] = booking_id
 
             self._parsed_attributes = parsed_attributes
 
