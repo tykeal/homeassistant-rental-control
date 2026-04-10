@@ -398,6 +398,6 @@ def async_register_keymaster_listener(
     )
     hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(unsub)
     _LOGGER.debug(
-        "Registered keymaster event bus listener for lockname=%s",
-        coordinator.lockname,
+        "Registered keymaster event bus listener for monitored locknames=%s",
+        sorted(coordinator.monitored_locknames),
     )

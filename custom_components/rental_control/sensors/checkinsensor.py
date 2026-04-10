@@ -1431,7 +1431,7 @@ class CheckinTrackingSensor(
             "Keymaster unlock detected for slot %d (lock=%s), "
             "transitioning to checked_in for %s",
             code_slot_num,
-            lock_name or "(parent)",
+            lock_name or self.coordinator.lockname,
             self._tracked_event_summary,
         )
         self._transition_to_checked_in(source="keymaster", lock_name=lock_name)
