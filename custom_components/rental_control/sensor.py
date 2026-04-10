@@ -86,4 +86,11 @@ async def async_setup_entry(
         "async_checkout",
     )
 
+    # Register debug set_state entity service
+    platform.async_register_entity_service(
+        "set_state",
+        {vol.Required("state"): cv.string},
+        "async_set_state",
+    )
+
     return True

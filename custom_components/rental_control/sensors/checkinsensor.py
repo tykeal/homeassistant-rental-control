@@ -1137,6 +1137,53 @@ class CheckinTrackingSensor(
             source="manual", linger_baseline=effective_baseline
         )
 
+    async def async_set_state(self, state: str) -> None:
+        """Force-set the sensor to an arbitrary valid state.
+
+        This is a **debug / testing** action that bypasses all
+        guard conditions and transition logic.  It performs a raw
+        state assignment, clears all tracked event and transition
+        fields, cancels pending timers, and writes HA state.
+        No HA bus events are fired.
+
+        Args:
+            state: Target state — must be one of the four valid
+                check-in states.
+
+        Raises:
+            ServiceValidationError: If *state* is not valid.
+        """
+        valid = self._attr_options
+        if valid is None or state not in valid:
+            raise ServiceValidationError(
+                f"Invalid state '{state}'. Valid states: {', '.join(valid or [])}"
+            )
+
+        _LOGGER.warning(
+            "DEBUG override: forcing %s from '%s' to '%s'",
+            self.entity_id,
+            self._state,
+            state,
+        )
+
+        self._state = state
+        self._tracked_event_summary = None
+        self._tracked_event_start = None
+        self._tracked_event_end = None
+        self._tracked_event_slot_name = None
+        self._checkin_source = None
+        self._checkout_source = None
+        self._checkout_time = None
+        self._transition_target_time = None
+        self._checked_out_event_key = None
+        self._next_event_start_day = None
+        self._checkin_lock_name = None
+        self._linger_followon_key = None
+        self._linger_baseline = None
+        self._event_missing_warned = False
+        self._cancel_timer()
+        self.async_write_ha_state()
+
     async def async_added_to_hass(self) -> None:
         """Restore persisted state and validate against current time/data.
 

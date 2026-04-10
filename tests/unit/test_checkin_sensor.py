@@ -4985,3 +4985,135 @@ class TestEventTrackingStability:
         # Key cleared, timer recomputed for cleaning window
         assert sensor._linger_followon_key is None
         assert sensor._transition_target_time != first_target
+
+
+class TestSetState:
+    """Tests for the debug set_state action."""
+
+    async def test_set_state_to_each_valid_state(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test forcing the sensor into each valid state."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        assert sensor._state == CHECKIN_STATE_NO_RESERVATION
+
+        for target in [
+            CHECKIN_STATE_AWAITING,
+            CHECKIN_STATE_CHECKED_IN,
+            CHECKIN_STATE_CHECKED_OUT,
+            CHECKIN_STATE_NO_RESERVATION,
+        ]:
+            await sensor.async_set_state(state=target)
+            assert sensor._state == target
+
+    async def test_set_state_rejects_invalid_state(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test that an invalid state raises ServiceValidationError."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        with pytest.raises(ServiceValidationError, match="Invalid state"):
+            await sensor.async_set_state(state="bogus")
+
+    async def test_set_state_clears_transition_fields(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test that set_state clears all tracked and transition fields."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        # Manually set fields to non-None values
+        sensor._tracked_event_summary = "Test Event"
+        sensor._tracked_event_start = dt_util.now()
+        sensor._tracked_event_end = dt_util.now()
+        sensor._tracked_event_slot_name = "John"
+        sensor._checkin_source = "automatic"
+        sensor._checkout_source = "manual"
+        sensor._checkout_time = dt_util.now()
+        sensor._transition_target_time = dt_util.now()
+        sensor._checked_out_event_key = "key"
+        sensor._next_event_start_day = dt_util.now()
+        sensor._checkin_lock_name = "front_door"
+        sensor._linger_followon_key = "followon"
+        sensor._linger_baseline = dt_util.now()
+
+        await sensor.async_set_state(state=CHECKIN_STATE_AWAITING)
+
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_summary is None
+        assert sensor._tracked_event_start is None
+        assert sensor._tracked_event_end is None
+        assert sensor._tracked_event_slot_name is None
+        assert sensor._checkin_source is None
+        assert sensor._checkout_source is None
+        assert sensor._checkout_time is None
+        assert sensor._transition_target_time is None
+        assert sensor._checked_out_event_key is None
+        assert sensor._next_event_start_day is None
+        assert sensor._checkin_lock_name is None
+        assert sensor._linger_followon_key is None
+        assert sensor._linger_baseline is None
+
+    async def test_set_state_cancels_pending_timer(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test that set_state cancels any pending timer."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        cancel_called = False
+
+        def _mock_cancel() -> None:
+            """Track that cancel was called."""
+            nonlocal cancel_called
+            cancel_called = True
+
+        sensor._unsub_timer = _mock_cancel
+
+        await sensor.async_set_state(state=CHECKIN_STATE_CHECKED_IN)
+        assert cancel_called
+        assert sensor._unsub_timer is None
+
+    async def test_set_state_does_not_fire_events(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test that set_state does not fire bus events."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        fired: list = []
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKIN,
+            lambda e: fired.append(e),
+        )
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKOUT,
+            lambda e: fired.append(e),
+        )
+
+        await sensor.async_set_state(state=CHECKIN_STATE_CHECKED_IN)
+        await hass.async_block_till_done()
+
+        assert len(fired) == 0

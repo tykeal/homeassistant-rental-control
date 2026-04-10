@@ -34,7 +34,7 @@
           "verify_ssl": "Verify SSL certificates"
         },
         "data_description": {
-          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)"
+          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5\u201348)"
         }
       }
     }
@@ -74,7 +74,7 @@
           "verify_ssl": "Verify SSL certificates"
         },
         "data_description": {
-          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)"
+          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5\u201348)"
         }
       }
     }
@@ -108,6 +108,16 @@
         "force": {
           "name": "Force",
           "description": "Bypass date and boundary guards. Use when the sensor is stuck and you need to override."
+        }
+      }
+    },
+    "set_state": {
+      "name": "Set state",
+      "description": "Force the check-in sensor into any valid state. Debug tool \u2014 bypasses all guard conditions and fires no events.",
+      "fields": {
+        "state": {
+          "name": "State",
+          "description": "Target state for the check-in sensor."
         }
       }
     }
