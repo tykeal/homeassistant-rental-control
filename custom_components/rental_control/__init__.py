@@ -31,6 +31,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.util import slugify
 
 from .const import CHECKIN_SENSOR
 from .const import CONF_CODE_LENGTH
@@ -337,8 +338,16 @@ def async_register_keymaster_listener(
         """
         event_data = event.data
 
-        # Validate lockname matches parent or any child lock
-        event_lockname = event_data.get("lockname", "")
+        # Validate lockname matches parent or any child lock.
+        # Keymaster sends the raw (friendly) lockname in event data,
+        # but monitored_locknames contains slugified names, so we
+        # must slugify before comparison.
+        raw_lockname = event_data.get("lockname", "")
+        event_lockname = (
+            slugify(raw_lockname)
+            if raw_lockname and isinstance(raw_lockname, str)
+            else ""
+        )
         monitored = coordinator.monitored_locknames
         if event_lockname not in monitored:
             return
@@ -386,11 +395,11 @@ def async_register_keymaster_listener(
         _LOGGER.debug(
             "Forwarding keymaster unlock (slot=%d, lock=%s) to checkin sensor",
             code_slot_num,
-            event_lockname,
+            raw_lockname,
         )
         checkin_sensor.async_handle_keymaster_unlock(
             code_slot_num=code_slot_num,
-            lock_name=event_lockname,
+            lock_name=raw_lockname,
         )
 
     unsub = hass.bus.async_listen(

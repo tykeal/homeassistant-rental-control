@@ -2753,6 +2753,113 @@ class TestEventBusListenerFiltering:
         sensor.async_handle_keymaster_unlock.assert_not_called()
         assert sensor._unsub_timer is not None
 
+    async def test_raw_lockname_with_spaces_matched(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test raw lockname with spaces and capitals is matched.
+
+        Keymaster sends the friendly lockname (e.g. "Front Door")
+        while monitored_locknames contains slugified names
+        (e.g. "front_door").  The listener must slugify the event
+        lockname before comparison.
+        """
+        from custom_components.rental_control import async_register_keymaster_listener
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import COORDINATOR
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
+        from custom_components.rental_control.const import UNSUB_LISTENERS
+
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.monitored_locknames = frozenset({"front_door"})
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        sensor = MagicMock()
+        mock_checkin_config_entry.add_to_hass(hass)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+            CHECKIN_SENSOR: sensor,
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
+        }
+
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        # Fire event with raw lockname containing spaces and capitals
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "Front Door",
+                "state": "unlocked",
+                "code_slot_num": 11,
+            },
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_called_once_with(
+            code_slot_num=11,
+            lock_name="Front Door",
+        )
+
+    async def test_raw_child_lockname_with_spaces_matched(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test raw child lockname with spaces is matched.
+
+        Validates that child lock events with friendly locknames
+        are properly matched against the slugified
+        monitored_locknames set.
+        """
+        from custom_components.rental_control import async_register_keymaster_listener
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import COORDINATOR
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
+        from custom_components.rental_control.const import UNSUB_LISTENERS
+
+        mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.monitored_locknames = frozenset(
+            {"front_door", "side_door"}
+        )
+        mock_checkin_coordinator.start_slot = 10
+        mock_checkin_coordinator.max_events = 3
+
+        sensor = MagicMock()
+        mock_checkin_config_entry.add_to_hass(hass)
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+            CHECKIN_SENSOR: sensor,
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
+        }
+
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        # Fire event with raw child lockname
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "Side Door",
+                "state": "unlocked",
+                "code_slot_num": 11,
+            },
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_called_once_with(
+            code_slot_num=11,
+            lock_name="Side Door",
+        )
+
 
 # ===========================================================================
 # Spec 006: Child lock monitoring tests
