@@ -12,3 +12,19 @@ checkout:
       default: false
       selector:
         boolean:
+
+set_state:
+  target:
+    entity:
+      integration: rental_control
+      domain: sensor
+  fields:
+    state:
+      required: true
+      selector:
+        select:
+          options:
+            - no_reservation
+            - awaiting_checkin
+            - checked_in
+            - checked_out

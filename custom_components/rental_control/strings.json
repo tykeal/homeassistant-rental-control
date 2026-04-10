@@ -110,6 +110,16 @@
           "description": "Bypass date and boundary guards. Use when the sensor is stuck and you need to override."
         }
       }
+    },
+    "set_state": {
+      "name": "Set state",
+      "description": "Force the check-in sensor into any valid state. Debug tool — bypasses all guard conditions and does not fire the integration's custom check-in/checkout events.",
+      "fields": {
+        "state": {
+          "name": "State",
+          "description": "Target state for the check-in sensor."
+        }
+      }
     }
   }
 }
