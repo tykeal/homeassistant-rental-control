@@ -34,7 +34,7 @@
           "verify_ssl": "Verify SSL certificates"
         },
         "data_description": {
-          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5\u201348)"
+          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)"
         }
       }
     }
@@ -74,7 +74,7 @@
           "verify_ssl": "Verify SSL certificates"
         },
         "data_description": {
-          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5\u201348)"
+          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)"
         }
       }
     }
@@ -113,7 +113,7 @@
     },
     "set_state": {
       "name": "Set state",
-      "description": "Force the check-in sensor into any valid state. Debug tool \u2014 bypasses all guard conditions and fires no events.",
+      "description": "Force the check-in sensor into any valid state. Debug tool — bypasses all guard conditions and does not fire the integration's custom check-in/checkout events.",
       "fields": {
         "state": {
           "name": "State",

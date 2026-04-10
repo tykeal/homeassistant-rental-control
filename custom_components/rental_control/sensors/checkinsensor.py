@@ -1144,7 +1144,10 @@ class CheckinTrackingSensor(
         guard conditions and transition logic.  It performs a raw
         state assignment, clears all tracked event and transition
         fields, cancels pending timers, and writes HA state.
-        No HA bus events are fired.
+        This does not fire the integration's custom
+        ``rental_control`` check-in/checkout bus events, but
+        ``async_write_ha_state()`` still emits Home Assistant's
+        standard ``state_changed`` event.
 
         Args:
             state: Target state — must be one of the four valid
