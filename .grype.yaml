@@ -17,6 +17,7 @@ ignore:
   - vulnerability: GHSA-m959-cc7f-wv43
     package:
       name: cryptography
+      version: "46.0.5"
       type: python
 
   # cryptography transitive dependency via
@@ -25,4 +26,5 @@ ignore:
   - vulnerability: GHSA-p423-j2cm-9vmq
     package:
       name: cryptography
+      version: "46.0.5"
       type: python
