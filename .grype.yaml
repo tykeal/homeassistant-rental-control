@@ -10,3 +10,19 @@ ignore:
     package:
       name: PyJWT
       type: python
+
+  # cryptography transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 46.0.6.
+  - vulnerability: GHSA-m959-cc7f-wv43
+    package:
+      name: cryptography
+      type: python
+
+  # cryptography transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 46.0.7.
+  - vulnerability: GHSA-p423-j2cm-9vmq
+    package:
+      name: cryptography
+      type: python
