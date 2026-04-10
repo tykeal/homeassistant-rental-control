@@ -1465,6 +1465,70 @@ class TestStaleStateValidation:
         assert sensor._state == CHECKIN_STATE_AWAITING
         assert sensor._checkin_source is None
 
+    async def test_awaiting_auto_checkin_after_switch_loads_off(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test deferred auto-checkin after switch loads with off state.
+
+        When the monitoring switch is not yet loaded during restore,
+        the sensor stays in awaiting_checkin.  Once the switch loads
+        with is_on=False and a coordinator update fires, the sensor
+        should auto-transition to checked_in.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        # Keymaster is configured but monitoring switch NOT in hass.data
+        mock_checkin_coordinator.lockname = "front_door"
+
+        now = dt_util.now()
+        start = now - timedelta(hours=2)
+        end = now + timedelta(hours=48)
+
+        data_dict = _make_extra_data_dict(
+            state=CHECKIN_STATE_AWAITING,
+            summary="Reserved - John Smith",
+            start=start,
+            end=end,
+            slot_name="John Smith",
+            checkin_source=None,
+            transition_target_time=start,
+        )
+
+        event = _make_event(
+            summary="Reserved - John Smith",
+            start=start,
+            end=end,
+        )
+        mock_checkin_coordinator.data = [event]
+        mock_checkin_coordinator.last_update_success = True
+
+        with patch.object(
+            sensor,
+            "async_get_last_extra_data",
+            new=AsyncMock(return_value=_mock_extra_data(data_dict)),
+        ):
+            await sensor.async_added_to_hass()
+
+        # Phase 1: switch not loaded — stays awaiting
+        assert sensor._state == CHECKIN_STATE_AWAITING
+
+        # Phase 2: switch loads with monitoring OFF
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=False),
+        }
+
+        # Next coordinator update triggers deferred auto-checkin
+        sensor._handle_coordinator_update()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+        assert sensor._checkin_source == "automatic"
+
     async def test_checked_out_transitions_to_awaiting_when_new_event(
         self,
         hass: HomeAssistant,

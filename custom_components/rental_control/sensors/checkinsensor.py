@@ -475,7 +475,22 @@ class CheckinTrackingSensor(
                 # Same event still in coordinator — update mutable fields
                 self._tracked_event_end = tracked.end
                 self._tracked_event_slot_name = self._extract_slot_name(tracked)
-                self.async_write_ha_state()
+                # Re-evaluate auto check-in on each coordinator update.
+                # During the startup race the monitoring switch may not
+                # have been loaded yet, so _is_keymaster_monitoring_enabled
+                # conservatively returned True.  Once all platforms are
+                # up and the switch is available, this path allows the
+                # deferred auto-checkin to proceed when monitoring is
+                # actually off and the event start has passed.
+                now = dt_util.now()
+                if (
+                    self._tracked_event_start is not None
+                    and self._tracked_event_start <= now
+                    and not self._is_keymaster_monitoring_enabled()
+                ):
+                    self._transition_to_checked_in(source="automatic")
+                else:
+                    self.async_write_ha_state()
             else:
                 # Tracked event gone — pick up next available or clear
                 event = self._get_relevant_event()
