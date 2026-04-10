@@ -423,14 +423,26 @@ class CheckinTrackingSensor(
         """Return True when keymaster monitoring is switched on.
 
         Looks up the :class:`KeymasterMonitoringSwitch` stored in
-        ``hass.data`` for this config entry.  Returns ``False`` when
-        the switch entity is missing or turned off.
+        ``hass.data`` for this config entry.  When the switch entity
+        is loaded, returns its ``is_on`` state.
+
+        When the switch entity is **not yet loaded** (e.g. during
+        platform setup on restart), falls back to the coordinator
+        configuration: if a lock is configured monitoring *may* be
+        active, so ``True`` is returned to prevent premature
+        auto check-in during the setup race window.
         """
         entry_data = self._hass.data.get(DOMAIN, {}).get(
             self._config_entry.entry_id, {}
         )
         monitoring_switch = entry_data.get(KEYMASTER_MONITORING_SWITCH)
-        return monitoring_switch is not None and monitoring_switch.is_on
+        if monitoring_switch is not None:
+            result: bool = monitoring_switch.is_on
+            return result
+        # Switch entity not yet loaded — fall back to configuration.
+        # If a lock is configured, assume monitoring may be active to
+        # prevent premature auto check-in during platform setup race.
+        return self.coordinator.lockname is not None
 
     @callback
     def _handle_coordinator_update(self) -> None:

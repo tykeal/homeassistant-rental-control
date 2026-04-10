@@ -1413,6 +1413,58 @@ class TestStaleStateValidation:
         assert sensor._state == CHECKIN_STATE_AWAITING
         assert sensor._checkin_source is None
 
+    async def test_awaiting_stays_awaiting_on_restore_switch_not_loaded(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test awaiting stays awaiting when switch not yet loaded.
+
+        When keymaster is configured (lockname set) but the
+        monitoring switch entity has not been added to hass.data
+        yet (platform setup race on restart), the sensor must NOT
+        auto-transition to checked_in.
+        """
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        # Keymaster is configured but monitoring switch NOT in hass.data
+        mock_checkin_coordinator.lockname = "front_door"
+
+        now = dt_util.now()
+        start = now - timedelta(hours=2)
+        end = now + timedelta(hours=48)
+
+        data_dict = _make_extra_data_dict(
+            state=CHECKIN_STATE_AWAITING,
+            summary="Reserved - John Smith",
+            start=start,
+            end=end,
+            slot_name="John Smith",
+            checkin_source=None,
+            transition_target_time=start,
+        )
+
+        event = _make_event(
+            summary="Reserved - John Smith",
+            start=start,
+            end=end,
+        )
+        mock_checkin_coordinator.data = [event]
+        mock_checkin_coordinator.last_update_success = True
+
+        with patch.object(
+            sensor,
+            "async_get_last_extra_data",
+            new=AsyncMock(return_value=_mock_extra_data(data_dict)),
+        ):
+            await sensor.async_added_to_hass()
+
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._checkin_source is None
+
     async def test_checked_out_transitions_to_awaiting_when_new_event(
         self,
         hass: HomeAssistant,
