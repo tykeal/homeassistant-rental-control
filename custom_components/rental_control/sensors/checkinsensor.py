@@ -79,6 +79,7 @@ class CheckinExtraStoredData(ExtraStoredData):
         transition_target_time: datetime | None,
         checked_out_event_key: str | None,
         next_event_start_day: datetime | None = None,
+        checkin_lock_name: str | None = None,
     ) -> None:
         """Initialise from typed field values."""
         self.state = state
@@ -92,6 +93,7 @@ class CheckinExtraStoredData(ExtraStoredData):
         self.transition_target_time = transition_target_time
         self.checked_out_event_key = checked_out_event_key
         self.next_event_start_day = next_event_start_day
+        self.checkin_lock_name = checkin_lock_name
 
     def as_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable dict representation."""
@@ -123,6 +125,7 @@ class CheckinExtraStoredData(ExtraStoredData):
                 if self.next_event_start_day
                 else None
             ),
+            "checkin_lock_name": self.checkin_lock_name,
         }
 
     @classmethod
@@ -158,6 +161,7 @@ class CheckinExtraStoredData(ExtraStoredData):
             transition_target_time=_parse_dt(data.get("transition_target_time")),
             checked_out_event_key=data.get("checked_out_event_key"),
             next_event_start_day=_parse_dt(data.get("next_event_start_day")),
+            checkin_lock_name=data.get("checkin_lock_name"),
         )
 
 
@@ -218,6 +222,9 @@ class CheckinTrackingSensor(
         # FR-006c: Start day of the follow-on event for midnight-to-awaiting
         self._next_event_start_day: datetime | None = None
 
+        # Spec 006: Lock that triggered check-in (child lock monitoring)
+        self._checkin_lock_name: str | None = None
+
         # Follow-on event key for linger guard (not persisted)
         self._linger_followon_key: str | None = None
 
@@ -266,6 +273,7 @@ class CheckinTrackingSensor(
             "checkout_source": self._checkout_source,
             "checkout_time": self._checkout_time,
             "next_transition": self._transition_target_time,
+            "lock_name": self._checkin_lock_name,
         }
 
     @property
@@ -287,6 +295,7 @@ class CheckinTrackingSensor(
             transition_target_time=self._transition_target_time,
             checked_out_event_key=self._checked_out_event_key,
             next_event_start_day=self._next_event_start_day,
+            checkin_lock_name=self._checkin_lock_name,
         )
 
     @staticmethod
@@ -605,6 +614,7 @@ class CheckinTrackingSensor(
         self._checkout_time = None
         self._checked_out_event_key = None
         self._next_event_start_day = None
+        self._checkin_lock_name = None
         self._linger_followon_key = None
         self._linger_baseline = None
         self._event_missing_warned = False
@@ -630,7 +640,7 @@ class CheckinTrackingSensor(
 
         self.async_write_ha_state()
 
-    def _transition_to_checked_in(self, source: str) -> None:
+    def _transition_to_checked_in(self, source: str, lock_name: str = "") -> None:
         """Transition to checked_in state.
 
         Fires a check-in event on the HA event bus and schedules auto
@@ -638,36 +648,40 @@ class CheckinTrackingSensor(
 
         Args:
             source: How check-in occurred (``keymaster`` or ``automatic``).
+            lock_name: The lock that triggered check-in (empty if automatic).
         """
         _LOGGER.debug(
-            "Transitioning to checked_in (source=%s) for event: %s",
+            "Transitioning to checked_in (source=%s, lock=%s) for event: %s",
             source,
+            lock_name or "(none)",
             self._tracked_event_summary,
         )
         self._state = CHECKIN_STATE_CHECKED_IN
         self._checkin_source = source
+        self._checkin_lock_name = lock_name or None
         self._transition_target_time = None
         self._event_missing_warned = False
 
         # Fire check-in event (per contracts/events.md)
+        event_payload: dict[str, Any] = {
+            "entity_id": self.entity_id,
+            "summary": self._tracked_event_summary or "",
+            "start": (
+                self._tracked_event_start.isoformat()
+                if self._tracked_event_start
+                else ""
+            ),
+            "end": (
+                self._tracked_event_end.isoformat() if self._tracked_event_end else ""
+            ),
+            "guest_name": self._tracked_event_slot_name or "",
+            "source": source,
+        }
+        if lock_name:
+            event_payload["lock_name"] = lock_name
         self._hass.bus.async_fire(
             EVENT_RENTAL_CONTROL_CHECKIN,
-            {
-                "entity_id": self.entity_id,
-                "summary": self._tracked_event_summary or "",
-                "start": (
-                    self._tracked_event_start.isoformat()
-                    if self._tracked_event_start
-                    else ""
-                ),
-                "end": (
-                    self._tracked_event_end.isoformat()
-                    if self._tracked_event_end
-                    else ""
-                ),
-                "guest_name": self._tracked_event_slot_name or "",
-                "source": source,
-            },
+            event_payload,
         )
 
         # Schedule auto check-out at event end time
@@ -863,6 +877,7 @@ class CheckinTrackingSensor(
         self._checkout_time = None
         self._transition_target_time = None
         self._checked_out_event_key = None
+        self._checkin_lock_name = None
         self._linger_followon_key = None
         self._linger_baseline = None
         self._event_missing_warned = False
@@ -1127,6 +1142,7 @@ class CheckinTrackingSensor(
             self._transition_target_time = restored.transition_target_time
             self._checked_out_event_key = restored.checked_out_event_key
             self._next_event_start_day = restored.next_event_start_day
+            self._checkin_lock_name = restored.checkin_lock_name
 
             _LOGGER.debug(
                 "Restored state '%s' for %s", self._state, self.coordinator.name
@@ -1347,6 +1363,7 @@ class CheckinTrackingSensor(
     def async_handle_keymaster_unlock(
         self,
         code_slot_num: int,
+        lock_name: str = "",
     ) -> None:
         """Handle a keymaster unlock event.
 
@@ -1362,6 +1379,7 @@ class CheckinTrackingSensor(
 
         Args:
             code_slot_num: The keymaster code slot number that was used.
+            lock_name: The lockname from the keymaster event (parent or child).
         """
         # FR-017: Ignore manual/RF unlocks (code_slot_num == 0)
         if code_slot_num == 0:
@@ -1410,11 +1428,13 @@ class CheckinTrackingSensor(
 
         # All conditions met — transition to checked_in
         _LOGGER.info(
-            "Keymaster unlock detected for slot %d, transitioning to checked_in for %s",
+            "Keymaster unlock detected for slot %d (lock=%s), "
+            "transitioning to checked_in for %s",
             code_slot_num,
+            lock_name or "(parent)",
             self._tracked_event_summary,
         )
-        self._transition_to_checked_in(source="keymaster")
+        self._transition_to_checked_in(source="keymaster", lock_name=lock_name)
 
     async def _async_update_lock_code_expiry(self, new_end: datetime) -> None:
         """Update keymaster lock code expiry after early checkout.

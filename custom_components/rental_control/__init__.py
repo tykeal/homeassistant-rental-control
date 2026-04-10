@@ -315,7 +315,7 @@ def async_register_keymaster_listener(
     matching unlock events to the check-in tracking sensor.
 
     The listener validates:
-    - ``lockname`` matches ``coordinator.lockname``
+    - ``lockname`` is in ``coordinator.monitored_locknames`` (parent + children)
     - ``state`` is ``"unlocked"``
     - ``code_slot_num != 0`` (FR-017)
     - ``code_slot_num`` is in ``[start_slot, start_slot + max_events)``
@@ -325,7 +325,6 @@ def async_register_keymaster_listener(
         config_entry: The integration config entry.
     """
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
-    lockname = coordinator.lockname
     start_slot = coordinator.start_slot
     max_events = coordinator.max_events
 
@@ -338,8 +337,10 @@ def async_register_keymaster_listener(
         """
         event_data = event.data
 
-        # Validate lockname matches
-        if event_data.get("lockname") != lockname:
+        # Validate lockname matches parent or any child lock
+        event_lockname = event_data.get("lockname", "")
+        monitored = coordinator.monitored_locknames
+        if event_lockname not in monitored:
             return
 
         # Validate state is unlocked
@@ -383,15 +384,20 @@ def async_register_keymaster_listener(
             return
 
         _LOGGER.debug(
-            "Forwarding keymaster unlock (slot=%d) to checkin sensor",
+            "Forwarding keymaster unlock (slot=%d, lock=%s) to checkin sensor",
             code_slot_num,
+            event_lockname,
         )
         checkin_sensor.async_handle_keymaster_unlock(
             code_slot_num=code_slot_num,
+            lock_name=event_lockname,
         )
 
     unsub = hass.bus.async_listen(
         "keymaster_lock_state_changed", _handle_keymaster_event
     )
     hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(unsub)
-    _LOGGER.debug("Registered keymaster event bus listener for lockname=%s", lockname)
+    _LOGGER.debug(
+        "Registered keymaster event bus listener for lockname=%s",
+        coordinator.lockname,
+    )

@@ -202,6 +202,7 @@ def mock_checkin_coordinator(
     coordinator.data = []
     coordinator.last_update_success = True
     coordinator.lockname = None
+    coordinator.monitored_locknames = frozenset()
     coordinator.start_slot = 10
     coordinator.max_events = 3
     coordinator.checkin = time(16, 0)
