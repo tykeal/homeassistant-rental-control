@@ -423,14 +423,25 @@ class CheckinTrackingSensor(
         """Return True when keymaster monitoring is switched on.
 
         Looks up the :class:`KeymasterMonitoringSwitch` stored in
-        ``hass.data`` for this config entry.  Returns ``False`` when
-        the switch entity is missing or turned off.
+        ``hass.data`` for this config entry.  When the switch entity
+        is loaded, returns its ``is_on`` state.
+
+        When the switch entity is **not yet loaded** (e.g. during
+        platform setup on restart), falls back to the coordinator
+        configuration: if a lock is configured monitoring *may* be
+        active, so ``True`` is returned to prevent premature
+        auto check-in during the setup race window.
         """
         entry_data = self._hass.data.get(DOMAIN, {}).get(
             self._config_entry.entry_id, {}
         )
         monitoring_switch = entry_data.get(KEYMASTER_MONITORING_SWITCH)
-        return monitoring_switch is not None and monitoring_switch.is_on
+        if monitoring_switch is not None:
+            return bool(monitoring_switch.is_on)
+        # Switch entity not yet loaded — fall back to configuration.
+        # If a lock is configured, assume monitoring may be active to
+        # prevent premature auto check-in during platform setup race.
+        return self.coordinator.lockname is not None
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -463,7 +474,22 @@ class CheckinTrackingSensor(
                 # Same event still in coordinator — update mutable fields
                 self._tracked_event_end = tracked.end
                 self._tracked_event_slot_name = self._extract_slot_name(tracked)
-                self.async_write_ha_state()
+                # Re-evaluate auto check-in on each coordinator update.
+                # During the startup race the monitoring switch may not
+                # have been loaded yet, so _is_keymaster_monitoring_enabled
+                # conservatively returned True.  Once all platforms are
+                # up and the switch is available, this path allows the
+                # deferred auto-checkin to proceed when monitoring is
+                # actually off and the event start has passed.
+                now = dt_util.now()
+                if (
+                    self._tracked_event_start is not None
+                    and self._tracked_event_start <= now
+                    and not self._is_keymaster_monitoring_enabled()
+                ):
+                    self._transition_to_checked_in(source="automatic")
+                else:
+                    self.async_write_ha_state()
             else:
                 # Tracked event gone — pick up next available or clear
                 event = self._get_relevant_event()
