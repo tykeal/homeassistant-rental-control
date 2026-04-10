@@ -1770,3 +1770,294 @@ class TestChildLockDiscovery:
         assert coordinator.monitored_locknames == frozenset(
             {"front_door", "patio_door"}
         )
+
+
+# ===========================================================================
+# Spec 006 Phase 5: Dynamic child lock lifecycle
+# ===========================================================================
+
+
+class TestChildLockDynamicLifecycle:
+    """Tests for dynamic add/remove of child locks at runtime."""
+
+    async def test_child_lock_added_at_runtime(self, hass: HomeAssistant) -> None:
+        """Test new child lock discovered after next coordinator refresh.
+
+        Starts with parent-only, adds a child lock entry, refreshes,
+        and verifies monitored_locknames includes the new child.
+        """
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_parent_add",
+        )
+        parent_entry.add_to_hass(hass)
+
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-add-lifecycle",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="rc_add_lifecycle",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+
+        # First refresh — parent only
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=frozen_time,
+            ),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=calendar_data.AIRBNB_ICS_CALENDAR,
+            )
+            await coordinator._async_update_data()
+
+        assert coordinator.monitored_locknames == frozenset({"front_door"})
+
+        # Add a child lock dynamically
+        child_entry = MockConfigEntry(
+            domain="keymaster",
+            data={
+                "lockname": "garage_door",
+                "parent_entry_id": "km_parent_add",
+            },
+            entry_id="km_child_add_lifecycle",
+        )
+        child_entry.add_to_hass(hass)
+
+        # Second refresh — should discover the new child
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=frozen_time,
+            ),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=calendar_data.AIRBNB_ICS_CALENDAR,
+            )
+            await coordinator._async_update_data()
+
+        assert coordinator.monitored_locknames == frozenset(
+            {"front_door", "garage_door"}
+        )
+
+    async def test_child_lock_removed_at_runtime(self, hass: HomeAssistant) -> None:
+        """Test removed child lock disappears after next refresh.
+
+        Starts with parent + child, removes the child entry,
+        refreshes, and verifies monitored_locknames reverts to
+        parent-only.
+        """
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_parent_remove",
+        )
+        parent_entry.add_to_hass(hass)
+
+        child_entry = MockConfigEntry(
+            domain="keymaster",
+            data={
+                "lockname": "patio_door",
+                "parent_entry_id": "km_parent_remove",
+            },
+            entry_id="km_child_remove_lifecycle",
+        )
+        child_entry.add_to_hass(hass)
+
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-remove-lifecycle",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="rc_remove_lifecycle",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+
+        # First refresh — parent + child
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=frozen_time,
+            ),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=calendar_data.AIRBNB_ICS_CALENDAR,
+            )
+            await coordinator._async_update_data()
+
+        assert coordinator.monitored_locknames == frozenset(
+            {"front_door", "patio_door"}
+        )
+
+        # Remove the child lock entry by unloading it
+        await hass.config_entries.async_remove(child_entry.entry_id)
+
+        # Second refresh — should no longer include child
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=frozen_time,
+            ),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=calendar_data.AIRBNB_ICS_CALENDAR,
+            )
+            await coordinator._async_update_data()
+
+        assert coordinator.monitored_locknames == frozenset({"front_door"})
+
+    async def test_second_child_added_preserves_first(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test adding a second child preserves the first.
+
+        Starts with parent + one child, adds a second child,
+        refreshes, and verifies all three are in monitored_locknames.
+        """
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_parent_multi",
+        )
+        parent_entry.add_to_hass(hass)
+
+        child1 = MockConfigEntry(
+            domain="keymaster",
+            data={
+                "lockname": "side_door",
+                "parent_entry_id": "km_parent_multi",
+            },
+            entry_id="km_child1_multi",
+        )
+        child1.add_to_hass(hass)
+
+        rc_entry = MockConfigEntry(
+            domain="rental_control",
+            title="Test Rental",
+            version=7,
+            unique_id="test-multi-lifecycle",
+            data={
+                "name": "Test Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="rc_multi_lifecycle",
+        )
+        rc_entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, rc_entry)
+
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+
+        # First refresh — parent + child1
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=frozen_time,
+            ),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=calendar_data.AIRBNB_ICS_CALENDAR,
+            )
+            await coordinator._async_update_data()
+
+        assert coordinator.monitored_locknames == frozenset({"front_door", "side_door"})
+
+        # Add second child
+        child2 = MockConfigEntry(
+            domain="keymaster",
+            data={
+                "lockname": "garage_door",
+                "parent_entry_id": "km_parent_multi",
+            },
+            entry_id="km_child2_multi",
+        )
+        child2.add_to_hass(hass)
+
+        # Second refresh — all three
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=frozen_time,
+            ),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=calendar_data.AIRBNB_ICS_CALENDAR,
+            )
+            await coordinator._async_update_data()
+
+        assert coordinator.monitored_locknames == frozenset(
+            {"front_door", "side_door", "garage_door"}
+        )
