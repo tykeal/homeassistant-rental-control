@@ -1939,8 +1939,9 @@ class TestChildLockDynamicLifecycle:
             {"front_door", "patio_door"}
         )
 
-        # Remove the child lock entry by unloading it
+        # Remove the child lock entry
         await hass.config_entries.async_remove(child_entry.entry_id)
+        await hass.async_block_till_done()
 
         # Second refresh — should no longer include child
         with (
