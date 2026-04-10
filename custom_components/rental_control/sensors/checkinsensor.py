@@ -437,8 +437,7 @@ class CheckinTrackingSensor(
         )
         monitoring_switch = entry_data.get(KEYMASTER_MONITORING_SWITCH)
         if monitoring_switch is not None:
-            result: bool = monitoring_switch.is_on
-            return result
+            return bool(monitoring_switch.is_on)
         # Switch entity not yet loaded — fall back to configuration.
         # If a lock is configured, assume monitoring may be active to
         # prevent premature auto check-in during platform setup race.

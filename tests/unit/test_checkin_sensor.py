@@ -1523,11 +1523,21 @@ class TestStaleStateValidation:
             KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=False),
         }
 
-        # Next coordinator update triggers deferred auto-checkin
+        # Next coordinator update triggers deferred auto-checkin.
+        # This is a post-startup transition, so the normal check-in
+        # event SHOULD fire (unlike silent restore catch-up).
+        fired_events: list = []
+        hass.bus.async_listen(
+            EVENT_RENTAL_CONTROL_CHECKIN,
+            lambda e: fired_events.append(e),
+        )
+
         sensor._handle_coordinator_update()
+        await hass.async_block_till_done()
 
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
         assert sensor._checkin_source == "automatic"
+        assert len(fired_events) == 1
 
     async def test_checked_out_transitions_to_awaiting_when_new_event(
         self,
