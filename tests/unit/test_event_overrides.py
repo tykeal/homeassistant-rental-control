@@ -955,15 +955,14 @@ class TestEdgeCases:
             await eo.async_check_overrides(coordinator)
             mock_fire.assert_not_called()
 
-    async def test_check_overrides_start_equals_last_end_not_cleared(self) -> None:
-        """Verify slot is NOT cleared when start_date == last_end (not >)."""
+    async def test_valid_override_with_matching_event_not_cleared(self) -> None:
+        """Verify slot is NOT cleared when event matches by time overlap."""
         eo = EventOverrides(start_slot=1, max_slots=1)
         today = _make_dt(2025, 7, 1)
         start = _make_dt(2025, 7, 15)
         end = _make_dt(2025, 7, 20)
         eo.update(1, "c", "Edge Guest", start, end)
 
-        # Event overlaps the override and last_end == override start
         coordinator = _make_coordinator(
             calendar_events=[
                 _make_event(end, "Edge Guest", start=start),
