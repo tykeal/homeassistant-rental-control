@@ -221,6 +221,35 @@ All new source files MUST include SPDX headers:
 
 Check `REUSE.toml` for file-type-specific header requirements.
 
+## Git Worktrees
+
+When creating git worktrees for feature branches, bug fixes, or any
+other work, **always** place them in the sibling `worktrees/` directory:
+
+```bash
+git worktree add /home/tykeal/repos/personal/homeassistant/worktrees/<branch-name> -b <branch-name> main
+```
+
+The `worktrees/` directory is a sibling of the repository under the
+repository root's parent directory:
+
+```
+repos/personal/homeassistant/
+├── rental-control/          ← this repository
+└── worktrees/               ← all worktrees go here
+    ├── feat/some-feature/
+    └── fix/some-bugfix/
+```
+
+**NEVER** create worktrees inside the repository directory itself.
+
+Clean up worktrees when the associated branch has been merged:
+
+```bash
+git worktree remove /home/tykeal/repos/personal/homeassistant/worktrees/<branch-name>
+git branch -D <branch-name>
+```
+
 ## Testing Requirements
 
 The Python project lives under `custom_components/`. Run commands
