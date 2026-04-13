@@ -23,6 +23,7 @@ from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DEFAULT_PATH
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import NAME
+from custom_components.rental_control.util import EventIdentity
 from custom_components.rental_control.util import add_call
 from custom_components.rental_control.util import async_fire_clear_code
 from custom_components.rental_control.util import async_fire_set_code
@@ -32,6 +33,7 @@ from custom_components.rental_control.util import compute_early_expiry_time
 from custom_components.rental_control.util import delete_folder
 from custom_components.rental_control.util import delete_rc_and_base_folder
 from custom_components.rental_control.util import gen_uuid
+from custom_components.rental_control.util import get_event_identities
 from custom_components.rental_control.util import get_event_names
 from custom_components.rental_control.util import get_slot_name
 from custom_components.rental_control.util import handle_state_change
@@ -368,6 +370,84 @@ class TestGetEventNames:
         rc.event_prefix = None
         rc.data = []
         assert get_event_names(rc) == []
+
+
+# ---------------------------------------------------------------------------
+# get_event_identities tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetEventIdentities:
+    """Tests for the get_event_identities function."""
+
+    def test_returns_identities_with_times_and_uid(self) -> None:
+        """Verify structured identities include name, times, uid."""
+        rc = MagicMock()
+        rc.event_prefix = None
+        event = MagicMock()
+        event.summary = "Alice"
+        event.description = ""
+        event.start = dt_util.now()
+        event.end = dt_util.now() + timedelta(days=5)
+        event.uid = "uid-123"
+        rc.data = [event]
+
+        result = get_event_identities(rc)
+        assert len(result) == 1
+        assert result[0] == EventIdentity("Alice", event.start, event.end, "uid-123")
+
+    def test_filters_blocked_events(self) -> None:
+        """Verify blocked events are excluded."""
+        rc = MagicMock()
+        rc.event_prefix = None
+        blocked = MagicMock()
+        blocked.summary = "Blocked"
+        blocked.description = ""
+        blocked.start = dt_util.now()
+        blocked.end = dt_util.now() + timedelta(days=1)
+        blocked.uid = None
+        rc.data = [blocked]
+
+        assert get_event_identities(rc) == []
+
+    def test_empty_calendar(self) -> None:
+        """Verify empty list when no events."""
+        rc = MagicMock()
+        rc.event_prefix = None
+        rc.data = []
+        assert get_event_identities(rc) == []
+
+    def test_event_without_uid_attribute(self) -> None:
+        """Verify uid is None when event lacks uid attribute."""
+        rc = MagicMock()
+        rc.event_prefix = None
+        event = CalendarEvent(
+            summary="Bob",
+            start=date(2025, 3, 15),
+            end=date(2025, 3, 20),
+        )
+        rc.data = [event]
+
+        result = get_event_identities(rc)
+        assert len(result) == 1
+        assert result[0].uid is None
+
+    def test_uses_calendar_parameter(self) -> None:
+        """Verify calendar parameter overrides coordinator data."""
+        rc = MagicMock()
+        rc.event_prefix = None
+        rc.data = []
+
+        event = MagicMock()
+        event.summary = "Override"
+        event.description = ""
+        event.start = dt_util.now()
+        event.end = dt_util.now() + timedelta(days=3)
+        event.uid = "uid-456"
+
+        result = get_event_identities(rc, calendar=[event])
+        assert len(result) == 1
+        assert result[0].name == "Override"
 
 
 # ---------------------------------------------------------------------------

@@ -25,6 +25,7 @@ import logging
 from pathlib import Path
 import re
 from typing import Any
+from typing import NamedTuple
 import uuid
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
@@ -387,6 +388,38 @@ def get_event_names(rc, calendar: list | None = None) -> list[str]:
         if slot_name:
             event_names.append(slot_name)
     return event_names
+
+
+class EventIdentity(NamedTuple):
+    """Structured identity for a calendar event."""
+
+    name: str
+    start: datetime
+    end: datetime
+    uid: str | None
+
+
+def get_event_identities(rc, calendar: list | None = None) -> list[EventIdentity]:
+    """Get structured event identities for slot reconciliation.
+
+    Returns name, time range, and UID for each event so that
+    override cleanup can distinguish same-named events by their
+    time windows and calendar UIDs.
+    """
+    events = calendar if calendar is not None else rc.data
+    if not events:
+        return []
+    identities: list[EventIdentity] = []
+    for event in events:
+        name = get_slot_name(
+            event.summary,
+            event.description or "",
+            rc.event_prefix or "",
+        )
+        if name:
+            uid = event.uid if hasattr(event, "uid") else None
+            identities.append(EventIdentity(name, event.start, event.end, uid))
+    return identities
 
 
 def gen_uuid(created: str) -> str:

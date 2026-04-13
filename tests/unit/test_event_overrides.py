@@ -32,12 +32,24 @@ def _make_dt(
     return datetime(year, month, day, hour, minute, tzinfo=dt_util.UTC)
 
 
-def _make_event(end: datetime, summary: str = "") -> MagicMock:
-    """Create a mock calendar event with the given end and summary."""
+def _make_event(
+    end: datetime,
+    summary: str = "",
+    start: datetime | None = None,
+    uid: str | None = None,
+) -> MagicMock:
+    """Create a mock calendar event with the given end and summary.
+
+    When *start* is omitted it defaults to ``end - 5 days`` which is
+    fine for tests that never inspect start.  Supply an explicit
+    *start* whenever the test relies on time-range overlap matching.
+    """
     event = MagicMock()
+    event.start = start if start is not None else end - timedelta(days=5)
     event.end = end
     event.summary = summary
     event.description = ""
+    event.uid = uid
     return event
 
 
@@ -645,7 +657,9 @@ class TestAsyncCheckOverrides:
         eo.update(1, "c", "Valid Guest", start, end)
 
         coordinator = _make_coordinator(
-            calendar_events=[_make_event(_make_dt(2025, 8, 1), "Valid Guest")],
+            calendar_events=[
+                _make_event(end, "Valid Guest", start=start),
+            ],
             max_events=5,
         )
 
@@ -668,18 +682,23 @@ class TestAsyncCheckOverrides:
         eo = EventOverrides(start_slot=1, max_slots=3)
         past = _make_dt(2025, 5, 1)
         past_end = _make_dt(2025, 5, 3)
+        past2 = _make_dt(2025, 5, 5)
+        past2_end = _make_dt(2025, 5, 8)
         future = _make_dt(2025, 7, 5)
         future_end = _make_dt(2025, 7, 10)
 
         eo.update(1, "c", "Past Guest", past, past_end)
         eo.update(2, "c", "Valid Guest", future, future_end)
-        eo.update(3, "c", "Also Past", past, past_end)
+        eo.update(3, "c", "Also Past", past2, past2_end)
 
+        # Calendar ordered chronologically; Valid Guest at end
+        # makes last_end=Jul 10 so slot 2 isn't caught by
+        # start_after_last_end.
         coordinator = _make_coordinator(
             calendar_events=[
-                _make_event(_make_dt(2025, 8, 1), "Past Guest"),
-                _make_event(_make_dt(2025, 8, 1), "Valid Guest"),
-                _make_event(_make_dt(2025, 8, 1), "Also Past"),
+                _make_event(past_end, "Past Guest", start=past),
+                _make_event(past2_end, "Also Past", start=past2),
+                _make_event(future_end, "Valid Guest", start=future),
             ],
             max_events=5,
         )
@@ -700,6 +719,119 @@ class TestAsyncCheckOverrides:
             # Slots 1 and 3 should be cleared
             assert eo.overrides[1] is None
             assert eo.overrides[3] is None
+
+    async def test_clears_orphaned_slot_same_name_different_dates(
+        self,
+    ) -> None:
+        """Verify orphaned slot is cleared when same-name event cancelled.
+
+        Scenario: Guest creates two reservations (same name, different
+        dates).  One reservation is cancelled.  The remaining event
+        still has the same name but a different time range.  The
+        orphaned slot must be cleared even though the name still
+        exists in the calendar.
+        """
+        eo = EventOverrides(start_slot=1, max_slots=2)
+
+        # Two overrides for the same guest, non-overlapping dates
+        stay_a_start = _make_dt(2025, 7, 1)
+        stay_a_end = _make_dt(2025, 7, 5)
+        stay_b_start = _make_dt(2025, 7, 10)
+        stay_b_end = _make_dt(2025, 7, 15)
+
+        eo.update(1, "1234", "John Doe", stay_a_start, stay_a_end)
+        eo.update(2, "5678", "John Doe", stay_b_start, stay_b_end)
+
+        # Guest cancels stay B — only stay A remains in calendar
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(stay_a_end, "John Doe", start=stay_a_start),
+            ],
+            max_events=5,
+        )
+
+        frozen = _make_dt(2025, 6, 25)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            # Only slot 2 (stay B) should be cleared
+            mock_fire.assert_called_once_with(coordinator, 2, expected_name="John Doe")
+            assert eo.overrides[1] is not None
+            assert eo.overrides[1]["slot_name"] == "John Doe"
+            assert eo.overrides[2] is None
+
+    async def test_keeps_both_slots_same_name_both_active(self) -> None:
+        """Verify both slots kept when same-name events both exist."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+
+        stay_a_start = _make_dt(2025, 7, 1)
+        stay_a_end = _make_dt(2025, 7, 5)
+        stay_b_start = _make_dt(2025, 7, 10)
+        stay_b_end = _make_dt(2025, 7, 15)
+
+        eo.update(1, "1234", "John Doe", stay_a_start, stay_a_end)
+        eo.update(2, "5678", "John Doe", stay_b_start, stay_b_end)
+
+        # Both stays still in calendar
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(stay_a_end, "John Doe", start=stay_a_start),
+                _make_event(stay_b_end, "John Doe", start=stay_b_start),
+            ],
+            max_events=5,
+        )
+
+        frozen = _make_dt(2025, 6, 25)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            mock_fire.assert_not_called()
+            assert eo.overrides[1] is not None
+            assert eo.overrides[2] is not None
+
+    async def test_uid_distinguishes_same_name_overlapping(self) -> None:
+        """Verify UID prevents false matches between same-name events."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+
+        start = _make_dt(2025, 7, 1)
+        end = _make_dt(2025, 7, 10)
+
+        eo.update(1, "1234", "John Doe", start, end)
+        eo._slot_uids[1] = "uid-A"
+        eo.update(2, "5678", "John Doe", start, end)
+        eo._slot_uids[2] = "uid-B"
+
+        # Only uid-A event remains
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(end, "John Doe", start=start, uid="uid-A"),
+            ],
+            max_events=5,
+        )
+
+        frozen = _make_dt(2025, 6, 25)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            # Slot 2 (uid-B) should be cleared
+            mock_fire.assert_called_once_with(coordinator, 2, expected_name="John Doe")
+            assert eo.overrides[1] is not None
+            assert eo.overrides[2] is None
 
 
 # ---------------------------------------------------------------------------
@@ -807,7 +939,9 @@ class TestEdgeCases:
         eo.update(1, "c", "Today Guest", start, end)
 
         coordinator = _make_coordinator(
-            calendar_events=[_make_event(_make_dt(2025, 8, 1), "Today Guest")],
+            calendar_events=[
+                _make_event(end, "Today Guest", start=start),
+            ],
             max_events=5,
         )
 
@@ -829,9 +963,11 @@ class TestEdgeCases:
         end = _make_dt(2025, 7, 20)
         eo.update(1, "c", "Edge Guest", start, end)
 
-        # Last event ends July 15 — same as start
+        # Event overlaps the override and last_end == override start
         coordinator = _make_coordinator(
-            calendar_events=[_make_event(_make_dt(2025, 7, 15), "Edge Guest")],
+            calendar_events=[
+                _make_event(end, "Edge Guest", start=start),
+            ],
             max_events=5,
         )
 
@@ -904,9 +1040,21 @@ class TestEdgeCases:
         # Calendar: 3 events, but max_events=2 so sensors only see
         # the first 2. "Old Guest" is at index 2 (beyond sensors).
         events = [
-            _make_event(_make_dt(2025, 7, 10), "Current Guest"),
-            _make_event(_make_dt(2025, 7, 20), "New Guest"),
-            _make_event(_make_dt(2025, 7, 25), "Old Guest"),
+            _make_event(
+                _make_dt(2025, 7, 10),
+                "Current Guest",
+                start=_make_dt(2025, 7, 5),
+            ),
+            _make_event(
+                _make_dt(2025, 7, 20),
+                "New Guest",
+                start=_make_dt(2025, 7, 11),
+            ),
+            _make_event(
+                _make_dt(2025, 7, 25),
+                "Old Guest",
+                start=_make_dt(2025, 7, 12),
+            ),
         ]
         coordinator = _make_coordinator(
             calendar_events=events,

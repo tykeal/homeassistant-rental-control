@@ -27,8 +27,9 @@ from typing import TypedDict
 from homeassistant.util import dt
 
 from .const import DEFAULT_MAX_RETRY_CYCLES
+from .util import EventIdentity
 from .util import async_fire_clear_code
-from .util import get_event_names
+from .util import get_event_identities
 
 if TYPE_CHECKING:
     from homeassistant.components.calendar import CalendarEvent
@@ -331,6 +332,37 @@ class EventOverrides:
         self._retry_counts[slot] = 0
         self._escalated[slot] = False
 
+    def _slot_has_matching_event(
+        self,
+        slot: int,
+        events: list[EventIdentity],
+    ) -> bool:
+        """Check if an override slot matches any current calendar event.
+
+        Uses name + strict interval overlap + UID tiebreaker, the same
+        logic as ``_find_overlapping_slot`` but searching calendar
+        events instead of other override slots.
+        """
+        override = self._overrides[slot]
+        if override is None:
+            return False
+
+        slot_name = override["slot_name"]
+        slot_start = override["start_time"]
+        slot_end = override["end_time"]
+        stored_uid = self._slot_uids.get(slot)
+
+        for ev in events:
+            if ev.name != slot_name:
+                continue
+            if not (slot_start < ev.end and ev.start < slot_end):
+                continue
+            if stored_uid is not None and ev.uid is not None and stored_uid != ev.uid:
+                continue
+            return True
+
+        return False
+
     async def async_check_overrides(
         self,
         coordinator,
@@ -353,8 +385,8 @@ class EventOverrides:
         # Only consider events within the sensor boundary so that
         # slots tied to events beyond max_events get cleared.
         sensor_cal = cal[: coordinator.max_events]
-        event_names = get_event_names(coordinator, calendar=sensor_cal)
-        _LOGGER.debug("event_names = %s", event_names)
+        event_ids = get_event_identities(coordinator, calendar=sensor_cal)
+        _LOGGER.debug("event_identities = %s", event_ids)
 
         async with self._lock:
             assigned_slots = self.__get_slots_with_values()
@@ -368,7 +400,7 @@ class EventOverrides:
             for slot in assigned_slots:
                 clear_code = False
 
-                if self.get_slot_name(slot) not in event_names:
+                if not self._slot_has_matching_event(slot, event_ids):
                     _LOGGER.debug(
                         "%s not in current events, clearing",
                         self._overrides[slot],
