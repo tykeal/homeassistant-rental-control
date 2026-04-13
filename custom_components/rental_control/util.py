@@ -368,28 +368,6 @@ async def async_fire_update_times(coordinator, event) -> None:
     check_gather_results(results, "Lock slot operation")
 
 
-def get_event_names(rc, calendar: list | None = None) -> list[str]:
-    """Get the current event names from coordinator data.
-
-    When called from within _async_update_data, pass the fresh
-    calendar list directly because coordinator.data has not been
-    updated yet.
-    """
-    events = calendar if calendar is not None else rc.data
-    if not events:
-        return []
-    event_names = []
-    for event in events:
-        slot_name = get_slot_name(
-            event.summary,
-            event.description or "",
-            rc.event_prefix or "",
-        )
-        if slot_name:
-            event_names.append(slot_name)
-    return event_names
-
-
 class EventIdentity(NamedTuple):
     """Structured identity for a calendar event."""
 
@@ -420,6 +398,15 @@ def get_event_identities(rc, calendar: list | None = None) -> list[EventIdentity
             uid = event.uid if hasattr(event, "uid") else None
             identities.append(EventIdentity(name, event.start, event.end, uid))
     return identities
+
+
+def get_event_names(rc, calendar: list | None = None) -> list[str]:
+    """Get the current event names from coordinator data.
+
+    Delegates to ``get_event_identities`` so that filtering logic
+    is maintained in a single place.
+    """
+    return [eid.name for eid in get_event_identities(rc, calendar=calendar)]
 
 
 def gen_uuid(created: str) -> str:
