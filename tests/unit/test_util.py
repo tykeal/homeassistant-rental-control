@@ -417,8 +417,8 @@ class TestGetEventIdentities:
         rc.data = []
         assert get_event_identities(rc) == []
 
-    def test_event_without_uid_attribute(self) -> None:
-        """Verify uid is None when event lacks uid attribute."""
+    def test_event_with_default_uid_returns_none(self) -> None:
+        """Verify uid is None when CalendarEvent has default uid."""
         rc = MagicMock()
         rc.event_prefix = None
         event = CalendarEvent(
@@ -426,6 +426,21 @@ class TestGetEventIdentities:
             start=date(2025, 3, 15),
             end=date(2025, 3, 20),
         )
+        rc.data = [event]
+
+        result = get_event_identities(rc)
+        assert len(result) == 1
+        assert result[0].uid is None
+
+    def test_event_object_without_uid_attribute(self) -> None:
+        """Verify uid is None when event object lacks uid attribute."""
+        rc = MagicMock()
+        rc.event_prefix = None
+        event = MagicMock(spec=["summary", "description", "start", "end"])
+        event.summary = "Bob"
+        event.description = ""
+        event.start = date(2025, 3, 15)
+        event.end = date(2025, 3, 20)
         rc.data = [event]
 
         result = get_event_identities(rc)
