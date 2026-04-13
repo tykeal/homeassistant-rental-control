@@ -230,7 +230,8 @@ other work, **always** place them in the sibling `worktrees/` directory:
 git worktree add /home/tykeal/repos/personal/homeassistant/worktrees/<branch-name> -b <branch-name> main
 ```
 
-The worktree path is relative to the repository root's parent:
+The `worktrees/` directory is a sibling of the repository under the
+repository root's parent directory:
 
 ```
 repos/personal/homeassistant/
