@@ -18,8 +18,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 from collections.abc import Sequence
+from datetime import date
 from datetime import datetime
+from datetime import time
 from datetime import timedelta
+from datetime import tzinfo
 import hashlib
 import logging
 from pathlib import Path
@@ -368,6 +371,23 @@ async def async_fire_update_times(coordinator, event) -> None:
     check_gather_results(results, "Lock slot operation")
 
 
+def _ensure_datetime(value: date | datetime, rc) -> datetime:
+    """Coerce a bare ``date`` to a timezone-aware ``datetime``.
+
+    ``CalendarEvent`` may carry ``date`` values for all-day
+    events.  Converting to midnight in the coordinator timezone
+    prevents ``TypeError`` when comparing with ``datetime``
+    override timestamps.  Falls back to UTC when no valid
+    timezone is available.
+    """
+    if isinstance(value, datetime):
+        return value
+    tz = getattr(rc, "timezone", None)
+    if not isinstance(tz, tzinfo):
+        tz = dt.UTC
+    return datetime.combine(value, time.min, tz)
+
+
 class EventIdentity(NamedTuple):
     """Structured identity for a calendar event."""
 
@@ -383,6 +403,10 @@ def get_event_identities(rc, calendar: list | None = None) -> list[EventIdentity
     Returns name, time range, and UID for each event so that
     override cleanup can distinguish same-named events by their
     time windows and calendar UIDs.
+
+    Bare ``date`` values are normalised to timezone-aware
+    ``datetime`` at midnight so downstream overlap comparisons
+    never mix types.
     """
     events = calendar if calendar is not None else rc.data
     if not events:
@@ -396,7 +420,9 @@ def get_event_identities(rc, calendar: list | None = None) -> list[EventIdentity
         )
         if name:
             uid = event.uid if hasattr(event, "uid") else None
-            identities.append(EventIdentity(name, event.start, event.end, uid))
+            start = _ensure_datetime(event.start, rc)
+            end = _ensure_datetime(event.end, rc)
+            identities.append(EventIdentity(name, start, end, uid))
     return identities
 
 

@@ -447,6 +447,27 @@ class TestGetEventIdentities:
         assert len(result) == 1
         assert result[0].uid is None
 
+    def test_bare_date_normalised_to_datetime(self) -> None:
+        """Verify bare date values become aware datetime at midnight."""
+        from datetime import datetime as dt_class
+
+        rc = MagicMock()
+        rc.event_prefix = None
+        event = CalendarEvent(
+            summary="AllDay",
+            start=date(2025, 6, 1),
+            end=date(2025, 6, 5),
+        )
+        rc.data = [event]
+
+        result = get_event_identities(rc)
+        assert len(result) == 1
+        assert isinstance(result[0].start, dt_class)
+        assert isinstance(result[0].end, dt_class)
+        assert result[0].start.hour == 0
+        assert result[0].start.minute == 0
+        assert result[0].start.tzinfo is not None
+
     def test_uses_calendar_parameter(self) -> None:
         """Verify calendar parameter overrides coordinator data."""
         rc = MagicMock()
