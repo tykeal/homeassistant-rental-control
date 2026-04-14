@@ -27,6 +27,7 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from freezegun import freeze_time
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.core import Event
 from homeassistant.core import callback
@@ -3478,6 +3479,7 @@ class TestChildLockMonitoringSwitch:
 class TestManualCheckout:
     """Tests for manual checkout action / async_checkout (T027)."""
 
+    @freeze_time("2025-06-15T12:00:00+00:00")
     async def test_checkout_success_when_checked_in_on_last_day(
         self,
         hass: HomeAssistant,
@@ -3495,7 +3497,7 @@ class TestManualCheckout:
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
 
-        now = dt_util.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        now = dt_util.now()
         start = now - timedelta(hours=2)
         end = now + timedelta(hours=2)
 
@@ -3514,9 +3516,8 @@ class TestManualCheckout:
             lambda e: fired_events.append(e),
         )
 
-        with patch("homeassistant.util.dt.now", return_value=now):
-            await sensor.async_checkout()
-            await hass.async_block_till_done()
+        await sensor.async_checkout()
+        await hass.async_block_till_done()
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
         assert sensor._checkout_source == "manual"
@@ -3531,6 +3532,7 @@ class TestManualCheckout:
         assert event_data["end"] == end.isoformat()
         assert event_data["guest_name"] == "John Smith"
 
+    @freeze_time("2025-06-15T12:00:00+00:00")
     async def test_checkout_succeeds_after_end_time_on_last_day(
         self,
         hass: HomeAssistant,
@@ -3546,7 +3548,7 @@ class TestManualCheckout:
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
 
-        now = dt_util.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        now = dt_util.now()
         start = now - timedelta(hours=6)
         end = now - timedelta(hours=1)
 
@@ -3558,8 +3560,7 @@ class TestManualCheckout:
 
         mock_checkin_coordinator.data = []
 
-        with patch("homeassistant.util.dt.now", return_value=now):
-            await sensor.async_checkout()
+        await sensor.async_checkout()
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
         assert sensor._checkout_source == "manual"
@@ -3755,6 +3756,7 @@ class TestManualCheckout:
         assert sensor._state == original_state
         assert len(fired_events) == 0
 
+    @freeze_time("2025-06-15T12:00:00+00:00")
     async def test_checkout_linger_timing_uses_actual_checkout_time(
         self,
         hass: HomeAssistant,
@@ -3771,7 +3773,7 @@ class TestManualCheckout:
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
 
-        now = dt_util.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        now = dt_util.now()
         start = now - timedelta(hours=2)
         end = now + timedelta(hours=4)
 
@@ -3784,8 +3786,7 @@ class TestManualCheckout:
         # No follow-on events → FR-006b cleaning window
         mock_checkin_coordinator.data = []
 
-        with patch("homeassistant.util.dt.now", return_value=now):
-            await sensor.async_checkout()
+        await sensor.async_checkout()
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
         assert sensor._checkout_time is not None
@@ -3801,6 +3802,7 @@ class TestManualCheckout:
         # Verify checkout_time is approximately now (not event end)
         assert abs((sensor._checkout_time - now).total_seconds()) < 2
 
+    @freeze_time("2025-06-15T12:00:00+00:00")
     async def test_checkout_at_start_boundary_succeeds(
         self,
         hass: HomeAssistant,
@@ -3812,7 +3814,7 @@ class TestManualCheckout:
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
 
-        now = dt_util.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        now = dt_util.now()
         start = now - timedelta(seconds=1)
         end = now + timedelta(hours=2)
 
@@ -3824,8 +3826,7 @@ class TestManualCheckout:
 
         mock_checkin_coordinator.data = []
 
-        with patch("homeassistant.util.dt.now", return_value=now):
-            await sensor.async_checkout()
+        await sensor.async_checkout()
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
 
@@ -3917,6 +3918,7 @@ class TestManualCheckout:
             with pytest.raises(ServiceValidationError, match="current state"):
                 await sensor.async_checkout(force=True)
 
+    @freeze_time("2025-06-15T12:00:00+00:00")
     async def test_force_checkout_uses_now_as_baseline_when_end_unknown(
         self,
         hass: HomeAssistant,
@@ -3932,15 +3934,14 @@ class TestManualCheckout:
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
 
-        now = dt_util.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        now = dt_util.now()
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._tracked_event_summary = "Reserved - Jane Doe"
         sensor._tracked_event_start = None
         sensor._tracked_event_end = None
         mock_checkin_coordinator.data = []
 
-        with patch("homeassistant.util.dt.now", return_value=now):
-            await sensor.async_checkout(force=True)
+        await sensor.async_checkout(force=True)
 
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
         assert sensor._checkout_time is not None
@@ -3984,8 +3985,7 @@ class TestEarlyCheckoutExpiry:
     @pytest.fixture(autouse=True)
     def _freeze_midday(self) -> Generator[None, None, None]:
         """Pin dt_util.now to midday so end-time offsets stay same-day."""
-        fixed = dt_util.now().replace(hour=12, minute=0, second=0, microsecond=0)
-        with patch("homeassistant.util.dt.now", return_value=fixed):
+        with freeze_time("2025-06-15T12:00:00+00:00"):
             yield
 
     async def test_unlock_while_checked_in_is_ignored(
