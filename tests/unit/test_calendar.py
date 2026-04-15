@@ -51,11 +51,11 @@ def _mock_coordinator(
 class TestRentalControlCalendarInit:
     """Tests for RentalControlCalendar initialization."""
 
-    def test_name_includes_coordinator_name(self) -> None:
-        """Verify entity name is '{NAME} {coordinator.name}'."""
+    def test_name_is_constant(self) -> None:
+        """Verify entity name is NAME (has_entity_name=True)."""
         coordinator = _mock_coordinator(name="Beach House")
         cal = RentalControlCalendar(coordinator)
-        assert cal.name == f"{NAME} Beach House"
+        assert cal.name == NAME
 
     def test_available_defaults_to_false(self) -> None:
         """Verify available is False after initialization."""
@@ -158,7 +158,7 @@ class TestAsyncSetupEntry:
 
         entity = async_add_entities.call_args[0][0][0]
         assert entity.coordinator is coordinator
-        assert entity.name == f"{NAME} Lake Cabin"
+        assert entity.name == NAME
 
 
 # ---------------------------------------------------------------------------

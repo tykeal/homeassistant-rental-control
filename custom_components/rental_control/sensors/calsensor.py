@@ -19,6 +19,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from ..const import ICON
+from ..const import NAME
 from ..const import SECONDS_PER_HOUR
 from ..const import SECONDS_PER_MINUTE
 from ..util import async_fire_clear_code
@@ -52,14 +53,19 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         """
         Initialize the sensor.
 
-        sensor_name is typically the name of the calendar.
-        eventnumber indicates which upcoming event this is, starting at zero
+        sensor_name is accepted for backward compatibility but unused;
+        the entity name is derived from NAME and event_number.
+        event_number indicates which upcoming event this is; numbering is
+        zero-based, so 0 refers to the first upcoming event.
         """
         super().__init__(coordinator)
+        del sensor_name
         if coordinator.event_prefix:
             summary = f"{coordinator.event_prefix} No reservation"
         else:
             summary = "No reservation"
+        self._attr_has_entity_name = True
+        self._attr_name = f"{NAME} Event {event_number}"
         self._code_generator = coordinator.code_generator
         self._code_length = coordinator.code_length
         self._entity_category = EntityCategory.DIAGNOSTIC
@@ -78,7 +84,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         self._parsed_attributes: dict[str, str] = {}
         self._event_number = event_number
         self._hass = hass
-        self._name = f"{sensor_name} Event {self._event_number}"
         self._state = summary
         self._unique_id = gen_uuid(
             f"{self.coordinator.unique_id} sensor {self._event_number}"
@@ -273,11 +278,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
     def icon(self) -> str:
         """Return the icon for the frontend."""
         return ICON
-
-    @property
-    def name(self) -> str:
-        """Return the name of the sensor."""
-        return self._name
 
     @property
     def state(self) -> str:

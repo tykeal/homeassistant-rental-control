@@ -53,8 +53,9 @@ class RentalControlCalendar(
     def __init__(self, coordinator: RentalControlCoordinator) -> None:
         """Create the iCal Calendar Event Device."""
         super().__init__(coordinator)
+        self._attr_has_entity_name = True
+        self._attr_name = NAME
         self._entity_category: EntityCategory = EntityCategory.DIAGNOSTIC
-        self._name: str = f"{NAME} {coordinator.name}"
         self._unique_id: str = gen_uuid(f"{coordinator.unique_id} calendar")
 
     @property
@@ -76,11 +77,6 @@ class RentalControlCalendar(
     def event(self) -> CalendarEvent | None:
         """Return the next upcoming event."""
         return self.coordinator.event
-
-    @property
-    def name(self) -> str:
-        """Return the name of the entity."""
-        return self._name
 
     @property
     def unique_id(self) -> str:
