@@ -109,7 +109,7 @@ jobs:
 
       - name: "Python tests [pytest] ${{ matrix.python-version }}"
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/python-test-action@92d4110d44ebc18fa4575c6b00203ff67d01a1cb  # v1.0.1
+        uses: lfreleng-actions/python-test-action@82aa55cf21a6be32d8d5b365716b2b349e8058bd  # v1.0.2
         with:
           python_version: ${{ matrix.python-version }}
 
