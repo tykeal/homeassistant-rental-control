@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
@@ -21,7 +20,6 @@ from .const import CHECKIN_SENSOR
 from .const import CONF_MAX_EVENTS
 from .const import COORDINATOR
 from .const import DOMAIN
-from .const import NAME
 from .sensors.calsensor import RentalControlCalSensor
 from .sensors.checkinsensor import CheckinTrackingSensor
 
@@ -45,7 +43,6 @@ async def async_setup_entry(
 ) -> bool:
     """Set up the iCal Sensor."""
     config = config_entry.data
-    name = config.get(CONF_NAME)
     max_events = config.get(CONF_MAX_EVENTS)
 
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
@@ -60,7 +57,7 @@ async def async_setup_entry(
             RentalControlCalSensor(
                 hass,
                 coordinator,
-                f"{NAME} {name}",
+                "",
                 eventnumber,
             )
         )

@@ -171,16 +171,16 @@ class TestSensorInit:
     """Tests for RentalControlCalSensor initialization."""
 
     def test_name_format(self, hass) -> None:
-        """Verify sensor name follows 'NAME name Event N' pattern."""
+        """Verify sensor name follows 'NAME Event N' pattern."""
         coordinator = _make_coordinator()
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test Rental", 0)
-        assert sensor.name == "Rental Control Test Rental Event 0"
+        assert sensor.name == "Rental Control Event 0"
 
     def test_name_with_event_number(self, hass) -> None:
         """Verify event number is included in sensor name."""
         coordinator = _make_coordinator()
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test Rental", 2)
-        assert sensor.name == "Rental Control Test Rental Event 2"
+        assert sensor.name == "Rental Control Event 2"
 
     def test_unique_id_generation(self, hass) -> None:
         """Verify unique_id uses gen_uuid with coordinator unique_id and event number."""
