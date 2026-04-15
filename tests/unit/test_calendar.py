@@ -51,7 +51,7 @@ def _mock_coordinator(
 class TestRentalControlCalendarInit:
     """Tests for RentalControlCalendar initialization."""
 
-    def test_name_includes_coordinator_name(self) -> None:
+    def test_name_is_constant(self) -> None:
         """Verify entity name is NAME (has_entity_name=True)."""
         coordinator = _mock_coordinator(name="Beach House")
         cal = RentalControlCalendar(coordinator)

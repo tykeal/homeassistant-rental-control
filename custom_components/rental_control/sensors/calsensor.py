@@ -55,9 +55,11 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
 
         sensor_name is accepted for backward compatibility but unused;
         the entity name is derived from NAME and event_number.
-        eventnumber indicates which upcoming event this is, starting at zero
+        event_number indicates which upcoming event this is; numbering is
+        zero-based, so 0 refers to the first upcoming event.
         """
         super().__init__(coordinator)
+        del sensor_name
         if coordinator.event_prefix:
             summary = f"{coordinator.event_prefix} No reservation"
         else:
