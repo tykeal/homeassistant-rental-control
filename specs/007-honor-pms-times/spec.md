@@ -38,7 +38,7 @@ A property manager wants to control whether the integration honors PMS-provided 
 
 **Acceptance Scenarios**:
 
-1. **Given** the integration is configured (with or without Keymaster), **When** the user opens the integration's options flow, **Then** a "Honor event times" toggle is displayed with a default value of off (disabled).
+1. **Given** the integration is configured (with or without Keymaster), **When** the user opens the integration's options flow, **Then** an "Honor event times" toggle is displayed with a default value of off (disabled).
 2. **Given** the user enables "Honor event times" in the options flow and saves, **When** the integration reloads, **Then** the setting persists and the integration uses calendar-provided times for events with explicit times.
 3. **Given** the user disables "Honor event times" (or it was never enabled), **When** a calendar refresh occurs, **Then** the integration continues to use stored override times for events already assigned to slots (current behavior preserved).
 
