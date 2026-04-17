@@ -97,7 +97,7 @@ def _make_config_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Test Rental",
-        version=7,
+        version=8,
         unique_id="test-integration-checkin-id",
         data={
             "name": "Test Rental",
@@ -713,7 +713,7 @@ class TestNoFollowOnFR006b:
         config_entry = MockConfigEntry(
             domain=DOMAIN,
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-custom-cw-id",
             data={
                 "name": "Test Rental",

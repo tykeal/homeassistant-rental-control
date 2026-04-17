@@ -13,6 +13,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rental_control.const import CONF_CODE_LENGTH
 from custom_components.rental_control.const import CONF_GENERATE
+from custom_components.rental_control.const import CONF_HONOR_EVENT_TIMES
 from custom_components.rental_control.const import CONF_PATH
 from custom_components.rental_control.const import CONF_SHOULD_UPDATE_CODE
 from custom_components.rental_control.const import COORDINATOR
@@ -254,13 +255,14 @@ async def test_migrate_entry_rejects_version_below_3(
     assert result is False
 
 
-async def test_migrate_entry_v3_to_v7(
+async def test_migrate_entry_v3_to_v8(
     hass: HomeAssistant,
 ) -> None:
-    """Verify a version-3 entry migrates through all steps to version 7.
+    """Verify a version-3 entry migrates through all steps to version 8.
 
-    The migration chain 3→4→5→6→7 adds code_length, generate_package,
-    removes packages_path, and adds should_update_code.
+    The migration chain 3→4→5→6→7→8 adds code_length, generate_package,
+    removes packages_path, adds should_update_code, and adds
+    honor_event_times.
     """
     from custom_components.rental_control import async_migrate_entry
 
@@ -289,17 +291,18 @@ async def test_migrate_entry_v3_to_v7(
     result = await async_migrate_entry(hass, entry)
 
     assert result is True
-    assert entry.version == 7
+    assert entry.version == 8
     assert entry.data[CONF_CODE_LENGTH] == DEFAULT_CODE_LENGTH
     assert entry.data[CONF_GENERATE] == DEFAULT_GENERATE
     assert CONF_PATH not in entry.data
     assert entry.data[CONF_SHOULD_UPDATE_CODE] is False
+    assert entry.data[CONF_HONOR_EVENT_TIMES] is False
 
 
-async def test_migrate_entry_v6_to_v7(
+async def test_migrate_entry_v6_to_v8(
     hass: HomeAssistant,
 ) -> None:
-    """Verify a version-6 entry only runs the v6→7 step."""
+    """Verify a version-6 entry runs v6→7 and v7→8 steps."""
     from custom_components.rental_control import async_migrate_entry
 
     entry = MockConfigEntry(
@@ -328,5 +331,48 @@ async def test_migrate_entry_v6_to_v7(
     result = await async_migrate_entry(hass, entry)
 
     assert result is True
-    assert entry.version == 7
+    assert entry.version == 8
     assert entry.data[CONF_SHOULD_UPDATE_CODE] is False
+    assert entry.data[CONF_HONOR_EVENT_TIMES] is False
+
+
+async def test_migrate_entry_v7_to_v8_honor_event_times(
+    hass: HomeAssistant,
+) -> None:
+    """Verify v7→v8 migration sets honor_event_times to False.
+
+    Verifies that an existing v7 config entry that lacks the
+    honor_event_times key gets migrated to v8 with the key set to False,
+    preserving existing behavior.
+    """
+    from custom_components.rental_control import async_migrate_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="V7 Entry",
+        version=7,
+        unique_id="v7-migration-test",
+        data={
+            "name": "V7 Entry",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "America/New_York",
+            "checkin": "16:00",
+            "checkout": "11:00",
+            "start_slot": 10,
+            "max_events": 3,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+            "code_length": 4,
+            "generate_package": True,
+            "should_update_code": False,
+        },
+        entry_id="v7_entry",
+    )
+    entry.add_to_hass(hass)
+
+    result = await async_migrate_entry(hass, entry)
+
+    assert result is True
+    assert entry.version == 8
+    assert entry.data[CONF_HONOR_EVENT_TIMES] is False

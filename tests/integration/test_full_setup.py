@@ -89,7 +89,7 @@ async def test_integration_setup_complete_config(
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Complete Rental",
-        version=7,
+        version=8,
         unique_id="test-complete-unique-id",
         data={
             "name": "Complete Rental",

@@ -255,7 +255,7 @@ async def test_door_code_generation_on_refresh(
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Code Test",
-        version=7,
+        version=8,
         unique_id="test-code-unique-id",
         data={
             "name": "Code Test",
@@ -353,7 +353,7 @@ async def test_concurrent_calendar_updates(
         domain=DOMAIN,
         title="Rental A",
         unique_id="unique_rental_a",
-        version=7,
+        version=8,
         data={
             "name": "Rental A",
             "url": "https://example.com/a.ics",
@@ -373,7 +373,7 @@ async def test_concurrent_calendar_updates(
         domain=DOMAIN,
         title="Rental B",
         unique_id="unique_rental_b",
-        version=7,
+        version=8,
         data={
             "name": "Rental B",
             "url": "https://example.com/b.ics",
