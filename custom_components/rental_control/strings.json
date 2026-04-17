@@ -29,6 +29,7 @@
           "refresh_frequency": "Refresh calendar in minutes. 0 - 1440",
           "start_slot": "Starting lock slot for management",
           "should_update_code": "For date based codes, update the code if future events change start or end dates",
+          "honor_event_times": "Honor calendar event times from PMS instead of stored override times",
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates"
@@ -69,6 +70,7 @@
           "refresh_frequency": "Refresh calendar in minutes. 0 - 1440",
           "start_slot": "Starting lock slot for management",
           "should_update_code": "For date based codes, update the code if future events change start or end dates",
+          "honor_event_times": "Honor calendar event times from PMS instead of stored override times",
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates"

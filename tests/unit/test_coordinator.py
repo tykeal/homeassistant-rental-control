@@ -1353,7 +1353,7 @@ class TestChildLockDiscovery:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-child-lock-id",
             data={
                 "name": "Test Rental",
@@ -1394,7 +1394,7 @@ class TestChildLockDiscovery:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-nonslugged-id",
             data={
                 "name": "Test Rental",
@@ -1426,7 +1426,7 @@ class TestChildLockDiscovery:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-no-match-id",
             data={
                 "name": "Test Rental",
@@ -1478,7 +1478,7 @@ class TestChildLockDiscovery:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-child-disc-id",
             data={
                 "name": "Test Rental",
@@ -1533,7 +1533,7 @@ class TestChildLockDiscovery:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-multi-child-id",
             data={
                 "name": "Test Rental",
@@ -1572,7 +1572,7 @@ class TestChildLockDiscovery:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-no-child-id",
             data={
                 "name": "Test Rental",
@@ -1623,7 +1623,7 @@ class TestChildLockDiscovery:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-mon-id",
             data={
                 "name": "Test Rental",
@@ -1677,7 +1677,7 @@ class TestChildLockDiscovery:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-parent-only-id",
             data={
                 "name": "Test Rental",
@@ -1717,7 +1717,7 @@ class TestChildLockDiscovery:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-refresh-id",
             data={
                 "name": "Test Rental",
@@ -1796,7 +1796,7 @@ class TestChildLockDynamicLifecycle:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-add-lifecycle",
             data={
                 "name": "Test Rental",
@@ -1896,7 +1896,7 @@ class TestChildLockDynamicLifecycle:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-remove-lifecycle",
             data={
                 "name": "Test Rental",
@@ -1990,7 +1990,7 @@ class TestChildLockDynamicLifecycle:
         rc_entry = MockConfigEntry(
             domain="rental_control",
             title="Test Rental",
-            version=7,
+            version=8,
             unique_id="test-multi-lifecycle",
             data={
                 "name": "Test Rental",
@@ -2062,3 +2062,858 @@ class TestChildLockDynamicLifecycle:
         assert coordinator.monitored_locknames == frozenset(
             {"front_door", "side_door", "garage_door"}
         )
+
+
+# ---------------------------------------------------------------------------
+# Honor event times tests (spec 007)
+# ---------------------------------------------------------------------------
+
+
+class TestHonorEventTimesTimedEvents:
+    """Tests for honor_event_times with timed (datetime) events."""
+
+    async def test_honor_true_timed_event_with_override_uses_calendar_times(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test honor=True + timed event + override → calendar times.
+
+        When honor_event_times is True and the event has explicit times
+        and an override exists, _ical_parser builds CalendarEvent with
+        calendar times (not override times).
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        # Calendar event with explicit times: 15:00 checkin, 10:00 checkout
+        timed_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART:{future_start}T150000
+DTEND:{future_end}T100000
+UID:honor-test-1@example.com
+SUMMARY:Reserved: Honor Test Guest
+DESCRIPTION:Email: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        # Create config entry with honor_event_times=True and a lock entry
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Honor Test",
+            version=8,
+            unique_id="honor-test-1",
+            data={
+                "name": "Honor Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="honor_test_1",
+        )
+        entry.add_to_hass(hass)
+
+        # Set up keymaster entry so lockname resolves
+        km_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_honor_1",
+        )
+        km_entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=timed_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+
+            # Inject override with DIFFERENT times (18:00 / 09:00 in UTC)
+            from custom_components.rental_control.event_overrides import EventOverrides
+
+            coordinator.event_overrides = EventOverrides(10, 3)
+            coordinator.event_overrides._overrides[10] = {
+                "slot_name": "Reserved: Honor Test Guest",
+                "slot_code": "1234",
+                "start_time": datetime(2024, 12, 25, 18, 0, 0, tzinfo=dt_util.UTC),
+                "end_time": datetime(2024, 12, 30, 9, 0, 0, tzinfo=dt_util.UTC),
+            }
+            coordinator.event_overrides.async_check_overrides = AsyncMock()  # type: ignore[method-assign]
+
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        # Calendar times are 15:00 and 10:00 America/New_York
+        # These get combined with the event date and converted to UTC
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                datetime(2024, 12, 25, 15, 0, 0).time(),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                datetime(2024, 12, 30, 10, 0, 0).time(),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_false_with_override_uses_override_times(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test honor=False + override → override times (FR-005).
+
+        When honor_event_times is False and an override exists,
+        _ical_parser builds CalendarEvent with override times,
+        preserving current behavior.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        timed_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART:{future_start}T150000
+DTEND:{future_end}T100000
+UID:honor-test-2@example.com
+SUMMARY:Reserved: Honor Test Guest
+DESCRIPTION:Email: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Honor Test",
+            version=8,
+            unique_id="honor-test-2",
+            data={
+                "name": "Honor Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="honor_test_2",
+        )
+        entry.add_to_hass(hass)
+
+        km_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_honor_2",
+        )
+        km_entry.add_to_hass(hass)
+
+        # Override times: 18:00 UTC checkin, 14:00 UTC checkout
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        override_start_utc = datetime(2024, 12, 25, 18, 0, 0, tzinfo=dt_util.UTC)
+        override_end_utc = datetime(2024, 12, 30, 14, 0, 0, tzinfo=dt_util.UTC)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=timed_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+
+            from custom_components.rental_control.event_overrides import EventOverrides
+
+            coordinator.event_overrides = EventOverrides(10, 3)
+            coordinator.event_overrides._overrides[10] = {
+                "slot_name": "Reserved: Honor Test Guest",
+                "slot_code": "1234",
+                "start_time": override_start_utc,
+                "end_time": override_end_utc,
+            }
+            coordinator.event_overrides.async_check_overrides = AsyncMock()  # type: ignore[method-assign]
+
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        # Override times: 18:00 UTC → 13:00 EST, 14:00 UTC → 09:00 EST
+        override_start_local = override_start_utc.astimezone(tz)
+        override_end_local = override_end_utc.astimezone(tz)
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                override_start_local.time(),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                override_end_local.time(),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_true_timed_event_no_override_uses_calendar_times(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test honor=True + timed event + no override → calendar times.
+
+        When honor_event_times is True and the event has explicit times
+        but no override exists, calendar times are used.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        timed_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART:{future_start}T150000
+DTEND:{future_end}T100000
+UID:honor-test-3@example.com
+SUMMARY:Reserved: Honor Test Guest
+DESCRIPTION:Email: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Honor Test",
+            version=8,
+            unique_id="honor-test-3",
+            data={
+                "name": "Honor Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+            },
+            entry_id="honor_test_3",
+        )
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=timed_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        # Calendar times: 15:00 / 10:00 in America/New_York
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                datetime(2024, 12, 25, 15, 0, 0).time(),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                datetime(2024, 12, 30, 10, 0, 0).time(),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_true_matching_times_no_unnecessary_update(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test honor=True + times match → no unnecessary update (FR-007).
+
+        When honor_event_times is True and calendar times match stored
+        override times, the CalendarEvent uses calendar times (which
+        happen to match), ensuring no unnecessary time-update event fires
+        downstream.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        # Calendar event with times 15:00 / 10:00 (America/New_York)
+        timed_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART:{future_start}T150000
+DTEND:{future_end}T100000
+UID:honor-test-4@example.com
+SUMMARY:Reserved: Honor Test Guest
+DESCRIPTION:Email: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Honor Test",
+            version=8,
+            unique_id="honor-test-4",
+            data={
+                "name": "Honor Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="honor_test_4",
+        )
+        entry.add_to_hass(hass)
+
+        km_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_honor_4",
+        )
+        km_entry.add_to_hass(hass)
+
+        # Override times MATCHING calendar times
+        # 15:00 EST = 20:00 UTC, 10:00 EST = 15:00 UTC
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        override_start_utc = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                datetime(2024, 12, 25, 15, 0, 0).time(),
+                tz,
+            )
+        )
+        override_end_utc = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                datetime(2024, 12, 30, 10, 0, 0).time(),
+                tz,
+            )
+        )
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=timed_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+
+            from custom_components.rental_control.event_overrides import EventOverrides
+
+            coordinator.event_overrides = EventOverrides(10, 3)
+            coordinator.event_overrides._overrides[10] = {
+                "slot_name": "Reserved: Honor Test Guest",
+                "slot_code": "1234",
+                "start_time": override_start_utc,
+                "end_time": override_end_utc,
+            }
+            coordinator.event_overrides.async_check_overrides = AsyncMock()  # type: ignore[method-assign]
+
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        # Calendar times and override times match, so result should
+        # be the same regardless — times used are calendar times
+        assert event.start == override_start_utc
+        assert event.end == override_end_utc
+
+
+class TestHonorEventTimesAllDayEvents:
+    """Tests for honor_event_times with all-day (date-only) events."""
+
+    async def test_honor_true_allday_no_override_uses_defaults(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test honor=True + all-day + no override → default times.
+
+        When honor_event_times is True and the event is all-day
+        (date-only DTSTART) with no override, configured default
+        checkin/checkout times are used.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        # All-day event — DTSTART/DTEND are dates, not datetimes
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:honor-allday-1@example.com
+SUMMARY:Reserved: Allday Guest
+DESCRIPTION:Email: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Honor Test",
+            version=8,
+            unique_id="honor-allday-1",
+            data={
+                "name": "Honor Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+            },
+            entry_id="honor_allday_1",
+        )
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        # Default times: 16:00 checkin, 11:00 checkout in America/New_York
+        from datetime import time
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                time(16, 0),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                time(11, 0),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_true_allday_with_override_uses_override_times(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test honor=True + all-day + override → override times.
+
+        When honor_event_times is True and the event is all-day
+        but an override exists, override times are used (not defaults).
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:honor-allday-2@example.com
+SUMMARY:Reserved: Allday Guest
+DESCRIPTION:Email: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Honor Test",
+            version=8,
+            unique_id="honor-allday-2",
+            data={
+                "name": "Honor Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="honor_allday_2",
+        )
+        entry.add_to_hass(hass)
+
+        km_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_allday_2",
+        )
+        km_entry.add_to_hass(hass)
+
+        # Override times: 18:00 UTC checkin, 14:00 UTC checkout
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        override_start_utc = datetime(2024, 12, 25, 18, 0, 0, tzinfo=dt_util.UTC)
+        override_end_utc = datetime(2024, 12, 30, 14, 0, 0, tzinfo=dt_util.UTC)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+
+            from custom_components.rental_control.event_overrides import EventOverrides
+
+            coordinator.event_overrides = EventOverrides(10, 3)
+            coordinator.event_overrides._overrides[10] = {
+                "slot_name": "Reserved: Allday Guest",
+                "slot_code": "1234",
+                "start_time": override_start_utc,
+                "end_time": override_end_utc,
+            }
+            coordinator.event_overrides.async_check_overrides = AsyncMock()  # type: ignore[method-assign]
+
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        # Override times: 18:00 UTC → 13:00 EST, 14:00 UTC → 09:00 EST
+        override_start_local = override_start_utc.astimezone(tz)
+        override_end_local = override_end_utc.astimezone(tz)
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                override_start_local.time(),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                override_end_local.time(),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_false_allday_no_override_uses_defaults(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test honor=False + all-day + no override → default times.
+
+        When honor_event_times is False and the event is all-day with
+        no override, configured default checkin/checkout times are used
+        (existing behavior preserved).
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:honor-allday-3@example.com
+SUMMARY:Reserved: Allday Guest
+DESCRIPTION:Email: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Honor Test",
+            version=8,
+            unique_id="honor-allday-3",
+            data={
+                "name": "Honor Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+            },
+            entry_id="honor_allday_3",
+        )
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        # Default times: 16:00 checkin, 11:00 checkout in America/New_York
+        from datetime import time
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                time(16, 0),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                time(11, 0),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+
+class TestHonorEventTimesEdgeCases:
+    """Edge case tests for honor_event_times feature."""
+
+    async def test_honor_true_timed_to_allday_transition(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test transitioning event from timed to all-day with honor=True.
+
+        Verifies that when an event changes from having explicit times
+        to being all-day between refreshes, the system gracefully falls
+        back to default times.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        # All-day event (date only — no times)
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:transition-test@example.com
+SUMMARY:Reserved: Transition Guest
+DESCRIPTION:Email: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Transition Test",
+            version=8,
+            unique_id="transition-test-1",
+            data={
+                "name": "Transition Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+            },
+            entry_id="transition_test_1",
+        )
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        # All-day event with honor=True and no override -> default times
+        from datetime import time as time_cls
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                time_cls(16, 0),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+
+    async def test_honor_enable_mid_session_via_update_config(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Test enabling honor_event_times mid-session via update_config.
+
+        Verifies that calling update_config with honor_event_times=True
+        updates the coordinator's attribute so the next refresh uses
+        calendar times for timed events.
+        """
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Mid-session Test",
+            version=8,
+            unique_id="mid-session-test-1",
+            data={
+                "name": "Mid-session Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+                "refresh_frequency": 2,
+            },
+            entry_id="mid_session_test_1",
+        )
+        entry.add_to_hass(hass)
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator.async_request_refresh = AsyncMock()
+
+        # Initially disabled
+        assert coordinator.honor_event_times is False
+
+        # Update config to enable
+        new_config = dict(entry.data)
+        new_config["honor_event_times"] = True
+
+        await coordinator.update_config(new_config)
+
+        # Now enabled
+        assert coordinator.honor_event_times is True
+        assert coordinator.async_request_refresh.called

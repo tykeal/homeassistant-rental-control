@@ -30,6 +30,7 @@ from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
 from .const import CONF_GENERATE
+from .const import CONF_HONOR_EVENT_TIMES
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
@@ -45,6 +46,7 @@ from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_DAYS
 from .const import DEFAULT_EVENT_PREFIX
 from .const import DEFAULT_GENERATE
+from .const import DEFAULT_HONOR_EVENT_TIMES
 from .const import DEFAULT_MAX_EVENTS
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DEFAULT_SHOULD_UPDATE_CODE
@@ -64,7 +66,7 @@ class RentalControlFlowHandler(  # type: ignore[call-arg]
 ):
     """Handle the config flow for Rental Control."""
 
-    VERSION = 7
+    VERSION = 8
 
     DEFAULTS = {
         CONF_CHECKIN: DEFAULT_CHECKIN,
@@ -75,6 +77,7 @@ class RentalControlFlowHandler(  # type: ignore[call-arg]
         CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
         CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
         CONF_SHOULD_UPDATE_CODE: DEFAULT_SHOULD_UPDATE_CODE,
+        CONF_HONOR_EVENT_TIMES: DEFAULT_HONOR_EVENT_TIMES,
         CONF_TIMEZONE: str(dt.DEFAULT_TIME_ZONE),
         CONF_VERIFY_SSL: True,
     }
@@ -282,6 +285,10 @@ def _get_schema(
                 default=_get_default(
                     CONF_SHOULD_UPDATE_CODE, DEFAULT_SHOULD_UPDATE_CODE
                 ),
+            ): cv.boolean,
+            vol.Optional(
+                CONF_HONOR_EVENT_TIMES,
+                default=_get_default(CONF_HONOR_EVENT_TIMES, DEFAULT_HONOR_EVENT_TIMES),
             ): cv.boolean,
             vol.Optional(
                 CONF_IGNORE_NON_RESERVED,

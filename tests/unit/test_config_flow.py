@@ -21,6 +21,7 @@ from custom_components.rental_control.const import CONF_CODE_GENERATION
 from custom_components.rental_control.const import CONF_CODE_LENGTH
 from custom_components.rental_control.const import CONF_DAYS
 from custom_components.rental_control.const import CONF_EVENT_PREFIX
+from custom_components.rental_control.const import CONF_HONOR_EVENT_TIMES
 from custom_components.rental_control.const import CONF_IGNORE_NON_RESERVED
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import CONF_MAX_EVENTS
@@ -32,6 +33,7 @@ from custom_components.rental_control.const import DEFAULT_CHECKIN
 from custom_components.rental_control.const import DEFAULT_CHECKOUT
 from custom_components.rental_control.const import DEFAULT_CODE_LENGTH
 from custom_components.rental_control.const import DEFAULT_DAYS
+from custom_components.rental_control.const import DEFAULT_HONOR_EVENT_TIMES
 from custom_components.rental_control.const import DEFAULT_MAX_EVENTS
 from custom_components.rental_control.const import DEFAULT_REFRESH_FREQUENCY
 from custom_components.rental_control.const import DEFAULT_START_SLOT
@@ -992,3 +994,156 @@ async def test_config_flow_url_bad_content_type(hass: HomeAssistant) -> None:
 
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {CONF_URL: "bad_ics"}
+
+
+async def test_honor_event_times_version_is_8(hass: HomeAssistant) -> None:
+    """Test that RentalControlFlowHandler VERSION is 8.
+
+    Verifies that the config flow handler version has been bumped
+    to 8 to account for the new honor_event_times configuration key.
+    """
+    from custom_components.rental_control.config_flow import RentalControlFlowHandler
+
+    assert RentalControlFlowHandler.VERSION == 8
+
+
+async def test_honor_event_times_in_options_schema(hass: HomeAssistant) -> None:
+    """Test that honor_event_times toggle appears in options flow schema.
+
+    Verifies that:
+    - honor_event_times appears as a schema key in the options flow
+    - The default value is False
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        config_result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+                CONF_HONOR_EVENT_TIMES: DEFAULT_HONOR_EVENT_TIMES,
+            },
+        )
+
+    assert config_result["type"] == FlowResultType.CREATE_ENTRY
+    entry = config_result["result"]
+
+    # Now test the options flow schema
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    schema = result["data_schema"].schema
+    schema_keys = {str(key.schema): key for key in schema.keys()}
+
+    assert CONF_HONOR_EVENT_TIMES in schema_keys
+
+
+async def test_honor_event_times_toggle_persists(hass: HomeAssistant) -> None:
+    """Test toggling honor_event_times to True persists in config_entry.data.
+
+    Verifies that:
+    - honor_event_times can be set to True via options flow
+    - The value persists in config_entry.data after update_listener runs
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+            repeat=True,
+        )
+
+        config_result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+                CONF_HONOR_EVENT_TIMES: False,
+            },
+        )
+        await hass.async_block_till_done()
+
+    assert config_result["type"] == FlowResultType.CREATE_ENTRY
+    entry = config_result["result"]
+
+    # Verify initial value is False
+    assert entry.data.get(CONF_HONOR_EVENT_TIMES) is False
+
+    # Now update via options flow to enable honor_event_times
+    with aioresponses() as mock_aiohttp:
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+            repeat=True,
+        )
+
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+                CONF_HONOR_EVENT_TIMES: True,
+            },
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated_entry.data[CONF_HONOR_EVENT_TIMES] is True
