@@ -240,7 +240,8 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         _LOGGER.debug("Migrating from version %s", version)
 
         data = config_entry.data.copy()
-        data[CONF_HONOR_EVENT_TIMES] = False
+        if CONF_HONOR_EVENT_TIMES not in data:
+            data[CONF_HONOR_EVENT_TIMES] = False
         hass.config_entries.async_update_entry(
             entry=config_entry,
             unique_id=config_entry.unique_id,

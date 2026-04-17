@@ -610,7 +610,9 @@ Please update Keymaster to at least v0.1.0-b0
                     override = self.event_overrides.get_slot_with_name(slot_name)
 
                 # Determine if event has explicit times (datetime vs date)
-                has_explicit_times = isinstance(event["DTSTART"].dt, datetime)
+                has_explicit_times = isinstance(event["DTSTART"].dt, datetime) and (
+                    "DTEND" in event and isinstance(event["DTEND"].dt, datetime)
+                )
 
                 if self.honor_event_times and has_explicit_times:
                     # FR-003: PMS times take priority for timed events
