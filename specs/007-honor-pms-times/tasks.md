@@ -30,7 +30,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Purpose**: Add the new constant and default that all subsequent phases depend on
 
-- [ ] T001 Add `CONF_HONOR_EVENT_TIMES = "honor_event_times"` and `DEFAULT_HONOR_EVENT_TIMES = False` to `custom_components/rental_control/const.py` after the existing `CONF_SHOULD_UPDATE_CODE` / `DEFAULT_SHOULD_UPDATE_CODE` entries (after line 95)
+- [X] T001 Add `CONF_HONOR_EVENT_TIMES = "honor_event_times"` and `DEFAULT_HONOR_EVENT_TIMES = False` to `custom_components/rental_control/const.py` after the existing `CONF_SHOULD_UPDATE_CODE` / `DEFAULT_SHOULD_UPDATE_CODE` entries (after line 95)
 
 ---
 
@@ -40,10 +40,10 @@ SPDX-License-Identifier: Apache-2.0
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete — the config entry must have the new key and the UI must have labels
 
-- [ ] T002 Add v7→v8 migration in `custom_components/rental_control/__init__.py`: import `CONF_HONOR_EVENT_TIMES` from `.const`, add migration block after the existing v6→v7 block (after line 237) that copies `config_entry.data`, sets `data[CONF_HONOR_EVENT_TIMES] = False`, and calls `hass.config_entries.async_update_entry()` with `version=8`
-- [ ] T003 [P] Add `honor_event_times` key with label string to `config.step.user.data` and `options.step.init.data` sections in `custom_components/rental_control/strings.json` — use label: "Honor calendar event times from PMS instead of stored override times"
-- [ ] T004 [P] Add `honor_event_times` key with identical English label to `config.step.user.data` and `options.step.init.data` sections in `custom_components/rental_control/translations/en.json`
-- [ ] T005 [P] Add `honor_event_times` key with French translation to `config.step.user.data` and `options.step.init.data` sections in `custom_components/rental_control/translations/fr.json` — use label: "Utiliser les heures des événements du calendrier PMS au lieu des heures de remplacement enregistrées"
+- [X] T002 Add v7→v8 migration in `custom_components/rental_control/__init__.py`: import `CONF_HONOR_EVENT_TIMES` from `.const`, add migration block after the existing v6→v7 block (after line 237) that copies `config_entry.data`, sets `data[CONF_HONOR_EVENT_TIMES] = False`, and calls `hass.config_entries.async_update_entry()` with `version=8`
+- [X] T003 [P] Add `honor_event_times` key with label string to `config.step.user.data` and `options.step.init.data` sections in `custom_components/rental_control/strings.json` — use label: "Honor calendar event times from PMS instead of stored override times"
+- [X] T004 [P] Add `honor_event_times` key with identical English label to `config.step.user.data` and `options.step.init.data` sections in `custom_components/rental_control/translations/en.json`
+- [X] T005 [P] Add `honor_event_times` key with French translation to `config.step.user.data` and `options.step.init.data` sections in `custom_components/rental_control/translations/fr.json` — use label: "Utiliser les heures des événements du calendrier PMS au lieu des heures de remplacement enregistrées"
 
 **Checkpoint**: Migration and translation strings complete — config entries will have the new key on load
 
@@ -59,15 +59,15 @@ SPDX-License-Identifier: Apache-2.0
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T006 [P] [US2] Add test in `tests/unit/test_config_flow.py` that verifies `VERSION` is 8 on `RentalControlFlowHandler`
-- [ ] T007 [P] [US2] Add test in `tests/unit/test_config_flow.py` that verifies `honor_event_times` toggle appears in the options flow schema and defaults to `False`
-- [ ] T008 [P] [US2] Add test in `tests/unit/test_config_flow.py` that verifies toggling `honor_event_times` to `True` in the options flow persists the value in `config_entry.data` after `update_listener` runs
-- [ ] T009 [P] [US2] Add test in `tests/unit/test_init.py` that verifies v7→v8 migration sets `honor_event_times` to `False` for an existing config entry that lacks the key
+- [X] T006 [P] [US2] Add test in `tests/unit/test_config_flow.py` that verifies `VERSION` is 8 on `RentalControlFlowHandler`
+- [X] T007 [P] [US2] Add test in `tests/unit/test_config_flow.py` that verifies `honor_event_times` toggle appears in the options flow schema and defaults to `False`
+- [X] T008 [P] [US2] Add test in `tests/unit/test_config_flow.py` that verifies toggling `honor_event_times` to `True` in the options flow persists the value in `config_entry.data` after `update_listener` runs
+- [X] T009 [P] [US2] Add test in `tests/unit/test_init.py` that verifies v7→v8 migration sets `honor_event_times` to `False` for an existing config entry that lacks the key
 
 ### Implementation for User Story 2
 
-- [ ] T010 [US2] Add `honor_event_times` toggle to config flow schema in `custom_components/rental_control/config_flow.py`: import `CONF_HONOR_EVENT_TIMES` and `DEFAULT_HONOR_EVENT_TIMES` from `.const`, add `CONF_HONOR_EVENT_TIMES: DEFAULT_HONOR_EVENT_TIMES` to `DEFAULTS` dict (after `CONF_SHOULD_UPDATE_CODE` entry around line 77), add `vol.Optional(CONF_HONOR_EVENT_TIMES, default=_get_default(CONF_HONOR_EVENT_TIMES, DEFAULT_HONOR_EVENT_TIMES)): cv.boolean` to `_get_schema()` after the `CONF_SHOULD_UPDATE_CODE` entry (after line 287), and bump `VERSION` from 7 to 8
-- [ ] T011 [US2] Verify all US2 tests pass — run `uv run pytest tests/unit/test_config_flow.py tests/unit/test_init.py -v -k "honor"` from worktree root
+- [X] T010 [US2] Add `honor_event_times` toggle to config flow schema in `custom_components/rental_control/config_flow.py`: import `CONF_HONOR_EVENT_TIMES` and `DEFAULT_HONOR_EVENT_TIMES` from `.const`, add `CONF_HONOR_EVENT_TIMES: DEFAULT_HONOR_EVENT_TIMES` to `DEFAULTS` dict (after `CONF_SHOULD_UPDATE_CODE` entry around line 77), add `vol.Optional(CONF_HONOR_EVENT_TIMES, default=_get_default(CONF_HONOR_EVENT_TIMES, DEFAULT_HONOR_EVENT_TIMES)): cv.boolean` to `_get_schema()` after the `CONF_SHOULD_UPDATE_CODE` entry (after line 287), and bump `VERSION` from 7 to 8
+- [X] T011 [US2] Verify all US2 tests pass — run `uv run pytest tests/unit/test_config_flow.py tests/unit/test_init.py -v -k "honor"` from worktree root
 
 **Checkpoint**: At this point, the "Honor event times" toggle is visible in the UI, persists across reloads, and migration handles existing entries. User Story 2 is fully functional and testable independently.
 
@@ -83,16 +83,16 @@ SPDX-License-Identifier: Apache-2.0
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T012 [P] [US1] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=True` and event has explicit times and override exists, `_ical_parser` builds `CalendarEvent` with calendar times (not override times)
-- [ ] T013 [P] [US1] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=False` and override exists, `_ical_parser` builds `CalendarEvent` with override times (current behavior preserved — FR-005)
-- [ ] T014 [P] [US1] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=True` and event has explicit times and no override exists, `_ical_parser` builds `CalendarEvent` with calendar times
-- [ ] T015 [P] [US1] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=True` and calendar times match stored override times, no unnecessary time-update event fires (FR-007)
+- [X] T012 [P] [US1] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=True` and event has explicit times and override exists, `_ical_parser` builds `CalendarEvent` with calendar times (not override times)
+- [X] T013 [P] [US1] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=False` and override exists, `_ical_parser` builds `CalendarEvent` with override times (current behavior preserved — FR-005)
+- [X] T014 [P] [US1] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=True` and event has explicit times and no override exists, `_ical_parser` builds `CalendarEvent` with calendar times
+- [X] T015 [P] [US1] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=True` and calendar times match stored override times, no unnecessary time-update event fires (FR-007)
 
 ### Implementation for User Story 1
 
-- [ ] T016 [US1] Read and store `honor_event_times` config in `custom_components/rental_control/coordinator.py`: import `CONF_HONOR_EVENT_TIMES` from `.const`, add `self.honor_event_times: bool = bool(config.get(CONF_HONOR_EVENT_TIMES))` in `__init__()` (after line 115 near the existing `self.should_update_code` assignment), and add `self.honor_event_times = bool(config.get(CONF_HONOR_EVENT_TIMES))` in `update_config()` (after line 518 near the existing `self.should_update_code` assignment)
-- [ ] T017 [US1] Modify time resolution logic in `custom_components/rental_control/coordinator.py` `_ical_parser()` method (lines 607–631): replace the current override-first / try-except block with the new three-way branching: (1) if `self.honor_event_times` and `isinstance(event["DTSTART"].dt, datetime)` → use calendar times, (2) elif override exists → use override times, (3) else try calendar `.time()` with `AttributeError` fallback to defaults
-- [ ] T018 [US1] Verify all US1 tests pass — run `uv run pytest tests/unit/test_coordinator.py -v -k "honor"` from worktree root
+- [X] T016 [US1] Read and store `honor_event_times` config in `custom_components/rental_control/coordinator.py`: import `CONF_HONOR_EVENT_TIMES` from `.const`, add `self.honor_event_times: bool = bool(config.get(CONF_HONOR_EVENT_TIMES))` in `__init__()` (after line 115 near the existing `self.should_update_code` assignment), and add `self.honor_event_times = bool(config.get(CONF_HONOR_EVENT_TIMES))` in `update_config()` (after line 518 near the existing `self.should_update_code` assignment)
+- [X] T017 [US1] Modify time resolution logic in `custom_components/rental_control/coordinator.py` `_ical_parser()` method (lines 607–631): replace the current override-first / try-except block with the new three-way branching: (1) if `self.honor_event_times` and `isinstance(event["DTSTART"].dt, datetime)` → use calendar times, (2) elif override exists → use override times, (3) else try calendar `.time()` with `AttributeError` fallback to defaults
+- [X] T018 [US1] Verify all US1 tests pass — run `uv run pytest tests/unit/test_coordinator.py -v -k "honor"` from worktree root
 
 **Checkpoint**: At this point, PMS time changes flow through to Keymaster when "Honor event times" is enabled. The core feature is complete. User Stories 1 AND 2 are both independently functional.
 
@@ -108,16 +108,16 @@ SPDX-License-Identifier: Apache-2.0
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T019 [P] [US3] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=True` and event is all-day (date-only DTSTART) and no override exists, `_ical_parser` uses configured default checkin/checkout times
-- [ ] T020 [P] [US3] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=True` and event is all-day and override exists, `_ical_parser` uses override times (not defaults)
-- [ ] T021 [P] [US3] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=False` and event is all-day and no override exists, `_ical_parser` uses configured default times (existing behavior)
+- [X] T019 [P] [US3] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=True` and event is all-day (date-only DTSTART) and no override exists, `_ical_parser` uses configured default checkin/checkout times
+- [X] T020 [P] [US3] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=True` and event is all-day and override exists, `_ical_parser` uses override times (not defaults)
+- [X] T021 [P] [US3] Add test in `tests/unit/test_coordinator.py` that verifies when `honor_event_times=False` and event is all-day and no override exists, `_ical_parser` uses configured default times (existing behavior)
 
 ### Implementation for User Story 3
 
 > **NOTE**: The time resolution logic implemented in T017 already handles all-day event fallback via the three-way branching. These tests validate that the existing implementation is correct for all-day edge cases — no additional source code changes should be needed.
 
-- [ ] T022 [US3] Verify all US3 tests pass — run `uv run pytest tests/unit/test_coordinator.py -v -k "all_day or allday"` from worktree root
-- [ ] T023 [US3] If any US3 test fails, fix the time resolution logic in `custom_components/rental_control/coordinator.py` `_ical_parser()` to ensure all-day events (where `isinstance(event["DTSTART"].dt, datetime)` is `False`) always fall through to the override or default branches
+- [X] T022 [US3] Verify all US3 tests pass — run `uv run pytest tests/unit/test_coordinator.py -v -k "all_day or allday"` from worktree root
+- [X] T023 [US3] If any US3 test fails, fix the time resolution logic in `custom_components/rental_control/coordinator.py` `_ical_parser()` to ensure all-day events (where `isinstance(event["DTSTART"].dt, datetime)` is `False`) always fall through to the override or default branches
 
 **Checkpoint**: All user stories are now independently functional. All-day events confirmed to work correctly with honor_event_times enabled/disabled.
 
@@ -127,11 +127,11 @@ SPDX-License-Identifier: Apache-2.0
 
 **Purpose**: Full test suite validation, edge cases, and pre-commit compliance
 
-- [ ] T024 [P] Add edge case test in `tests/unit/test_coordinator.py` that verifies transitioning an event from explicit times to all-day (between refreshes) with `honor_event_times=True` falls back to defaults gracefully
-- [ ] T025 [P] Add edge case test in `tests/unit/test_coordinator.py` that verifies enabling `honor_event_times` mid-session (via `update_config`) causes the next refresh to use calendar times for timed events with existing overrides
-- [ ] T026 Run full test suite from worktree root: `uv run pytest tests/ -v --cov=custom_components/rental_control --cov-report=term-missing` — verify no regressions across all existing tests
-- [ ] T027 Run pre-commit hooks from worktree root: `pre-commit run --all-files` — verify ruff, mypy, interrogate (100% docstring coverage), reuse (SPDX headers), and gitlint all pass
-- [ ] T028 Validate quickstart.md test commands work: run `uv run pytest tests/unit/test_coordinator.py -v -k "honor"` and `uv run pytest tests/unit/test_config_flow.py -v -k "honor"` from worktree root
+- [X] T024 [P] Add edge case test in `tests/unit/test_coordinator.py` that verifies transitioning an event from explicit times to all-day (between refreshes) with `honor_event_times=True` falls back to defaults gracefully
+- [X] T025 [P] Add edge case test in `tests/unit/test_coordinator.py` that verifies enabling `honor_event_times` mid-session (via `update_config`) causes the next refresh to use calendar times for timed events with existing overrides
+- [X] T026 Run full test suite from worktree root: `uv run pytest tests/ -v --cov=custom_components/rental_control --cov-report=term-missing` — verify no regressions across all existing tests
+- [X] T027 Run pre-commit hooks from worktree root: `pre-commit run --all-files` — verify ruff, mypy, interrogate (100% docstring coverage), reuse (SPDX headers), and gitlint all pass
+- [X] T028 Validate quickstart.md test commands work: run `uv run pytest tests/unit/test_coordinator.py -v -k "honor"` and `uv run pytest tests/unit/test_config_flow.py -v -k "honor"` from worktree root
 
 ---
 
