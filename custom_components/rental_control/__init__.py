@@ -37,6 +37,7 @@ from .const import CHECKIN_SENSOR
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_GENERATE
+from .const import CONF_HONOR_EVENT_TIMES
 from .const import CONF_PATH
 from .const import CONF_SHOULD_UPDATE_CODE
 from .const import COORDINATOR
@@ -232,6 +233,22 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         )
 
         version = 7
+        _LOGGER.debug("Migration to version %s complete", config_entry.version)
+
+    # 7 -> 8: Add honor_event_times to configuration
+    if version == 7:
+        _LOGGER.debug("Migrating from version %s", version)
+
+        data = config_entry.data.copy()
+        data[CONF_HONOR_EVENT_TIMES] = False
+        hass.config_entries.async_update_entry(
+            entry=config_entry,
+            unique_id=config_entry.unique_id,
+            data=data,
+            version=8,
+        )
+
+        version = 8
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     return True

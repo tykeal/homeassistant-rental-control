@@ -29,6 +29,7 @@
           "refresh_frequency": "Rafra\u00eechir le calendrier en minutes. 0 - 1440",
           "start_slot": "Slot de d\u00e9part pour la gestion",
           "should_update_code": "Pour les codes bas\u00e9s sur la date, mettez \u00e0 jour le code si les \u00e9v\u00e9nements futurs changent les dates de d\u00e9but ou de fin",
+          "honor_event_times": "Utiliser les heures des \u00e9v\u00e9nements du calendrier PMS au lieu des heures de remplacement enregistr\u00e9es",
           "timezone": "Fuseau horaire du calendrier",
           "url": "URL du calendrier",
           "verify_ssl": "V\u00e9rifier les certificats SSL"
@@ -69,6 +70,7 @@
           "refresh_frequency": "Rafra\u00eechir le calendrier en minutes. 0 - 1440",
           "start_slot": "Slot de d\u00e9part pour la gestion",
           "should_update_code": "Pour les codes bas\u00e9s sur la date, mettez \u00e0 jour le code si les \u00e9v\u00e9nements futurs changent les dates de d\u00e9but ou de fin",
+          "honor_event_times": "Utiliser les heures des \u00e9v\u00e9nements du calendrier PMS au lieu des heures de remplacement enregistr\u00e9es",
           "timezone": "Fuseau horaire du calendrier",
           "url": "URL du calendrier",
           "verify_ssl": "V\u00e9rifier les certificats SSL"

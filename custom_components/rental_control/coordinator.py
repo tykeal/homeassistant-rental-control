@@ -54,6 +54,7 @@ from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
+from .const import CONF_HONOR_EVENT_TIMES
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
@@ -113,6 +114,7 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
             CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION
         )
         self.should_update_code: bool = bool(config.get(CONF_SHOULD_UPDATE_CODE))
+        self.honor_event_times: bool = bool(config.get(CONF_HONOR_EVENT_TIMES))
         self.code_length: int = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.event: CalendarEvent | None = None
         self.created: str = config.get(CONF_CREATION_DATETIME, str(dt.now()))
@@ -516,6 +518,7 @@ Please update Keymaster to at least v0.1.0-b0
         self.days = config[CONF_DAYS]
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.should_update_code = bool(config.get(CONF_SHOULD_UPDATE_CODE))
+        self.honor_event_times = bool(config.get(CONF_HONOR_EVENT_TIMES))
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.ignore_non_reserved = bool(config.get(CONF_IGNORE_NON_RESERVED))
         self.verify_ssl = bool(config.get(CONF_VERIFY_SSL))
@@ -606,17 +609,24 @@ Please update Keymaster to at least v0.1.0-b0
                 if slot_name and self.event_overrides:
                     override = self.event_overrides.get_slot_with_name(slot_name)
 
-                if override:
+                # Determine if event has explicit times (datetime vs date)
+                has_explicit_times = isinstance(event["DTSTART"].dt, datetime)
+
+                if self.honor_event_times and has_explicit_times:
+                    # FR-003: PMS times take priority for timed events
+                    checkin: time = event["DTSTART"].dt.time()
+                    checkout: time = event["DTEND"].dt.time()
+                elif override:
+                    # FR-005 (disabled) or FR-004 (all-day with override)
                     # Get start & end overrides in the correct timezone
                     # Overrides are stored in UTC since Keymaster's time
-                    # start end end configurations values are in UTC
+                    # start and end configuration values are in UTC
                     start_time: datetime = override["start_time"].astimezone(
                         self.timezone
                     )
                     end_time: datetime = override["end_time"].astimezone(self.timezone)
-                    checkin: time = start_time.time()
-                    checkout: time = end_time.time()
-                    _LOGGER.debug("Checkin: %s, Checkout: %s", checkin, checkout)
+                    checkin = start_time.time()
+                    checkout = end_time.time()
                 else:
                     try:
                         # If the event has a time, use that, otherwise use the
