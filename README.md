@@ -55,14 +55,27 @@ and sensors for managing rental properties.
 
 ### Entities Created
 
-- Creates a customizable number of event sensors for the current and upcoming
-  events
-    - sensor.rental_control_my_calendar_event_0
-    - sensor.rental_control_my_calendar_event_1
-    - sensor.rental_control_my_calendar_event_2
+For a calendar named **My Calendar** the integration creates the following
+entities. Entity IDs follow the pattern `<domain>.<device_name>_<entity_name>`:
+
+- **Event sensors** (one per sensor count):
+    - `sensor.my_calendar_rental_control_event_0`
+    - `sensor.my_calendar_rental_control_event_1`
+    - `sensor.my_calendar_rental_control_event_2`
     - (...)
-- Creates a calendar entry for use with calendar cards
-    - calendar.rental_control_my_calendar
+- **Calendar** entity for use with calendar cards:
+    - `calendar.my_calendar_rental_control`
+- **Check-in tracking sensor** (always created):
+    - `sensor.my_calendar_check_in`
+- **Keymaster Monitoring switch** (when Keymaster lock configured):
+    - `switch.my_calendar_keymaster_monitoring`
+- **Early Checkout Expiry switch** (when Keymaster lock configured):
+    - `switch.my_calendar_early_checkout_expiry`
+
+> **Note:** Existing installs keep their original entity IDs. Home
+> Assistant caches entity IDs in its entity registry, so only new
+> integrations get the updated naming pattern.
+
 - Each event sensor has dynamically added attributes extracted from the event
   description when available:
     - `last_four` -- the last 4 digits of the phone number of the booking guest
@@ -70,6 +83,10 @@ and sensors for managing rental properties.
     - `guest_email` -- the email address of the booking guest
     - `phone_number` -- the phone number of the booking guest
     - `reservation_url` -- the URL to the reservation
+    - `booking_id` -- the booking / reservation identifier
+    - Other `Field: Value` lines in the description that the above dedicated
+      extractors do not capture become attributes with slugified keys
+      (e.g., `Check-In Time: 3:00 PM` becomes `check_in_time`)
 
 ### Check-in Tracking
 
@@ -110,6 +127,12 @@ integrations know the full set of valid states.
 The check-in sensor state **persists across Home Assistant restarts** and
 the integration validates stale states on startup automatically.
 
+**Debug action:** The integration provides a `rental_control.set_state`
+service action for testing and development. It forces the check-in sensor into
+any valid state (`no_reservation`, `awaiting_checkin`, `checked_in`,
+`checked_out`). Use this for debugging only — it bypasses the normal state
+machine transitions.
+
 ### Keymaster Monitoring Switch
 
 When you configure a Keymaster lock the integration creates a **Keymaster
@@ -117,6 +140,11 @@ Monitoring** switch entity. Turning it **on** makes Keymaster unlock events on
 the configured lock trigger an immediate check-in transition (the sensor moves
 from `awaiting_checkin` to `checked_in` the moment the guest uses their door
 code). When **off** (the default), time-based automatic check-in applies.
+
+The integration automatically discovers **child locks** associated with the
+configured Keymaster parent lock. It monitors unlock events on any child lock
+identically to the parent, so a guest unlocking a secondary lock (e.g., a
+Z-Wave deadbolt paired with a relay lock) also triggers check-in.
 
 ### Early Checkout Expiry Switch
 
@@ -174,6 +202,11 @@ Both events include attributes: `summary`, `guest_name`, `entity_id`, `start`,
 - Automatic slot assignment with **deduplication**: the same guest reservation
   never occupies more than one lock code slot even when calendar data shifts
   between refreshes
+- **Slot reconciliation**: the integration periodically verifies that all
+  populated Keymaster slots match current calendar events. When a reservation
+  gets cancelled or removed from the calendar, its slot clears automatically.
+  Matching uses guest name, time-range overlap, and UID tiebreaker to handle
+  edge cases like same-name guests with different date ranges
 - Slot command retry with escalation: if a lock code set/clear command fails
   after 3 attempts the integration creates a persistent notification alerting
   the user to take manual action
@@ -266,9 +299,13 @@ integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https:
   into the future by default. You can also adjust this when adding a new
   calendar
 - Set your checkin and checkout times. All times use 24 hour format. These
-  times apply to the calendar events. If the events come in with times already
-  attached they _will_ get overwritten (most rental hosting platforms provide
-  day in / day out in the events)
+  times apply to all-day calendar events. If the events come in with times
+  already attached, the integration uses those times instead of the defaults
+- **Honor event times**: enable this option if your calendar source (e.g., a
+  PMS like Guesty) provides actual check-in/check-out times in the events.
+  When enabled, the integration always uses the calendar-provided times and
+  pushes any time changes to Keymaster. When disabled (the default), times
+  stored in Keymaster slots take precedence after initial assignment
 - The cleaning window (default 6 hours) controls how long the check-in sensor
   stays in the `checked_out` state after a guest departs before transitioning
   to `no_reservation` or `awaiting_checkin` for the next guest. You can set
@@ -284,7 +321,9 @@ integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https:
       Control when it takes over the slot unless it matches event data for the
       calendar.
     - The following portions of a Keymaster slot will influence (that is
-      override) data in the calendar or event sensor:
+      override) data in the calendar or event sensor (unless you enable
+      **Honor event times**, in which case the calendar always wins for
+      events with explicit times):
         - Checkin/out TIME (not date) will update the calendar event and also
           the sensor tracked information. **NOTE:** If you use a timezone that
           is _not_ the system timezone on your calendar, you will run into
@@ -362,7 +401,11 @@ The integration extracts the following data from the Description of the event
         - `Children:\s+(\d+)$`
 - The integration extracts email addresses from the Description by matching
   against: `Email:\s+(\S+@\S+)`
+- Booking IDs match against: `Booking ID:\s*(.+)$`
 - Reservation URLs match against the first URL in the Description
+- **Dynamic attributes**: other `Field: Value` lines in the description that
+  do not match the above patterns become sensor attributes with slugified keys
+  (lowercase, spaces and special characters replaced with underscores)
 
 An example calendar entry with this data might look like this:
 
@@ -372,6 +415,8 @@ Description:
     Phone: 555-555-5555
     Email: jdoe@example.com
     Guests: 2
+    Booking ID: ABC-123456
+    Property: Beach House
     https://www.example.com/reservation/123456789
 ```
 
@@ -383,12 +428,19 @@ Phone number: 555-555-5555
 Last four: 5555
 Email: jdoe@example.com
 Number of guests: 2
+Booking ID: ABC-123456
 Reservation URL: https://www.example.com/reservation/123456789
+Dynamic attribute "property": Beach House
 ```
 
 ### Automation Examples
 
-Here are some examples of automations that work with Rental Control
+Here are some examples of automations that work with Rental Control.
+
+> **Note:** The entity IDs below use the current naming pattern. If you
+> set up your integration before the naming change, your entity IDs may
+> follow the older `sensor.rental_control_<calendar>_event_N` pattern.
+> Check your entity registry for exact IDs.
 
 - Manage thermostat for guests and between guests
     ```yaml
@@ -396,7 +448,7 @@ Here are some examples of automations that work with Rental Control
     mode: single
     triggers:
       - entity_id:
-          - sensor.rental_control_my_calendar_event_0
+          - sensor.my_calendar_rental_control_event_0
         attribute: description
         trigger: state
         to: 'No reservation'
@@ -406,7 +458,7 @@ Here are some examples of automations that work with Rental Control
           seconds: 0
         id: No Reservations
       - entity_id:
-          - sensor.rental_control_my_calendar_event_0
+          - sensor.my_calendar_rental_control_event_0
           attribute: eta_days
           for:
             hours: 1
@@ -416,19 +468,19 @@ Here are some examples of automations that work with Rental Control
           id: Between Guests
           trigger: numeric_state
       - entity_id:
-          - sensor.rental_control_my_calendar_event_0
+          - sensor.my_calendar_rental_control_event_0
         attribute: eta_minutes
         below: 180
         id: Guests
         trigger: numeric_state
       - entity_id:
-          - sensor.rental_control_my_calendar_event_1
+          - sensor.my_calendar_rental_control_event_1
         attribute: eta_minutes
         below: 180
         id: Guests
         trigger: numeric_state
       - entity_id:
-          - calendar.rental_control_my_calendar
+          - calendar.my_calendar_rental_control
           to: 'on'
           id: Guests
           trigger: state
