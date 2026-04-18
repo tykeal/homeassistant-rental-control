@@ -28,3 +28,19 @@ ignore:
       name: cryptography
       version: "46.0.5"
       type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.2.0.
+  - vulnerability: GHSA-whj4-6x5x-4v2j
+    package:
+      name: pillow
+      version: "12.1.1"
+      type: python
+
+  # uv build dependency — low severity, not shipped
+  # to users. Fixed in 0.11.6.
+  - vulnerability: GHSA-pjjw-68hj-v9mw
+    package:
+      name: uv
+      version: "0.11.1"
+      type: python
