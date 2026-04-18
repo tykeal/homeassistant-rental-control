@@ -582,6 +582,88 @@ class TestExtractBookingId:
         assert sensor._extract_booking_id() is None
 
 
+class TestExtractDynamicAttributes:
+    """Tests for _extract_dynamic_attributes parsing."""
+
+    def test_extracts_unknown_fields(self, hass) -> None:
+        """Verify unknown 'Field: Value' lines become attributes."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = "Listing: Beach House\nSource: Guesty"
+        result = sensor._extract_dynamic_attributes()
+        assert result == {"listing": "Beach House", "source": "Guesty"}
+
+    def test_skips_known_fields(self, hass) -> None:
+        """Verify fields handled by dedicated extractors are skipped."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = (
+            "Email: guest@example.com\n"
+            "Phone: +1 555-123-4567\n"
+            "Guests: 4\n"
+            "Booking ID: abc123\n"
+            "Custom Field: extra data"
+        )
+        result = sensor._extract_dynamic_attributes()
+        assert result == {"custom_field": "extra data"}
+
+    def test_skips_url_lines(self, hass) -> None:
+        """Verify URL lines are not captured as dynamic attributes."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = (
+            "https://example.com/booking/123\nPlatform: Airbnb"
+        )
+        result = sensor._extract_dynamic_attributes()
+        assert result == {"platform": "Airbnb"}
+
+    def test_returns_empty_when_no_description(self, hass) -> None:
+        """Verify empty dict when description is None."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = None
+        assert sensor._extract_dynamic_attributes() == {}
+
+    def test_returns_empty_when_no_fields(self, hass) -> None:
+        """Verify empty dict when description has no field patterns."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = "Just a plain text note"
+        assert sensor._extract_dynamic_attributes() == {}
+
+    def test_slugifies_field_names(self, hass) -> None:
+        """Verify field names are slugified to valid attribute keys."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = (
+            "Check-In Time: 3:00 PM\nNumber Of Pets: 2"
+        )
+        result = sensor._extract_dynamic_attributes()
+        assert result == {
+            "check_in_time": "3:00 PM",
+            "number_of_pets": "2",
+        }
+
+    def test_does_not_override_dedicated_attributes(self, hass) -> None:
+        """Verify dynamic attrs don't overwrite dedicated extractor results."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = (
+            "Adults: 2\nChildren: 1\nProperty: Lake Cabin"
+        )
+        result = sensor._extract_dynamic_attributes()
+        # Adults and Children are known fields, only Property comes through
+        assert result == {"property": "Lake Cabin"}
+
+    def test_skips_last_4_digits_field(self, hass) -> None:
+        """Verify 'Last 4 Digits' known field is skipped."""
+        coordinator = _make_coordinator()
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["description"] = "Last 4 Digits: 1234\nRegion: US West"
+        result = sensor._extract_dynamic_attributes()
+        assert result == {"region": "US West"}
+
+
 # ---------------------------------------------------------------------------
 # Code generation tests
 # ---------------------------------------------------------------------------

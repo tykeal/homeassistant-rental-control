@@ -196,6 +196,55 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
                     return booking_id
         return None
 
+    # Field labels already handled by dedicated extractors.
+    _KNOWN_FIELDS: frozenset[str] = frozenset(
+        {
+            "email",
+            "last 4 digits",
+            "phone",
+            "phone number",
+            "phone (last 4)",
+            "guests",
+            "adults",
+            "children",
+            "booking id",
+        }
+    )
+
+    def _extract_dynamic_attributes(self) -> dict[str, str]:
+        """Extract unrecognised 'Field: Value' lines from description.
+
+        Parses each line for a ``<field>: <value>`` pattern and returns
+        a dict keyed by the slugified field name.  Lines whose field
+        label matches a dedicated extractor, or that look like URLs,
+        are skipped.
+        """
+        desc = self._event_attributes.get("description")
+        if not desc:
+            return {}
+
+        result: dict[str, str] = {}
+        line_re = re.compile(r"^([^:\n]+?):\s+(.+)$", re.MULTILINE)
+
+        for match in line_re.finditer(desc):
+            field = match.group(1).strip()
+            value = match.group(2).strip()
+
+            # Skip fields handled by dedicated extractors
+            if field.lower() in self._KNOWN_FIELDS:
+                continue
+
+            # Skip bare URLs that happen to contain ':'
+            if field.lower().startswith("http"):
+                continue
+
+            # Slugify: lowercase, replace non-alnum with underscore
+            key = re.sub(r"[^a-z0-9]+", "_", field.lower()).strip("_")
+            if key and value:
+                result[key] = value
+
+        return result
+
     def _generate_door_code(self) -> str:
         """Generate a door code based upon the selected type."""
 
@@ -384,6 +433,13 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             booking_id = self._extract_booking_id()
             if booking_id is not None:
                 parsed_attributes["booking_id"] = booking_id
+
+            # Capture any remaining "Field: Value" lines not already
+            # handled by the dedicated extractors above.
+            dynamic = self._extract_dynamic_attributes()
+            for key, value in dynamic.items():
+                if key not in parsed_attributes:
+                    parsed_attributes[key] = value
 
             self._parsed_attributes = parsed_attributes
 
