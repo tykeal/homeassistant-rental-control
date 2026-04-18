@@ -365,8 +365,12 @@ Please update Keymaster to at least v0.1.0-b0
 
         try:
             # Some calendars are filled with NULL-bytes that break
-            # parsing
-            event_list = Calendar.from_ical(text.replace("\x00", ""))
+            # parsing.  from_ical triggers blocking timezone file I/O
+            # so run it in the executor.
+            cleaned = text.replace("\x00", "")
+            event_list = await self.hass.async_add_executor_job(
+                Calendar.from_ical, cleaned
+            )
 
             # Convert non-standard timezone definitions
             if "X-WR-TIMEZONE" in event_list:
