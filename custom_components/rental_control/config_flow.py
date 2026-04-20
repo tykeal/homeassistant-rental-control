@@ -133,6 +133,18 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
         )
 
 
+def _normalize_lock_entry(value: Any) -> str:
+    """Normalize cleared lock entry values to '(none)'.
+
+    The HA frontend sends None or empty string when the user
+    clears a select field via the X button. Map those to the
+    explicit '(none)' sentinel so vol.In validation passes.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "(none)"
+    return str(value)
+
+
 def _available_lock_managers(
     hass: HomeAssistant,
 ) -> list:
@@ -258,7 +270,7 @@ def _get_schema(
             ): cv.positive_int,
             vol.Optional(
                 CONF_LOCK_ENTRY, default=_get_default(CONF_LOCK_ENTRY, "(none)")
-            ): vol.In(_available_lock_managers(hass)),
+            ): vol.All(_normalize_lock_entry, vol.In(_available_lock_managers(hass))),
             vol.Required(
                 CONF_START_SLOT,
                 default=_get_default(CONF_START_SLOT, DEFAULT_START_SLOT),
