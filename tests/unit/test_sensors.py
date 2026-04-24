@@ -942,6 +942,26 @@ class TestGenerateDoorCodeStaticRandom:
         # date_based: start=2025-03-15, end=2025-03-20 → "1520"
         assert code == "1520"
 
+    def test_static_random_empty_uid_falls_back_to_description(self, hass) -> None:
+        """Verify empty-string UID falls back to description-seeded code."""
+        coordinator = _make_coordinator(code_generator="static_random", code_length=4)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["start"] = datetime(
+            2025, 3, 15, 16, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["end"] = datetime(
+            2025, 3, 20, 11, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["uid"] = ""
+        sensor._event_attributes["description"] = "Fallback test"
+        code = sensor._generate_door_code()
+
+        # Empty UID should be treated as absent; code seeded from description
+        random.seed("Fallback test")
+        max_range = int("9999".rjust(4, "9"))
+        expected = str(random.randrange(1, max_range, 4)).zfill(4)
+        assert code == expected
+
 
 class TestGenerateDoorCodeLastFour:
     """Tests for _generate_door_code with last_four generator."""
