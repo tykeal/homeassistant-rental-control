@@ -75,6 +75,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             "location": None,
             "start": None,
             "end": None,
+            "uid": None,
             "eta_days": None,
             "eta_hours": None,
             "eta_minutes": None,
@@ -373,6 +374,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             self._event_attributes["end"] = event.end
             self._event_attributes["location"] = event.location
             self._event_attributes["description"] = event.description
+            self._event_attributes["uid"] = event.uid if hasattr(event, "uid") else None
             # get timedelta for eta
             td = start - datetime.now(start.tzinfo)
             eta_days = None
@@ -479,6 +481,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
                 "location": None,
                 "start": None,
                 "end": None,
+                "uid": None,
                 "eta_days": None,
                 "eta_hours": None,
                 "eta_minutes": None,

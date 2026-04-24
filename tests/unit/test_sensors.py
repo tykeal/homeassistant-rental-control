@@ -36,6 +36,7 @@ def _make_event(
     location: str | None = "123 Main St",
     description: str
     | None = "Phone: +1 555-123-4567\nEmail: john@example.com\nGuests: 4\nhttps://airbnb.com/reservations/123",
+    uid: str | None = "default-test-uid-001",
 ) -> MagicMock:
     """Create a mock calendar event."""
     if start is None:
@@ -48,6 +49,7 @@ def _make_event(
     event.end = end
     event.location = location
     event.description = description
+    event.uid = uid
     return event
 
 
@@ -228,6 +230,7 @@ class TestSensorInit:
         assert attrs["location"] is None
         assert attrs["start"] is None
         assert attrs["end"] is None
+        assert attrs["uid"] is None
         assert attrs["eta_days"] is None
         assert attrs["eta_hours"] is None
         assert attrs["eta_minutes"] is None
@@ -928,6 +931,35 @@ class TestHandleCoordinatorUpdateWithEvents:
         assert attrs["end"] == event.end
         assert attrs["location"] == event.location
         assert attrs["description"] == event.description
+        assert attrs["uid"] == event.uid
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_uid_exposed_as_event_attribute(self, hass) -> None:
+        """Verify UID from calendar event appears in extra_state_attributes."""
+        event = _make_event(uid="abc-123")
+        coordinator = _make_coordinator(data=[event])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["uid"] == "abc-123"
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_uid_none_when_event_has_no_uid(self, hass) -> None:
+        """Verify UID is None when calendar event has no UID."""
+        event = _make_event(uid=None)
+        coordinator = _make_coordinator(data=[event])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["uid"] is None
 
     @freeze_time("2025-03-10T12:00:00+00:00")
     def test_calculates_eta(self, hass) -> None:
@@ -1130,6 +1162,7 @@ class TestHandleCoordinatorUpdateNoEvents:
         assert attrs["location"] is None
         assert attrs["start"] is None
         assert attrs["end"] is None
+        assert attrs["uid"] is None
         assert attrs["eta_days"] is None
         assert attrs["slot_name"] is None
         assert attrs["slot_code"] is None
