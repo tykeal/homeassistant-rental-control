@@ -717,9 +717,10 @@ class TestGenerateDoorCodeDateBased:
         sensor._event_attributes["end"] = datetime(
             2025, 3, 20, 11, 0, tzinfo=timezone.utc
         )
+        sensor._event_attributes["uid"] = None
         sensor._event_attributes["description"] = None
         code = sensor._generate_door_code()
-        # Falls back to date_based since description is None
+        # Falls back to date_based since both uid and description are None
         assert code == "1520"
 
 
@@ -735,7 +736,7 @@ class TestGenerateDoorCodeStaticRandom:
         random.setstate(self._rng_state)
 
     def test_static_random_produces_code(self, hass) -> None:
-        """Verify static_random produces a code seeded from description."""
+        """Verify static_random produces a code seeded from UID."""
         coordinator = _make_coordinator(code_generator="static_random", code_length=4)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor._event_attributes["start"] = datetime(
@@ -744,13 +745,14 @@ class TestGenerateDoorCodeStaticRandom:
         sensor._event_attributes["end"] = datetime(
             2025, 3, 20, 11, 0, tzinfo=timezone.utc
         )
+        sensor._event_attributes["uid"] = "test-uid-001"
         sensor._event_attributes["description"] = "Test reservation details"
         code = sensor._generate_door_code()
         assert len(code) == 4
         assert code.isdigit()
 
     def test_static_random_deterministic(self, hass) -> None:
-        """Verify same description always produces same code."""
+        """Verify same UID always produces same code."""
         coordinator = _make_coordinator(code_generator="static_random", code_length=4)
         sensor1 = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor1._event_attributes["start"] = datetime(
@@ -759,6 +761,7 @@ class TestGenerateDoorCodeStaticRandom:
         sensor1._event_attributes["end"] = datetime(
             2025, 3, 20, 11, 0, tzinfo=timezone.utc
         )
+        sensor1._event_attributes["uid"] = "same-uid"
         sensor1._event_attributes["description"] = "Same description"
 
         sensor2 = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 1)
@@ -768,6 +771,7 @@ class TestGenerateDoorCodeStaticRandom:
         sensor2._event_attributes["end"] = datetime(
             2025, 3, 20, 11, 0, tzinfo=timezone.utc
         )
+        sensor2._event_attributes["uid"] = "same-uid"
         sensor2._event_attributes["description"] = "Same description"
 
         assert sensor1._generate_door_code() == sensor2._generate_door_code()
@@ -777,6 +781,7 @@ class TestGenerateDoorCodeStaticRandom:
 
         Uses known input values to verify each description seeds a distinct
         reproducible code, avoiding reliance on PRNG collision avoidance.
+        Tests the description-fallback path (uid=None).
         """
         coordinator = _make_coordinator(code_generator="static_random", code_length=4)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
@@ -786,6 +791,7 @@ class TestGenerateDoorCodeStaticRandom:
         sensor._event_attributes["end"] = datetime(
             2025, 3, 20, 11, 0, tzinfo=timezone.utc
         )
+        sensor._event_attributes["uid"] = None
 
         sensor._event_attributes["description"] = "Description A"
         code_a = sensor._generate_door_code()
@@ -815,10 +821,126 @@ class TestGenerateDoorCodeStaticRandom:
         sensor._event_attributes["end"] = datetime(
             2025, 3, 20, 11, 0, tzinfo=timezone.utc
         )
+        sensor._event_attributes["uid"] = "test-uid-len6"
         sensor._event_attributes["description"] = "Test reservation"
         code = sensor._generate_door_code()
         assert len(code) == 6
         assert code.isdigit()
+
+    # --- US1: UID-seeded door codes ---
+
+    def test_static_random_uid_seeded_deterministic(self, hass) -> None:
+        """Verify UID-seeded code is deterministic across calls."""
+        coordinator = _make_coordinator(code_generator="static_random", code_length=4)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["start"] = datetime(
+            2025, 3, 15, 16, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["end"] = datetime(
+            2025, 3, 20, 11, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["uid"] = "abc-123"
+        sensor._event_attributes["description"] = "Some guest info"
+        code1 = sensor._generate_door_code()
+        code2 = sensor._generate_door_code()
+        assert code1 == code2
+        assert len(code1) == 4
+        assert code1.isdigit()
+
+    def test_static_random_uid_stable_across_description_change(self, hass) -> None:
+        """Verify UID-seeded code is stable when description changes."""
+        coordinator = _make_coordinator(code_generator="static_random", code_length=4)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["start"] = datetime(
+            2025, 3, 15, 16, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["end"] = datetime(
+            2025, 3, 20, 11, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["uid"] = "abc-123"
+        sensor._event_attributes["description"] = "Guest: Alice"
+        code_before = sensor._generate_door_code()
+
+        sensor._event_attributes["description"] = "Guest: Alice - early checkin"
+        code_after = sensor._generate_door_code()
+
+        assert code_before == code_after
+
+    def test_static_random_different_uids_produce_different_codes(self, hass) -> None:
+        """Verify different UIDs produce different door codes."""
+        coordinator = _make_coordinator(code_generator="static_random", code_length=4)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["start"] = datetime(
+            2025, 3, 15, 16, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["end"] = datetime(
+            2025, 3, 20, 11, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["description"] = "Same description"
+
+        sensor._event_attributes["uid"] = "uid-A"
+        code_a = sensor._generate_door_code()
+
+        sensor._event_attributes["uid"] = "uid-B"
+        code_b = sensor._generate_door_code()
+
+        assert code_a != code_b
+
+    def test_static_random_uid_respects_code_length(self, hass) -> None:
+        """Verify UID-seeded code respects configured code_length."""
+        coordinator = _make_coordinator(code_generator="static_random", code_length=6)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["start"] = datetime(
+            2025, 3, 15, 16, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["end"] = datetime(
+            2025, 3, 20, 11, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["uid"] = "test-uid"
+        sensor._event_attributes["description"] = "Some details"
+        code = sensor._generate_door_code()
+        assert len(code) == 6
+        assert code.isdigit()
+
+    # --- US2: Fallback chain ---
+
+    def test_static_random_uid_none_falls_back_to_description(self, hass) -> None:
+        """Verify UID=None falls back to description-seeded code."""
+        coordinator = _make_coordinator(code_generator="static_random", code_length=4)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["start"] = datetime(
+            2025, 3, 15, 16, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["end"] = datetime(
+            2025, 3, 20, 11, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["uid"] = None
+        sensor._event_attributes["description"] = "Fallback test"
+        code = sensor._generate_door_code()
+
+        # Verify it matches what random.seed("Fallback test") produces
+        random.seed("Fallback test")
+        max_range = int("9999".rjust(4, "9"))
+        expected = str(random.randrange(1, max_range, 4)).zfill(4)
+        assert code == expected
+
+    def test_static_random_uid_and_description_none_falls_back_to_date_based(
+        self, hass
+    ) -> None:
+        """Verify UID=None and description=None falls back to date_based."""
+        coordinator = _make_coordinator(code_generator="static_random", code_length=4)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["start"] = datetime(
+            2025, 3, 15, 16, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["end"] = datetime(
+            2025, 3, 20, 11, 0, tzinfo=timezone.utc
+        )
+        sensor._event_attributes["uid"] = None
+        sensor._event_attributes["description"] = None
+        code = sensor._generate_door_code()
+        # date_based: start=2025-03-15, end=2025-03-20 → "1520"
+        assert code == "1520"
 
 
 class TestGenerateDoorCodeLastFour:

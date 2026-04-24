@@ -257,8 +257,15 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         # their calendar entries!
         # This also gets around Unavailable and Blocked entries that do not
         # have a description either
+        #
+        # For static_random: only force date_based when BOTH uid and
+        # description are None (UID alone can seed the generator).
         if self._event_attributes["description"] is None:
-            generator = "date_based"
+            if (
+                generator != "static_random"
+                or self._event_attributes.get("uid") is None
+            ):
+                generator = "date_based"
 
         # AirBnB provides the last 4 digits of the guest's registered phone
         #
@@ -277,8 +284,12 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         if generator == "last_four" and code_length == 4:
             ret = self._extract_last_four()
         elif generator == "static_random":
-            # If the description changes this will most likely change the code
-            random.seed(self._event_attributes["description"])
+            # Prefer UID (immutable per RFC 5545) over description (mutable)
+            seed = (
+                self._event_attributes.get("uid")
+                or self._event_attributes["description"]
+            )
+            random.seed(seed)
             max_range = int("9999".rjust(code_length, "9"))
             ret = str(random.randrange(1, max_range, code_length)).zfill(code_length)
 
