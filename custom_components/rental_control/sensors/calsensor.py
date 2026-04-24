@@ -75,6 +75,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             "location": None,
             "start": None,
             "end": None,
+            "uid": None,
             "eta_days": None,
             "eta_hours": None,
             "eta_minutes": None,
@@ -256,8 +257,15 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         # their calendar entries!
         # This also gets around Unavailable and Blocked entries that do not
         # have a description either
+        #
+        # For static_random: only force date_based when BOTH uid and
+        # description are None (UID alone can seed the generator).
         if self._event_attributes["description"] is None:
-            generator = "date_based"
+            if (
+                generator != "static_random"
+                or self._event_attributes.get("uid") is None
+            ):
+                generator = "date_based"
 
         # AirBnB provides the last 4 digits of the guest's registered phone
         #
@@ -276,10 +284,18 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         if generator == "last_four" and code_length == 4:
             ret = self._extract_last_four()
         elif generator == "static_random":
-            # If the description changes this will most likely change the code
-            random.seed(self._event_attributes["description"])
-            max_range = int("9999".rjust(code_length, "9"))
-            ret = str(random.randrange(1, max_range, code_length)).zfill(code_length)
+            # Prefer UID (immutable per RFC 5545) over description (mutable).
+            # Only seed when we have a non-empty value; otherwise fall
+            # through to the date_based generator below.
+            uid = self._event_attributes.get("uid")
+            description = self._event_attributes["description"]
+            seed = uid if uid else description
+            if seed:
+                random.seed(seed)
+                max_range = int("9999".rjust(code_length, "9"))
+                ret = str(random.randrange(1, max_range, code_length)).zfill(
+                    code_length
+                )
 
         if ret is None:
             # Generate code based on checkin/out days
@@ -373,6 +389,10 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             self._event_attributes["end"] = event.end
             self._event_attributes["location"] = event.location
             self._event_attributes["description"] = event.description
+            uid = getattr(event, "uid", None)
+            if isinstance(uid, str):
+                uid = uid.strip() or None
+            self._event_attributes["uid"] = uid
             # get timedelta for eta
             td = start - datetime.now(start.tzinfo)
             eta_days = None
@@ -449,14 +469,14 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             # Gate on overrides.ready to avoid spurious overflow
             # warnings during bootstrap when _next_slot is still None.
             if overrides and overrides.ready and slot_name is not None:
-                uid: str | None = event.uid if hasattr(event, "uid") else None
+                event_uid: str | None = event.uid if hasattr(event, "uid") else None
                 self.hass.async_create_task(
                     self._async_handle_slot_assignment(
                         slot_name=slot_name,
                         slot_code=slot_code,
                         start_time=event.start,
                         end_time=event.end,
-                        uid=uid,
+                        uid=event_uid,
                         prefix=self.coordinator.event_prefix or "",
                         eta_days=eta_days,
                     )
@@ -479,6 +499,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
                 "location": None,
                 "start": None,
                 "end": None,
+                "uid": None,
                 "eta_days": None,
                 "eta_hours": None,
                 "eta_minutes": None,
