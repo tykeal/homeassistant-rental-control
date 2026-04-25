@@ -270,7 +270,7 @@ def _get_schema(
             ): cv.positive_int,
             vol.Optional(
                 CONF_LOCK_ENTRY, default=_get_default(CONF_LOCK_ENTRY, "(none)")
-            ): vol.All(_normalize_lock_entry, vol.In(_available_lock_managers(hass))),
+            ): vol.Any(vol.In(_available_lock_managers(hass)), None, ""),
             vol.Required(
                 CONF_START_SLOT,
                 default=_get_default(CONF_START_SLOT, DEFAULT_START_SLOT),
@@ -349,6 +349,13 @@ async def _start_config_flow(
     description_placeholders: dict[str, str] = {}
 
     if user_input is not None:
+        # Normalize lock entry outside the schema to keep the
+        # schema JSON-serializable for the HA frontend.
+        if CONF_LOCK_ENTRY in user_input:
+            user_input[CONF_LOCK_ENTRY] = _normalize_lock_entry(
+                user_input[CONF_LOCK_ENTRY]
+            )
+
         # Regular flow has an async function
         if hasattr(cls, "_get_unique_id"):
             errors.update(await cls._get_unique_id(user_input))
