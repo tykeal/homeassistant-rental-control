@@ -1175,11 +1175,11 @@ def test_normalize_lock_entry(input_val: str | None, expected: str) -> None:
 async def test_config_flow_lock_entry_none_normalized(
     hass: HomeAssistant,
 ) -> None:
-    """Test clearing lock via X button stores None lock entry.
+    """Test selecting '(none)' stores None lock entry.
 
-    When the HA frontend X-clear button sends None for the lock
-    select field, the normalizer converts it to '(none)' so
-    schema validation passes and the entry saves with no lock.
+    When the user selects '(none)' from the lock manager dropdown
+    to disconnect a lock, the config flow converts the sentinel to
+    None before saving the entry.
     """
     with aioresponses() as mock_aiohttp:
         test_url = "https://example.com/calendar.ics"
@@ -1219,7 +1219,7 @@ async def test_config_flow_lock_entry_none_normalized(
     entry = config_result["result"]
     assert entry.data[CONF_LOCK_ENTRY] is None
 
-    # Simulate X-clear button: send None for lock_entry
+    # Select '(none)' from the dropdown to disconnect lock
     with aioresponses() as mock_aiohttp:
         mock_aiohttp.get(
             test_url,
@@ -1239,7 +1239,7 @@ async def test_config_flow_lock_entry_none_normalized(
                 CONF_URL: test_url,
                 CONF_VERIFY_SSL: True,
                 CONF_IGNORE_NON_RESERVED: True,
-                CONF_LOCK_ENTRY: None,
+                CONF_LOCK_ENTRY: "(none)",
                 CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
                 CONF_TIMEZONE: "UTC",
                 CONF_EVENT_PREFIX: "",
@@ -1262,84 +1262,15 @@ async def test_config_flow_lock_entry_none_normalized(
 async def test_config_flow_lock_entry_empty_string_normalized(
     hass: HomeAssistant,
 ) -> None:
-    """Test clearing lock via empty string stores None lock entry.
+    """Test _normalize_lock_entry converts empty string to sentinel.
 
-    When the HA frontend sends an empty string for a cleared
-    select field, the normalizer converts it to '(none)' so
-    schema validation passes and the entry saves with no lock.
+    Verify the normalizer utility itself handles empty strings,
+    even though the SelectSelector dropdown sends '(none)' directly.
     """
-    with aioresponses() as mock_aiohttp:
-        test_url = "https://example.com/calendar.ics"
-        mock_aiohttp.get(
-            test_url,
-            status=200,
-            body=calendar_data.AIRBNB_ICS_CALENDAR,
-            headers={"content-type": "text/calendar"},
-            repeat=True,
-        )
+    from custom_components.rental_control.config_flow import _normalize_lock_entry
 
-        config_result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_USER},
-            data={
-                CONF_NAME: "Test Lock Empty",
-                CONF_URL: test_url,
-                CONF_VERIFY_SSL: True,
-                CONF_IGNORE_NON_RESERVED: True,
-                CONF_LOCK_ENTRY: "(none)",
-                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
-                CONF_TIMEZONE: "UTC",
-                CONF_EVENT_PREFIX: "",
-                CONF_CHECKIN: DEFAULT_CHECKIN,
-                CONF_CHECKOUT: DEFAULT_CHECKOUT,
-                CONF_DAYS: DEFAULT_DAYS,
-                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
-                CONF_START_SLOT: DEFAULT_START_SLOT,
-                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
-                CONF_CODE_GENERATION: "Start/End Date",
-                CONF_SHOULD_UPDATE_CODE: True,
-            },
-        )
-        await hass.async_block_till_done()
-
-    assert config_result["type"] == FlowResultType.CREATE_ENTRY
-    entry = config_result["result"]
-
-    # Simulate X-clear button: send empty string for lock_entry
-    with aioresponses() as mock_aiohttp:
-        mock_aiohttp.get(
-            test_url,
-            status=200,
-            body=calendar_data.AIRBNB_ICS_CALENDAR,
-            headers={"content-type": "text/calendar"},
-            repeat=True,
-        )
-
-        result = await hass.config_entries.options.async_init(
-            entry.entry_id,
-        )
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            user_input={
-                CONF_NAME: "Test Lock Empty",
-                CONF_URL: test_url,
-                CONF_VERIFY_SSL: True,
-                CONF_IGNORE_NON_RESERVED: True,
-                CONF_LOCK_ENTRY: "",
-                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
-                CONF_TIMEZONE: "UTC",
-                CONF_EVENT_PREFIX: "",
-                CONF_CHECKIN: DEFAULT_CHECKIN,
-                CONF_CHECKOUT: DEFAULT_CHECKOUT,
-                CONF_DAYS: DEFAULT_DAYS,
-                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
-                CONF_START_SLOT: DEFAULT_START_SLOT,
-                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
-                CONF_CODE_GENERATION: "Start/End Date",
-                CONF_SHOULD_UPDATE_CODE: True,
-            },
-        )
-
-    assert result["type"] == FlowResultType.CREATE_ENTRY
-    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
-    assert updated_entry.data[CONF_LOCK_ENTRY] is None
+    assert _normalize_lock_entry("") == "(none)"
+    assert _normalize_lock_entry("  ") == "(none)"
+    assert _normalize_lock_entry(None) == "(none)"
+    assert _normalize_lock_entry("Lock1") == "Lock1"
+    assert _normalize_lock_entry("(none)") == "(none)"

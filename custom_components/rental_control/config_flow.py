@@ -16,6 +16,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.selector import SelectOptionDict
+from homeassistant.helpers.selector import SelectSelector
+from homeassistant.helpers.selector import SelectSelectorConfig
+from homeassistant.helpers.selector import SelectSelectorMode
 from homeassistant.util import dt
 import voluptuous as vol
 from voluptuous.schema_builder import ALLOW_EXTRA
@@ -270,7 +274,15 @@ def _get_schema(
             ): cv.positive_int,
             vol.Optional(
                 CONF_LOCK_ENTRY, default=_get_default(CONF_LOCK_ENTRY, "(none)")
-            ): vol.Any(vol.In(_available_lock_managers(hass)), None, ""),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value=v, label=v)
+                        for v in _available_lock_managers(hass)
+                    ],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
             vol.Required(
                 CONF_START_SLOT,
                 default=_get_default(CONF_START_SLOT, DEFAULT_START_SLOT),
