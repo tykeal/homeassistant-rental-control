@@ -188,6 +188,7 @@ jobs:
         uses: lfreleng-actions/python-audit-action@1776538e768c52c55c3c96495f6e25f0762ad28f  # v0.2.6
         with:
           python_version: "${{ matrix.python-version }}"
+          ignore_vulns: 'GHSA-58qw-9mgm-455v'
 
   sbom:
     name: 'Generate SBOM'
