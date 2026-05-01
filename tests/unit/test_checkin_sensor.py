@@ -115,6 +115,29 @@ def _create_sensor(
 # ===========================================================================
 
 
+async def test_checkin_sensor_icon_per_state(
+    hass: HomeAssistant,
+    mock_checkin_coordinator: MagicMock,
+    mock_checkin_config_entry: MockConfigEntry,
+) -> None:
+    """Verify each check-in state returns the correct MDI icon."""
+    sensor = _create_sensor(hass, mock_checkin_coordinator, mock_checkin_config_entry)
+
+    expected = {
+        CHECKIN_STATE_AWAITING: "mdi:door-open",
+        CHECKIN_STATE_CHECKED_IN: "mdi:account-check",
+        CHECKIN_STATE_CHECKED_OUT: "mdi:airplane",
+        CHECKIN_STATE_NO_RESERVATION: "mdi:bed-empty",
+    }
+    for state, icon in expected.items():
+        sensor._state = state
+        assert sensor.icon == icon, f"State {state!r} should use {icon!r}"
+
+    # Unknown state falls back to bed-empty
+    sensor._state = "unknown_state"
+    assert sensor.icon == "mdi:bed-empty"
+
+
 class TestSensorEntityProperties:
     """Tests for CheckinTrackingSensor entity configuration."""
 
