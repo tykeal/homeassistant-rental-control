@@ -56,6 +56,13 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+_CHECKIN_STATE_ICONS: dict[str, str] = {
+    CHECKIN_STATE_AWAITING: "mdi:door-open",
+    CHECKIN_STATE_CHECKED_IN: "mdi:account-check",
+    CHECKIN_STATE_CHECKED_OUT: "mdi:airplane",
+    CHECKIN_STATE_NO_RESERVATION: "mdi:bed-empty",
+}
+
 
 class CheckinExtraStoredData(ExtraStoredData):
     """Extra stored data for persisting CheckinTrackingSensor state.
@@ -251,6 +258,11 @@ class CheckinTrackingSensor(
     def state(self) -> str:
         """Return the current check-in tracking state."""
         return self._state
+
+    @property
+    def icon(self) -> str:
+        """Return an icon reflecting the current check-in state."""
+        return _CHECKIN_STATE_ICONS.get(self._state, "mdi:bed-empty")
 
     @property
     def device_info(self) -> DeviceInfo:
