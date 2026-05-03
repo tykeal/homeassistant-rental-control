@@ -236,6 +236,7 @@ class TestSensorInit:
         assert attrs["eta_minutes"] is None
         assert attrs["slot_name"] is None
         assert attrs["slot_code"] is None
+        assert attrs["slot_number"] is None
 
     @freeze_time("2025-03-10T12:00:00+00:00")
     async def test_async_added_to_hass_processes_existing_data(self, hass) -> None:
@@ -1308,6 +1309,7 @@ class TestHandleCoordinatorUpdateNoEvents:
         assert attrs["eta_days"] is None
         assert attrs["slot_name"] is None
         assert attrs["slot_code"] is None
+        assert attrs["slot_number"] is None
 
     def test_clears_parsed_attributes(self, hass) -> None:
         """Verify parsed attributes are cleared when no events."""
@@ -1630,3 +1632,78 @@ class TestHandleCoordinatorUpdateOverrides:
             await coro
             mock_clear_code.assert_not_called()
             mock_update_times.assert_called_once_with(coordinator, sensor)
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    async def test_slot_number_set_on_assignment(self, hass) -> None:
+        """Verify slot_number is exposed after slot assignment."""
+        event = _make_event()
+        override = {
+            "slot_code": "4321",
+            "start_time": event.start,
+            "end_time": event.end,
+        }
+        overrides = MagicMock()
+        overrides.ready = True
+        overrides.get_slot_with_name.return_value = override
+        overrides.get_slot_key_by_name.return_value = 12
+        overrides.async_reserve_or_get_slot = AsyncMock(
+            return_value=ReserveResult(12, False, False)
+        )
+        overrides.overrides = {12: override}
+        coordinator = _make_coordinator(data=[event], event_overrides=overrides)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        # Sync path sets slot_number from read-only lookup
+        assert sensor.extra_state_attributes["slot_number"] == 12
+
+        # Async path also sets slot_number from result.slot
+        coro = sensor.hass.async_create_task.call_args[0][0]
+        await coro
+        assert sensor.extra_state_attributes["slot_number"] == 12
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    async def test_slot_number_set_after_new_assignment(self, hass) -> None:
+        """Verify slot_number is populated after a new slot assignment."""
+        event = _make_event()
+        overrides = MagicMock()
+        overrides.ready = True
+        overrides.get_slot_with_name.return_value = None
+        overrides.get_slot_key_by_name.return_value = 0
+        overrides.async_reserve_or_get_slot = AsyncMock(
+            return_value=ReserveResult(10, True, False)
+        )
+        coordinator = _make_coordinator(data=[event], event_overrides=overrides)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        with patch(
+            "custom_components.rental_control.sensors.calsensor.async_fire_set_code",
+            new_callable=AsyncMock,
+        ):
+            sensor._handle_coordinator_update()
+
+            # Sync path: get_slot_key_by_name returned 0, so None
+            assert sensor.extra_state_attributes["slot_number"] is None
+
+            coro = sensor.hass.async_create_task.call_args[0][0]
+            await coro
+
+            # Async path sets slot_number from result.slot
+            assert sensor.extra_state_attributes["slot_number"] == 10
+
+    def test_slot_number_cleared_when_no_events(self, hass) -> None:
+        """Verify slot_number is reset to None when no events."""
+        coordinator = _make_coordinator(data=[])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["slot_number"] = 10
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        assert sensor.extra_state_attributes["slot_number"] is None
