@@ -807,6 +807,7 @@ class TestAutoCheckoutRescheduling:
 class TestPostCheckoutLinger:
     """Tests for post-checkout linger timing (related to T014)."""
 
+    @freeze_time("2025-03-10T12:00:00+00:00")
     async def test_same_day_turnover_linger_timing(
         self,
         hass: HomeAssistant,
