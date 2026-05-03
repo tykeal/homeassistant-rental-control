@@ -81,6 +81,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             "eta_minutes": None,
             "slot_name": None,
             "slot_code": None,
+            "slot_number": None,
         }
         self._parsed_attributes: dict[str, str] = {}
         self._event_number = event_number
@@ -416,6 +417,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             self._event_attributes["slot_name"] = slot_name
 
             slot_code = self._generate_door_code()
+            self._event_attributes["slot_number"] = None
 
             # Read-only lookup for display: show existing override code
             # immediately rather than the generated fallback.  This is
@@ -425,6 +427,8 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
                 existing = overrides.get_slot_with_name(slot_name)
                 if existing and existing["slot_code"]:
                     slot_code = str(existing["slot_code"])
+                slot_key = overrides.get_slot_key_by_name(slot_name)
+                self._event_attributes["slot_number"] = slot_key if slot_key else None
             self._event_attributes["slot_code"] = slot_code
 
             # attributes parsed from description
@@ -505,6 +509,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
                 "eta_minutes": None,
                 "slot_name": None,
                 "slot_code": None,
+                "slot_number": None,
             }
             self._parsed_attributes = {}
             self._state = summary
@@ -565,6 +570,8 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
                 self.name,
             )
             return
+
+        self._event_attributes["slot_number"] = result.slot
 
         if result.is_new:
             await async_fire_set_code(self.coordinator, self, result.slot)
