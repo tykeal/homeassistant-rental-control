@@ -2917,3 +2917,858 @@ END:VCALENDAR
         # Now enabled
         assert coordinator.honor_event_times is True
         assert coordinator.async_request_refresh.called
+
+
+# ---------------------------------------------------------------------------
+# Description-based time extraction integration tests (spec 007)
+# ---------------------------------------------------------------------------
+
+
+class TestHonorEventTimesDescriptionExtraction:
+    """Integration tests for description-based time extraction."""
+
+    async def test_honor_true_allday_description_times_no_override(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T008/T013: honor=True + all-day + description times → extracted.
+
+        When honor_event_times is True and the event is all-day with
+        check-in/out times in the description and no override, the
+        description times are used.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:desc-test-1@example.com
+SUMMARY:Reserved: Desc Guest
+DESCRIPTION:Check-in time: 15\\nCheck-out time: 10\\nEmail: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Desc Test",
+            version=8,
+            unique_id="desc-test-1",
+            data={
+                "name": "Desc Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+            },
+            entry_id="desc_test_1",
+        )
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        from datetime import time as time_cls
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        # Description times: 15:00 checkin, 10:00 checkout
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                time_cls(15, 0),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                time_cls(10, 0),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_true_allday_description_checkin_only_no_override(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T014: honor=True + all-day + only checkin in description.
+
+        When only check-in time is in the description, check-out
+        falls back to configured default.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:desc-test-2@example.com
+SUMMARY:Reserved: Desc Guest
+DESCRIPTION:Check-in time: 15\\nEmail: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Desc Test",
+            version=8,
+            unique_id="desc-test-2",
+            data={
+                "name": "Desc Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+            },
+            entry_id="desc_test_2",
+        )
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        from datetime import time as time_cls
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        # Description checkin: 15:00, checkout falls back to default 11:00
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                time_cls(15, 0),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                time_cls(11, 0),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_true_allday_no_description_times_no_override(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T015: honor=True + all-day + no desc times + no override.
+
+        Falls back to configured default checkin/checkout times.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:desc-test-3@example.com
+SUMMARY:Reserved: Desc Guest
+DESCRIPTION:Email: test@example.com\\nNo times here
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Desc Test",
+            version=8,
+            unique_id="desc-test-3",
+            data={
+                "name": "Desc Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+            },
+            entry_id="desc_test_3",
+        )
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        from datetime import time as time_cls
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        # No description times, falls back to defaults: 16:00 / 11:00
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                time_cls(16, 0),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                time_cls(11, 0),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_true_allday_description_times_with_override(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T022: honor=True + all-day + desc times + override.
+
+        Description times take priority over override times.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:desc-test-4@example.com
+SUMMARY:Reserved: Desc Guest
+DESCRIPTION:Check-in time: 15\\nCheck-out time: 10\\nEmail: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Desc Test",
+            version=8,
+            unique_id="desc-test-4",
+            data={
+                "name": "Desc Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="desc_test_4",
+        )
+        entry.add_to_hass(hass)
+
+        km_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_desc_4",
+        )
+        km_entry.add_to_hass(hass)
+
+        override_start_utc = datetime(2024, 12, 25, 21, 0, 0, tzinfo=dt_util.UTC)
+        override_end_utc = datetime(2024, 12, 30, 14, 0, 0, tzinfo=dt_util.UTC)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+
+            from custom_components.rental_control.event_overrides import EventOverrides
+
+            coordinator.event_overrides = EventOverrides(10, 3)
+            coordinator.event_overrides._overrides[10] = {
+                "slot_name": "Reserved: Desc Guest",
+                "slot_code": "1234",
+                "start_time": override_start_utc,
+                "end_time": override_end_utc,
+            }
+            coordinator.event_overrides.async_check_overrides = AsyncMock()  # type: ignore[method-assign]
+
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        from datetime import time as time_cls
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        # Description times: 15:00 checkin, 10:00 checkout (override ignored)
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                time_cls(15, 0),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                time_cls(10, 0),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_true_allday_partial_desc_with_override_fallback(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T023: honor=True + all-day + partial desc + override fallback.
+
+        When only check-in is in the description, check-out falls
+        back to override time (not default).
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:desc-test-5@example.com
+SUMMARY:Reserved: Desc Guest
+DESCRIPTION:Check-in time: 15\\nEmail: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Desc Test",
+            version=8,
+            unique_id="desc-test-5",
+            data={
+                "name": "Desc Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="desc_test_5",
+        )
+        entry.add_to_hass(hass)
+
+        km_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_desc_5",
+        )
+        km_entry.add_to_hass(hass)
+
+        # Override: 18:00 UTC start, 14:00 UTC end
+        # In America/New_York: 13:00 start, 09:00 end
+        override_start_utc = datetime(2024, 12, 25, 18, 0, 0, tzinfo=dt_util.UTC)
+        override_end_utc = datetime(2024, 12, 30, 14, 0, 0, tzinfo=dt_util.UTC)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+
+            from custom_components.rental_control.event_overrides import EventOverrides
+
+            coordinator.event_overrides = EventOverrides(10, 3)
+            coordinator.event_overrides._overrides[10] = {
+                "slot_name": "Reserved: Desc Guest",
+                "slot_code": "1234",
+                "start_time": override_start_utc,
+                "end_time": override_end_utc,
+            }
+            coordinator.event_overrides.async_check_overrides = AsyncMock()  # type: ignore[method-assign]
+
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        from datetime import time as time_cls
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        # Checkin from description: 15:00
+        # Checkout falls back to override: 14:00 UTC → 09:00 EST
+        override_end_local = override_end_utc.astimezone(tz)
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                time_cls(15, 0),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                override_end_local.time(),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_true_allday_no_desc_times_with_override_fallback(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T024: honor=True + all-day + no desc times + override.
+
+        When no description times are found, falls back to override.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:desc-test-6@example.com
+SUMMARY:Reserved: Desc Guest
+DESCRIPTION:Email: test@example.com\\nNo times here
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Desc Test",
+            version=8,
+            unique_id="desc-test-6",
+            data={
+                "name": "Desc Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id="desc_test_6",
+        )
+        entry.add_to_hass(hass)
+
+        km_entry = MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_desc_6",
+        )
+        km_entry.add_to_hass(hass)
+
+        # Override: 18:00 UTC start, 14:00 UTC end
+        override_start_utc = datetime(2024, 12, 25, 18, 0, 0, tzinfo=dt_util.UTC)
+        override_end_utc = datetime(2024, 12, 30, 14, 0, 0, tzinfo=dt_util.UTC)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+
+            from custom_components.rental_control.event_overrides import EventOverrides
+
+            coordinator.event_overrides = EventOverrides(10, 3)
+            coordinator.event_overrides._overrides[10] = {
+                "slot_name": "Reserved: Desc Guest",
+                "slot_code": "1234",
+                "start_time": override_start_utc,
+                "end_time": override_end_utc,
+            }
+            coordinator.event_overrides.async_check_overrides = AsyncMock()  # type: ignore[method-assign]
+
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        # No desc times → falls back to override times
+        override_start_local = override_start_utc.astimezone(tz)
+        override_end_local = override_end_utc.astimezone(tz)
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                override_start_local.time(),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                override_end_local.time(),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_false_allday_description_times_ignored(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T037: honor=False + all-day + description times → ignored.
+
+        When honor_event_times is False, description times are not
+        extracted; default times are used.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:desc-test-7@example.com
+SUMMARY:Reserved: Desc Guest
+DESCRIPTION:Check-in time: 15\\nCheck-out time: 10\\nEmail: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Desc Test",
+            version=8,
+            unique_id="desc-test-7",
+            data={
+                "name": "Desc Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+            },
+            entry_id="desc_test_7",
+        )
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        from datetime import time as time_cls
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        # honor=False → description times ignored, uses defaults 16/11
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                time_cls(16, 0),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                time_cls(11, 0),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_true_timed_event_description_times_ignored(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T038: honor=True + timed event + desc times → PMS wins.
+
+        When the event has explicit times (datetime), PMS times take
+        priority even if description also has times.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        # Timed event with 15:00 / 10:00 but description says 14/09
+        timed_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART:{future_start}T150000
+DTEND:{future_end}T100000
+UID:desc-test-8@example.com
+SUMMARY:Reserved: Desc Guest
+DESCRIPTION:Check-in time: 14\\nCheck-out time: 9\\nEmail: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Desc Test",
+            version=8,
+            unique_id="desc-test-8",
+            data={
+                "name": "Desc Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+            },
+            entry_id="desc_test_8",
+        )
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=timed_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        # PMS/calendar times: 15:00 / 10:00 (not description 14/09)
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                datetime(2024, 12, 25, 15, 0, 0).time(),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                datetime(2024, 12, 30, 10, 0, 0).time(),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end
+
+    async def test_honor_true_allday_12h_description_times(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T039: honor=True + all-day + 12h description times.
+
+        12-hour format times in descriptions are correctly parsed.
+        """
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = (frozen_time + timedelta(days=5)).strftime("%Y%m%d")
+        future_end = (frozen_time + timedelta(days=10)).strftime("%Y%m%d")
+
+        allday_ics = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:{future_start}
+DTEND;VALUE=DATE:{future_end}
+UID:desc-test-9@example.com
+SUMMARY:Reserved: Desc Guest
+DESCRIPTION:Check-in: 4 PM\\nCheck-out: 11 AM\\nEmail: test@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Desc Test",
+            version=8,
+            unique_id="desc-test-9",
+            data={
+                "name": "Desc Test",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "14:00",
+                "checkout": "10:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+            },
+            entry_id="desc_test_9",
+        )
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=allday_ics,
+            )
+
+            coordinator = RentalControlCoordinator(hass, entry)
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        event = result[0]
+        from datetime import time as time_cls
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        # Description: "4 PM" → 16:00, "11 AM" → 11:00
+        expected_start = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 25).date(),
+                time_cls(16, 0),
+                tz,
+            )
+        )
+        expected_end = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, 30).date(),
+                time_cls(11, 0),
+                tz,
+            )
+        )
+        assert event.start == expected_start
+        assert event.end == expected_end

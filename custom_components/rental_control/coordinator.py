@@ -71,6 +71,8 @@ from .const import EVENT_AGE_THRESHOLD_DAYS
 from .const import LOCK_MANAGER
 from .const import REQUEST_TIMEOUT
 from .const import VERSION
+from .description_parser import extract_checkin_time
+from .description_parser import extract_checkout_time
 from .event_overrides import EventOverrides
 from .util import get_slot_name
 
@@ -622,6 +624,37 @@ Please update Keymaster to at least v0.1.0-b0
                     # FR-003: PMS times take priority for timed events
                     checkin: time = event["DTSTART"].dt.time()
                     checkout: time = event["DTEND"].dt.time()
+                elif self.honor_event_times and not has_explicit_times:
+                    # Priority 2: description-extracted times (NEW)
+                    raw_desc = event.get("DESCRIPTION")
+                    description = str(raw_desc) if raw_desc else ""
+                    desc_checkin = extract_checkin_time(description)
+                    desc_checkout = extract_checkout_time(description)
+
+                    if override:
+                        # Priority 3 fallback for missing description times
+                        start_tz = override["start_time"].astimezone(self.timezone)
+                        end_tz = override["end_time"].astimezone(self.timezone)
+                        checkin = (
+                            desc_checkin
+                            if desc_checkin is not None
+                            else start_tz.time()
+                        )
+                        checkout = (
+                            desc_checkout
+                            if desc_checkout is not None
+                            else end_tz.time()
+                        )
+                    else:
+                        # Priority 4 fallback for missing description times
+                        checkin = (
+                            desc_checkin if desc_checkin is not None else self.checkin
+                        )
+                        checkout = (
+                            desc_checkout
+                            if desc_checkout is not None
+                            else self.checkout
+                        )
                 elif override:
                     # FR-005 (disabled) or FR-004 (all-day with override)
                     # Get start & end overrides in the correct timezone
