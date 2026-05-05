@@ -8,31 +8,29 @@ from datetime import time
 import re
 
 _CHECKIN_PATTERN = re.compile(
-    r"check-?in(?:\s+time)?\s*:\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?",
+    r"check-?in(?:\s+time)?\s*:\s*(\d{1,2}(?::\d{2})?)(?!\d|:)\s*(AM|PM)?",
     re.IGNORECASE,
 )
 
 _CHECKOUT_PATTERN = re.compile(
-    r"check-?out(?:\s+time)?\s*:\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?",
+    r"check-?out(?:\s+time)?\s*:\s*(\d{1,2}(?::\d{2})?)(?!\d|:)\s*(AM|PM)?",
     re.IGNORECASE,
 )
 
 
-def _parse_time_match(
-    hour_str: str, minute_str: str | None, ampm: str | None
-) -> time | None:
+def _parse_time_match(time_str: str, ampm: str | None) -> time | None:
     """Convert regex capture groups to a validated time object.
 
     Args:
-        hour_str: Matched hour digits (1-2 chars).
-        minute_str: Matched minute digits or None.
+        time_str: Matched time string (e.g., "16" or "16:30").
         ampm: "AM", "PM", or None.
 
     Returns:
         A valid datetime.time or None if values are out of range.
     """
-    hour = int(hour_str)
-    minute = int(minute_str) if minute_str else 0
+    parts = time_str.split(":")
+    hour = int(parts[0])
+    minute = int(parts[1]) if len(parts) > 1 else 0
 
     if ampm:
         ampm_upper = ampm.upper()
@@ -67,7 +65,7 @@ def extract_checkin_time(description: str) -> time | None:
     match = _CHECKIN_PATTERN.search(description)
     if not match:
         return None
-    return _parse_time_match(match.group(1), match.group(2), match.group(3))
+    return _parse_time_match(match.group(1), match.group(2))
 
 
 def extract_checkout_time(description: str) -> time | None:
@@ -85,4 +83,4 @@ def extract_checkout_time(description: str) -> time | None:
     match = _CHECKOUT_PATTERN.search(description)
     if not match:
         return None
-    return _parse_time_match(match.group(1), match.group(2), match.group(3))
+    return _parse_time_match(match.group(1), match.group(2))

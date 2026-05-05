@@ -626,7 +626,8 @@ Please update Keymaster to at least v0.1.0-b0
                     checkout: time = event["DTEND"].dt.time()
                 elif self.honor_event_times and not has_explicit_times:
                     # Priority 2: description-extracted times (NEW)
-                    description = str(event.get("DESCRIPTION", ""))
+                    raw_desc = event.get("DESCRIPTION")
+                    description = str(raw_desc) if raw_desc else ""
                     desc_checkin = extract_checkin_time(description)
                     desc_checkout = extract_checkout_time(description)
 

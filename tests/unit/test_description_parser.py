@@ -20,83 +20,83 @@ class TestParseTimeMatch:
 
     def test_24h_hour_only(self) -> None:
         """T003: 24-hour format with hour only returns correct time."""
-        assert _parse_time_match("16", None, None) == time(16, 0)
+        assert _parse_time_match("16", None) == time(16, 0)
 
     def test_24h_hour_and_minutes(self) -> None:
         """T003: 24-hour format with hour and minutes."""
-        assert _parse_time_match("16", "30", None) == time(16, 30)
+        assert _parse_time_match("16:30", None) == time(16, 30)
 
     def test_24h_midnight(self) -> None:
         """T003: 24-hour format midnight."""
-        assert _parse_time_match("0", None, None) == time(0, 0)
+        assert _parse_time_match("0", None) == time(0, 0)
 
     def test_24h_hour_23(self) -> None:
         """T003: 24-hour format hour 23."""
-        assert _parse_time_match("23", "59", None) == time(23, 59)
+        assert _parse_time_match("23:59", None) == time(23, 59)
 
     def test_12h_am(self) -> None:
         """T004: 12-hour AM format."""
-        assert _parse_time_match("9", None, "AM") == time(9, 0)
+        assert _parse_time_match("9", "AM") == time(9, 0)
 
     def test_12h_pm(self) -> None:
         """T004: 12-hour PM format."""
-        assert _parse_time_match("4", None, "PM") == time(16, 0)
+        assert _parse_time_match("4", "PM") == time(16, 0)
 
     def test_12h_pm_with_minutes(self) -> None:
         """T004: 12-hour PM format with minutes."""
-        assert _parse_time_match("4", "30", "PM") == time(16, 30)
+        assert _parse_time_match("4:30", "PM") == time(16, 30)
 
     def test_12h_12pm_is_noon(self) -> None:
         """T004: 12 PM is noon (12:00)."""
-        assert _parse_time_match("12", None, "PM") == time(12, 0)
+        assert _parse_time_match("12", "PM") == time(12, 0)
 
     def test_12h_12am_is_midnight(self) -> None:
         """T004: 12 AM is midnight (00:00)."""
-        assert _parse_time_match("12", None, "AM") == time(0, 0)
+        assert _parse_time_match("12", "AM") == time(0, 0)
 
     def test_12h_am_lowercase(self) -> None:
         """T004: Case-insensitive AM/PM."""
-        assert _parse_time_match("9", None, "am") == time(9, 0)
+        assert _parse_time_match("9", "am") == time(9, 0)
 
     def test_12h_pm_lowercase(self) -> None:
         """T004: Case-insensitive PM."""
-        assert _parse_time_match("4", None, "pm") == time(16, 0)
+        assert _parse_time_match("4", "pm") == time(16, 0)
 
     def test_invalid_24h_hour_24(self) -> None:
         """T005: Hour 24 in 24h mode is invalid."""
-        assert _parse_time_match("24", None, None) is None
+        assert _parse_time_match("24", None) is None
 
     def test_invalid_24h_hour_25(self) -> None:
         """T005: Hour 25 in 24h mode is invalid."""
-        assert _parse_time_match("25", None, None) is None
+        assert _parse_time_match("25", None) is None
 
     def test_invalid_12h_hour_0(self) -> None:
         """T005: Hour 0 in 12h mode is invalid."""
-        assert _parse_time_match("0", None, "AM") is None
+        assert _parse_time_match("0", "AM") is None
 
     def test_invalid_12h_hour_13(self) -> None:
         """T005: Hour 13 in 12h mode is invalid."""
-        assert _parse_time_match("13", None, "PM") is None
+        assert _parse_time_match("13", "PM") is None
 
     def test_invalid_minute_60(self) -> None:
         """T006: Minute 60 is invalid."""
-        assert _parse_time_match("10", "60", None) is None
+        assert _parse_time_match("10:60", None) is None
 
     def test_invalid_minute_99(self) -> None:
         """T006: Minute 99 is invalid."""
-        assert _parse_time_match("10", "99", None) is None
+        assert _parse_time_match("10:99", None) is None
 
     def test_valid_minute_00(self) -> None:
         """T007: Minute 00 is valid."""
-        assert _parse_time_match("10", "00", None) == time(10, 0)
+        assert _parse_time_match("10:00", None) == time(10, 0)
 
     def test_valid_minute_59(self) -> None:
         """T007: Minute 59 is valid."""
-        assert _parse_time_match("10", "59", None) == time(10, 59)
+        assert _parse_time_match("10:59", None) == time(10, 59)
 
     def test_none_minute_defaults_to_0(self) -> None:
         """T007: None minute defaults to 0."""
-        assert _parse_time_match("10", None, None) == time(10, 0)
+        assert _parse_time_match("10", None) == time(10, 0)
 
 
 # ---------------------------------------------------------------------------
