@@ -1,14 +1,21 @@
 {
   "domain": "rental_control",
   "name": "Rental Control",
-  "after_dependencies": ["keymaster"],
-  "codeowners": ["@tykeal"],
+  "after_dependencies": [
+    "keymaster"
+  ],
+  "codeowners": [
+    "@tykeal"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/tykeal/homeassistant-rental-control",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/tykeal/homeassistant-rental-control/issues",
-  "requirements": ["icalendar>=7.0.0", "x-wr-timezone>=2.0.0"],
+  "requirements": [
+    "icalendar>=7.0.0,!=7.1.0",
+    "x-wr-timezone>=2.0.0"
+  ],
   "version": "0.0.0"
 }
