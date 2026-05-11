@@ -72,7 +72,7 @@ repos:
           - setuptools
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: fc0f09a29bb495f4a91f00266155d6282d52485d  # frozen: v1.20.2
+    rev: a9d9ff50af0432cbb950856daf08082fa51cbfa2  # frozen: v2.0.0
     hooks:
       - id: mypy
         additional_dependencies:
