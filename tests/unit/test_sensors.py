@@ -1497,7 +1497,7 @@ class TestHandleCoordinatorUpdateOverrides:
             sensor._handle_coordinator_update()
             coro = sensor.hass.async_create_task.call_args[0][0]
             await coro
-            mock_update_times.assert_called_once_with(coordinator, sensor)
+            mock_update_times.assert_called_once_with(coordinator, sensor, 10)
 
     @freeze_time("2025-03-10T12:00:00+00:00")
     async def test_fires_clear_code_on_date_shift_date_based(self, hass) -> None:
@@ -1631,7 +1631,7 @@ class TestHandleCoordinatorUpdateOverrides:
             coro = sensor.hass.async_create_task.call_args[0][0]
             await coro
             mock_clear_code.assert_not_called()
-            mock_update_times.assert_called_once_with(coordinator, sensor)
+            mock_update_times.assert_called_once_with(coordinator, sensor, 10)
 
     @freeze_time("2025-03-10T12:00:00+00:00")
     async def test_slot_number_set_on_assignment(self, hass) -> None:

@@ -19,6 +19,7 @@ import pytest
 from custom_components.rental_control.event_overrides import EventOverride
 from custom_components.rental_control.event_overrides import EventOverrides
 from custom_components.rental_control.event_overrides import ReserveResult
+from custom_components.rental_control.util import EventIdentity
 
 # ---------------------------------------------------------------------------
 # Helpers / Fixtures
@@ -1607,3 +1608,114 @@ class TestUidTiebreaker:
         # Matches existing slot 3 (no stored UID → no tiebreaker skip)
         assert result.slot == 3
         assert result.is_new is False
+
+
+class TestUidPositiveMatch:
+    """Tests for UID-based positive matching in slot lookup."""
+
+    async def test_uid_positive_match_non_overlapping_dates(self) -> None:
+        """Same UID + name matches even when dates do not overlap.
+
+        Simulates a reservation whose dates shift entirely (e.g.,
+        extended stay moves end date past the original range).
+        """
+        eo = _make_ready_eo()
+        # Original reservation
+        r1 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 5),
+            uid="UID-001",
+        )
+        assert r1.is_new is True
+
+        # Same UID, shifted dates (no overlap with original)
+        r2 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="5678",
+            start_time=_make_dt(2025, 8, 6),
+            end_time=_make_dt(2025, 8, 10),
+            uid="UID-001",
+        )
+        assert r2.slot == r1.slot
+        assert r2.is_new is False
+        assert r2.times_updated is True
+
+    async def test_slot_has_matching_event_uid_positive_match(self) -> None:
+        """Slot matches event by UID even when dates shifted."""
+        eo = _make_ready_eo()
+        r1 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 5),
+            uid="UID-001",
+        )
+        assert r1.slot is not None
+
+        # Event with same UID but shifted dates
+        events = [
+            EventIdentity(
+                name="Alice",
+                start=_make_dt(2025, 8, 6),
+                end=_make_dt(2025, 8, 10),
+                uid="UID-001",
+            )
+        ]
+        assert eo._slot_has_matching_event(r1.slot, events) is True
+
+    async def test_date_extension_updates_existing_slot(self) -> None:
+        """Extending end date of active reservation reuses slot."""
+        eo = _make_ready_eo()
+        # Original reservation: Aug 1-5
+        r1 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="0105",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 5),
+            uid="UID-002",
+        )
+        assert r1.is_new is True
+
+        # Guest extends stay to Aug 10 (overlapping, same UID)
+        r2 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="0110",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 10),
+            uid="UID-002",
+        )
+        assert r2.slot == r1.slot
+        assert r2.slot is not None
+        assert r2.is_new is False
+        assert r2.times_updated is True
+        # Code should remain original
+        override = eo.overrides[r2.slot]
+        assert override is not None
+        assert override["slot_code"] == "0105"
+        # End time should be updated
+        assert override["end_time"] == _make_dt(2025, 8, 10)
+
+    async def test_different_uid_still_creates_new_slot(self) -> None:
+        """Different UIDs with same name still get separate slots."""
+        eo = _make_ready_eo()
+        r1 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 5),
+            uid="UID-AAA",
+        )
+        assert r1.is_new is True
+
+        # Different UID, overlapping dates
+        r2 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="5678",
+            start_time=_make_dt(2025, 8, 3),
+            end_time=_make_dt(2025, 8, 7),
+            uid="UID-BBB",
+        )
+        assert r2.slot != r1.slot
+        assert r2.is_new is True

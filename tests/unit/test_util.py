@@ -37,6 +37,7 @@ from custom_components.rental_control.util import get_event_identities
 from custom_components.rental_control.util import get_event_names
 from custom_components.rental_control.util import get_slot_name
 from custom_components.rental_control.util import handle_state_change
+from custom_components.rental_control.util import normalize_uid
 
 # ---------------------------------------------------------------------------
 # gen_uuid tests
@@ -1296,11 +1297,10 @@ class TestAsyncFireUpdateTimes:
         """Verify both datetime entities are updated."""
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
-        coordinator.event_overrides.get_slot_key_by_name.return_value = 10
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event()
-        await async_fire_update_times(coordinator, event)
+        await async_fire_update_times(coordinator, event, 10)
 
         calls = coordinator.hass.services.async_call.await_args_list
         assert len(calls) == 2
@@ -1313,21 +1313,19 @@ class TestAsyncFireUpdateTimes:
         """Verify no service calls when lockname is empty."""
         coordinator = MagicMock()
         coordinator.lockname = ""
-        coordinator.event_overrides.get_slot_key_by_name.return_value = 10
         coordinator.hass.services.async_call = AsyncMock()
 
-        await async_fire_update_times(coordinator, self._make_event())
+        await async_fire_update_times(coordinator, self._make_event(), 10)
 
         coordinator.hass.services.async_call.assert_not_awaited()
 
     async def test_no_slot_found_returns_early(self) -> None:
-        """Verify no service calls when slot name is not found."""
+        """Verify no service calls when slot is zero/falsy."""
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
-        coordinator.event_overrides.get_slot_key_by_name.return_value = None
         coordinator.hass.services.async_call = AsyncMock()
 
-        await async_fire_update_times(coordinator, self._make_event())
+        await async_fire_update_times(coordinator, self._make_event(), 0)
 
         coordinator.hass.services.async_call.assert_not_awaited()
 
@@ -1337,7 +1335,6 @@ class TestAsyncFireUpdateTimes:
         """Verify a failing service call is logged but does not crash."""
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
-        coordinator.event_overrides.get_slot_key_by_name.return_value = 10
         coordinator.hass.services.async_call = AsyncMock(
             side_effect=ServiceNotFound("datetime", "set_value")
         )
@@ -1345,7 +1342,7 @@ class TestAsyncFireUpdateTimes:
         with caplog.at_level(
             logging.ERROR, logger="custom_components.rental_control.util"
         ):
-            await async_fire_update_times(coordinator, self._make_event())
+            await async_fire_update_times(coordinator, self._make_event(), 10)
 
         assert "Lock slot operation" in caplog.text
 
@@ -1408,7 +1405,6 @@ class TestPreExecutionVerification:
         """Verify async_fire_update_times returns early when ownership fails."""
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
-        coordinator.event_overrides.get_slot_key_by_name.return_value = 10
         coordinator.event_overrides.verify_slot_ownership.return_value = False
         coordinator.hass.services.async_call = AsyncMock()
 
@@ -1422,7 +1418,7 @@ class TestPreExecutionVerification:
         with caplog.at_level(
             logging.WARNING, logger="custom_components.rental_control.util"
         ):
-            await async_fire_update_times(coordinator, event)
+            await async_fire_update_times(coordinator, event, 10)
 
         coordinator.hass.services.async_call.assert_not_awaited()
         assert "ownership" in caplog.text.lower()
@@ -1846,3 +1842,31 @@ class TestComputeEarlyExpiryTime:
         original_end = now + timedelta(minutes=20)
         result = compute_early_expiry_time(now, original_end, grace_minutes=30)
         assert result == original_end
+
+
+class TestNormalizeUid:
+    """Tests for normalize_uid helper."""
+
+    def test_none_returns_none(self) -> None:
+        """Verify None input returns None."""
+        assert normalize_uid(None) is None
+
+    def test_empty_string_returns_none(self) -> None:
+        """Verify empty string returns None."""
+        assert normalize_uid("") is None
+
+    def test_whitespace_only_returns_none(self) -> None:
+        """Verify whitespace-only string returns None."""
+        assert normalize_uid("   ") is None
+
+    def test_strips_whitespace(self) -> None:
+        """Verify leading/trailing whitespace is stripped."""
+        assert normalize_uid("  abc123  ") == "abc123"
+
+    def test_preserves_normal_uid(self) -> None:
+        """Verify normal UID is preserved unchanged."""
+        assert normalize_uid("abc123@example.com") == "abc123@example.com"
+
+    def test_strips_newlines(self) -> None:
+        """Verify trailing newlines are stripped."""
+        assert normalize_uid("abc123\n") == "abc123"
