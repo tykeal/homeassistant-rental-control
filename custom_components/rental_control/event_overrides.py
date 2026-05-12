@@ -41,15 +41,22 @@ _LOGGER = logging.getLogger(__name__)
 def _to_utc(value: datetime) -> datetime:
     """Normalize a datetime to UTC for timezone-safe comparison.
 
-    Aware datetimes are converted directly.  Naive datetimes (missing
-    ``tzinfo`` or returning ``None`` from ``utcoffset()``) are assumed
-    to represent Home Assistant's configured local timezone before
-    conversion to UTC.
+    Aware datetimes are converted via ``dt.as_utc``.  Naive datetimes
+    (missing ``tzinfo`` or returning ``None`` from ``utcoffset()``)
+    are assumed to represent Home Assistant's configured local timezone
+    before conversion.
+
+    ``dt.as_utc`` is intentionally **not** used for naive values because
+    it treats them as already-UTC, whereas values arriving here without
+    timezone info (e.g. from ``dt.parse_datetime`` on a tz-less string)
+    are more likely to be in the user's configured local timezone.
     """
     if value.tzinfo is None or value.utcoffset() is None:
         local: datetime = dt.as_local(value)
-        return local.astimezone(dt.UTC)
-    return value.astimezone(dt.UTC)
+        result: datetime = dt.as_utc(local)
+        return result
+    utc: datetime = dt.as_utc(value)
+    return utc
 
 
 def _strip_prefix(slot_name: str, prefix: str) -> str:

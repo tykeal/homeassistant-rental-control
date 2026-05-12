@@ -1755,18 +1755,19 @@ class TestToUtc:
 
         from custom_components.rental_control.event_overrides import _to_utc
 
-        # Set HA default timezone to US/Eastern (UTC-5, no DST here)
+        # Set HA default timezone to a fixed UTC-5 offset
+        previous_tz = dt_util.get_default_time_zone()
         eastern = timezone(timedelta(hours=-5))
         dt_util.set_default_time_zone(eastern)
         try:
             naive = datetime(2025, 8, 1, 12, 0)
             result = _to_utc(naive)
-            # 12:00 Eastern (UTC-5) => 17:00 UTC
+            # 12:00 at UTC-5 => 17:00 UTC
             assert result.tzinfo is not None
             assert result.utcoffset() == timedelta(0)
             assert result == datetime(2025, 8, 1, 17, 0, tzinfo=dt_util.UTC)
         finally:
-            dt_util.set_default_time_zone(dt_util.UTC)
+            dt_util.set_default_time_zone(previous_tz)
 
 
 class TestTimezoneSafeComparison:
