@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+from typing import Any
 from unittest.mock import MagicMock
 
 from aioresponses import aioresponses
@@ -21,6 +22,7 @@ from custom_components.rental_control.const import DOMAIN
 from tests.fixtures import calendar_data
 
 if TYPE_CHECKING:
+    from homeassistant.core import CALLBACK_TYPE
     from homeassistant.core import HomeAssistant
 
 
@@ -55,6 +57,58 @@ def auto_enable_custom_integrations(enable_custom_integrations):
     enable_custom_integrations fixture and applies it to all tests.
     """
     yield
+
+
+@pytest.fixture(autouse=True)
+def _cancel_checkin_timers(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Cancel lingering timers on CheckinTrackingSensor after each test.
+
+    Tests create sensors via helper functions that bypass the HA
+    entity platform, so ``async_will_remove_from_hass`` is never
+    called during teardown. This leaves ``async_track_point_in_time``
+    handles active, which newer versions of
+    pytest-homeassistant-custom-component flag as errors.
+
+    This fixture wraps ``async_track_point_in_time`` to accumulate
+    every unsub handle created during the test, then cancels them
+    all in teardown.  This catches timers leaked when tests invoke
+    callbacks directly (setting ``_unsub_timer = None``) without
+    the real timer firing.
+
+    The import and ``hass`` dependency are deferred: the wrapper is
+    installed only when ``hass`` is already in the test's fixture
+    list, so unrelated tests pay no import or instantiation cost.
+    """
+    if "hass" not in request.fixturenames:
+        yield
+        return
+
+    from homeassistant.helpers.event import async_track_point_in_time as _real_track
+
+    unsubs: list[CALLBACK_TYPE] = []
+
+    def _tracking_track(*args: Any, **kwargs: Any) -> CALLBACK_TYPE:
+        """Wrap async_track_point_in_time to record the handle."""
+        unsub = _real_track(*args, **kwargs)
+        unsubs.append(unsub)
+        return unsub
+
+    monkeypatch.setattr(
+        "custom_components.rental_control.sensors.checkinsensor"
+        ".async_track_point_in_time",
+        _tracking_track,
+    )
+
+    # Resolve hass so pytest tears us down before HA shutdown.
+    request.getfixturevalue("hass")
+
+    yield
+
+    for unsub in unsubs:
+        unsub()
 
 
 @pytest.fixture
