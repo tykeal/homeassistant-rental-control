@@ -219,6 +219,8 @@ class EventOverrides:
                         return slot
 
         # Phase 2: name + strict interval overlap + UID negative gate
+        start_utc = _to_utc(start_time)
+        end_utc = _to_utc(end_time)
         for slot in self.__get_slots_with_values():
             if slot == exclude_slot:
                 continue
@@ -228,8 +230,8 @@ class EventOverrides:
             if override["slot_name"] != slot_name:
                 continue
             if not (
-                _to_utc(start_time) < _to_utc(override["end_time"])
-                and _to_utc(override["start_time"]) < _to_utc(end_time)
+                start_utc < _to_utc(override["end_time"])
+                and _to_utc(override["start_time"]) < end_utc
             ):
                 continue
             stored_uid = normalize_uid(self._slot_uids.get(slot))
@@ -263,9 +265,11 @@ class EventOverrides:
                 if uid is not None:
                     self._slot_uids[existing] = normalize_uid(uid)
                 override = self._overrides[existing]
+                start_utc = _to_utc(start_time)
+                end_utc = _to_utc(end_time)
                 if override is not None and (
-                    _to_utc(override["start_time"]) != _to_utc(start_time)
-                    or _to_utc(override["end_time"]) != _to_utc(end_time)
+                    _to_utc(override["start_time"]) != start_utc
+                    or _to_utc(override["end_time"]) != end_utc
                 ):
                     override["start_time"] = start_time
                     override["end_time"] = end_time
@@ -403,12 +407,13 @@ class EventOverrides:
                     return True
 
         # Phase 2: name + strict interval overlap + UID negative gate
+        slot_start_utc = _to_utc(slot_start)
+        slot_end_utc = _to_utc(slot_end)
         for ev in events:
             if ev.name != slot_name:
                 continue
             if not (
-                _to_utc(slot_start) < _to_utc(ev.end)
-                and _to_utc(ev.start) < _to_utc(slot_end)
+                slot_start_utc < _to_utc(ev.end) and _to_utc(ev.start) < slot_end_utc
             ):
                 continue
             ev_uid = normalize_uid(ev.uid)
