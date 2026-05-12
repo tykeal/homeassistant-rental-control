@@ -30,6 +30,7 @@ from .const import DEFAULT_MAX_RETRY_CYCLES
 from .util import EventIdentity
 from .util import async_fire_clear_code
 from .util import get_event_identities
+from .util import normalize_uid
 
 if TYPE_CHECKING:
     from homeassistant.components.calendar import CalendarEvent
@@ -171,16 +172,39 @@ class EventOverrides:
         uid: str | None = None,
         exclude_slot: int | None = None,
     ) -> int | None:
-        """Find existing slot with same name and overlapping time range.
+        """Find existing slot matching by UID or overlapping time range.
 
-        Uses strict interval overlap: start_a < end_b AND start_b < end_a.
-        If both incoming uid and stored uid are non-None and differ,
-        the slot is skipped (distinct reservations with same name).
+        Uses a two-phase search:
+
+        Phase 1 — UID positive match.  When both the incoming event and
+        a stored slot carry a non-None UID that is equal, the slot is
+        returned immediately (provided the name also matches).  This
+        ensures that a reservation whose dates shifted beyond the
+        original overlap window is still recognised as the same booking.
+
+        Phase 2 — Strict interval overlap with UID negative gate
+        (original logic).  ``start_a < end_b AND start_b < end_a``.
+        If both UIDs are non-None and differ the slot is skipped
+        (distinct reservations with the same guest name).
 
         When *exclude_slot* is set that slot number is skipped entirely,
         allowing ``async_update`` to avoid matching the slot it is about
         to write to.
         """
+        uid = normalize_uid(uid)
+
+        # Phase 1: UID positive match
+        if uid is not None:
+            for slot in self.__get_slots_with_values():
+                if slot == exclude_slot:
+                    continue
+                stored_uid = normalize_uid(self._slot_uids.get(slot))
+                if stored_uid is not None and stored_uid == uid:
+                    override = self._overrides[slot]
+                    if override is not None and override["slot_name"] == slot_name:
+                        return slot
+
+        # Phase 2: name + strict interval overlap + UID negative gate
         for slot in self.__get_slots_with_values():
             if slot == exclude_slot:
                 continue
@@ -193,7 +217,7 @@ class EventOverrides:
                 start_time < override["end_time"] and override["start_time"] < end_time
             ):
                 continue
-            stored_uid = self._slot_uids.get(slot)
+            stored_uid = normalize_uid(self._slot_uids.get(slot))
             if uid is not None and stored_uid is not None and uid != stored_uid:
                 continue
             return slot
@@ -222,7 +246,7 @@ class EventOverrides:
             existing = self._find_overlapping_slot(slot_name, start_time, end_time, uid)
             if existing is not None:
                 if uid is not None:
-                    self._slot_uids[existing] = uid
+                    self._slot_uids[existing] = normalize_uid(uid)
                 override = self._overrides[existing]
                 if override is not None and (
                     override["start_time"] != start_time
@@ -243,7 +267,7 @@ class EventOverrides:
                 }
                 self._overrides[new_slot] = new_override
                 if uid is not None:
-                    self._slot_uids[new_slot] = uid
+                    self._slot_uids[new_slot] = normalize_uid(uid)
                 self.__assign_next_slot()
                 return ReserveResult(new_slot, True, False)
 
@@ -339,9 +363,13 @@ class EventOverrides:
     ) -> bool:
         """Check if an override slot matches any current calendar event.
 
-        Uses name + strict interval overlap + UID tiebreaker, the same
-        logic as ``_find_overlapping_slot`` but searching calendar
-        events instead of other override slots.
+        Uses a two-phase search mirroring ``_find_overlapping_slot``:
+
+        Phase 1 — UID positive match.  If the stored slot UID equals an
+        event UID and the names match, the slot is considered matched
+        regardless of time overlap.
+
+        Phase 2 — name + strict interval overlap + UID negative gate.
         """
         override = self._overrides[slot]
         if override is None:
@@ -350,14 +378,23 @@ class EventOverrides:
         slot_name = override["slot_name"]
         slot_start = override["start_time"]
         slot_end = override["end_time"]
-        stored_uid = self._slot_uids.get(slot)
+        stored_uid = normalize_uid(self._slot_uids.get(slot))
 
+        # Phase 1: UID positive match
+        if stored_uid is not None:
+            for ev in events:
+                ev_uid = normalize_uid(ev.uid)
+                if ev_uid is not None and ev_uid == stored_uid and ev.name == slot_name:
+                    return True
+
+        # Phase 2: name + strict interval overlap + UID negative gate
         for ev in events:
             if ev.name != slot_name:
                 continue
             if not (slot_start < ev.end and ev.start < slot_end):
                 continue
-            if stored_uid is not None and ev.uid is not None and stored_uid != ev.uid:
+            ev_uid = normalize_uid(ev.uid)
+            if stored_uid is not None and ev_uid is not None and stored_uid != ev_uid:
                 continue
             return True
 

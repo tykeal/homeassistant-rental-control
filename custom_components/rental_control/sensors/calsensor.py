@@ -27,6 +27,7 @@ from ..util import async_fire_set_code
 from ..util import async_fire_update_times
 from ..util import gen_uuid
 from ..util import get_slot_name
+from ..util import normalize_uid
 
 if TYPE_CHECKING:
     from ..coordinator import RentalControlCoordinator
@@ -473,7 +474,9 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             # Gate on overrides.ready to avoid spurious overflow
             # warnings during bootstrap when _next_slot is still None.
             if overrides and overrides.ready and slot_name is not None:
-                event_uid: str | None = event.uid if hasattr(event, "uid") else None
+                event_uid: str | None = normalize_uid(
+                    event.uid if hasattr(event, "uid") else None
+                )
                 self.hass.async_create_task(
                     self._async_handle_slot_assignment(
                         slot_name=slot_name,
@@ -558,10 +561,14 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         # itself is still valid, but Keymaster side effects must not
         # fire for a stale event.
         current_attrs = self._event_attributes
+        current_uid = normalize_uid(
+            str(current_attrs["uid"]) if current_attrs.get("uid") is not None else None
+        )
         if (
             current_attrs.get("slot_name") != slot_name
             or current_attrs.get("start") != start_time
             or current_attrs.get("end") != end_time
+            or current_uid != uid
         ):
             _LOGGER.debug(
                 "Slot assignment for '%s' is stale, skipping "
@@ -597,4 +604,4 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
                 )
                 await async_fire_clear_code(self.coordinator, result.slot)
             else:
-                await async_fire_update_times(self.coordinator, self)
+                await async_fire_update_times(self.coordinator, self, result.slot)
