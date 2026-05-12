@@ -58,6 +58,19 @@ from .const import NAME
 _LOGGER = logging.getLogger(__name__)
 
 
+def normalize_uid(value: str | None) -> str | None:
+    """Normalize a calendar UID for consistent comparison.
+
+    Strips surrounding whitespace and converts empty strings
+    to ``None`` so that all UID storage and comparison paths
+    use an identical canonical form.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None
+
+
 def check_gather_results(
     results: Sequence[object],
     context: str,
@@ -330,13 +343,12 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         )
 
 
-async def async_fire_update_times(coordinator, event) -> None:
+async def async_fire_update_times(coordinator, event, slot: int) -> None:
     """Update times on slot."""
 
     lockname: str = coordinator.lockname
     coro: list[Coroutine] = []
     slot_name: str = event.extra_state_attributes["slot_name"]
-    slot = coordinator.event_overrides.get_slot_key_by_name(slot_name)
 
     if not slot or not lockname:
         return
@@ -419,7 +431,7 @@ def get_event_identities(rc, calendar: list | None = None) -> list[EventIdentity
             rc.event_prefix or "",
         )
         if name:
-            uid = event.uid if hasattr(event, "uid") else None
+            uid = normalize_uid(event.uid if hasattr(event, "uid") else None)
             start = _ensure_datetime(event.start, rc)
             end = _ensure_datetime(event.end, rc)
             identities.append(EventIdentity(name, start, end, uid))
