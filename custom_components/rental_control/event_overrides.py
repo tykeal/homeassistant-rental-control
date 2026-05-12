@@ -38,6 +38,27 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def _to_utc(value: datetime) -> datetime:
+    """Normalize a datetime to UTC for timezone-safe comparison.
+
+    Aware datetimes are converted via ``dt.as_utc``.  Naive datetimes
+    (missing ``tzinfo`` or returning ``None`` from ``utcoffset()``)
+    are assumed to represent Home Assistant's configured local timezone
+    before conversion.
+
+    ``dt.as_utc`` is intentionally **not** used for naive values because
+    it treats them as already-UTC, whereas values arriving here without
+    timezone info (e.g. from ``dt.parse_datetime`` on a tz-less string)
+    are more likely to be in the user's configured local timezone.
+    """
+    if value.tzinfo is None or value.utcoffset() is None:
+        local: datetime = dt.as_local(value)
+        result: datetime = dt.as_utc(local)
+        return result
+    utc: datetime = dt.as_utc(value)
+    return utc
+
+
 def _strip_prefix(slot_name: str, prefix: str) -> str:
     """Remove a leading prefix and space from slot_name.
 
@@ -205,6 +226,8 @@ class EventOverrides:
                         return slot
 
         # Phase 2: name + strict interval overlap + UID negative gate
+        start_utc = _to_utc(start_time)
+        end_utc = _to_utc(end_time)
         for slot in self.__get_slots_with_values():
             if slot == exclude_slot:
                 continue
@@ -214,7 +237,8 @@ class EventOverrides:
             if override["slot_name"] != slot_name:
                 continue
             if not (
-                start_time < override["end_time"] and override["start_time"] < end_time
+                start_utc < _to_utc(override["end_time"])
+                and _to_utc(override["start_time"]) < end_utc
             ):
                 continue
             stored_uid = normalize_uid(self._slot_uids.get(slot))
@@ -248,9 +272,11 @@ class EventOverrides:
                 if uid is not None:
                     self._slot_uids[existing] = normalize_uid(uid)
                 override = self._overrides[existing]
+                start_utc = _to_utc(start_time)
+                end_utc = _to_utc(end_time)
                 if override is not None and (
-                    override["start_time"] != start_time
-                    or override["end_time"] != end_time
+                    _to_utc(override["start_time"]) != start_utc
+                    or _to_utc(override["end_time"]) != end_utc
                 ):
                     override["start_time"] = start_time
                     override["end_time"] = end_time
@@ -388,10 +414,14 @@ class EventOverrides:
                     return True
 
         # Phase 2: name + strict interval overlap + UID negative gate
+        slot_start_utc = _to_utc(slot_start)
+        slot_end_utc = _to_utc(slot_end)
         for ev in events:
             if ev.name != slot_name:
                 continue
-            if not (slot_start < ev.end and ev.start < slot_end):
+            if not (
+                slot_start_utc < _to_utc(ev.end) and _to_utc(ev.start) < slot_end_utc
+            ):
                 continue
             ev_uid = normalize_uid(ev.uid)
             if stored_uid is not None and ev_uid is not None and stored_uid != ev_uid:

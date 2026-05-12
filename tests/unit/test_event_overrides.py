@@ -1719,3 +1719,148 @@ class TestUidPositiveMatch:
         )
         assert r2.slot != r1.slot
         assert r2.is_new is True
+
+
+# ---------------------------------------------------------------------------
+# Timezone-safe datetime comparison (Issue #513)
+# ---------------------------------------------------------------------------
+
+
+class TestToUtc:
+    """Tests for the _to_utc helper function."""
+
+    def test_aware_utc_passthrough(self) -> None:
+        """UTC datetimes pass through unchanged."""
+        from custom_components.rental_control.event_overrides import _to_utc
+
+        value = datetime(2025, 8, 1, 12, 0, tzinfo=dt_util.UTC)
+        result = _to_utc(value)
+        assert result == value
+        assert result.tzinfo == dt_util.UTC
+
+    def test_aware_non_utc_converts(self) -> None:
+        """Non-UTC aware datetimes are converted to UTC."""
+        from datetime import timezone
+
+        from custom_components.rental_control.event_overrides import _to_utc
+
+        eastern = timezone(timedelta(hours=-5))
+        value = datetime(2025, 8, 1, 7, 0, tzinfo=eastern)
+        result = _to_utc(value)
+        assert result == datetime(2025, 8, 1, 12, 0, tzinfo=dt_util.UTC)
+
+    def test_naive_treated_as_local(self) -> None:
+        """Naive datetimes are assumed to be HA local time."""
+        from datetime import timezone
+
+        from custom_components.rental_control.event_overrides import _to_utc
+
+        # Set HA default timezone to a fixed UTC-5 offset
+        previous_tz = dt_util.get_default_time_zone()
+        eastern = timezone(timedelta(hours=-5))
+        dt_util.set_default_time_zone(eastern)
+        try:
+            naive = datetime(2025, 8, 1, 12, 0)
+            result = _to_utc(naive)
+            # 12:00 at UTC-5 => 17:00 UTC
+            assert result.tzinfo is not None
+            assert result.utcoffset() == timedelta(0)
+            assert result == datetime(2025, 8, 1, 17, 0, tzinfo=dt_util.UTC)
+        finally:
+            dt_util.set_default_time_zone(previous_tz)
+
+
+class TestTimezoneSafeComparison:
+    """Verify that datetime comparisons are timezone-safe."""
+
+    @pytest.mark.asyncio
+    async def test_same_instant_different_tz_no_times_updated(self) -> None:
+        """Override and event at same instant but different tz => no update."""
+        from datetime import timezone
+
+        eo = _make_ready_eo()
+
+        eastern = timezone(timedelta(hours=-5))
+        utc_start = datetime(2025, 8, 1, 5, 0, tzinfo=dt_util.UTC)
+        utc_end = datetime(2025, 8, 5, 5, 0, tzinfo=dt_util.UTC)
+
+        # First reservation in UTC
+        r1 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=utc_start,
+            end_time=utc_end,
+            uid="UID-1",
+        )
+        assert r1.is_new is True
+
+        # Same instant expressed in Eastern
+        east_start = datetime(2025, 8, 1, 0, 0, tzinfo=eastern)
+        east_end = datetime(2025, 8, 5, 0, 0, tzinfo=eastern)
+
+        r2 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=east_start,
+            end_time=east_end,
+            uid="UID-1",
+        )
+        assert r2.slot == r1.slot
+        assert r2.is_new is False
+        assert r2.times_updated is False
+
+    @pytest.mark.asyncio
+    async def test_overlap_detected_across_timezones(self) -> None:
+        """Overlap detection works when times are in different timezones."""
+        from datetime import timezone
+
+        eo = _make_ready_eo()
+
+        eastern = timezone(timedelta(hours=-5))
+        # Store in UTC
+        r1 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=datetime(2025, 8, 1, 5, 0, tzinfo=dt_util.UTC),
+            end_time=datetime(2025, 8, 5, 5, 0, tzinfo=dt_util.UTC),
+        )
+        assert r1.is_new is True
+
+        # Query in Eastern — overlaps the same range
+        r2 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=datetime(2025, 8, 3, 0, 0, tzinfo=eastern),
+            end_time=datetime(2025, 8, 7, 0, 0, tzinfo=eastern),
+        )
+        # Should find existing slot, not create new
+        assert r2.slot == r1.slot
+        assert r2.is_new is False
+
+    @pytest.mark.asyncio
+    async def test_slot_has_matching_event_cross_timezone(self) -> None:
+        """_slot_has_matching_event finds match across timezones."""
+        from datetime import timezone
+
+        eo = _make_ready_eo()
+
+        eastern = timezone(timedelta(hours=-5))
+        # Store override in UTC
+        await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=datetime(2025, 8, 1, 5, 0, tzinfo=dt_util.UTC),
+            end_time=datetime(2025, 8, 5, 5, 0, tzinfo=dt_util.UTC),
+            uid="UID-1",
+        )
+
+        # Event identity in Eastern
+        events = [
+            EventIdentity(
+                name="Alice",
+                start=datetime(2025, 8, 2, 0, 0, tzinfo=eastern),
+                end=datetime(2025, 8, 4, 0, 0, tzinfo=eastern),
+                uid="UID-1",
+            ),
+        ]
+        assert eo._slot_has_matching_event(1, events) is True
