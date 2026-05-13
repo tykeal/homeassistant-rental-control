@@ -1067,6 +1067,191 @@ class TestSlotBootstrapping:
 
 
 # ---------------------------------------------------------------------------
+# Partial slot reset detection tests
+# ---------------------------------------------------------------------------
+
+
+class TestPartialSlotResetDetection:
+    """Tests for detecting and resetting partially-cleared slots."""
+
+    async def test_startup_detects_partial_reset_and_forces_clear(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify slot with name but no code triggers force-reset."""
+        mock_config_entry.add_to_hass(hass)
+
+        with patch.object(
+            dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+        ):
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            hass.states.async_set("text.front_door_code_slot_10_pin", "")
+            hass.states.async_set("text.front_door_code_slot_10_name", "Ghost")
+
+            with patch(
+                "custom_components.rental_control.coordinator.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_clear:
+                await coordinator.async_setup_keymaster_overrides()
+
+        mock_clear.assert_awaited_once_with(coordinator, 10)
+        # Slot is registered as empty so ready can become True
+        mock_update.assert_awaited_once()
+        call_args = mock_update.call_args[0]
+        assert call_args[1] == ""
+        assert call_args[2] == ""
+
+    async def test_startup_skips_fully_empty_slots(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify fully empty slots do not trigger force-reset."""
+        mock_config_entry.add_to_hass(hass)
+
+        with patch.object(
+            dt_util,
+            "start_of_local_day",
+            return_value=FROZEN_START_OF_DAY,
+        ):
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            hass.states.async_set("text.front_door_code_slot_10_pin", "")
+            hass.states.async_set("text.front_door_code_slot_10_name", "")
+
+            with patch(
+                "custom_components.rental_control.coordinator.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_clear:
+                await coordinator.async_setup_keymaster_overrides()
+
+        mock_clear.assert_not_awaited()
+
+    async def test_startup_loads_normal_slots(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify slots with both name and code load normally."""
+        mock_config_entry.add_to_hass(hass)
+
+        with patch.object(
+            dt_util,
+            "start_of_local_day",
+            return_value=FROZEN_START_OF_DAY,
+        ):
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            hass.states.async_set("text.front_door_code_slot_10_pin", "1234")
+            hass.states.async_set("text.front_door_code_slot_10_name", "Guest")
+
+            with patch(
+                "custom_components.rental_control.coordinator.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_clear:
+                await coordinator.async_setup_keymaster_overrides()
+
+        mock_clear.assert_not_awaited()
+        mock_update.assert_awaited_once()
+        call_args = mock_update.call_args[0]
+        assert call_args[1] == "1234"
+        assert call_args[2] == "Guest"
+
+    async def test_startup_handles_force_reset_failure(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify force-reset failure is logged but does not crash."""
+        mock_config_entry.add_to_hass(hass)
+
+        with patch.object(
+            dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+        ):
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            hass.states.async_set("text.front_door_code_slot_10_pin", "")
+            hass.states.async_set("text.front_door_code_slot_10_name", "Ghost")
+
+            with patch(
+                "custom_components.rental_control.coordinator.async_fire_clear_code",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("lock offline"),
+            ) as mock_clear:
+                await coordinator.async_setup_keymaster_overrides()
+
+        mock_clear.assert_awaited_once_with(coordinator, 10)
+        # Slot still registered as empty despite reset failure
+        mock_update.assert_awaited_once()
+        call_args = mock_update.call_args[0]
+        assert call_args[1] == ""
+        assert call_args[2] == ""
+
+    async def test_startup_skips_reset_when_pin_unknown(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify unknown PIN state does not trigger force-reset."""
+        mock_config_entry.add_to_hass(hass)
+
+        with patch.object(
+            dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+        ):
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            hass.states.async_set("text.front_door_code_slot_10_pin", "unknown")
+            hass.states.async_set("text.front_door_code_slot_10_name", "Guest")
+
+            with patch(
+                "custom_components.rental_control.coordinator.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_clear:
+                await coordinator.async_setup_keymaster_overrides()
+
+        mock_clear.assert_not_awaited()
+        # Normal load path with normalized empty code
+        mock_update.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
 # Lockname slugification tests
 # ---------------------------------------------------------------------------
 

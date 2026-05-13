@@ -1109,6 +1109,7 @@ class TestAsyncFireClearCode:
         coordinator.name = "Test Rental"
         coordinator.lockname = "front_door"
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.states.get.return_value = None
 
         await async_fire_clear_code(coordinator, 10)
 
@@ -1140,6 +1141,119 @@ class TestAsyncFireClearCode:
         await async_fire_clear_code(coordinator, 10)
 
         coordinator.hass.services.async_call.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# async_fire_clear_code post-clear verification tests
+# ---------------------------------------------------------------------------
+
+
+class TestClearCodePostClearVerification:
+    """Tests for post-clear name verification in async_fire_clear_code."""
+
+    async def test_clear_code_verifies_name_cleared(self) -> None:
+        """Verify text.set_value is NOT called when name is empty."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        name_state = MagicMock()
+        name_state.state = ""
+        coordinator.hass.states.get.return_value = name_state
+
+        await async_fire_clear_code(coordinator, 10)
+
+        # Only the button.press call should have been made
+        coordinator.hass.services.async_call.assert_awaited_once_with(
+            domain="button",
+            service="press",
+            target={
+                "entity_id": "button.front_door_code_slot_10_reset",
+            },
+            blocking=True,
+        )
+
+    async def test_clear_code_forces_name_clear_on_persist(
+        self,
+    ) -> None:
+        """Verify text.set_value is called when name persists."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        name_state = MagicMock()
+        name_state.state = "Ghost"
+        coordinator.hass.states.get.return_value = name_state
+
+        await async_fire_clear_code(coordinator, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        assert len(calls) == 2
+        set_call = calls[1]
+        assert set_call.kwargs["domain"] == "text"
+        assert set_call.kwargs["service"] == "set_value"
+        assert set_call.kwargs["target"] == {
+            "entity_id": "text.front_door_code_slot_10_name",
+        }
+        assert set_call.kwargs["service_data"] == {"value": ""}
+
+    async def test_clear_code_handles_force_clear_failure(
+        self,
+    ) -> None:
+        """Verify force-clear exception is logged, not propagated."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+
+        name_state = MagicMock()
+        name_state.state = "Ghost"
+        coordinator.hass.states.get.return_value = name_state
+
+        # First call (button.press) succeeds; second (set_value) fails
+        coordinator.hass.services.async_call = AsyncMock(
+            side_effect=[None, RuntimeError("set_value failed")],
+        )
+
+        # Should not raise
+        await async_fire_clear_code(coordinator, 10)
+
+        assert coordinator.hass.services.async_call.await_count == 2
+
+    async def test_clear_code_skips_unknown_name_state(
+        self,
+    ) -> None:
+        """Verify no force-clear when name state is 'unknown'."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        name_state = MagicMock()
+        name_state.state = "unknown"
+        coordinator.hass.states.get.return_value = name_state
+
+        await async_fire_clear_code(coordinator, 10)
+
+        coordinator.hass.services.async_call.assert_awaited_once()
+
+    async def test_clear_code_skips_unavailable_name_state(
+        self,
+    ) -> None:
+        """Verify no force-clear when name state is 'unavailable'."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        name_state = MagicMock()
+        name_state.state = "unavailable"
+        coordinator.hass.states.get.return_value = name_state
+
+        await async_fire_clear_code(coordinator, 10)
+
+        coordinator.hass.services.async_call.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1576,6 +1690,7 @@ class TestRetryEscalation:
         coordinator.name = "Test Rental"
         coordinator.lockname = "front_door"
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.states.get.return_value = None
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides._escalated = {10: True}
 
@@ -1685,6 +1800,7 @@ class TestSlugifiedLocknameEntityIds:
         coordinator.name = "Test Rental"
         coordinator.lockname = "front_door"
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.states.get.return_value = None
 
         await async_fire_clear_code(coordinator, 10)
 

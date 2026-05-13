@@ -74,6 +74,7 @@ from .const import VERSION
 from .description_parser import extract_checkin_time
 from .description_parser import extract_checkout_time
 from .event_overrides import EventOverrides
+from .util import async_fire_clear_code
 from .util import get_slot_name
 from .util import normalize_uid
 
@@ -291,6 +292,36 @@ Please update Keymaster to at least v0.1.0-b0
             use_date_range = self.hass.states.get(
                 f"{SWITCH}.{self.lockname}_code_slot_{i}_use_date_range_limits"
             )
+
+            if (
+                slot_name_value
+                and slot_code.state == ""
+                and not slot_code_value
+                and (use_date_range is None or use_date_range.state == "off")
+            ):
+                # Partially-reset slot: name persists but code was cleared
+                # and date-range limits are off.  Only trigger when the raw
+                # PIN state is explicitly empty, not when it is
+                # unknown/unavailable (entity not yet loaded).
+                _LOGGER.warning(
+                    "Slot %d has name '%s' but no code; forcing "
+                    "reset (Keymaster may not have fully cleared "
+                    "the slot)",
+                    i,
+                    slot_name_value,
+                )
+                try:
+                    await async_fire_clear_code(self, i)
+                except Exception:
+                    _LOGGER.exception(
+                        "Failed to force-reset partially-cleared slot %d",
+                        i,
+                    )
+                # Register the slot as empty so the overrides map
+                # reaches max_slots and ready becomes True.
+                slot_name_value = ""
+                slot_code_value = ""
+
             if use_date_range and use_date_range.state == "on":
                 start_time_state = self.hass.states.get(
                     f"{DATETIME}.{self.lockname}_code_slot_{i}_date_range_start"

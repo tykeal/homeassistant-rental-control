@@ -200,6 +200,37 @@ async def async_fire_clear_code(
             )
         raise
 
+    # Give Keymaster time to propagate the state change
+    await asyncio.sleep(0.5)
+
+    # Verify the slot name was actually cleared
+    name_entity = f"{TEXT}.{coordinator.lockname}_code_slot_{slot}_name"
+    name_state = hass.states.get(name_entity)
+    if name_state is not None and name_state.state not in (
+        "",
+        "unknown",
+        "unavailable",
+    ):
+        _LOGGER.warning(
+            "Slot %d name '%s' persisted after reset; "
+            "forcing name clear via text.set_value",
+            slot,
+            name_state.state,
+        )
+        try:
+            await hass.services.async_call(
+                domain=TEXT,
+                service="set_value",
+                target={"entity_id": name_entity},
+                service_data={"value": ""},
+                blocking=True,
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Failed to force-clear name for slot %d",
+                slot,
+            )
+
     was_escalated = coordinator.event_overrides._escalated.get(slot, False)
     coordinator.event_overrides.record_retry_success(slot)
     if was_escalated:
