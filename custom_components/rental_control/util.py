@@ -303,7 +303,9 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     slot_name = f"{prefix}{event.extra_state_attributes['slot_name']}"
 
     if coordinator.trim_names:
-        slot_name = trim_name(slot_name, coordinator.max_name_length)
+        guest = event.extra_state_attributes["slot_name"]
+        guest_max = coordinator.max_name_length - len(prefix)
+        slot_name = f"{prefix}{trim_name(guest, guest_max)}"
 
     expected_name = event.extra_state_attributes["slot_name"]
     if not coordinator.event_overrides.verify_slot_ownership(slot, expected_name):

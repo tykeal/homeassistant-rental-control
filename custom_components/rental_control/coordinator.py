@@ -129,6 +129,9 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
         )
         if self.event_overrides is not None:
             self.event_overrides.trim_names = self.trim_names
+            self.event_overrides.max_name_length = self.max_name_length
+            prefix = f"{self.event_prefix} " if self.event_prefix else ""
+            self.event_overrides.prefix_length = len(prefix)
         self.code_length: int = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.event: CalendarEvent | None = None
         self.created: str = config.get(CONF_CREATION_DATETIME, str(dt.now()))
@@ -573,6 +576,9 @@ Please update Keymaster to at least v0.1.0-b0
         )
         if self.event_overrides is not None:
             self.event_overrides.trim_names = self.trim_names
+            self.event_overrides.max_name_length = self.max_name_length
+            prefix = f"{self.event_prefix} " if self.event_prefix else ""
+            self.event_overrides.prefix_length = len(prefix)
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.ignore_non_reserved = bool(config.get(CONF_IGNORE_NON_RESERVED))
         self.verify_ssl = bool(config.get(CONF_VERIFY_SSL))

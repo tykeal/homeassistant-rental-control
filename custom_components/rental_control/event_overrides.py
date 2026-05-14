@@ -31,6 +31,7 @@ from .util import EventIdentity
 from .util import async_fire_clear_code
 from .util import get_event_identities
 from .util import normalize_uid
+from .util import trim_name
 
 if TYPE_CHECKING:
     from homeassistant.components.calendar import CalendarEvent
@@ -71,16 +72,17 @@ def _strip_prefix(slot_name: str, prefix: str) -> str:
     return slot_name
 
 
-def _is_word_boundary_prefix(shorter: str, longer: str) -> bool:
-    """Check if *shorter* is a word-boundary prefix of *longer*.
+def _is_trimmed_match(name_a: str, name_b: str, guest_max: int) -> bool:
+    """Check if *name_a* and *name_b* are related by trim_name.
 
-    Returns True when *longer* starts with *shorter* and the character
-    immediately following in *longer* is a space.  This matches names
-    produced by ``trim_name`` which always trims on word boundaries.
+    Returns True when trimming the longer name to *guest_max*
+    produces the shorter name, covering both word-boundary and
+    hard-truncated single-word cases.
     """
-    if len(shorter) >= len(longer):
+    if name_a == name_b or guest_max <= 0:
         return False
-    return longer.startswith(shorter) and longer[len(shorter)] == " "
+    shorter, longer = sorted((name_a, name_b), key=len)
+    return trim_name(longer, guest_max) == shorter
 
 
 class ReserveResult(NamedTuple):
@@ -116,6 +118,8 @@ class EventOverrides:
         self._slot_uids: dict[int, str | None] = {}
         self._start_slot: int = start_slot
         self._trim_names: bool = False
+        self._max_name_length: int = 0
+        self._prefix_length: int = 0
 
     @property
     def max_slots(self) -> int:
@@ -151,6 +155,26 @@ class EventOverrides:
     def trim_names(self, value: bool) -> None:
         """Set whether name trimming is enabled."""
         self._trim_names = value
+
+    @property
+    def max_name_length(self) -> int:
+        """Return the configured max name length."""
+        return self._max_name_length
+
+    @max_name_length.setter
+    def max_name_length(self, value: int) -> None:
+        """Set the configured max name length."""
+        self._max_name_length = value
+
+    @property
+    def prefix_length(self) -> int:
+        """Return the event prefix length including separator."""
+        return self._prefix_length
+
+    @prefix_length.setter
+    def prefix_length(self, value: int) -> None:
+        """Set the event prefix length including separator."""
+        self._prefix_length = value
 
     def __assign_next_slot(self) -> None:
         """Assign the next slot."""
@@ -231,13 +255,14 @@ class EventOverrides:
         If both UIDs are non-None and differ the slot is skipped
         (distinct reservations with the same guest name).
 
-        Phase 3 — Word-boundary prefix-match fallback for trimmed
-        names.  After a Home Assistant restart the override may contain
-        a trimmed display name read back from Keymaster.  If the
-        incoming *slot_name* is a word-boundary prefix of the stored
-        name (or vice-versa) and the time intervals overlap, the slot
-        is returned.  Only names separated by a space are considered,
-        preventing false matches like ``Ann`` / ``Anna``.
+        Phase 3 — Trim-aware fallback for trimmed names.  After a
+        Home Assistant restart the override may contain a trimmed
+        display name read back from Keymaster.  If the incoming
+        *slot_name* is the trimmed form of the stored name (or
+        vice-versa) and the time intervals overlap, the slot is
+        returned.  Uses the actual ``trim_name`` function so both
+        word-boundary and hard-truncated single-word cases are
+        handled correctly.
 
         When *exclude_slot* is set that slot number is skipped entirely,
         allowing ``async_update`` to avoid matching the slot it is about
@@ -277,10 +302,12 @@ class EventOverrides:
                 continue
             return slot
 
-        # Phase 3: word-boundary prefix-match fallback for trimmed names.
-        # Only active when name trimming is enabled to avoid false
-        # matches between distinct names that share a common prefix.
+        # Phase 3: trim-aware fallback for trimmed names.
+        # Only active when name trimming is enabled.  Uses the actual
+        # trim_name function so both word-boundary and hard-truncated
+        # single-word cases are handled correctly.
         if self._trim_names:
+            guest_max = self._max_name_length - self._prefix_length
             for slot in self.__get_slots_with_values():
                 if slot == exclude_slot:
                     continue
@@ -290,10 +317,7 @@ class EventOverrides:
                 stored = override["slot_name"]
                 if stored == slot_name:
                     continue  # already checked in Phase 2
-                if not (
-                    _is_word_boundary_prefix(stored, slot_name)
-                    or _is_word_boundary_prefix(slot_name, stored)
-                ):
+                if not _is_trimmed_match(stored, slot_name, guest_max):
                     continue
                 if not (
                     start_utc < _to_utc(override["end_time"])
@@ -460,8 +484,8 @@ class EventOverrides:
 
         Phase 2 — name + strict interval overlap + UID negative gate.
 
-        Phase 3 — word-boundary prefix-match fallback for trimmed
-        names with time overlap, restoring the full name on match.
+        Phase 3 — trim-aware fallback for trimmed names with time
+        overlap, restoring the full name on match.
         """
         override = self._overrides[slot]
         if override is None:
@@ -494,16 +518,14 @@ class EventOverrides:
                 continue
             return True
 
-        # Phase 3: word-boundary prefix-match fallback for trimmed names.
+        # Phase 3: trim-aware fallback for trimmed names.
         # Only active when name trimming is enabled.
         if self._trim_names:
+            guest_max = self._max_name_length - self._prefix_length
             for ev in events:
                 if ev.name == slot_name:
                     continue
-                if not (
-                    _is_word_boundary_prefix(slot_name, ev.name)
-                    or _is_word_boundary_prefix(ev.name, slot_name)
-                ):
+                if not _is_trimmed_match(slot_name, ev.name, guest_max):
                     continue
                 if not (
                     slot_start_utc < _to_utc(ev.end)
