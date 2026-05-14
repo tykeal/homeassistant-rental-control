@@ -1410,9 +1410,61 @@ async def test_config_flow_prefix_boundary_exactly_min_remaining(
 ) -> None:
     """Verify no error when prefix leaves exactly MIN_NAME_LENGTH chars.
 
-    With max_name_length=16 and prefix_len=12, exactly 4 characters
-    remain for the slot name which equals MIN_NAME_LENGTH. This
-    boundary case must be accepted.
+    With max_name_length=16 and an 11-char prefix, the effective
+    prefix length is 12 (11 + space separator), leaving exactly
+    4 characters for the slot name which equals MIN_NAME_LENGTH.
+    This boundary case must be accepted.
+    """
+    from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
+    from custom_components.rental_control.const import CONF_TRIM_NAMES
+
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "ElevenChars",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+                CONF_TRIM_NAMES: True,
+                CONF_MAX_NAME_LENGTH: 16,
+            },
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert "prefix_too_long_for_trim" not in result.get("errors", {})
+
+
+async def test_config_flow_prefix_boundary_one_over(
+    hass: HomeAssistant,
+) -> None:
+    """Verify error when prefix leaves fewer than MIN_NAME_LENGTH chars.
+
+    With max_name_length=16 and a 12-char prefix, the effective
+    prefix length is 13 (12 + space separator), leaving only 3
+    characters which is below MIN_NAME_LENGTH (4). This must be
+    rejected.
     """
     from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
     from custom_components.rental_control.const import CONF_TRIM_NAMES
@@ -1438,55 +1490,6 @@ async def test_config_flow_prefix_boundary_exactly_min_remaining(
                 CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
                 CONF_TIMEZONE: "UTC",
                 CONF_EVENT_PREFIX: "TwelveCharsX",
-                CONF_CHECKIN: DEFAULT_CHECKIN,
-                CONF_CHECKOUT: DEFAULT_CHECKOUT,
-                CONF_DAYS: DEFAULT_DAYS,
-                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
-                CONF_START_SLOT: DEFAULT_START_SLOT,
-                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
-                CONF_CODE_GENERATION: "Start/End Date",
-                CONF_SHOULD_UPDATE_CODE: True,
-                CONF_TRIM_NAMES: True,
-                CONF_MAX_NAME_LENGTH: 16,
-            },
-        )
-
-    assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert "prefix_too_long_for_trim" not in result.get("errors", {})
-
-
-async def test_config_flow_prefix_boundary_one_over(
-    hass: HomeAssistant,
-) -> None:
-    """Verify error when prefix leaves fewer than MIN_NAME_LENGTH chars.
-
-    With max_name_length=16 and prefix_len=13, only 3 characters
-    remain which is below MIN_NAME_LENGTH (4). This must be rejected.
-    """
-    from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
-    from custom_components.rental_control.const import CONF_TRIM_NAMES
-
-    with aioresponses() as mock_aiohttp:
-        test_url = "https://example.com/calendar.ics"
-        mock_aiohttp.get(
-            test_url,
-            status=200,
-            body=calendar_data.AIRBNB_ICS_CALENDAR,
-            headers={"content-type": "text/calendar"},
-        )
-
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_USER},
-            data={
-                CONF_NAME: "Test Rental",
-                CONF_URL: test_url,
-                CONF_VERIFY_SSL: True,
-                CONF_IGNORE_NON_RESERVED: True,
-                CONF_LOCK_ENTRY: "(none)",
-                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
-                CONF_TIMEZONE: "UTC",
-                CONF_EVENT_PREFIX: "ThirteenChars",
                 CONF_CHECKIN: DEFAULT_CHECKIN,
                 CONF_CHECKOUT: DEFAULT_CHECKOUT,
                 CONF_DAYS: DEFAULT_DAYS,

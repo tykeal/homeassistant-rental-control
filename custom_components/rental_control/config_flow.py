@@ -459,7 +459,8 @@ async def _start_config_flow(
         if user_input.get(CONF_TRIM_NAMES, False) and user_input.get(
             CONF_EVENT_PREFIX, ""
         ):
-            prefix_len = len(user_input[CONF_EVENT_PREFIX])
+            # Account for the space separator between prefix and name
+            prefix_len = len(user_input[CONF_EVENT_PREFIX]) + 1
             max_len = user_input.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH)
             if prefix_len > (max_len - MIN_NAME_LENGTH):
                 errors["base"] = "prefix_too_long_for_trim"
