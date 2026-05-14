@@ -305,7 +305,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     if coordinator.trim_names:
         slot_name = trim_name(slot_name, coordinator.max_name_length)
 
-    expected_name = event.extra_state_attributes["slot_name"]
+    expected_name = slot_name.removeprefix(prefix)
     if not coordinator.event_overrides.verify_slot_ownership(slot, expected_name):
         _LOGGER.warning(
             "Slot %d ownership verification failed for '%s'; aborting set_code",
