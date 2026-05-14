@@ -3,6 +3,7 @@
     "error": {
       "bad_code_length": "Lock code length must be even and >= 4",
       "bad_ics": "URL did not provide valid calendar",
+      "bad_max_name_length": "Max name length must be 4 or greater",
       "bad_minimum": "Value must be 1 or greater",
       "bad_refresh": "Refresh must be between 0 and 1440.",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
@@ -47,6 +48,7 @@
     "error": {
       "bad_code_length": "Lock code length must be even and >= 4",
       "bad_ics": "URL did not provide valid calendar",
+      "bad_max_name_length": "Max name length must be 4 or greater",
       "bad_minimum": "Value must be 1 or greater",
       "bad_refresh": "Refresh must be between 0 and 1440.",
       "bad_time": "Check-in/out time is invalid. Use 24 hour time",
