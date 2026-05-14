@@ -240,6 +240,49 @@ async def async_fire_clear_code(
         )
 
 
+def trim_name(name: str, max_length: int) -> str:
+    """Trim a slot name to fit within *max_length* on a word boundary.
+
+    Algorithm:
+        1. Normalize whitespace (collapse runs, strip edges).
+        2. If the result already fits, return it unchanged.
+        3. Split on whitespace and accumulate words left-to-right,
+           adding each word only if the running length plus a space
+           separator plus the word length stays within *max_length*.
+        4. If even the first word exceeds *max_length*, hard-truncate
+           it to *max_length* characters.
+
+    Args:
+        name: The raw slot name string.
+        max_length: Maximum allowed character length (inclusive).
+
+    Returns:
+        A trimmed string whose ``len()`` is ``<= max_length`` and
+        that has no trailing whitespace.
+    """
+    name = " ".join(name.split())
+
+    if len(name) <= max_length:
+        return name
+
+    words = name.split()
+    if len(words[0]) > max_length:
+        return words[0][:max_length]
+
+    result: list[str] = [words[0]]
+    current_length = len(words[0])
+
+    for word in words[1:]:
+        needed = current_length + 1 + len(word)
+        if needed <= max_length:
+            result.append(word)
+            current_length = needed
+        else:
+            break
+
+    return " ".join(result)
+
+
 async def async_fire_set_code(coordinator, event, slot: int) -> None:
     """Set codes into a slot."""
     _LOGGER.debug("In async_fire_set_code - slot: %s", slot)
@@ -258,6 +301,11 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         prefix = ""
 
     slot_name = f"{prefix}{event.extra_state_attributes['slot_name']}"
+
+    if coordinator.trim_names:
+        guest = event.extra_state_attributes["slot_name"]
+        guest_max = coordinator.max_name_length - len(prefix)
+        slot_name = f"{prefix}{trim_name(guest, guest_max)}"
 
     expected_name = event.extra_state_attributes["slot_name"]
     if not coordinator.event_overrides.verify_slot_ownership(slot, expected_name):
@@ -678,6 +726,32 @@ async def handle_state_change(
         start_time,
         end_time,
     )
+    # When trim_names is enabled the name in Keymaster is the shortened
+    # display value.  Preserve the original untrimmed name already stored
+    # in the override only when the Keymaster value matches the expected
+    # trimmed form, so that manual/external name changes are honoured.
+    if coordinator.trim_names and slot_name_value:
+        existing = (
+            coordinator.event_overrides.overrides.get(slot_num)
+            if coordinator.event_overrides
+            else None
+        )
+        if existing and existing["slot_name"]:
+            prefix = f"{coordinator.event_prefix} " if coordinator.event_prefix else ""
+            guest_max = coordinator.max_name_length - len(prefix)
+            expected_trimmed = trim_name(existing["slot_name"], guest_max)
+            # Strip prefix before comparing since overrides store
+            # the guest-only portion.
+            incoming_guest = (
+                slot_name_value[len(prefix) :]
+                if prefix and slot_name_value.startswith(prefix)
+                else slot_name_value
+            )
+            if incoming_guest == expected_trimmed:
+                # Prepend the prefix so that async_update's
+                # _strip_prefix round-trip is idempotent.
+                slot_name_value = prefix + existing["slot_name"]
+
     await coordinator.update_event_overrides(
         slot_num,
         slot_code_value,

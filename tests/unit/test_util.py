@@ -38,6 +38,7 @@ from custom_components.rental_control.util import get_event_names
 from custom_components.rental_control.util import get_slot_name
 from custom_components.rental_control.util import handle_state_change
 from custom_components.rental_control.util import normalize_uid
+from custom_components.rental_control.util import trim_name
 
 # ---------------------------------------------------------------------------
 # gen_uuid tests
@@ -727,6 +728,7 @@ class TestHandleStateChangeLogging:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()
@@ -811,6 +813,7 @@ class TestHandleStateChangeStateMutation:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()
@@ -864,6 +867,7 @@ class TestHandleStateChangeStateMutation:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()
@@ -900,6 +904,78 @@ class TestHandleStateChangeStateMutation:
         call_args = mock_coordinator.update_event_overrides.call_args
         assert call_args[0][2] == ""  # slot_name_value should be ""
 
+    async def test_trim_preserve_guest_starting_with_prefix(self) -> None:
+        """Verify no double prefix stripping when guest name starts with prefix.
+
+        Bug scenario: prefix="Rental", guest="Rental Guest".
+        Keymaster shows "Rental Renta" (trimmed).  handle_state_change
+        restores full name as "Rental Rental Guest" before passing to
+        update_event_overrides which strips the prefix once → stored as
+        "Rental Guest".  Without the fix the guest name would be
+        double-stripped to just "Guest".
+        """
+        lockname = "test_lock"
+        slot_num = 10
+        prefix = "Rental"
+        # guest_max = 12 - 7 = 5  →  trim_name("Rental Guest", 5) = "Renta"
+        # Keymaster shows "Rental Renta"
+        mock_slot_code_state = MagicMock()
+        mock_slot_code_state.state = "1234"
+        mock_slot_name_state = MagicMock()
+        mock_slot_name_state.state = "Rental Renta"
+        mock_slot_enabled = MagicMock()
+        mock_slot_enabled.state = "on"
+
+        mock_overrides = MagicMock()
+        mock_overrides.overrides = {
+            slot_num: {
+                "slot_name": "Rental Guest",
+                "slot_code": "1234",
+                "start_time": dt_util.now(),
+                "end_time": dt_util.now() + timedelta(days=1),
+            }
+        }
+        mock_overrides.async_check_overrides = AsyncMock()
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.event_prefix = prefix
+        mock_coordinator.trim_names = True
+        mock_coordinator.max_name_length = 12
+        mock_coordinator.event_overrides = mock_overrides
+        mock_coordinator.update_event_overrides = AsyncMock()
+
+        def states_get(entity_id: str) -> MagicMock | None:
+            """Return mock states for various entities."""
+            if "enabled" in entity_id:
+                return mock_slot_enabled
+            if "pin" in entity_id:
+                return mock_slot_code_state
+            if "name" in entity_id:
+                return mock_slot_name_state
+            if "use_date_range" in entity_id:
+                return None
+            return None
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+        hass.states.get = states_get
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": f"switch.{lockname}_code_slot_{slot_num}_enabled"}
+
+        with patch("custom_components.rental_control.util.asyncio.sleep"):
+            await handle_state_change(hass, config_entry, event)
+
+        mock_coordinator.update_event_overrides.assert_awaited_once()
+        call_args = mock_coordinator.update_event_overrides.call_args
+        # The name passed should be "Rental Rental Guest" so that
+        # _strip_prefix("Rental Rental Guest", "Rental") → "Rental Guest"
+        assert call_args[0][2] == "Rental Rental Guest"
+
 
 # ---------------------------------------------------------------------------
 # handle_state_change unbound variable tests
@@ -934,6 +1010,7 @@ class TestHandleStateChangeUnboundVars:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()
@@ -1004,6 +1081,7 @@ class TestHandleStateChangeSlotExtraction:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()
@@ -1075,6 +1153,7 @@ class TestHandleStateChangeSlotExtraction:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_update = AsyncMock()
 
@@ -1296,6 +1375,7 @@ class TestAsyncFireSetCode:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event()
@@ -1328,6 +1408,7 @@ class TestAsyncFireSetCode:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = "Rental"
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event(slot_name="Guest")
@@ -1347,6 +1428,7 @@ class TestAsyncFireSetCode:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event(slot_name="Guest")
@@ -1358,6 +1440,47 @@ class TestAsyncFireSetCode:
         ]
         assert len(name_calls) == 1
 
+    async def test_trim_names_trims_slot_name(self) -> None:
+        """Verify slot name is trimmed when trim_names is enabled."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = "Rental"
+        coordinator.trim_names = True
+        coordinator.max_name_length = 12
+        coordinator.hass.services.async_call = AsyncMock()
+
+        event = self._make_event(slot_name="Very Long Guest Name")
+        await async_fire_set_code(coordinator, event, 10)
+
+        # "Rental Very Long Guest Name" trimmed to 12 → "Rental Very"
+        calls = coordinator.hass.services.async_call.await_args_list
+        name_calls = [
+            c
+            for c in calls
+            if c.kwargs.get("service_data", {}).get("value") == "Rental Very"
+        ]
+        assert len(name_calls) == 1
+
+    async def test_trim_names_disabled_no_trim(self) -> None:
+        """Verify slot name is not trimmed when trim_names is disabled."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = "Rental"
+        coordinator.trim_names = False
+        coordinator.hass.services.async_call = AsyncMock()
+
+        event = self._make_event(slot_name="Very Long Guest Name")
+        await async_fire_set_code(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        name_calls = [
+            c
+            for c in calls
+            if c.kwargs.get("service_data", {}).get("value")
+            == "Rental Very Long Guest Name"
+        ]
+        assert len(name_calls) == 1
+
     async def test_gather_exception_propagates_for_retry(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -1365,6 +1488,7 @@ class TestAsyncFireSetCode:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides.record_retry_failure.return_value = False
 
@@ -1476,6 +1600,7 @@ class TestPreExecutionVerification:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = False
 
@@ -1542,6 +1667,7 @@ class TestPreExecutionVerification:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
 
@@ -1573,6 +1699,7 @@ class TestRetryEscalation:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides._escalated = {10: True}
@@ -1601,6 +1728,7 @@ class TestRetryEscalation:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides._escalated = {}
@@ -1626,6 +1754,7 @@ class TestRetryEscalation:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides.record_retry_failure.return_value = True
         coordinator.event_overrides._escalated = {}
@@ -1659,6 +1788,7 @@ class TestRetryEscalation:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides.record_retry_failure.return_value = False
 
@@ -1767,6 +1897,7 @@ class TestSlugifiedLocknameEntityIds:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
 
         event = MagicMock()
@@ -1831,6 +1962,7 @@ class TestSlugifiedLocknameEntityIds:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()
@@ -1879,6 +2011,7 @@ class TestSlugifiedLocknameEntityIds:
         """Verify handle_state_change exits early when lockname is None."""
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = None
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
 
         hass = MagicMock()
@@ -1986,3 +2119,74 @@ class TestNormalizeUid:
     def test_strips_newlines(self) -> None:
         """Verify trailing newlines are stripped."""
         assert normalize_uid("abc123\n") == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# trim_name tests
+# ---------------------------------------------------------------------------
+
+
+class TestTrimName:
+    """Tests for the trim_name function."""
+
+    def test_short_name_returned_unchanged(self) -> None:
+        """Verify a name under the limit is returned as-is."""
+        assert trim_name("Rental Chris", 16) == "Rental Chris"
+
+    def test_exact_length_returned_unchanged(self) -> None:
+        """Verify a name exactly at the limit is returned as-is."""
+        assert trim_name("Hello World12345", 16) == "Hello World12345"
+
+    def test_word_boundary_trim(self) -> None:
+        """Verify trimming drops last word that would exceed limit."""
+        assert trim_name("Rental Christopher Montgomery", 16) == "Rental"
+
+    def test_word_boundary_trim_longer_limit(self) -> None:
+        """Verify trimming at a longer limit keeps more words."""
+        assert trim_name("Rental Christopher Montgomery", 28) == "Rental Christopher"
+
+    def test_single_word_exceeding_limit_hard_truncated(self) -> None:
+        """Verify a single long word is hard-truncated."""
+        assert trim_name("Superlongname", 8) == "Superlon"
+
+    def test_empty_string_returns_empty(self) -> None:
+        """Verify empty string returns empty string."""
+        assert trim_name("", 16) == ""
+
+    def test_short_string_under_limit(self) -> None:
+        """Verify a short string well under the limit passes through."""
+        assert trim_name("Hi", 16) == "Hi"
+
+    def test_first_word_longer_than_max(self) -> None:
+        """Verify first word longer than max is hard-truncated."""
+        assert trim_name("VacationHome Christopher", 12) == "VacationHome"
+
+    def test_whitespace_normalization(self) -> None:
+        """Verify leading, trailing, and multiple spaces are normalized."""
+        assert trim_name("  spaced  name  ", 16) == "spaced name"
+
+    def test_result_never_exceeds_max_length(self) -> None:
+        """Verify postcondition: result length is always <= max_length."""
+        names = [
+            "Rental Christopher Montgomery",
+            "Superlongname",
+            "A B C D E F G H I J K",
+            "  lots   of   spaces  ",
+        ]
+        for name in names:
+            for max_len in range(4, 30):
+                result = trim_name(name, max_len)
+                assert len(result) <= max_len
+
+    def test_result_has_no_trailing_whitespace(self) -> None:
+        """Verify postcondition: result has no trailing whitespace."""
+        result = trim_name("  spaced  name  extra  ", 16)
+        assert result == result.rstrip()
+
+    def test_multiple_words_only_first_fits(self) -> None:
+        """Verify only first word returned when others exceed limit."""
+        assert trim_name("Hello WorldExtra", 8) == "Hello"
+
+    def test_skips_long_middle_word(self) -> None:
+        """Verify accumulation stops at first non-fitting word."""
+        assert trim_name("Hello LongWord A", 8) == "Hello"

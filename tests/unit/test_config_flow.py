@@ -999,14 +999,14 @@ async def test_config_flow_url_bad_content_type(hass: HomeAssistant) -> None:
 
 
 async def test_honor_event_times_version_is_8(hass: HomeAssistant) -> None:
-    """Test that RentalControlFlowHandler VERSION is 8.
+    """Test that RentalControlFlowHandler VERSION is 9.
 
     Verifies that the config flow handler version has been bumped
-    to 8 to account for the new honor_event_times configuration key.
+    to 9 to account for the new trim_names configuration keys.
     """
     from custom_components.rental_control.config_flow import RentalControlFlowHandler
 
-    assert RentalControlFlowHandler.VERSION == 8
+    assert RentalControlFlowHandler.VERSION == 9
 
 
 async def test_honor_event_times_in_options_schema(hass: HomeAssistant) -> None:
@@ -1274,3 +1274,283 @@ async def test_config_flow_lock_entry_empty_string_normalized(
     assert _normalize_lock_entry(None) == "(none)"
     assert _normalize_lock_entry("Lock1") == "Lock1"
     assert _normalize_lock_entry("(none)") == "(none)"
+
+
+# ---------------------------------------------------------------------------
+# Trim name config flow tests
+# ---------------------------------------------------------------------------
+
+
+async def test_config_flow_trim_fields_in_schema(hass: HomeAssistant) -> None:
+    """Verify trim_names and max_name_length appear in schema.
+
+    Checks that the config flow schema includes the new trim fields
+    with correct default values.
+    """
+    from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
+    from custom_components.rental_control.const import CONF_TRIM_NAMES
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    schema = result["data_schema"].schema
+    schema_keys = {str(key.schema): key for key in schema.keys()}
+
+    assert CONF_TRIM_NAMES in schema_keys
+    assert CONF_MAX_NAME_LENGTH in schema_keys
+
+    # Verify defaults
+    assert schema_keys[CONF_TRIM_NAMES].default() is False
+    assert schema_keys[CONF_MAX_NAME_LENGTH].default() == 16
+
+
+async def test_config_flow_prefix_too_long_for_trim(
+    hass: HomeAssistant,
+) -> None:
+    """Verify prefix_too_long_for_trim error when prefix is too long.
+
+    When trim_names is enabled and the effective prefix length
+    (including the space separator) exceeds
+    max_name_length - MIN_NAME_LENGTH, a validation error should
+    be returned.
+    """
+    from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
+    from custom_components.rental_control.const import CONF_TRIM_NAMES
+
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "VeryLongPrefix",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+                CONF_TRIM_NAMES: True,
+                CONF_MAX_NAME_LENGTH: 16,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"]["base"] == "prefix_too_long_for_trim"
+
+
+async def test_config_flow_prefix_short_enough_for_trim(
+    hass: HomeAssistant,
+) -> None:
+    """Verify no error when prefix is short enough for trim.
+
+    When trim_names is enabled and the event prefix is short relative
+    to max_name_length, no prefix_too_long_for_trim error is raised.
+    """
+    from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
+    from custom_components.rental_control.const import CONF_TRIM_NAMES
+
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "RC",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+                CONF_TRIM_NAMES: True,
+                CONF_MAX_NAME_LENGTH: 16,
+            },
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert "prefix_too_long_for_trim" not in result.get("errors", {})
+
+
+async def test_config_flow_prefix_boundary_exactly_min_remaining(
+    hass: HomeAssistant,
+) -> None:
+    """Verify no error when prefix leaves exactly MIN_NAME_LENGTH chars.
+
+    With max_name_length=16 and an 11-char prefix, the effective
+    prefix length is 12 (11 + space separator), leaving exactly
+    4 characters for the slot name which equals MIN_NAME_LENGTH.
+    This boundary case must be accepted.
+    """
+    from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
+    from custom_components.rental_control.const import CONF_TRIM_NAMES
+
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "ElevenChars",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+                CONF_TRIM_NAMES: True,
+                CONF_MAX_NAME_LENGTH: 16,
+            },
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert "prefix_too_long_for_trim" not in result.get("errors", {})
+
+
+async def test_config_flow_prefix_boundary_one_over(
+    hass: HomeAssistant,
+) -> None:
+    """Verify error when prefix leaves fewer than MIN_NAME_LENGTH chars.
+
+    With max_name_length=16 and a 12-char prefix, the effective
+    prefix length is 13 (12 + space separator), leaving only 3
+    characters which is below MIN_NAME_LENGTH (4). This must be
+    rejected.
+    """
+    from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
+    from custom_components.rental_control.const import CONF_TRIM_NAMES
+
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+            data={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "TwelveCharsX",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+                CONF_TRIM_NAMES: True,
+                CONF_MAX_NAME_LENGTH: 16,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"]["base"] == "prefix_too_long_for_trim"
+
+
+async def test_config_flow_max_name_length_min_validation(
+    hass: HomeAssistant,
+) -> None:
+    """Verify max_name_length schema rejects values below MIN_NAME_LENGTH.
+
+    Exercises the production data_schema returned by the config flow
+    form rather than a hand-built schema copy.
+    """
+    from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
+    from custom_components.rental_control.const import MIN_NAME_LENGTH
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+    )
+    assert result["type"] == FlowResultType.FORM
+    schema = result["data_schema"]
+
+    base_data = {
+        CONF_NAME: "Test",
+        CONF_URL: "https://example.com/cal.ics",
+        CONF_VERIFY_SSL: True,
+        CONF_IGNORE_NON_RESERVED: True,
+        CONF_LOCK_ENTRY: "(none)",
+        CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+        CONF_TIMEZONE: "UTC",
+        CONF_EVENT_PREFIX: "",
+        CONF_CHECKIN: DEFAULT_CHECKIN,
+        CONF_CHECKOUT: DEFAULT_CHECKOUT,
+        CONF_DAYS: DEFAULT_DAYS,
+        CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+        CONF_START_SLOT: DEFAULT_START_SLOT,
+        CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+        CONF_CODE_GENERATION: "Start/End Date",
+        CONF_SHOULD_UPDATE_CODE: True,
+    }
+
+    # Valid value must pass
+    valid = {**base_data, CONF_MAX_NAME_LENGTH: MIN_NAME_LENGTH}
+    parsed = schema(valid)
+    assert parsed[CONF_MAX_NAME_LENGTH] == MIN_NAME_LENGTH
+
+    # Value below minimum must raise
+    invalid = {**base_data, CONF_MAX_NAME_LENGTH: MIN_NAME_LENGTH - 1}
+    with pytest.raises(vol.Invalid):
+        schema(invalid)

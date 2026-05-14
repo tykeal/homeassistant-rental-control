@@ -38,10 +38,12 @@ from .const import CONF_HONOR_EVENT_TIMES
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
+from .const import CONF_MAX_NAME_LENGTH
 from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
+from .const import CONF_TRIM_NAMES
 from .const import DEFAULT_CHECKIN
 from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_CLEANING_WINDOW
@@ -52,11 +54,14 @@ from .const import DEFAULT_EVENT_PREFIX
 from .const import DEFAULT_GENERATE
 from .const import DEFAULT_HONOR_EVENT_TIMES
 from .const import DEFAULT_MAX_EVENTS
+from .const import DEFAULT_MAX_NAME_LENGTH
 from .const import DEFAULT_REFRESH_FREQUENCY
 from .const import DEFAULT_SHOULD_UPDATE_CODE
 from .const import DEFAULT_START_SLOT
+from .const import DEFAULT_TRIM_NAMES
 from .const import DOMAIN
 from .const import LOCK_MANAGER
+from .const import MIN_NAME_LENGTH
 from .const import REQUEST_TIMEOUT
 from .util import gen_uuid
 
@@ -70,7 +75,7 @@ class RentalControlFlowHandler(  # type: ignore[call-arg]
 ):
     """Handle the config flow for Rental Control."""
 
-    VERSION = 8
+    VERSION = 9
 
     DEFAULTS = {
         CONF_CHECKIN: DEFAULT_CHECKIN,
@@ -82,6 +87,8 @@ class RentalControlFlowHandler(  # type: ignore[call-arg]
         CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
         CONF_SHOULD_UPDATE_CODE: DEFAULT_SHOULD_UPDATE_CODE,
         CONF_HONOR_EVENT_TIMES: DEFAULT_HONOR_EVENT_TIMES,
+        CONF_TRIM_NAMES: DEFAULT_TRIM_NAMES,
+        CONF_MAX_NAME_LENGTH: DEFAULT_MAX_NAME_LENGTH,
         CONF_TIMEZONE: str(dt.DEFAULT_TIME_ZONE),
         CONF_VERIFY_SSL: True,
     }
@@ -325,6 +332,14 @@ def _get_schema(
                 CONF_CLEANING_WINDOW,
                 default=_get_default(CONF_CLEANING_WINDOW, DEFAULT_CLEANING_WINDOW),
             ): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=48.0)),
+            vol.Optional(
+                CONF_TRIM_NAMES,
+                default=_get_default(CONF_TRIM_NAMES, DEFAULT_TRIM_NAMES),
+            ): cv.boolean,
+            vol.Optional(
+                CONF_MAX_NAME_LENGTH,
+                default=_get_default(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH),
+            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_NAME_LENGTH)),
         },
         extra=ALLOW_EXTRA,
     )
@@ -439,6 +454,22 @@ async def _start_config_flow(
         user_input[CONF_CODE_GENERATION] = _generator_convert(
             ident=user_input[CONF_CODE_GENERATION], to_type=True
         )
+
+        if (
+            user_input.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH)
+            < MIN_NAME_LENGTH
+        ):
+            errors[CONF_MAX_NAME_LENGTH] = "bad_max_name_length"
+
+        # Warn if prefix is too long relative to max name length
+        if user_input.get(CONF_TRIM_NAMES, False) and user_input.get(
+            CONF_EVENT_PREFIX, ""
+        ):
+            # Account for the space separator between prefix and name
+            prefix_len = len(user_input[CONF_EVENT_PREFIX]) + 1
+            max_len = user_input.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH)
+            if prefix_len > (max_len - MIN_NAME_LENGTH):
+                errors["base"] = "prefix_too_long_for_trim"
 
         if not errors:
             # Only do this conversion if there are no errors and it needs to be

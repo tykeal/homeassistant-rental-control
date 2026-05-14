@@ -58,14 +58,18 @@ from .const import CONF_HONOR_EVENT_TIMES
 from .const import CONF_IGNORE_NON_RESERVED
 from .const import CONF_LOCK_ENTRY
 from .const import CONF_MAX_EVENTS
+from .const import CONF_MAX_NAME_LENGTH
 from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
+from .const import CONF_TRIM_NAMES
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_MAX_MISSES
+from .const import DEFAULT_MAX_NAME_LENGTH
 from .const import DEFAULT_REFRESH_FREQUENCY
+from .const import DEFAULT_TRIM_NAMES
 from .const import DOMAIN
 from .const import EVENT_AGE_THRESHOLD_DAYS
 from .const import LOCK_MANAGER
@@ -119,6 +123,15 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
         )
         self.should_update_code: bool = bool(config.get(CONF_SHOULD_UPDATE_CODE))
         self.honor_event_times: bool = bool(config.get(CONF_HONOR_EVENT_TIMES))
+        self.trim_names: bool = bool(config.get(CONF_TRIM_NAMES, DEFAULT_TRIM_NAMES))
+        self.max_name_length: int = int(
+            str(config.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH))
+        )
+        if self.event_overrides is not None:
+            self.event_overrides.trim_names = self.trim_names
+            self.event_overrides.max_name_length = self.max_name_length
+            prefix = f"{self.event_prefix} " if self.event_prefix else ""
+            self.event_overrides.prefix_length = len(prefix)
         self.code_length: int = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.event: CalendarEvent | None = None
         self.created: str = config.get(CONF_CREATION_DATETIME, str(dt.now()))
@@ -557,6 +570,15 @@ Please update Keymaster to at least v0.1.0-b0
         self.code_generator = config.get(CONF_CODE_GENERATION, DEFAULT_CODE_GENERATION)
         self.should_update_code = bool(config.get(CONF_SHOULD_UPDATE_CODE))
         self.honor_event_times = bool(config.get(CONF_HONOR_EVENT_TIMES))
+        self.trim_names = bool(config.get(CONF_TRIM_NAMES, DEFAULT_TRIM_NAMES))
+        self.max_name_length = int(
+            str(config.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH))
+        )
+        if self.event_overrides is not None:
+            self.event_overrides.trim_names = self.trim_names
+            self.event_overrides.max_name_length = self.max_name_length
+            prefix = f"{self.event_prefix} " if self.event_prefix else ""
+            self.event_overrides.prefix_length = len(prefix)
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.ignore_non_reserved = bool(config.get(CONF_IGNORE_NON_RESERVED))
         self.verify_ssl = bool(config.get(CONF_VERIFY_SSL))

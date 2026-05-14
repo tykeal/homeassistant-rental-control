@@ -121,7 +121,7 @@ def mock_config_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Test Rental",
-        version=8,
+        version=9,
         unique_id="test-unique-id",
         data={
             "name": "Test Rental",
@@ -153,7 +153,7 @@ def mock_config_entry_full() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Complete Rental",
-        version=8,
+        version=9,
         unique_id="test-full-unique-id",
         data={
             "name": "Complete Rental",
@@ -284,7 +284,7 @@ def mock_checkin_config_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Test Rental",
-        version=8,
+        version=9,
         unique_id="test-checkin-unique-id",
         data={
             "name": "Test Rental",
