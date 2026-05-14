@@ -728,6 +728,7 @@ class TestHandleStateChangeLogging:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()
@@ -812,6 +813,7 @@ class TestHandleStateChangeStateMutation:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()
@@ -865,6 +867,7 @@ class TestHandleStateChangeStateMutation:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()
@@ -935,6 +938,7 @@ class TestHandleStateChangeUnboundVars:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()
@@ -1005,6 +1009,7 @@ class TestHandleStateChangeSlotExtraction:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()
@@ -1076,6 +1081,7 @@ class TestHandleStateChangeSlotExtraction:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_update = AsyncMock()
 
@@ -1933,6 +1939,7 @@ class TestSlugifiedLocknameEntityIds:
         """Verify handle_state_change exits early when lockname is None."""
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = None
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
 
         hass = MagicMock()

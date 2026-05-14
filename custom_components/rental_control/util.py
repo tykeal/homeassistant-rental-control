@@ -728,8 +728,8 @@ async def handle_state_change(
     )
     # When trim_names is enabled the name in Keymaster is the shortened
     # display value.  Preserve the original untrimmed name already stored
-    # in the override so that ownership checks and slot lookups continue
-    # to use the full calendar name.
+    # in the override only when the Keymaster value matches the expected
+    # trimmed form, so that manual/external name changes are honoured.
     if coordinator.trim_names and slot_name_value:
         existing = (
             coordinator.event_overrides.overrides.get(slot_num)
@@ -737,7 +737,11 @@ async def handle_state_change(
             else None
         )
         if existing and existing["slot_name"]:
-            slot_name_value = existing["slot_name"]
+            prefix = f"{coordinator.event_prefix} " if coordinator.event_prefix else ""
+            guest_max = coordinator.max_name_length - len(prefix)
+            expected_trimmed = trim_name(existing["slot_name"], guest_max)
+            if slot_name_value == expected_trimmed:
+                slot_name_value = existing["slot_name"]
 
     await coordinator.update_event_overrides(
         slot_num,
