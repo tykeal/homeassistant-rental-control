@@ -1311,8 +1311,9 @@ async def test_config_flow_prefix_too_long_for_trim(
 ) -> None:
     """Verify prefix_too_long_for_trim error when prefix is too long.
 
-    When trim_names is enabled and the event prefix length is >=
-    max_name_length - MIN_NAME_LENGTH (4), a validation error should
+    When trim_names is enabled and the effective prefix length
+    (including the space separator) exceeds
+    max_name_length - MIN_NAME_LENGTH, a validation error should
     be returned.
     """
     from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
