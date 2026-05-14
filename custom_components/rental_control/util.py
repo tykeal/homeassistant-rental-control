@@ -748,7 +748,9 @@ async def handle_state_change(
                 else slot_name_value
             )
             if incoming_guest == expected_trimmed:
-                slot_name_value = existing["slot_name"]
+                # Prepend the prefix so that async_update's
+                # _strip_prefix round-trip is idempotent.
+                slot_name_value = prefix + existing["slot_name"]
 
     await coordinator.update_event_overrides(
         slot_num,

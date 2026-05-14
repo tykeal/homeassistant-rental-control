@@ -904,6 +904,78 @@ class TestHandleStateChangeStateMutation:
         call_args = mock_coordinator.update_event_overrides.call_args
         assert call_args[0][2] == ""  # slot_name_value should be ""
 
+    async def test_trim_preserve_guest_starting_with_prefix(self) -> None:
+        """Verify no double prefix stripping when guest name starts with prefix.
+
+        Bug scenario: prefix="Rental", guest="Rental Guest".
+        Keymaster shows "Rental Renta" (trimmed).  handle_state_change
+        restores full name as "Rental Rental Guest" before passing to
+        update_event_overrides which strips the prefix once → stored as
+        "Rental Guest".  Without the fix the guest name would be
+        double-stripped to just "Guest".
+        """
+        lockname = "test_lock"
+        slot_num = 10
+        prefix = "Rental"
+        # guest_max = 12 - 7 = 5  →  trim_name("Rental Guest", 5) = "Renta"
+        # Keymaster shows "Rental Renta"
+        mock_slot_code_state = MagicMock()
+        mock_slot_code_state.state = "1234"
+        mock_slot_name_state = MagicMock()
+        mock_slot_name_state.state = "Rental Renta"
+        mock_slot_enabled = MagicMock()
+        mock_slot_enabled.state = "on"
+
+        mock_overrides = MagicMock()
+        mock_overrides.overrides = {
+            slot_num: {
+                "slot_name": "Rental Guest",
+                "slot_code": "1234",
+                "start_time": dt_util.now(),
+                "end_time": dt_util.now() + timedelta(days=1),
+            }
+        }
+        mock_overrides.async_check_overrides = AsyncMock()
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.event_prefix = prefix
+        mock_coordinator.trim_names = True
+        mock_coordinator.max_name_length = 12
+        mock_coordinator.event_overrides = mock_overrides
+        mock_coordinator.update_event_overrides = AsyncMock()
+
+        def states_get(entity_id: str) -> MagicMock | None:
+            """Return mock states for various entities."""
+            if "enabled" in entity_id:
+                return mock_slot_enabled
+            if "pin" in entity_id:
+                return mock_slot_code_state
+            if "name" in entity_id:
+                return mock_slot_name_state
+            if "use_date_range" in entity_id:
+                return None
+            return None
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+        hass.states.get = states_get
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": f"switch.{lockname}_code_slot_{slot_num}_enabled"}
+
+        with patch("custom_components.rental_control.util.asyncio.sleep"):
+            await handle_state_change(hass, config_entry, event)
+
+        mock_coordinator.update_event_overrides.assert_awaited_once()
+        call_args = mock_coordinator.update_event_overrides.call_args
+        # The name passed should be "Rental Rental Guest" so that
+        # _strip_prefix("Rental Rental Guest", "Rental") → "Rental Guest"
+        assert call_args[0][2] == "Rental Rental Guest"
+
 
 # ---------------------------------------------------------------------------
 # handle_state_change unbound variable tests

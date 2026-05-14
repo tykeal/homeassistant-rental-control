@@ -259,10 +259,12 @@ class EventOverrides:
         Home Assistant restart the override may contain a trimmed
         display name read back from Keymaster.  If the incoming
         *slot_name* is the trimmed form of the stored name (or
-        vice-versa) and the time intervals overlap, the slot is
-        returned.  Uses the actual ``trim_name`` function so both
-        word-boundary and hard-truncated single-word cases are
-        handled correctly.
+        vice-versa) the slot is returned.  Uses the actual
+        ``trim_name`` function so both word-boundary and
+        hard-truncated single-word cases are handled correctly.
+        Phase 3a checks UID-positive matches without requiring
+        time overlap (mirroring Phase 1).  Phase 3b checks
+        overlap-based matches (mirroring Phase 2).
 
         When *exclude_slot* is set that slot number is skipped entirely,
         allowing ``async_update`` to avoid matching the slot it is about
@@ -308,6 +310,29 @@ class EventOverrides:
         # single-word cases are handled correctly.
         if self._trim_names:
             guest_max = self._max_name_length - self._prefix_length
+
+            # Phase 3a: UID-positive trim match (no overlap required),
+            # mirrors Phase 1 but tolerates trimmed names.
+            if uid is not None:
+                for slot in self.__get_slots_with_values():
+                    if slot == exclude_slot:
+                        continue
+                    stored_uid = normalize_uid(self._slot_uids.get(slot))
+                    if stored_uid is None or stored_uid != uid:
+                        continue
+                    override = self._overrides[slot]
+                    if override is None:
+                        continue
+                    stored = override["slot_name"]
+                    if stored == slot_name:
+                        continue  # already matched in Phase 1
+                    if not _is_trimmed_match(stored, slot_name, guest_max):
+                        continue
+                    if len(slot_name) > len(stored):
+                        override["slot_name"] = slot_name
+                    return slot
+
+            # Phase 3b: trim match with overlap (no UID required).
             for slot in self.__get_slots_with_values():
                 if slot == exclude_slot:
                     continue
@@ -522,6 +547,23 @@ class EventOverrides:
         # Only active when name trimming is enabled.
         if self._trim_names:
             guest_max = self._max_name_length - self._prefix_length
+
+            # Phase 3a: UID-positive trim match (no overlap required),
+            # mirrors Phase 1 but tolerates trimmed names.
+            if stored_uid is not None:
+                for ev in events:
+                    ev_uid = normalize_uid(ev.uid)
+                    if ev_uid is None or ev_uid != stored_uid:
+                        continue
+                    if ev.name == slot_name:
+                        continue  # already matched in Phase 1
+                    if not _is_trimmed_match(slot_name, ev.name, guest_max):
+                        continue
+                    if len(ev.name) > len(slot_name):
+                        override["slot_name"] = ev.name
+                    return True
+
+            # Phase 3b: trim match with overlap (no UID required).
             for ev in events:
                 if ev.name == slot_name:
                     continue

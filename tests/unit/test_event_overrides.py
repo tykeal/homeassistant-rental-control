@@ -2064,3 +2064,53 @@ class TestPhase3TrimAwareMatching:
         assert eo._slot_has_matching_event(1, events) is True
         assert eo._overrides[1] is not None
         assert eo._overrides[1]["slot_name"] == "Very Long Guest"
+
+    # -- Phase 3a UID-positive trim match (no overlap required) --
+
+    @pytest.mark.asyncio
+    async def test_find_overlapping_uid_positive_trim_no_overlap(self) -> None:
+        """Phase 3a: UID match + trim match without time overlap."""
+        eo = self._ready_eo()
+        eo.trim_names = True
+        eo.max_name_length = 11
+        eo.prefix_length = 7
+
+        start1 = _make_dt(2025, 6, 1)
+        end1 = _make_dt(2025, 6, 5)
+        # Non-overlapping window
+        start2 = _make_dt(2025, 7, 1)
+        end2 = _make_dt(2025, 7, 5)
+
+        result = await eo.async_reserve_or_get_slot(
+            "Chri", "1234", start1, end1, uid="UID-A"
+        )
+        assert result.slot == 1
+
+        # Same UID, trimmed name, no overlap → Phase 3a matches
+        slot = eo._find_overlapping_slot("Christopher", start2, end2, uid="UID-A")
+        assert slot == 1
+        assert eo._overrides[1] is not None
+        assert eo._overrides[1]["slot_name"] == "Christopher"
+
+    @pytest.mark.asyncio
+    async def test_slot_matching_uid_positive_trim_no_overlap(self) -> None:
+        """Phase 3a: _slot_has_matching_event UID + trim without overlap."""
+        eo = self._ready_eo()
+        eo.trim_names = True
+        eo.max_name_length = 11
+        eo.prefix_length = 7
+
+        start = _make_dt(2025, 6, 1)
+        end = _make_dt(2025, 6, 5)
+        # Non-overlapping event window
+        ev_start = _make_dt(2025, 7, 1)
+        ev_end = _make_dt(2025, 7, 5)
+
+        await eo.async_reserve_or_get_slot("Chri", "1234", start, end, uid="UID-A")
+
+        events = [
+            EventIdentity(name="Christopher", start=ev_start, end=ev_end, uid="UID-A"),
+        ]
+        assert eo._slot_has_matching_event(1, events) is True
+        assert eo._overrides[1] is not None
+        assert eo._overrides[1]["slot_name"] == "Christopher"
