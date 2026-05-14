@@ -10,7 +10,8 @@
       "invalid_path": "Path must be a relative path, not absolute",
       "invalid_url": "URL is malformed or invalid",
       "same_name": "Name already in use",
-      "unknown": "Unexpected error, check logs for more details"
+      "unknown": "Unexpected error, check logs for more details",
+      "prefix_too_long_for_trim": "Event prefix too long for max name length"
     },
     "step": {
       "user": {
@@ -30,6 +31,8 @@
           "start_slot": "Starting lock slot for management",
           "should_update_code": "For date based codes, update the code if future events change start or end dates",
           "honor_event_times": "Honor calendar event times from PMS instead of stored override times",
+          "trim_names": "Trim slot names to maximum length",
+          "max_name_length": "Maximum slot name length",
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates"
@@ -51,7 +54,8 @@
       "invalid_path": "Path must be a relative path, not absolute",
       "invalid_url": "URL is malformed or invalid",
       "same_name": "Name already in use",
-      "unknown": "Unexpected error, check logs for more details"
+      "unknown": "Unexpected error, check logs for more details",
+      "prefix_too_long_for_trim": "Event prefix too long for max name length"
     },
     "step": {
       "init": {
@@ -71,6 +75,8 @@
           "start_slot": "Starting lock slot for management",
           "should_update_code": "For date based codes, update the code if future events change start or end dates",
           "honor_event_times": "Honor calendar event times from PMS instead of stored override times",
+          "trim_names": "Trim slot names to maximum length",
+          "max_name_length": "Maximum slot name length",
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates"

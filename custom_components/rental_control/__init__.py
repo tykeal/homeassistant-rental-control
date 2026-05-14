@@ -38,11 +38,14 @@ from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_GENERATE
 from .const import CONF_HONOR_EVENT_TIMES
+from .const import CONF_MAX_NAME_LENGTH
 from .const import CONF_PATH
 from .const import CONF_SHOULD_UPDATE_CODE
+from .const import CONF_TRIM_NAMES
 from .const import COORDINATOR
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_GENERATE
+from .const import DEFAULT_MAX_NAME_LENGTH
 from .const import DOMAIN
 from .const import KEYMASTER_MONITORING_SWITCH
 from .const import NAME
@@ -250,6 +253,23 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         )
 
         version = 8
+        _LOGGER.debug("Migration to version %s complete", config_entry.version)
+
+    # 8 -> 9: Add trim_names and max_name_length to configuration
+    if version == 8:
+        _LOGGER.debug("Migrating from version %s", version)
+
+        data = config_entry.data.copy()
+        data[CONF_TRIM_NAMES] = False
+        data[CONF_MAX_NAME_LENGTH] = DEFAULT_MAX_NAME_LENGTH
+        hass.config_entries.async_update_entry(
+            entry=config_entry,
+            unique_id=config_entry.unique_id,
+            data=data,
+            version=9,
+        )
+
+        version = 9
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     return True
