@@ -455,6 +455,12 @@ async def _start_config_flow(
             ident=user_input[CONF_CODE_GENERATION], to_type=True
         )
 
+        if (
+            user_input.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH)
+            < MIN_NAME_LENGTH
+        ):
+            errors[CONF_MAX_NAME_LENGTH] = "bad_minimum"
+
         # Warn if prefix is too long relative to max name length
         if user_input.get(CONF_TRIM_NAMES, False) and user_input.get(
             CONF_EVENT_PREFIX, ""
