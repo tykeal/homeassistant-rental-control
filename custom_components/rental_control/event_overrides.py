@@ -71,6 +71,18 @@ def _strip_prefix(slot_name: str, prefix: str) -> str:
     return slot_name
 
 
+def _is_word_boundary_prefix(shorter: str, longer: str) -> bool:
+    """Check if *shorter* is a word-boundary prefix of *longer*.
+
+    Returns True when *longer* starts with *shorter* and the character
+    immediately following in *longer* is a space.  This matches names
+    produced by ``trim_name`` which always trims on word boundaries.
+    """
+    if len(shorter) >= len(longer):
+        return False
+    return longer.startswith(shorter) and longer[len(shorter)] == " "
+
+
 class ReserveResult(NamedTuple):
     """Result of a slot reservation attempt."""
 
@@ -208,13 +220,13 @@ class EventOverrides:
         If both UIDs are non-None and differ the slot is skipped
         (distinct reservations with the same guest name).
 
-        Phase 3 — Prefix-match fallback for trimmed names.  After a
-        Home Assistant restart the override may contain a trimmed
-        display name read back from Keymaster.  If the incoming
-        *slot_name* starts with the stored name (or vice-versa) and
-        the time intervals overlap, the slot is returned.  This
-        prevents duplicate slot assignments when name trimming is
-        enabled.
+        Phase 3 — Word-boundary prefix-match fallback for trimmed
+        names.  After a Home Assistant restart the override may contain
+        a trimmed display name read back from Keymaster.  If the
+        incoming *slot_name* is a word-boundary prefix of the stored
+        name (or vice-versa) and the time intervals overlap, the slot
+        is returned.  Only names separated by a space are considered,
+        preventing false matches like ``Ann`` / ``Anna``.
 
         When *exclude_slot* is set that slot number is skipped entirely,
         allowing ``async_update`` to avoid matching the slot it is about
@@ -254,7 +266,7 @@ class EventOverrides:
                 continue
             return slot
 
-        # Phase 3: prefix-match fallback for trimmed names
+        # Phase 3: word-boundary prefix-match fallback for trimmed names
         for slot in self.__get_slots_with_values():
             if slot == exclude_slot:
                 continue
@@ -264,7 +276,10 @@ class EventOverrides:
             stored = override["slot_name"]
             if stored == slot_name:
                 continue  # already checked in Phase 2
-            if not (slot_name.startswith(stored) or stored.startswith(slot_name)):
+            if not (
+                _is_word_boundary_prefix(stored, slot_name)
+                or _is_word_boundary_prefix(slot_name, stored)
+            ):
                 continue
             if not (
                 start_utc < _to_utc(override["end_time"])
@@ -275,7 +290,8 @@ class EventOverrides:
             if uid is not None and stored_uid is not None and uid != stored_uid:
                 continue
             # Update stored name to the full untrimmed version
-            override["slot_name"] = slot_name
+            if len(slot_name) > len(stored):
+                override["slot_name"] = slot_name
             return slot
 
         return None
@@ -430,8 +446,8 @@ class EventOverrides:
 
         Phase 2 — name + strict interval overlap + UID negative gate.
 
-        Phase 3 — prefix-match fallback for trimmed names with time
-        overlap, restoring the full name on match.
+        Phase 3 — word-boundary prefix-match fallback for trimmed
+        names with time overlap, restoring the full name on match.
         """
         override = self._overrides[slot]
         if override is None:
@@ -464,11 +480,14 @@ class EventOverrides:
                 continue
             return True
 
-        # Phase 3: prefix-match fallback for trimmed names
+        # Phase 3: word-boundary prefix-match fallback for trimmed names
         for ev in events:
             if ev.name == slot_name:
                 continue
-            if not (ev.name.startswith(slot_name) or slot_name.startswith(ev.name)):
+            if not (
+                _is_word_boundary_prefix(slot_name, ev.name)
+                or _is_word_boundary_prefix(ev.name, slot_name)
+            ):
                 continue
             if not (
                 slot_start_utc < _to_utc(ev.end) and _to_utc(ev.start) < slot_end_utc
@@ -477,7 +496,8 @@ class EventOverrides:
             ev_uid = normalize_uid(ev.uid)
             if stored_uid is not None and ev_uid is not None and stored_uid != ev_uid:
                 continue
-            override["slot_name"] = ev.name
+            if len(ev.name) > len(slot_name):
+                override["slot_name"] = ev.name
             return True
 
         return False
