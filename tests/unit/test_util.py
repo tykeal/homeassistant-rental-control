@@ -2065,3 +2065,7 @@ class TestTrimName:
     def test_multiple_words_only_first_fits(self) -> None:
         """Verify only first word returned when others exceed limit."""
         assert trim_name("Hello WorldExtra", 8) == "Hello"
+
+    def test_skips_long_middle_word(self) -> None:
+        """Verify accumulation stops at first non-fitting word."""
+        assert trim_name("Hello LongWord A", 8) == "Hello"

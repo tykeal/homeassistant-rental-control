@@ -277,7 +277,8 @@ def trim_name(name: str, max_length: int) -> str:
         if needed <= max_length:
             result.append(word)
             current_length = needed
-        # Once a word doesn't fit, stop accumulating.
+        else:
+            break
 
     return " ".join(result)
 
