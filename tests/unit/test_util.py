@@ -1362,6 +1362,47 @@ class TestAsyncFireSetCode:
         ]
         assert len(name_calls) == 1
 
+    async def test_trim_names_trims_slot_name(self) -> None:
+        """Verify slot name is trimmed when trim_names is enabled."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = "Rental"
+        coordinator.trim_names = True
+        coordinator.max_name_length = 12
+        coordinator.hass.services.async_call = AsyncMock()
+
+        event = self._make_event(slot_name="Very Long Guest Name")
+        await async_fire_set_code(coordinator, event, 10)
+
+        # "Rental Very Long Guest Name" trimmed to 12 → "Rental Very"
+        calls = coordinator.hass.services.async_call.await_args_list
+        name_calls = [
+            c
+            for c in calls
+            if c.kwargs.get("service_data", {}).get("value") == "Rental Very"
+        ]
+        assert len(name_calls) == 1
+
+    async def test_trim_names_disabled_no_trim(self) -> None:
+        """Verify slot name is not trimmed when trim_names is disabled."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = "Rental"
+        coordinator.trim_names = False
+        coordinator.hass.services.async_call = AsyncMock()
+
+        event = self._make_event(slot_name="Very Long Guest Name")
+        await async_fire_set_code(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        name_calls = [
+            c
+            for c in calls
+            if c.kwargs.get("service_data", {}).get("value")
+            == "Rental Very Long Guest Name"
+        ]
+        assert len(name_calls) == 1
+
     async def test_gather_exception_propagates_for_retry(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
