@@ -461,7 +461,7 @@ async def _start_config_flow(
         ):
             prefix_len = len(user_input[CONF_EVENT_PREFIX])
             max_len = user_input.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH)
-            if prefix_len >= (max_len - MIN_NAME_LENGTH):
+            if prefix_len > (max_len - MIN_NAME_LENGTH):
                 errors["base"] = "prefix_too_long_for_trim"
 
         if not errors:
