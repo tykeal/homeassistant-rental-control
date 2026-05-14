@@ -115,6 +115,7 @@ class EventOverrides:
         self._retry_counts: dict[int, int] = {}
         self._slot_uids: dict[int, str | None] = {}
         self._start_slot: int = start_slot
+        self._trim_names: bool = False
 
     @property
     def max_slots(self) -> int:
@@ -140,6 +141,16 @@ class EventOverrides:
     def start_slot(self) -> int:
         """Return the start_slot."""
         return self._start_slot
+
+    @property
+    def trim_names(self) -> bool:
+        """Return whether name trimming is enabled."""
+        return self._trim_names
+
+    @trim_names.setter
+    def trim_names(self, value: bool) -> None:
+        """Set whether name trimming is enabled."""
+        self._trim_names = value
 
     def __assign_next_slot(self) -> None:
         """Assign the next slot."""
@@ -266,33 +277,36 @@ class EventOverrides:
                 continue
             return slot
 
-        # Phase 3: word-boundary prefix-match fallback for trimmed names
-        for slot in self.__get_slots_with_values():
-            if slot == exclude_slot:
-                continue
-            override = self._overrides[slot]
-            if override is None:
-                continue
-            stored = override["slot_name"]
-            if stored == slot_name:
-                continue  # already checked in Phase 2
-            if not (
-                _is_word_boundary_prefix(stored, slot_name)
-                or _is_word_boundary_prefix(slot_name, stored)
-            ):
-                continue
-            if not (
-                start_utc < _to_utc(override["end_time"])
-                and _to_utc(override["start_time"]) < end_utc
-            ):
-                continue
-            stored_uid = normalize_uid(self._slot_uids.get(slot))
-            if uid is not None and stored_uid is not None and uid != stored_uid:
-                continue
-            # Update stored name to the full untrimmed version
-            if len(slot_name) > len(stored):
-                override["slot_name"] = slot_name
-            return slot
+        # Phase 3: word-boundary prefix-match fallback for trimmed names.
+        # Only active when name trimming is enabled to avoid false
+        # matches between distinct names that share a common prefix.
+        if self._trim_names:
+            for slot in self.__get_slots_with_values():
+                if slot == exclude_slot:
+                    continue
+                override = self._overrides[slot]
+                if override is None:
+                    continue
+                stored = override["slot_name"]
+                if stored == slot_name:
+                    continue  # already checked in Phase 2
+                if not (
+                    _is_word_boundary_prefix(stored, slot_name)
+                    or _is_word_boundary_prefix(slot_name, stored)
+                ):
+                    continue
+                if not (
+                    start_utc < _to_utc(override["end_time"])
+                    and _to_utc(override["start_time"]) < end_utc
+                ):
+                    continue
+                stored_uid = normalize_uid(self._slot_uids.get(slot))
+                if uid is not None and stored_uid is not None and uid != stored_uid:
+                    continue
+                # Update stored name to the full untrimmed version
+                if len(slot_name) > len(stored):
+                    override["slot_name"] = slot_name
+                return slot
 
         return None
 
@@ -480,25 +494,32 @@ class EventOverrides:
                 continue
             return True
 
-        # Phase 3: word-boundary prefix-match fallback for trimmed names
-        for ev in events:
-            if ev.name == slot_name:
-                continue
-            if not (
-                _is_word_boundary_prefix(slot_name, ev.name)
-                or _is_word_boundary_prefix(ev.name, slot_name)
-            ):
-                continue
-            if not (
-                slot_start_utc < _to_utc(ev.end) and _to_utc(ev.start) < slot_end_utc
-            ):
-                continue
-            ev_uid = normalize_uid(ev.uid)
-            if stored_uid is not None and ev_uid is not None and stored_uid != ev_uid:
-                continue
-            if len(ev.name) > len(slot_name):
-                override["slot_name"] = ev.name
-            return True
+        # Phase 3: word-boundary prefix-match fallback for trimmed names.
+        # Only active when name trimming is enabled.
+        if self._trim_names:
+            for ev in events:
+                if ev.name == slot_name:
+                    continue
+                if not (
+                    _is_word_boundary_prefix(slot_name, ev.name)
+                    or _is_word_boundary_prefix(ev.name, slot_name)
+                ):
+                    continue
+                if not (
+                    slot_start_utc < _to_utc(ev.end)
+                    and _to_utc(ev.start) < slot_end_utc
+                ):
+                    continue
+                ev_uid = normalize_uid(ev.uid)
+                if (
+                    stored_uid is not None
+                    and ev_uid is not None
+                    and stored_uid != ev_uid
+                ):
+                    continue
+                if len(ev.name) > len(slot_name):
+                    override["slot_name"] = ev.name
+                return True
 
         return False
 
