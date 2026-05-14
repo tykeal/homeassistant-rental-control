@@ -1510,20 +1510,46 @@ async def test_config_flow_prefix_boundary_one_over(
 async def test_config_flow_max_name_length_min_validation(
     hass: HomeAssistant,
 ) -> None:
-    """Verify max_name_length schema rejects values below 4.
+    """Verify max_name_length schema rejects values below MIN_NAME_LENGTH.
 
-    Tests the voluptuous schema validation directly since HA config
-    flows may accept extra keys silently.
+    Exercises the production data_schema returned by the config flow
+    form rather than a hand-built schema copy.
     """
+    from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
     from custom_components.rental_control.const import MIN_NAME_LENGTH
 
-    schema = vol.All(vol.Coerce(int), vol.Range(min=MIN_NAME_LENGTH))
-    # Valid value should pass
-    assert schema(4) == 4
-    assert schema(16) == 16
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+    )
+    assert result["type"] == FlowResultType.FORM
+    schema = result["data_schema"]
 
-    # Values below minimum should raise
+    base_data = {
+        CONF_NAME: "Test",
+        CONF_URL: "https://example.com/cal.ics",
+        CONF_VERIFY_SSL: True,
+        CONF_IGNORE_NON_RESERVED: True,
+        CONF_LOCK_ENTRY: "(none)",
+        CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+        CONF_TIMEZONE: "UTC",
+        CONF_EVENT_PREFIX: "",
+        CONF_CHECKIN: DEFAULT_CHECKIN,
+        CONF_CHECKOUT: DEFAULT_CHECKOUT,
+        CONF_DAYS: DEFAULT_DAYS,
+        CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+        CONF_START_SLOT: DEFAULT_START_SLOT,
+        CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+        CONF_CODE_GENERATION: "Start/End Date",
+        CONF_SHOULD_UPDATE_CODE: True,
+    }
+
+    # Valid value must pass
+    valid = {**base_data, CONF_MAX_NAME_LENGTH: MIN_NAME_LENGTH}
+    parsed = schema(valid)
+    assert parsed[CONF_MAX_NAME_LENGTH] == MIN_NAME_LENGTH
+
+    # Value below minimum must raise
+    invalid = {**base_data, CONF_MAX_NAME_LENGTH: MIN_NAME_LENGTH - 1}
     with pytest.raises(vol.Invalid):
-        schema(2)
-    with pytest.raises(vol.Invalid):
-        schema(3)
+        schema(invalid)
