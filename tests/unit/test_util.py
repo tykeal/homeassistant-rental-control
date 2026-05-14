@@ -1884,6 +1884,7 @@ class TestSlugifiedLocknameEntityIds:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
         mock_coordinator.update_event_overrides = AsyncMock()

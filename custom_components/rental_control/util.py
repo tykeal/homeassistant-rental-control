@@ -305,7 +305,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     if coordinator.trim_names:
         slot_name = trim_name(slot_name, coordinator.max_name_length)
 
-    expected_name = slot_name.removeprefix(prefix)
+    expected_name = event.extra_state_attributes["slot_name"]
     if not coordinator.event_overrides.verify_slot_ownership(slot, expected_name):
         _LOGGER.warning(
             "Slot %d ownership verification failed for '%s'; aborting set_code",
@@ -724,6 +724,19 @@ async def handle_state_change(
         start_time,
         end_time,
     )
+    # When trim_names is enabled the name in Keymaster is the shortened
+    # display value.  Preserve the original untrimmed name already stored
+    # in the override so that ownership checks and slot lookups continue
+    # to use the full calendar name.
+    if coordinator.trim_names and slot_name_value:
+        existing = (
+            coordinator.event_overrides.overrides.get(slot_num)
+            if coordinator.event_overrides
+            else None
+        )
+        if existing and existing["slot_name"]:
+            slot_name_value = existing["slot_name"]
+
     await coordinator.update_event_overrides(
         slot_num,
         slot_code_value,
