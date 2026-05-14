@@ -740,7 +740,14 @@ async def handle_state_change(
             prefix = f"{coordinator.event_prefix} " if coordinator.event_prefix else ""
             guest_max = coordinator.max_name_length - len(prefix)
             expected_trimmed = trim_name(existing["slot_name"], guest_max)
-            if slot_name_value == expected_trimmed:
+            # Strip prefix before comparing since overrides store
+            # the guest-only portion.
+            incoming_guest = (
+                slot_name_value[len(prefix) :]
+                if prefix and slot_name_value.startswith(prefix)
+                else slot_name_value
+            )
+            if incoming_guest == expected_trimmed:
                 slot_name_value = existing["slot_name"]
 
     await coordinator.update_event_overrides(
