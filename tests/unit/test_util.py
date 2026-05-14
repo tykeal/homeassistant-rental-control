@@ -38,6 +38,7 @@ from custom_components.rental_control.util import get_event_names
 from custom_components.rental_control.util import get_slot_name
 from custom_components.rental_control.util import handle_state_change
 from custom_components.rental_control.util import normalize_uid
+from custom_components.rental_control.util import trim_name
 
 # ---------------------------------------------------------------------------
 # gen_uuid tests
@@ -1296,6 +1297,7 @@ class TestAsyncFireSetCode:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event()
@@ -1328,6 +1330,7 @@ class TestAsyncFireSetCode:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = "Rental"
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event(slot_name="Guest")
@@ -1347,6 +1350,7 @@ class TestAsyncFireSetCode:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event(slot_name="Guest")
@@ -1365,6 +1369,7 @@ class TestAsyncFireSetCode:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides.record_retry_failure.return_value = False
 
@@ -1476,6 +1481,7 @@ class TestPreExecutionVerification:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = False
 
@@ -1542,6 +1548,7 @@ class TestPreExecutionVerification:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
 
@@ -1573,6 +1580,7 @@ class TestRetryEscalation:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides._escalated = {10: True}
@@ -1601,6 +1609,7 @@ class TestRetryEscalation:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides._escalated = {}
@@ -1626,6 +1635,7 @@ class TestRetryEscalation:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides.record_retry_failure.return_value = True
         coordinator.event_overrides._escalated = {}
@@ -1659,6 +1669,7 @@ class TestRetryEscalation:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides.record_retry_failure.return_value = False
 
@@ -1767,6 +1778,7 @@ class TestSlugifiedLocknameEntityIds:
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
+        coordinator.trim_names = False
         coordinator.hass.services.async_call = AsyncMock()
 
         event = MagicMock()
@@ -1986,3 +1998,70 @@ class TestNormalizeUid:
     def test_strips_newlines(self) -> None:
         """Verify trailing newlines are stripped."""
         assert normalize_uid("abc123\n") == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# trim_name tests
+# ---------------------------------------------------------------------------
+
+
+class TestTrimName:
+    """Tests for the trim_name function."""
+
+    def test_short_name_returned_unchanged(self) -> None:
+        """Verify a name under the limit is returned as-is."""
+        assert trim_name("Rental Chris", 16) == "Rental Chris"
+
+    def test_exact_length_returned_unchanged(self) -> None:
+        """Verify a name exactly at the limit is returned as-is."""
+        assert trim_name("Hello World12345", 16) == "Hello World12345"
+
+    def test_word_boundary_trim(self) -> None:
+        """Verify trimming drops last word that would exceed limit."""
+        assert trim_name("Rental Christopher Montgomery", 16) == "Rental"
+
+    def test_word_boundary_trim_longer_limit(self) -> None:
+        """Verify trimming at a longer limit keeps more words."""
+        assert trim_name("Rental Christopher Montgomery", 28) == "Rental Christopher"
+
+    def test_single_word_exceeding_limit_hard_truncated(self) -> None:
+        """Verify a single long word is hard-truncated."""
+        assert trim_name("Superlongname", 8) == "Superlon"
+
+    def test_empty_string_returns_empty(self) -> None:
+        """Verify empty string returns empty string."""
+        assert trim_name("", 16) == ""
+
+    def test_short_string_under_limit(self) -> None:
+        """Verify a short string well under the limit passes through."""
+        assert trim_name("Hi", 16) == "Hi"
+
+    def test_first_word_longer_than_max(self) -> None:
+        """Verify first word longer than max is hard-truncated."""
+        assert trim_name("VacationHome Christopher", 12) == "VacationHome"
+
+    def test_whitespace_normalization(self) -> None:
+        """Verify leading, trailing, and multiple spaces are normalized."""
+        assert trim_name("  spaced  name  ", 16) == "spaced name"
+
+    def test_result_never_exceeds_max_length(self) -> None:
+        """Verify postcondition: result length is always <= max_length."""
+        names = [
+            "Rental Christopher Montgomery",
+            "Superlongname",
+            "A B C D E F G H I J K",
+            "  lots   of   spaces  ",
+        ]
+        for name in names:
+            for max_len in range(4, 30):
+                result = trim_name(name, max_len)
+                assert len(result) <= max_len
+
+    def test_result_has_no_trailing_whitespace(self) -> None:
+        """Verify postcondition: result has no trailing whitespace."""
+        result = trim_name("  spaced  name  extra  ", 16)
+        assert result == result.rstrip()
+
+    def test_multiple_words_only_first_fits(self) -> None:
+        """Verify only first word returned when others exceed limit."""
+        assert trim_name("Hello WorldExtra", 8) == "Hello"
