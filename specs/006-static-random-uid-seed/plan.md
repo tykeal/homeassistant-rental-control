@@ -1,7 +1,7 @@
 # Implementation Plan: Static Random Seed from iCal UID
 
-**Branch**: `001-static-random-uid-seed` | **Date**: 2026-04-24 | **Spec**: [spec.md](./spec.md)
-**Input**: Feature specification from `/specs/001-static-random-uid-seed/spec.md`
+**Branch**: `006-static-random-uid-seed` | **Date**: 2026-04-24 | **Spec**: [spec.md](./spec.md)
+**Input**: Feature specification from `/specs/006-static-random-uid-seed/spec.md`
 
 ## Summary
 
@@ -42,7 +42,7 @@ This is a **BREAKING CHANGE** — existing `static_random` users will experience
 ### Documentation (this feature)
 
 ```text
-specs/001-static-random-uid-seed/
+specs/006-static-random-uid-seed/
 ├── plan.md              # This file
 ├── research.md          # Phase 0 output
 ├── data-model.md        # Phase 1 output

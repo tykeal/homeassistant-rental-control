@@ -1,6 +1,6 @@
 # Research: Static Random Seed from iCal UID
 
-**Feature**: 001-static-random-uid-seed
+**Feature**: 006-static-random-uid-seed
 **Date**: 2026-04-24
 **Status**: Complete — all unknowns resolved
 
