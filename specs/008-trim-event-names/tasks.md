@@ -68,7 +68,7 @@ to reflect the merged implementation.
   **Contract** (from `contracts/internal-api.md`): `trim_name()` is called with the guest/slot portion only and a remaining budget (`max_name_length - len(prefix_with_separator)`). Examples:
   | Input (guest, budget) | Output | Combined result with prefix `"Rental "` |
   |-------|--------|------|
-  | `("Christopher Montgomery", 9)` | `"Christophe"` | `"Rental Christophe"` (16) |
+  | `("Christopher Montgomery", 9)` | `"Christoph"` | `"Rental Christoph"` (16) |
   | `("Chris", 9)` | `"Chris"` | `"Rental Chris"` (12) |
   | `("Christopher Montgomery", 21)` | `"Christopher"` | `"Rental Christopher"` (18) |
   | `("Superlongname", 8)` | `"Superlon"` | first-word hard-truncate |

@@ -22,7 +22,7 @@ A property manager uses a lock whose provider only supports slot names of 16 cha
 
 **Acceptance Scenarios**:
 
-1. **Given** trimming is enabled with a max length of 16 and an event prefix of "Rental" (7 chars including the appended space), **When** a calendar event has a guest name of "Christopher Montgomery" (so the raw combined name would be "Rental Christopher Montgomery", 29 chars), **Then** the prefix is preserved and the guest portion is word-boundary trimmed against the remaining 9-character budget, producing `"Rental Christophe"` (the first guest word is hard-truncated to exactly 9 characters because it alone exceeds the remaining budget).
+1. **Given** trimming is enabled with a max length of 16 and an event prefix of "Rental" (7 chars including the appended space), **When** a calendar event has a guest name of "Christopher Montgomery" (so the raw combined name would be "Rental Christopher Montgomery", 29 chars), **Then** the prefix is preserved and the guest portion is word-boundary trimmed against the remaining 9-character budget, producing `"Rental Christoph"` (the first guest word is hard-truncated to exactly 9 characters because it alone exceeds the remaining budget).
 2. **Given** trimming is enabled with a max length of 16, **When** a combined name is already 16 characters or fewer, **Then** the name is sent unchanged (aside from internal whitespace normalization on the guest portion).
 3. **Given** trimming is disabled (default), **When** any calendar event is synced, **Then** the full combined name is sent to Keymaster with no modification.
 
