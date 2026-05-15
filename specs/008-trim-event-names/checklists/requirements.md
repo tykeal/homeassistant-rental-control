@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Specification Quality Checklist: Trim Event Names for Keymaster
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning

@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Prerequisites
 
-- Python 3.12+
+- Python ≥3.14.2
 - uv package manager
 - Home Assistant development environment (or `pytest-homeassistant-custom-component`)
 

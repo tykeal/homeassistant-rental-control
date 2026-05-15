@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Feature Specification: Trim Event Names for Keymaster
 
 **Feature Branch**: `008-trim-event-names`

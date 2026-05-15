@@ -8,7 +8,9 @@ SPDX-License-Identifier: Apache-2.0
 **Input**: Design documents from `/specs/008-trim-event-names/`
 **Prerequisites**: plan.md ✅, spec.md ✅, research.md ✅, data-model.md ✅, contracts/ ✅, quickstart.md ✅
 
-**Tests**: Not explicitly requested in the feature specification. Test tasks are **excluded**.
+**Tests**: Unit and integration tests are required for `trim_name()`,
+config validation, and any migration logic; see quickstart.md for the
+testing strategy.
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 

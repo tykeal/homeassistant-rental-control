@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Implementation Plan: Trim Event Names
 
 **Branch**: `008-trim-event-names` | **Date**: 2025-07-14 | **Spec**: [spec.md](./spec.md)
@@ -9,7 +14,7 @@ Add a configurable option to trim combined slot names (prefix + guest name) to a
 
 ## Technical Context
 
-**Language/Version**: Python 3.12+ (Home Assistant integration)
+**Language/Version**: Python ≥3.14.2 (Home Assistant integration)
 **Primary Dependencies**: homeassistant core, voluptuous, icalendar, aiohttp
 **Storage**: Home Assistant config entries (JSON-backed via `.storage/`)
 **Testing**: pytest via `uv run pytest tests/`
