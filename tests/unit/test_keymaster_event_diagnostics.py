@@ -231,30 +231,33 @@ class TestDiagnosticsBuffer:
     ) -> None:
         """Twelve events leave exactly the last 10 in the buffer."""
         _setup_entry(hass, mock_checkin_coordinator, mock_checkin_config_entry)
+        # Widen the managed slot range so each event maps to a unique
+        # code_slot_num, allowing unambiguous assertions about which
+        # entries were evicted vs retained.
+        mock_checkin_coordinator.max_events = 12
         _set_diag(mock_checkin_config_entry, hass, True)
         async_register_keymaster_listener(hass, mock_checkin_config_entry)
 
         for i in range(12):
             # Use the monitored lockname so each event takes the
-            # accepted path and is recorded; vary code_slot_num within
-            # the configured range (start_slot=10, max_events=3) so we
-            # can identify the dropped ones.
+            # accepted path and is recorded. Vary code_slot_num
+            # uniquely across all 12 events (slots 10..21) so the
+            # ordering of retained entries can be verified exactly.
             hass.bus.async_fire(
                 "keymaster_lock_state_changed",
                 {
                     "lockname": "front_door",
                     "state": "unlocked",
-                    "code_slot_num": 10 + (i % 3),
+                    "code_slot_num": 10 + i,
                 },
             )
         await hass.async_block_till_done()
 
         buf = list(mock_checkin_coordinator.keymaster_event_diagnostics)
         assert len(buf) == 10
-        # The first two events (i=0,1) were evicted; i=2 is the oldest
-        # remaining and i=11 is the newest.
-        assert buf[0]["code_slot_num"] == 10 + (2 % 3)
-        assert buf[-1]["code_slot_num"] == 10 + (11 % 3)
+        # The first two events (slots 10 and 11) were evicted; slot 12
+        # is the oldest remaining and slot 21 is the newest.
+        assert [e["code_slot_num"] for e in buf] == list(range(12, 22))
 
     async def test_unmonitored_events_not_recorded(
         self,
@@ -380,9 +383,11 @@ class TestDiagnosticsBuffer:
     ) -> None:
         """Non-string lockname values do not crash; events are dropped.
 
-        Non-string locknames slugify to the empty string, which is not
-        in ``monitored_locknames``. After the unmonitored-event drop
-        fix (#529) these events are silently discarded rather than
+        Non-string locknames are treated as an empty slug (the
+        listener avoids calling ``slugify()`` on non-strings and sets
+        ``event_lockname`` to ``""`` directly), which is not in
+        ``monitored_locknames``. After the unmonitored-event drop fix
+        (#529) these events are silently discarded rather than
         recorded as ``rejected_not_monitored``.
         """
         _setup_entry(hass, mock_checkin_coordinator, mock_checkin_config_entry)
