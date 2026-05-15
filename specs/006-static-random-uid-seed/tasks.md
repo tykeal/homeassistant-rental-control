@@ -1,6 +1,6 @@
 # Tasks: Static Random Seed from iCal UID
 
-**Input**: Design documents from `/specs/001-static-random-uid-seed/`
+**Input**: Design documents from `/specs/006-static-random-uid-seed/`
 **Prerequisites**: plan.md ✅, spec.md ✅, research.md ✅, data-model.md ✅, quickstart.md ✅
 
 **Tests**: Included — plan.md requires "All changes will have unit tests; coverage target ≥85% maintained" and quickstart.md defines explicit test matrix.

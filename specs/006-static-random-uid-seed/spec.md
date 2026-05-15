@@ -1,6 +1,6 @@
 # Feature Specification: Static Random Seed from iCal UID
 
-**Feature Branch**: `001-static-random-uid-seed`
+**Feature Branch**: `006-static-random-uid-seed`
 **Created**: 2026-04-24
 **Status**: Draft
 **Input**: User description: "Switch the static_random code generator seed from the event description to the iCal UID"
