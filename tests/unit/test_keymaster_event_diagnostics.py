@@ -127,14 +127,6 @@ class TestDiagnosticsBuffer:
         [
             (
                 {
-                    "lockname": "back_door",
-                    "state": "unlocked",
-                    "code_slot_num": 11,
-                },
-                "rejected_not_monitored",
-            ),
-            (
-                {
                     "lockname": "front_door",
                     "state": "locked",
                     "code_slot_num": 11,
@@ -239,22 +231,81 @@ class TestDiagnosticsBuffer:
     ) -> None:
         """Twelve events leave exactly the last 10 in the buffer."""
         _setup_entry(hass, mock_checkin_coordinator, mock_checkin_config_entry)
+        # Widen the managed slot range so each event maps to a unique
+        # code_slot_num, allowing unambiguous assertions about which
+        # entries were evicted vs retained.
+        mock_checkin_coordinator.max_events = 12
         _set_diag(mock_checkin_config_entry, hass, True)
         async_register_keymaster_listener(hass, mock_checkin_config_entry)
 
         for i in range(12):
-            # Vary lockname so we can identify the dropped ones; all
-            # take the rejected_not_monitored path.
+            # Use the monitored lockname so each event takes the
+            # accepted path and is recorded. Vary code_slot_num
+            # uniquely across all 12 events (slots 10..21) so the
+            # ordering of retained entries can be verified exactly.
             hass.bus.async_fire(
                 "keymaster_lock_state_changed",
-                {"lockname": f"other_{i}", "state": "unlocked", "code_slot_num": 11},
+                {
+                    "lockname": "front_door",
+                    "state": "unlocked",
+                    "code_slot_num": 10 + i,
+                },
             )
         await hass.async_block_till_done()
 
         buf = list(mock_checkin_coordinator.keymaster_event_diagnostics)
         assert len(buf) == 10
-        assert buf[0]["lockname"] == "other_2"
-        assert buf[-1]["lockname"] == "other_11"
+        # The first two events (slots 10 and 11) were evicted; slot 12
+        # is the oldest remaining and slot 21 is the newest.
+        assert [e["code_slot_num"] for e in buf] == list(range(12, 22))
+
+    async def test_unmonitored_events_not_recorded(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Unmonitored-lock events must not consume buffer slots.
+
+        Regression test for #529: in deployments with many RC
+        integrations, every integration's listener sees events from
+        every Keymaster lock. Previously these were recorded with
+        disposition ``rejected_not_monitored`` and flooded the 10-entry
+        buffer, evicting useful signal from monitored locks. Now they
+        are dropped without recording.
+        """
+        _setup_entry(hass, mock_checkin_coordinator, mock_checkin_config_entry)
+        _set_diag(mock_checkin_config_entry, hass, True)
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        # 12 events from unmonitored locks — must NOT be recorded.
+        for i in range(12):
+            hass.bus.async_fire(
+                "keymaster_lock_state_changed",
+                {
+                    "lockname": f"other_{i}",
+                    "state": "unlocked",
+                    "code_slot_num": 11,
+                },
+            )
+        await hass.async_block_till_done()
+        assert len(mock_checkin_coordinator.keymaster_event_diagnostics) == 0
+
+        # One event for the monitored lock — must be recorded.
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "front_door",
+                "state": "unlocked",
+                "code_slot_num": 11,
+            },
+        )
+        await hass.async_block_till_done()
+
+        buf = list(mock_checkin_coordinator.keymaster_event_diagnostics)
+        assert len(buf) == 1
+        assert buf[0]["lockname"] == "front_door"
+        assert buf[0]["disposition"] == "accepted"
 
     async def test_toggle_takes_effect_immediately(
         self,
@@ -302,10 +353,13 @@ class TestDiagnosticsBuffer:
         _set_diag(mock_checkin_config_entry, hass, True)
         async_register_keymaster_listener(hass, mock_checkin_config_entry)
 
-        # An event taking a rejected path must still write state
+        # An event taking a recorded rejected path must still write
+        # state. Use state=locked (rejected_state) on the monitored
+        # lockname so the event is recorded rather than silently
+        # dropped as unmonitored.
         hass.bus.async_fire(
             "keymaster_lock_state_changed",
-            {"lockname": "back_door", "state": "unlocked", "code_slot_num": 11},
+            {"lockname": "front_door", "state": "locked", "code_slot_num": 11},
         )
         await hass.async_block_till_done()
         sensor.async_write_ha_state.assert_called()
@@ -327,7 +381,15 @@ class TestDiagnosticsBuffer:
         mock_checkin_config_entry: MockConfigEntry,
         bad_lockname: object,
     ) -> None:
-        """Non-string lockname values do not crash and are coerced."""
+        """Non-string lockname values do not crash; events are dropped.
+
+        Non-string locknames are treated as an empty slug (the
+        listener avoids calling ``slugify()`` on non-strings and sets
+        ``event_lockname`` to ``""`` directly), which is not in
+        ``monitored_locknames``. After the unmonitored-event drop fix
+        (#529) these events are silently discarded rather than
+        recorded as ``rejected_not_monitored``.
+        """
         _setup_entry(hass, mock_checkin_coordinator, mock_checkin_config_entry)
         _set_diag(mock_checkin_config_entry, hass, True)
         async_register_keymaster_listener(hass, mock_checkin_config_entry)
@@ -342,11 +404,9 @@ class TestDiagnosticsBuffer:
         )
         await hass.async_block_till_done()
 
-        buf = list(mock_checkin_coordinator.keymaster_event_diagnostics)
-        assert len(buf) == 1
-        assert buf[0]["lockname"] == str(bad_lockname)
-        assert buf[0]["lockname_slug"] == ""
-        assert buf[0]["disposition"] == "rejected_not_monitored"
+        # No crash; nothing recorded because the empty slug is not in
+        # monitored_locknames.
+        assert len(mock_checkin_coordinator.keymaster_event_diagnostics) == 0
 
 
 class TestDiagnosticsAttribute:

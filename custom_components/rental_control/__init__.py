@@ -389,6 +389,20 @@ def async_register_keymaster_listener(
             if raw_lockname and isinstance(raw_lockname, str)
             else ""
         )
+
+        # Drop unmonitored-lock events as early as possible: in
+        # deployments with many RC integrations, every integration
+        # sees every event on the HA bus, and the unmonitored case
+        # is by far the hottest path. Recording these events with
+        # disposition "rejected_not_monitored" would flood the
+        # 10-entry diagnostics ring buffer with noise from other
+        # integrations' locks. The "rejected_not_monitored"
+        # disposition string is retained as a reserved value for
+        # schema stability with downstream consumers but is no
+        # longer emitted.
+        if event_lockname not in coordinator.monitored_locknames:
+            return
+
         code_slot_num = event_data.get("code_slot_num")
 
         diagnostics_enabled = config_entry.data.get(
@@ -421,12 +435,6 @@ def async_register_keymaster_listener(
             )
             if sensor is not None and sensor.hass is not None:
                 sensor.async_write_ha_state()
-
-        monitored = coordinator.monitored_locknames
-        if event_lockname not in monitored:
-            if diagnostics_enabled:
-                _record("rejected_not_monitored")
-            return
 
         # Validate state is unlocked
         if event_data.get("state") != "unlocked":
