@@ -40,7 +40,7 @@ uv run ruff check custom_components/ tests/
 
 ## Code Style
 
-Python ≥3.13.2: Follow standard conventions, ruff formatting
+Python ≥3.14.2: Follow standard conventions, ruff formatting
 
 ## Recent Changes
 - 008-trim-event-names: Added Python ≥3.14.2 + homeassistant core, voluptuous, icalendar, aiohttp
