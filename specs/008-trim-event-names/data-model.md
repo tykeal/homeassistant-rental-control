@@ -1,0 +1,86 @@
+<!--
+SPDX-FileCopyrightText: 2025 Andrew Grimberg <tykeal@bardicgrove.org>
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Data Model: Trim Event Names
+
+## Configuration Entities
+
+### Existing Entity: Config Entry Data (`config_entry.data`)
+
+The Rental Control config entry is a flat dictionary stored by Home Assistant's config entry system. This feature adds two new keys.
+
+### New Fields
+
+| Field | Key Constant | Type | Default | Validation | Description |
+|-------|-------------|------|---------|------------|-------------|
+| Trim Names | `CONF_TRIM_NAMES` = `"trim_names"` | `bool` | `False` | `cv.boolean` | When enabled, preserves the prefix verbatim and word-boundary trims only the guest/slot portion before the combined name is sent to Keymaster |
+| Max Name Length | `CONF_MAX_NAME_LENGTH` = `"max_name_length"` | `int` | `16` | `vol.All(vol.Coerce(int), vol.Range(min=4))` | Maximum total character length for the combined slot name (prefix + appended space + trimmed guest portion) when trimming is enabled |
+
+### Relationships
+
+```
+Config Entry Data (flat dict)
+├── ... (existing fields: name, url, event_prefix, etc.)
+├── trim_names: bool          ← NEW (FR-001)
+└── max_name_length: int      ← NEW (FR-002)
+
+RentalControlCoordinator (runtime)
+├── ... (existing attrs: event_prefix, lockname, etc.)
+├── trim_names: bool          ← mirrors config (FR-001)
+└── max_name_length: int      ← mirrors config (FR-002)
+```
+
+### Validation Rules
+
+1. `trim_names` must be a valid boolean (enforced by `cv.boolean` in voluptuous schema)
+2. `max_name_length` must be an integer ≥ 4 (enforced by `vol.Range(min=4)`)
+3. **Cross-field warning** (FR-007): When `trim_names` is `True` and `len(event_prefix) + 1 > (max_name_length - MIN_NAME_LENGTH)` (the `+ 1` accounts for the appended space separator and `MIN_NAME_LENGTH` is `4`), set `errors["base"] = "prefix_too_long_for_trim"` so the form re-renders with the warning
+4. `max_name_length` is stored regardless of `trim_names` value (simplifies migration and UI)
+
+### State Transitions
+
+No state machine — these are static configuration values. Changes take effect on the next `async_fire_set_code()` call (i.e., next calendar refresh cycle that sets lock codes).
+
+### Config Version Migration
+
+| Version | Change |
+|---------|--------|
+| 8 → 9 | Add `trim_names: False` and `max_name_length: 16` to all existing entries |
+
+## Runtime Data Flow
+
+```
+Calendar Event
+    │
+    ▼
+async_fire_set_code(coordinator, event, slot)
+    │
+    ├── prefix = coordinator.event_prefix + " " (or "")
+    ├── guest = event.slot_name
+    ├── slot_name = prefix + guest
+    │
+    ├── IF coordinator.trim_names:
+    │   ├── guest_max = coordinator.max_name_length - len(prefix)
+    │   └── slot_name = prefix + trim_name(guest, guest_max)
+    │
+    └── Send slot_name to Keymaster via entity calls
+```
+
+## Pure Function: `trim_name(name: str, max_length: int) -> str`
+
+`trim_name()` operates on the guest/slot portion only. The prefix is
+preserved verbatim by `async_fire_set_code()`; `max_length` here is
+the remaining budget after subtracting the prefix length.
+
+**Input**: Guest/slot portion string, remaining-budget maximum length
+**Output**: Trimmed string ≤ max_length characters, no trailing whitespace
+
+**Algorithm**:
+1. Normalize whitespace: `name = " ".join(name.split())` (collapse internal whitespace runs and strip edges)
+2. If `len(name) <= max_length`: return the normalized `name`
+3. Split the normalized `name` on whitespace into words
+4. If first word length > `max_length`: return `first_word[:max_length]`
+5. Accumulate words left-to-right: add word if `current_length + 1 (separator) + word_length <= max_length`
+6. Return the space-joined accumulated words (no trailing whitespace by construction)
