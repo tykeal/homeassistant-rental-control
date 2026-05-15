@@ -22,6 +22,9 @@ from custom_components.rental_control.const import CONF_CHECKOUT
 from custom_components.rental_control.const import CONF_CODE_GENERATION
 from custom_components.rental_control.const import CONF_CODE_LENGTH
 from custom_components.rental_control.const import CONF_DAYS
+from custom_components.rental_control.const import (
+    CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
+)
 from custom_components.rental_control.const import CONF_EVENT_PREFIX
 from custom_components.rental_control.const import CONF_HONOR_EVENT_TIMES
 from custom_components.rental_control.const import CONF_IGNORE_NON_RESERVED
@@ -1149,6 +1152,112 @@ async def test_honor_event_times_toggle_persists(hass: HomeAssistant) -> None:
     assert result["type"] == FlowResultType.CREATE_ENTRY
     updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated_entry.data[CONF_HONOR_EVENT_TIMES] is True
+
+
+async def test_keymaster_event_diagnostics_options_only(hass: HomeAssistant) -> None:
+    """Test diagnostics option appears only in options flow.
+
+    Verifies that:
+    - The option is NOT present in the initial config flow schema
+    - The option IS present in the options flow schema with default
+      value False
+    - Submitting the options flow with the option enabled persists it
+      on the config entry
+    """
+    with aioresponses() as mock_aiohttp:
+        test_url = "https://example.com/calendar.ics"
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+            repeat=True,
+        )
+
+        # Initial config flow schema must NOT include the option
+        init_result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+        )
+        init_schema_keys = {
+            str(key.schema) for key in init_result["data_schema"].schema.keys()
+        }
+        assert CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS not in init_schema_keys
+
+        config_result = await hass.config_entries.flow.async_configure(
+            init_result["flow_id"],
+            user_input={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+                CONF_HONOR_EVENT_TIMES: DEFAULT_HONOR_EVENT_TIMES,
+            },
+        )
+        await hass.async_block_till_done()
+
+    assert config_result["type"] == FlowResultType.CREATE_ENTRY
+    entry = config_result["result"]
+    # Default value (option absent from initial flow) must be False
+    assert entry.data.get(CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS, False) is False
+
+    with aioresponses() as mock_aiohttp:
+        mock_aiohttp.get(
+            test_url,
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+            repeat=True,
+        )
+
+        opts_result = await hass.config_entries.options.async_init(entry.entry_id)
+        opts_schema_keys = {
+            str(key.schema): key for key in opts_result["data_schema"].schema.keys()
+        }
+        assert CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS in opts_schema_keys
+        # Default in options flow is False
+        default_marker = opts_schema_keys[CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS]
+        assert default_marker.default() is False
+
+        result = await hass.config_entries.options.async_configure(
+            opts_result["flow_id"],
+            user_input={
+                CONF_NAME: "Test Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "(none)",
+                CONF_REFRESH_FREQUENCY: DEFAULT_REFRESH_FREQUENCY,
+                CONF_TIMEZONE: "UTC",
+                CONF_EVENT_PREFIX: "",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: DEFAULT_MAX_EVENTS,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+                CONF_HONOR_EVENT_TIMES: DEFAULT_HONOR_EVENT_TIMES,
+                CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS: True,
+            },
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated_entry.data[CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS] is True
 
 
 @pytest.mark.parametrize(
