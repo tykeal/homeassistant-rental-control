@@ -12,6 +12,10 @@ SPDX-License-Identifier: Apache-2.0
 config validation, and any migration logic; see quickstart.md for the
 testing strategy.
 
+**Status**: This is a **retroactive** task list — the feature has
+already shipped in PR #524. All task checkboxes are marked complete
+to reflect the merged implementation.
+
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
 ## Format: `[ID] [P?] [Story] Description`
@@ -31,7 +35,7 @@ testing strategy.
 
 **Purpose**: Add new configuration constants and defaults that all subsequent phases depend on
 
-- [ ] T001 Add `CONF_TRIM_NAMES`, `CONF_MAX_NAME_LENGTH`, `DEFAULT_TRIM_NAMES`, `DEFAULT_MAX_NAME_LENGTH`, and `MIN_NAME_LENGTH` constants to `custom_components/rental_control/const.py`
+- [x] T001 Add `CONF_TRIM_NAMES`, `CONF_MAX_NAME_LENGTH`, `DEFAULT_TRIM_NAMES`, `DEFAULT_MAX_NAME_LENGTH`, and `MIN_NAME_LENGTH` constants to `custom_components/rental_control/const.py`
 
   **Details**: Add after the existing `DEFAULT_START_SLOT` line (~line 99):
   ```python
@@ -51,14 +55,15 @@ testing strategy.
 
 **⚠️ CRITICAL**: The trim function must exist before any integration work can proceed
 
-- [ ] T002 Implement `trim_name(name: str, max_length: int) -> str` pure function in `custom_components/rental_control/util.py`
+- [x] T002 Implement `trim_name(name: str, max_length: int) -> str` pure function in `custom_components/rental_control/util.py`
 
   **Details**: Add the function (before `async_fire_set_code`). Algorithm per research.md R-001:
-  1. If `len(name) <= max_length`: return `name` unchanged
-  2. Split `name` on whitespace into words
-  3. If first word length > `max_length`: return `first_word[:max_length]` (hard-truncate)
-  4. Accumulate words left-to-right: add word if `current_length + 1 (separator) + word_length <= max_length`
-  5. Return joined accumulated words (no trailing whitespace by construction)
+  1. Normalize whitespace first: `name = " ".join(name.split())` (collapses internal runs and strips edges)
+  2. If `len(name) <= max_length`: return the normalized `name`
+  3. Split the normalized `name` on whitespace into words
+  4. If first word length > `max_length`: return `first_word[:max_length]` (hard-truncate)
+  5. Accumulate words left-to-right: add word if `current_length + 1 (separator) + word_length <= max_length`
+  6. Return the space-joined accumulated words (no trailing whitespace by construction)
 
   **Contract** (from `contracts/internal-api.md`):
   | Input | Output |
@@ -88,7 +93,7 @@ testing strategy.
 
 ### Implementation for User Story 1
 
-- [ ] T003 [P] [US1] Add `trim_names` and `max_name_length` attributes to `RentalControlCoordinator.__init__()` in `custom_components/rental_control/coordinator.py`
+- [x] T003 [P] [US1] Add `trim_names` and `max_name_length` attributes to `RentalControlCoordinator.__init__()` in `custom_components/rental_control/coordinator.py`
 
   **Details**: Add after the existing `self.honor_event_times` line (~line 121):
   ```python
@@ -99,7 +104,7 @@ testing strategy.
   ```
   Import `CONF_TRIM_NAMES`, `CONF_MAX_NAME_LENGTH`, `DEFAULT_TRIM_NAMES`, `DEFAULT_MAX_NAME_LENGTH` from `const.py`. Follow the exact `int(str(config.get(...)))` pattern used by existing attributes like `self.start_slot`.
 
-- [ ] T004 [P] [US1] Add `trim_names` and `max_name_length` to `RentalControlCoordinator.update_config()` in `custom_components/rental_control/coordinator.py`
+- [x] T004 [P] [US1] Add `trim_names` and `max_name_length` to `RentalControlCoordinator.update_config()` in `custom_components/rental_control/coordinator.py`
 
   **Details**: Add after the existing `self.honor_event_times` update in `update_config()` (~line 508+):
   ```python
@@ -110,7 +115,7 @@ testing strategy.
   ```
   This ensures config changes via the options flow take effect at runtime.
 
-- [ ] T005 [US1] Integrate `trim_name()` call into `async_fire_set_code()` in `custom_components/rental_control/util.py`
+- [x] T005 [US1] Integrate `trim_name()` call into `async_fire_set_code()` in `custom_components/rental_control/util.py`
 
   **Details**: After line ~260 where `slot_name` is constructed (`slot_name = f"{prefix}{event.extra_state_attributes['slot_name']}"`), add:
   ```python
@@ -131,7 +136,7 @@ testing strategy.
 
 ### Implementation for User Story 2
 
-- [ ] T006 [US2] Add `trim_names` and `max_name_length` fields to `_get_schema()` in `custom_components/rental_control/config_flow.py`
+- [x] T006 [US2] Add `trim_names` and `max_name_length` fields to `_get_schema()` in `custom_components/rental_control/config_flow.py`
 
   **Details**: Add to the schema dict in `_get_schema()` following the existing field pattern (after the last `vol.Optional` entry):
   ```python
@@ -146,11 +151,11 @@ testing strategy.
   ```
   Import `CONF_TRIM_NAMES`, `CONF_MAX_NAME_LENGTH`, `DEFAULT_TRIM_NAMES`, `DEFAULT_MAX_NAME_LENGTH`, `MIN_NAME_LENGTH` from `const`. Both fields always visible per research.md R-002 (HA doesn't support conditional field visibility in single-step flows). The `max_name_length` field uses `vol.Range(min=MIN_NAME_LENGTH)` to enforce the minimum of 4 (FR-009).
 
-- [ ] T007 [US2] Bump config flow `VERSION` to `9` in `custom_components/rental_control/config_flow.py`
+- [x] T007 [US2] Bump config flow `VERSION` to `9` in `custom_components/rental_control/config_flow.py`
 
   **Details**: In the `RentalControlFlowHandler` class, update `VERSION = 8` to `VERSION = 9`. This aligns the config flow version with the new migration target.
 
-- [ ] T008 [P] [US2] Add UI labels for new fields in `custom_components/rental_control/strings.json`
+- [x] T008 [P] [US2] Add UI labels for new fields in `custom_components/rental_control/strings.json`
 
   **Details**: Add to both `config.step.user.data` and `options.step.init.data` sections:
   ```json
@@ -159,7 +164,7 @@ testing strategy.
   ```
   Follow the existing key naming pattern (matches `CONF_TRIM_NAMES` and `CONF_MAX_NAME_LENGTH` config keys).
 
-- [ ] T009 [P] [US2] Add English translations for new fields in `custom_components/rental_control/translations/en.json`
+- [x] T009 [P] [US2] Add English translations for new fields in `custom_components/rental_control/translations/en.json`
 
   **Details**: Mirror the same additions as `strings.json` — add `trim_names` and `max_name_length` labels to both `config.step.user.data` and `options.step.init.data` sections:
   ```json
@@ -167,7 +172,7 @@ testing strategy.
   "max_name_length": "Maximum slot name length"
   ```
 
-- [ ] T010 [US2] Add config migration v8→v9 in `custom_components/rental_control/__init__.py`
+- [x] T010 [US2] Add config migration v8→v9 in `custom_components/rental_control/__init__.py`
 
   **Details**: Add after the existing `if version == 7:` block (~line 252), following the exact same pattern:
   ```python
@@ -200,7 +205,7 @@ testing strategy.
 
 ### Implementation for User Story 3
 
-- [ ] T011 [US3] Verify options flow includes trim fields via shared `_get_schema()` in `custom_components/rental_control/config_flow.py`
+- [x] T011 [US3] Verify options flow includes trim fields via shared `_get_schema()` in `custom_components/rental_control/config_flow.py`
 
   **Details**: The options flow already uses the same `_get_schema()` function as the initial config flow. Since T006 added the trim fields to `_get_schema()`, the options flow automatically includes them. Verify that:
   1. The `RentalControlOptionsFlowHandler.async_step_init()` calls `_start_config_flow()` which uses `_get_schema()` — confirm the new fields appear
@@ -221,7 +226,7 @@ testing strategy.
 
 ### Implementation for User Story 4
 
-- [ ] T012 [US4] Add prefix-length validation warning in `_start_config_flow()` in `custom_components/rental_control/config_flow.py`
+- [x] T012 [US4] Add prefix-length validation warning in `_start_config_flow()` in `custom_components/rental_control/config_flow.py`
 
   **Details**: After existing validations and before the `if not errors:` block, add per research.md R-004 (final decision):
   ```python
@@ -230,25 +235,27 @@ testing strategy.
       user_input.get(CONF_TRIM_NAMES, False)
       and user_input.get(CONF_EVENT_PREFIX, "")
   ):
-      prefix_len = len(user_input[CONF_EVENT_PREFIX])
+      # +1 accounts for the space separator the integration appends
+      # between the configured prefix and the parsed slot name.
+      prefix_len = len(user_input[CONF_EVENT_PREFIX]) + 1
       max_len = user_input.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH)
-      if prefix_len >= (max_len - 4):
+      if prefix_len > (max_len - MIN_NAME_LENGTH):
           errors["base"] = "prefix_too_long_for_trim"
   ```
-  This uses `errors["base"]` which displays as a form-level message per HA convention. The user sees the warning, can adjust prefix/max_length, and resubmit. The threshold is `prefix_len >= (max_name_length - 4)` per FR-007.
+  This uses `errors["base"]` which displays as a form-level message per HA convention. The user sees the warning, can adjust prefix/max_length, and resubmit. The threshold uses strict `>` against `(max_len - MIN_NAME_LENGTH)` so a prefix that exactly leaves room for `MIN_NAME_LENGTH` (4) characters of guest name is still accepted.
 
-- [ ] T013 [P] [US4] Add `prefix_too_long_for_trim` error string to `custom_components/rental_control/strings.json`
+- [x] T013 [P] [US4] Add `prefix_too_long_for_trim` error string to `custom_components/rental_control/strings.json`
 
   **Details**: Add to both `config.error` and `options.error` sections:
   ```json
-  "prefix_too_long_for_trim": "Event prefix is too long relative to the max name length — guest names will be truncated severely or hidden entirely"
+  "prefix_too_long_for_trim": "Event prefix too long for max name length"
   ```
 
-- [ ] T014 [P] [US4] Add `prefix_too_long_for_trim` error translation to `custom_components/rental_control/translations/en.json`
+- [x] T014 [P] [US4] Add `prefix_too_long_for_trim` error translation to `custom_components/rental_control/translations/en.json`
 
   **Details**: Mirror the same addition as `strings.json` — add the error key to both `config.error` and `options.error` sections:
   ```json
-  "prefix_too_long_for_trim": "Event prefix is too long relative to the max name length — guest names will be truncated severely or hidden entirely"
+  "prefix_too_long_for_trim": "Event prefix too long for max name length"
   ```
 
 **Checkpoint**: All user stories are now complete. The full feature lifecycle works: configure → migrate → trim at runtime → warn on misconfiguration.
@@ -259,9 +266,9 @@ testing strategy.
 
 **Purpose**: Final validation and cleanup across all modified files
 
-- [ ] T015 Run `uv run pytest tests/ -v` to verify all existing tests still pass with the new code
-- [ ] T016 Run `pre-commit run --all-files` to verify ruff, mypy, interrogate (100% docstrings), gitlint, and reuse (SPDX headers) compliance across all modified files
-- [ ] T017 Run quickstart.md validation — execute the development setup steps and verify the implementation order matches actual code
+- [x] T015 Run `uv run pytest tests/ -v` to verify all existing tests still pass with the new code
+- [x] T016 Run `pre-commit run --all-files` to verify ruff, mypy, interrogate (100% docstrings), gitlint, and reuse (SPDX headers) compliance across all modified files
+- [x] T017 Run quickstart.md validation — execute the development setup steps and verify the implementation order matches actual code
 
 ---
 

@@ -94,7 +94,7 @@ A property manager has a long event prefix (e.g., "VacationHome ") and enables t
 - **FR-004**: When trimming is enabled and a single word exceeds the max length, the system MUST hard-truncate that word to the max length.
 - **FR-005**: When trimming is disabled, the system MUST send the full combined name to Keymaster with no modification.
 - **FR-006**: The "Trim Names" and "Max Name Length" options MUST be available in both the initial configuration flow and the reconfiguration (options) flow.
-- **FR-007**: During configuration, when trimming is enabled and an event prefix is set, the system MUST display a warning if the prefix length is greater than or equal to (max name length minus 4). The warning key MUST be `prefix_too_long_for_trim`.
+- **FR-007**: During configuration, when trimming is enabled and an event prefix is set, the system MUST display a warning if `len(event_prefix) + 1` (to account for the space separator the integration appends between the prefix and the slot name) is greater than (max name length minus `MIN_NAME_LENGTH`, where `MIN_NAME_LENGTH` is 4). The warning is surfaced via `errors["base"]` with the key `prefix_too_long_for_trim`.
 - **FR-008**: The configuration version MUST be migrated from version 8 to version 9. The migration MUST add default values for both new options to all existing configuration entries (trimming disabled, max length 16).
 - **FR-009**: The "Max Name Length" field MUST reject values below the minimum of 4 with a validation error.
 - **FR-010**: Trimmed names MUST NOT have trailing whitespace.
@@ -106,8 +106,8 @@ A property manager has a long event prefix (e.g., "VacationHome ") and enables t
 
 ## Assumptions
 
-- The event prefix already includes any desired separator (e.g., trailing space). Trimming operates on the fully concatenated string.
-- The prefix length used for validation is the exact string length of the configured prefix, including any trailing spaces.
+- The integration appends a single space separator when concatenating the prefix and the parsed slot name, so the configured `event_prefix` is the bare prefix string and typically does not include trailing whitespace.
+- Prefix-length validation accounts for that appended space by using `len(event_prefix) + 1` when comparing against the max name length.
 - Word boundaries are defined solely by whitespace characters (spaces, tabs). No special handling for hyphens, underscores, or other punctuation as word separators.
 - The minimum max name length of 4 is sufficient to display at least a meaningful fragment of a name or prefix in all reasonable scenarios.
 - Existing users upgrading from config version 8 to 9 will receive default values (trimming off, max length 16) and experience no change in behavior until they explicitly enable trimming.

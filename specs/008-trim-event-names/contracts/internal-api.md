@@ -81,11 +81,18 @@ if (
     user_input.get(CONF_TRIM_NAMES, False)
     and user_input.get(CONF_EVENT_PREFIX, "")
 ):
-    prefix_len = len(user_input[CONF_EVENT_PREFIX])
+    # +1 accounts for the space separator the integration appends
+    # between the configured prefix and the parsed slot name.
+    prefix_len = len(user_input[CONF_EVENT_PREFIX]) + 1
     max_len = user_input.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH)
-    if prefix_len >= (max_len - 4):
+    if prefix_len > (max_len - MIN_NAME_LENGTH):
         errors["base"] = "prefix_too_long_for_trim"
 ```
+
+The threshold uses strict greater-than against
+`(max_len - MIN_NAME_LENGTH)` so the configuration is still accepted
+when the prefix exactly leaves room for `MIN_NAME_LENGTH` (4)
+characters of guest name. `MIN_NAME_LENGTH` is defined in `const.py`.
 
 ## Contract 3: Config Migration v8 → v9
 
@@ -145,5 +152,5 @@ self.max_name_length = int(
 
 **Config and options error keys**:
 ```json
-"prefix_too_long_for_trim": "Event prefix is too long relative to the max name length — guest names will be truncated severely or hidden entirely"
+"prefix_too_long_for_trim": "Event prefix too long for max name length"
 ```

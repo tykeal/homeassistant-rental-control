@@ -37,7 +37,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## R-004: Prefix Length Validation Warning
 
-**Decision**: In `_start_config_flow()`, after existing validations and before the `if not errors:` block, check: if `trim_names` is enabled and `len(event_prefix) >= (max_name_length - 4)`, add `description_placeholders["prefix_too_long_for_trim"]` with a warning message. Use HA's `description_placeholders` mechanism rather than `errors` since this is a warning, not a blocking error.
+**Decision**: In `_start_config_flow()`, after existing validations and before the `if not errors:` block, check: if `trim_names` is enabled and `len(event_prefix) + 1 > (max_name_length - MIN_NAME_LENGTH)` (the `+ 1` accounts for the space separator the integration appends between the prefix and the parsed slot name, and `MIN_NAME_LENGTH` is `4`), set `errors["base"] = "prefix_too_long_for_trim"` so the form re-renders with the warning.
 
 **Rationale**: FR-007 specifies a warning, not a validation error. HA config flows support `description_placeholders` for informational messages displayed to the user. Using `errors` would block form submission, which contradicts the spec's intent (the user should still be able to proceed with this configuration).
 

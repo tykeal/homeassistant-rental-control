@@ -36,7 +36,7 @@ RentalControlCoordinator (runtime)
 
 1. `trim_names` must be a valid boolean (enforced by `cv.boolean` in voluptuous schema)
 2. `max_name_length` must be an integer ≥ 4 (enforced by `vol.Range(min=4)`)
-3. **Cross-field warning** (FR-007): When `trim_names` is `True` and `len(event_prefix) >= (max_name_length - 4)`, display warning `prefix_too_long_for_trim`
+3. **Cross-field warning** (FR-007): When `trim_names` is `True` and `len(event_prefix) + 1 > (max_name_length - MIN_NAME_LENGTH)` (the `+ 1` accounts for the appended space separator and `MIN_NAME_LENGTH` is `4`), set `errors["base"] = "prefix_too_long_for_trim"` so the form re-renders with the warning
 4. `max_name_length` is stored regardless of `trim_names` value (simplifies migration and UI)
 
 ### State Transitions
@@ -72,8 +72,9 @@ async_fire_set_code(coordinator, event, slot)
 **Output**: Trimmed string ≤ max_length characters, no trailing whitespace
 
 **Algorithm**:
-1. If `len(name) <= max_length`: return `name` unchanged
-2. Split `name` on whitespace into words
-3. If first word length > `max_length`: return `first_word[:max_length]`
-4. Accumulate words left-to-right: add word if `current_length + separator + word_length <= max_length`
-5. Return joined accumulated words (no trailing whitespace by construction)
+1. Normalize whitespace: `name = " ".join(name.split())` (collapse internal whitespace runs and strip edges)
+2. If `len(name) <= max_length`: return the normalized `name`
+3. Split the normalized `name` on whitespace into words
+4. If first word length > `max_length`: return `first_word[:max_length]`
+5. Accumulate words left-to-right: add word if `current_length + 1 (separator) + word_length <= max_length`
+6. Return the space-joined accumulated words (no trailing whitespace by construction)
