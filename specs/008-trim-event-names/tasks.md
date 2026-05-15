@@ -65,17 +65,17 @@ to reflect the merged implementation.
   5. Accumulate words left-to-right: add word if `current_length + 1 (separator) + word_length <= max_length`
   6. Return the space-joined accumulated words (no trailing whitespace by construction)
 
-  **Contract** (from `contracts/internal-api.md`):
-  | Input | Output |
-  |-------|--------|
-  | `("Rental Christopher Montgomery", 16)` | `"Rental"` |
-  | `("Rental Chris", 16)` | `"Rental Chris"` |
-  | `("Rental Christopher Montgomery", 28)` | `"Rental Christopher"` |
-  | `("Superlongname", 8)` | `"Superlon"` |
-  | `("", 16)` | `""` |
-  | `("Hi", 16)` | `"Hi"` |
-  | `("VacationHome Christopher", 12)` | `"VacationHome"` |
-  | `("  spaced  name  ", 16)` | `"spaced name"` |
+  **Contract** (from `contracts/internal-api.md`): `trim_name()` is called with the guest/slot portion only and a remaining budget (`max_name_length - len(prefix_with_separator)`). Examples:
+  | Input (guest, budget) | Output | Combined result with prefix `"Rental "` |
+  |-------|--------|------|
+  | `("Christopher Montgomery", 9)` | `"Christophe"` | `"Rental Christophe"` (16) |
+  | `("Chris", 9)` | `"Chris"` | `"Rental Chris"` (12) |
+  | `("Christopher Montgomery", 21)` | `"Christopher"` | `"Rental Christopher"` (18) |
+  | `("Superlongname", 8)` | `"Superlon"` | first-word hard-truncate |
+  | `("", 16)` | `""` | prefix only |
+  | `("Hi", 16)` | `"Hi"` | under limit, unchanged |
+  | `("VacationHome Christopher", 12)` | `"VacationHome"` | second word would exceed remaining budget |
+  | `("  spaced  name  ", 16)` | `"spaced name"` | whitespace normalized |
 
   **Postconditions**: `len(result) <= max_length` and `result == result.rstrip()`
 

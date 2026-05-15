@@ -45,7 +45,7 @@ Python ≥3.14.2: Follow standard conventions, ruff formatting
 ## Recent Changes
 - 008-trim-event-names: Added Python ≥3.14.2 + homeassistant core, voluptuous, icalendar, aiohttp
 - 007-honor-pms-times: Added Python ≥ 3.14.2 + homeassistant (core), icalendar, voluptuous, x-wr-timezone, aiohttp
-- 004-checkin-tracking: Added Python ≥3.13.2 (per pyproject.toml `requires-python = ">=3.13.2"`) + homeassistant ≥ 2025.8.0, icalendar ≥ 6.1.0, x-wr-timezone ≥ 2.0.0
+- 005-fix-duplicate-slot: Added Python ≥3.13.2 + Home Assistant Core (≥2025.x), pytest-homeassistant-custom-component, Keymaster integration
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Feature Branch**: `008-trim-event-names`
 **Created**: 2025-07-14
-**Status**: Draft
+**Status**: Shipped (retroactive spec — implementation merged in PR #524)
 **Input**: User description: "Add an option to trim event names to a specific maximum character length before sending them to Keymaster. Some locks that Keymaster supports take the actual slot name defined in Keymaster, but the lock provider itself only supports a maximum character length. Since Rental Control is the gateway for codes entering Keymaster, it's the logical place to trim names. Trimming should be on word boundaries to produce readable names."
 
 ## User Scenarios & Testing *(mandatory)*
@@ -78,7 +78,7 @@ A property manager has a long event prefix (e.g., "VacationHome ") and enables t
 ### Edge Cases
 
 - What happens when a single word in the guest name exceeds the remaining budget? The word is hard-truncated to fit within the remaining budget (max length minus the prefix length including the appended space).
-- What happens when the prefix alone equals or exceeds the max length? The prefix is preserved as-is and the remaining budget for the guest portion is zero (or negative), so the guest portion becomes empty. This is the scenario the FR-007 warning is designed to catch.
+- What happens when the prefix alone equals or exceeds the max length? This case is blocked by the FR-007 config-flow validation, which uses `errors["base"]` to reject configurations whose prefix doesn't leave at least `MIN_NAME_LENGTH` characters for the guest portion. It is only reachable via manual edits to the underlying config entry; in that pathological case the prefix is preserved verbatim and the guest portion becomes empty.
 - What happens when the combined name is exactly the max length? It is sent as-is.
 - What happens when the slot name is empty (e.g., unparsed event)? An empty guest portion remains empty after trimming — only the prefix is sent.
 - What happens when max length is set to the minimum value of 4? Trimming still applies; most guest names will be hard-truncated but the system remains functional.
