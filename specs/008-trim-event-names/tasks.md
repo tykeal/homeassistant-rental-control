@@ -224,7 +224,7 @@ to reflect the merged implementation.
 
 **Goal**: When trimming is enabled and the event prefix is too long relative to the max name length, the configuration flow displays a warning message so the user can adjust their settings.
 
-**Independent Test**: Configure trimming with `max_name_length=16` and set event prefix to "VacationHome " (13 chars). Verify the warning `prefix_too_long_for_trim` appears. Then set prefix to "R " (2 chars) and verify no warning appears.
+**Independent Test**: Configure trimming with `max_name_length=16` and set event prefix to "VacationHome" (12 chars; the integration adds the separator, so `len(prefix) + 1 = 13`). Verify the warning `prefix_too_long_for_trim` appears. Then set prefix to "R" (1 char; effective length 2 with separator) and verify no warning appears.
 
 ### Implementation for User Story 4
 

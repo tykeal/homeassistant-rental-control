@@ -61,7 +61,7 @@ A property manager who previously set up Rental Control without trimming now ins
 
 ### User Story 4 — Prefix Length Validation Warning (Priority: P3)
 
-A property manager has a long event prefix (e.g., "VacationHome ") and enables trimming with a max length of 16. The configuration flow warns them that the prefix consumes most of the available characters, leaving insufficient room for a meaningful guest name.
+A property manager has a long event prefix (e.g., "VacationHome") and enables trimming with a max length of 16. Because the integration appends its own space separator when building the combined name, the effective prefix consumes `len(event_prefix) + 1` characters, and the configuration flow warns them that the prefix consumes most of the available characters, leaving insufficient room for a meaningful guest name.
 
 **Why this priority**: Preventing misconfiguration protects users from a confusing situation where every guest name is essentially invisible, replaced entirely by the prefix.
 
@@ -69,8 +69,8 @@ A property manager has a long event prefix (e.g., "VacationHome ") and enables t
 
 **Acceptance Scenarios**:
 
-1. **Given** trimming is enabled with max length 16 and the event prefix is "VacationHome " (13 chars), **When** the user submits the configuration, **Then** a warning is displayed indicating the prefix is too long relative to the max name length.
-2. **Given** trimming is enabled with max length 16 and the event prefix is "R " (2 chars), **When** the user submits the configuration, **Then** no warning is displayed.
+1. **Given** trimming is enabled with max length 16 and the event prefix is "VacationHome" (12 chars; effective length 13 once the appended separator is counted), **When** the user submits the configuration, **Then** a warning is displayed indicating the prefix is too long relative to the max name length.
+2. **Given** trimming is enabled with max length 16 and the event prefix is "R" (1 char; effective length 2 with the appended separator), **When** the user submits the configuration, **Then** no warning is displayed.
 3. **Given** trimming is disabled, **When** the user sets any prefix length, **Then** no prefix-length warning related to trimming is displayed regardless of prefix or max name length values.
 
 ---
