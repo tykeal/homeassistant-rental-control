@@ -15,18 +15,27 @@ signatures and configuration schema additions.
 
 ```python
 def trim_name(name: str, max_length: int) -> str:
-    """Trim a combined slot name to max_length on word boundaries.
+    """Trim a slot name to max_length on word boundaries.
 
-    Splits the input on whitespace and accumulates words left-to-right
-    until adding the next word would exceed max_length. If the very
-    first word exceeds max_length, it is hard-truncated.
+    Called with the guest/slot portion of the combined name only. The
+    prefix is preserved verbatim by the caller
+    (``async_fire_set_code``), which passes ``max_length`` as the
+    remaining budget (``coordinator.max_name_length - len(prefix)``).
 
-    The returned string never has trailing whitespace and is guaranteed
-    to be <= max_length characters.
+    The function first normalizes whitespace (collapses internal runs
+    and strips edges). If the normalized name already fits, it is
+    returned. Otherwise it splits on whitespace and accumulates words
+    left-to-right until adding the next word would exceed
+    ``max_length``. If the very first word exceeds ``max_length``, it
+    is hard-truncated.
+
+    The returned string never has trailing whitespace and is
+    guaranteed to be ``<= max_length`` characters.
 
     Args:
-        name: The full combined name (prefix + slot name).
-        max_length: Maximum allowed character length (must be >= 4).
+        name: The guest/slot portion of the combined name.
+        max_length: Remaining character budget (must be >= 4 at call
+            sites; the function itself does not enforce a minimum).
 
     Returns:
         The trimmed name string.
@@ -35,16 +44,20 @@ def trim_name(name: str, max_length: int) -> str:
 
 ### Input/Output Contract
 
-| Input | Output | Rule |
+`trim_name()` is called by `async_fire_set_code()` with the guest
+portion only and a remaining budget. The examples below illustrate
+both raw `trim_name()` behavior and the resulting combined string
+when assembled with a prefix.
+
+| `trim_name()` input | `trim_name()` output | Combined result (prefix + " " + output) |
 |-------|--------|------|
-| `("Rental Christopher Montgomery", 16)` | `"Rental"` | "Rental Christopher" = 21 chars > 16, so only "Rental" (6) fits |
-| `("Rental Chris", 16)` | `"Rental Chris"` | 12 chars ≤ 16, unchanged |
-| `("Rental Christopher Montgomery", 28)` | `"Rental Christopher Montgomery"` | Exactly 28 ≤ 28, unchanged |
-| `("Superlongname", 8)` | `"Superlon"` | Single word > max, hard-truncate |
-| `("", 16)` | `""` | Empty input → empty output |
-| `("Hi", 16)` | `"Hi"` | Under limit, unchanged |
-| `("VacationHome Christopher", 12)` | `"VacationHome"` | First word = 12, exactly fits; next word would exceed |
-| `("  spaced  name  ", 16)` | `"spaced name"` | Whitespace-split normalizes spacing |
+| `("Christopher Montgomery", 9)` | `"Christop"` | `"Rental Christop"` (15 ≤ 16) |
+| `("Chris", 9)` | `"Chris"` | `"Rental Chris"` (12 ≤ 16) |
+| `("Christopher Montgomery", 21)` | `"Christopher"` | `"Rental Christopher"` (18 ≤ 25) |
+| `("Superlongname", 8)` | `"Superlon"` | first-word hard-truncate |
+| `("", 16)` | `""` | empty guest → only prefix is sent |
+| `("Hi", 16)` | `"Hi"` | under limit, unchanged |
+| `("  spaced  name  ", 16)` | `"spaced name"` | internal whitespace normalized |
 
 ### Preconditions
 - `max_length >= 4` (enforced by config validation, not by this function)

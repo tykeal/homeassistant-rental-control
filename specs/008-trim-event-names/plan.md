@@ -10,7 +10,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Summary
 
-Add a configurable option to trim combined slot names (prefix + guest name) to a maximum character length before sending them to Keymaster. Trimming uses word-boundary logic (split on whitespace, accumulate words until the next would exceed the limit) with hard-truncation fallback for single words exceeding the max. Two new config options: a boolean `trim_names` (default: off) and an integer `max_name_length` (default: 16, min: 4). Requires config version migration 8→9, config flow UI additions, core trim logic in `util.py`, and prefix-length validation warning.
+Add a configurable option to bound the combined slot name (prefix + appended space + guest portion) to a maximum character length before sending it to Keymaster. The configured event prefix is preserved verbatim; only the guest/slot portion is trimmed, using a remaining budget equal to `max_name_length - len(prefix_with_separator)`. Trimming uses word-boundary logic (split on whitespace, accumulate words until the next would exceed the remaining budget) with hard-truncation fallback for single words exceeding the budget. Two new config options: a boolean `trim_names` (default: off) and an integer `max_name_length` (default: 16, min: 4). Requires config version migration 8→9, config flow UI additions, core trim logic in `util.py`, and prefix-length validation warning.
 
 ## Technical Context
 

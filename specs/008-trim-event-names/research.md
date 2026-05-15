@@ -61,12 +61,20 @@ SPDX-License-Identifier: Apache-2.0
 
 ## R-006: Where to Apply Trimming
 
-**Decision**: Apply trimming in `util.py::async_fire_set_code()` immediately after line 260 where `slot_name` is constructed (`slot_name = f"{prefix}{event.extra_state_attributes['slot_name']}"`). Add: `if coordinator.trim_names: slot_name = trim_name(slot_name, coordinator.max_name_length)`.
+**Decision**: Apply trimming in `util.py::async_fire_set_code()` after `slot_name` is initially constructed. When `coordinator.trim_names` is true, re-build `slot_name` by preserving the prefix verbatim and trimming only the guest portion with a remaining budget:
 
-**Rationale**: This is the single point where the combined name is assembled before being sent to Keymaster. Trimming here ensures:
-1. The full combined name (prefix + slot name) is trimmed as a unit (FR-003)
-2. It happens after prefix concatenation but before any Keymaster API calls
-3. It doesn't affect other uses of the slot name (e.g., sensor display)
+```python
+if coordinator.trim_names:
+    guest = event.extra_state_attributes["slot_name"]
+    guest_max = coordinator.max_name_length - len(prefix)
+    slot_name = f"{prefix}{trim_name(guest, guest_max)}"
+```
+
+**Rationale**: This is the single point where the combined name is assembled before being sent to Keymaster. Trimming the guest portion (rather than the combined string) here ensures:
+1. The prefix is preserved verbatim so the user's branding/identification is never truncated.
+2. The total `len(slot_name)` is still bounded by `max_name_length` because the remaining budget already subtracts `len(prefix)`.
+3. It happens after prefix concatenation but before any Keymaster API calls.
+4. It doesn't affect other uses of the slot name (e.g., sensor display).
 
 **Alternatives considered**:
 - **Trim in coordinator during event processing**: Would affect sensor display names, which should show the full name. Rejected.

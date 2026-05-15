@@ -15,8 +15,8 @@ The Rental Control config entry is a flat dictionary stored by Home Assistant's 
 
 | Field | Key Constant | Type | Default | Validation | Description |
 |-------|-------------|------|---------|------------|-------------|
-| Trim Names | `CONF_TRIM_NAMES` = `"trim_names"` | `bool` | `False` | `cv.boolean` | Enables word-boundary trimming of combined slot names before sending to Keymaster |
-| Max Name Length | `CONF_MAX_NAME_LENGTH` = `"max_name_length"` | `int` | `16` | `vol.All(vol.Coerce(int), vol.Range(min=4))` | Maximum character length for the combined slot name when trimming is enabled |
+| Trim Names | `CONF_TRIM_NAMES` = `"trim_names"` | `bool` | `False` | `cv.boolean` | When enabled, preserves the prefix verbatim and word-boundary trims only the guest/slot portion before the combined name is sent to Keymaster |
+| Max Name Length | `CONF_MAX_NAME_LENGTH` = `"max_name_length"` | `int` | `16` | `vol.All(vol.Coerce(int), vol.Range(min=4))` | Maximum total character length for the combined slot name (prefix + appended space + trimmed guest portion) when trimming is enabled |
 
 ### Relationships
 
@@ -58,15 +58,21 @@ Calendar Event
 async_fire_set_code(coordinator, event, slot)
     │
     ├── prefix = coordinator.event_prefix + " " (or "")
-    ├── slot_name = prefix + event.slot_name
+    ├── guest = event.slot_name
+    ├── slot_name = prefix + guest
     │
     ├── IF coordinator.trim_names:
-    │   └── slot_name = trim_name(slot_name, coordinator.max_name_length)
+    │   ├── guest_max = coordinator.max_name_length - len(prefix)
+    │   └── slot_name = prefix + trim_name(guest, guest_max)
     │
     └── Send slot_name to Keymaster via entity calls
 ```
 
 ## Pure Function: `trim_name(name: str, max_length: int) -> str`
+
+`trim_name()` operates on the guest/slot portion only. The prefix is
+preserved verbatim by `async_fire_set_code()`; `max_length` here is
+the remaining budget after subtracting the prefix length.
 
 **Input**: Combined name string, maximum length
 **Output**: Trimmed string ≤ max_length characters, no trailing whitespace

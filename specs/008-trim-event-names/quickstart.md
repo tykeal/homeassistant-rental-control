@@ -59,7 +59,7 @@ Add v8→v9 migration block in `async_migrate_entry()`.
 Read `trim_names` and `max_name_length` in both `__init__()` and `update_config()`.
 
 ### 6. Integration Point (`util.py`)
-Call `trim_name()` in `async_fire_set_code()` after slot_name construction.
+In `async_fire_set_code()`, after the initial `slot_name` is assembled from `prefix + guest`, re-build it under `if coordinator.trim_names:` by preserving `prefix` and calling `trim_name(guest, max_name_length - len(prefix))` for the guest portion only.
 
 ### 7. UI Strings (`strings.json`, `translations/en.json`)
 Add labels for new fields and the `prefix_too_long_for_trim` warning.

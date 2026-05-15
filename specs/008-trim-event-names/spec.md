@@ -14,7 +14,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ### User Story 1 — Enable Name Trimming for a Lock With Character Limits (Priority: P1)
 
-A property manager uses a lock whose provider only supports slot names of 16 characters or fewer. They enable the "Trim Names" option in Rental Control's configuration and set the maximum length to 16. When a calendar event with a long guest name (e.g., "Christopher Montgomery") is synced, the combined name (prefix + slot name) is trimmed on a word boundary so the lock receives a readable, compliant name instead of a truncated or rejected one.
+A property manager uses a lock whose provider only supports slot names of 16 characters or fewer. They enable the "Trim Names" option in Rental Control's configuration and set the maximum length to 16. When a calendar event with a long guest name (e.g., "Christopher Montgomery") is synced, the prefix is preserved and the guest portion is trimmed on a word boundary using the remaining character budget (max length minus the prefix length, including the appended space separator) so the lock receives a readable, compliant name instead of a truncated or rejected one.
 
 **Why this priority**: This is the core value of the feature — without trimming, locks with character limits receive names that are too long, which may cause silent failures or garbled display on the lock itself.
 
@@ -22,8 +22,8 @@ A property manager uses a lock whose provider only supports slot names of 16 cha
 
 **Acceptance Scenarios**:
 
-1. **Given** trimming is enabled with a max length of 16, **When** a calendar event produces a combined name of "Rental Christopher Montgomery" (28 chars), **Then** the name sent to Keymaster is trimmed to "Rental" or "Rental Christopher" (whichever fits within 16 characters on a word boundary).
-2. **Given** trimming is enabled with a max length of 16, **When** a combined name is already 16 characters or fewer, **Then** the name is sent unchanged.
+1. **Given** trimming is enabled with a max length of 16 and an event prefix of "Rental" (7 chars including the appended space), **When** a calendar event has a guest name of "Christopher Montgomery" (so the raw combined name would be "Rental Christopher Montgomery", 29 chars), **Then** the prefix is preserved and the guest portion is word-boundary trimmed to fit the remaining 9-character budget, producing a name such as "Rental Christop" (with the guest portion hard-truncated only if the first word still exceeds the remaining budget).
+2. **Given** trimming is enabled with a max length of 16, **When** a combined name is already 16 characters or fewer, **Then** the name is sent unchanged (aside from internal whitespace normalization on the guest portion).
 3. **Given** trimming is disabled (default), **When** any calendar event is synced, **Then** the full combined name is sent to Keymaster with no modification.
 
 ---
@@ -77,11 +77,11 @@ A property manager has a long event prefix (e.g., "VacationHome ") and enables t
 
 ### Edge Cases
 
-- What happens when a single word in the slot name exceeds the max length? The word is hard-truncated to fit within the limit.
-- What happens when the prefix alone equals or exceeds the max length? The prefix itself is hard-truncated to the max length and no slot name portion is appended.
-- What happens when the combined name is exactly the max length? It is sent as-is with no modification.
-- What happens when the slot name is empty (e.g., unparsed event)? An empty string remains empty after trimming — no special handling needed.
-- What happens when max length is set to the minimum value of 4? Trimming still applies; most names will be hard-truncated but the system remains functional.
+- What happens when a single word in the guest name exceeds the remaining budget? The word is hard-truncated to fit within the remaining budget (max length minus the prefix length including the appended space).
+- What happens when the prefix alone equals or exceeds the max length? The prefix is preserved as-is and the remaining budget for the guest portion is zero (or negative), so the guest portion becomes empty. This is the scenario the FR-007 warning is designed to catch.
+- What happens when the combined name is exactly the max length? It is sent as-is.
+- What happens when the slot name is empty (e.g., unparsed event)? An empty guest portion remains empty after trimming — only the prefix is sent.
+- What happens when max length is set to the minimum value of 4? Trimming still applies; most guest names will be hard-truncated but the system remains functional.
 - What happens when whitespace-only content remains after prefix? The result is the prefix (trimmed of trailing whitespace if needed).
 
 ## Requirements *(mandatory)*
@@ -89,9 +89,9 @@ A property manager has a long event prefix (e.g., "VacationHome ") and enables t
 ### Functional Requirements
 
 - **FR-001**: System MUST provide a boolean configuration option "Trim Names" that controls whether name trimming is applied to slot names before sending them to Keymaster. Default value MUST be off (disabled).
-- **FR-002**: System MUST provide an integer configuration option "Max Name Length" that defines the maximum character length for the combined slot name. Default value MUST be 16. Minimum allowed value MUST be 4.
-- **FR-003**: When trimming is enabled, the system MUST trim the full combined name (prefix + slot name) to the configured max length using word-boundary logic: split on whitespace, accumulate words until the next word would exceed the limit.
-- **FR-004**: When trimming is enabled and a single word exceeds the max length, the system MUST hard-truncate that word to the max length.
+- **FR-002**: System MUST provide an integer configuration option "Max Name Length" that defines the maximum total character length of the combined slot name (prefix plus appended space plus guest portion). Default value MUST be 16. Minimum allowed value MUST be 4.
+- **FR-003**: When trimming is enabled, the system MUST preserve the configured event prefix verbatim and trim only the guest/slot portion using a remaining budget equal to `max_name_length - len(prefix_with_separator)`. Trimming uses word-boundary logic on the guest portion: split on whitespace, accumulate words until the next word would exceed the remaining budget.
+- **FR-004**: When trimming is enabled and a single word in the guest portion exceeds the remaining budget, the system MUST hard-truncate that word to the remaining budget.
 - **FR-005**: When trimming is disabled, the system MUST send the full combined name to Keymaster with no modification.
 - **FR-006**: The "Trim Names" and "Max Name Length" options MUST be available in both the initial configuration flow and the reconfiguration (options) flow.
 - **FR-007**: During configuration, when trimming is enabled and an event prefix is set, the system MUST display a warning if `len(event_prefix) + 1` (to account for the space separator the integration appends between the prefix and the slot name) is greater than (max name length minus `MIN_NAME_LENGTH`, where `MIN_NAME_LENGTH` is 4). The warning is surfaced via `errors["base"]` with the key `prefix_too_long_for_trim`.
@@ -102,7 +102,7 @@ A property manager has a long event prefix (e.g., "VacationHome ") and enables t
 ### Key Entities
 
 - **Trim Configuration**: Two new settings (trim enabled flag, max name length) associated with each Rental Control integration entry. These settings govern whether and how combined slot names are shortened before being sent to Keymaster.
-- **Combined Slot Name**: The string formed by concatenating the event prefix with the parsed slot name. This is the value that is trimmed (when enabled) and ultimately sent to the lock via Keymaster.
+- **Combined Slot Name**: The string sent to Keymaster, formed by concatenating the event prefix (plus an appended space separator when a prefix is configured) with the guest/slot portion. When trimming is enabled, only the guest/slot portion is trimmed using a remaining budget; the prefix is preserved verbatim.
 
 ## Assumptions
 
@@ -118,7 +118,7 @@ A property manager has a long event prefix (e.g., "VacationHome ") and enables t
 
 - **SC-001**: When trimming is enabled, 100% of slot names sent to Keymaster are at or below the configured max character length.
 - **SC-002**: When trimming is disabled, 100% of slot names are sent unchanged compared to current behavior (no regression).
-- **SC-003**: Trimmed names remain human-readable — trimming occurs on word boundaries in all cases except when a single word exceeds the max length.
+- **SC-003**: Trimmed names remain human-readable — the prefix is preserved verbatim and trimming occurs on word boundaries in the guest portion in all cases except when the first guest word exceeds the remaining budget.
 - **SC-004**: Users can enable, disable, and adjust trimming settings in under 30 seconds through the configuration or options flow.
 - **SC-005**: Users with existing configurations experience zero disruption when upgrading — default values are applied automatically and prior behavior is preserved.
 - **SC-006**: When a prefix is too long relative to the max name length, 100% of such configurations trigger a visible warning during setup or reconfiguration.

@@ -117,12 +117,14 @@ to reflect the merged implementation.
 
 - [x] T005 [US1] Integrate `trim_name()` call into `async_fire_set_code()` in `custom_components/rental_control/util.py`
 
-  **Details**: After line ~260 where `slot_name` is constructed (`slot_name = f"{prefix}{event.extra_state_attributes['slot_name']}"`), add:
+  **Details**: After `slot_name` is initially constructed (`slot_name = f"{prefix}{event.extra_state_attributes['slot_name']}"`), preserve the prefix and trim only the guest portion against a remaining budget:
   ```python
   if coordinator.trim_names:
-      slot_name = trim_name(slot_name, coordinator.max_name_length)
+      guest = event.extra_state_attributes["slot_name"]
+      guest_max = coordinator.max_name_length - len(prefix)
+      slot_name = f"{prefix}{trim_name(guest, guest_max)}"
   ```
-  This is the single integration point per research.md R-006. The trim only affects the name sent to Keymaster — sensor display names remain full-length. Import `trim_name` if not already in scope (it's in the same file).
+  This is the single integration point per research.md R-006. The trim only affects the name sent to Keymaster — sensor display names remain full-length. The prefix (including the appended space separator) is preserved verbatim. Import `trim_name` if not already in scope (it's in the same file).
 
 **Checkpoint**: User Story 1 is now functional — trimming works at runtime when config has `trim_names=True`. Remaining stories add UI to configure it.
 
