@@ -424,8 +424,14 @@ def async_register_keymaster_listener(
 
         monitored = coordinator.monitored_locknames
         if event_lockname not in monitored:
-            if diagnostics_enabled:
-                _record("rejected_not_monitored")
+            # Drop unmonitored-lock events without recording: in
+            # deployments with many RC integrations, every integration
+            # sees every event on the HA bus, and recording
+            # "rejected_not_monitored" would quickly flood the 10-entry
+            # ring buffer with noise from other integrations' locks.
+            # The "rejected_not_monitored" disposition string is
+            # retained as a reserved value for schema stability with
+            # downstream consumers but is no longer emitted.
             return
 
         # Validate state is unlocked
