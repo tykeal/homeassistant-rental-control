@@ -286,6 +286,39 @@ class TestDiagnosticsBuffer:
         assert len(buf) == 1
         assert buf[0]["disposition"] == "accepted"
 
+    async def test_recording_writes_sensor_state(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Recording a disposition must refresh the sensor's HA state.
+
+        Without ``async_write_ha_state`` the new diagnostic entry would
+        not surface in ``hass.states`` until the next coordinator
+        refresh, defeating the purpose of the opt-in attribute.
+        """
+        sensor = _setup_entry(hass, mock_checkin_coordinator, mock_checkin_config_entry)
+        _set_diag(mock_checkin_config_entry, hass, True)
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        # An event taking a rejected path must still write state
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {"lockname": "back_door", "state": "unlocked", "code_slot_num": 11},
+        )
+        await hass.async_block_till_done()
+        sensor.async_write_ha_state.assert_called()
+        sensor.async_write_ha_state.reset_mock()
+
+        # And the accepted path also writes state
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {"lockname": "front_door", "state": "unlocked", "code_slot_num": 11},
+        )
+        await hass.async_block_till_done()
+        sensor.async_write_ha_state.assert_called()
+
     @pytest.mark.parametrize("bad_lockname", [None, 123])
     async def test_non_string_lockname_defensive(
         self,

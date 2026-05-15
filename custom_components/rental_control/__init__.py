@@ -397,9 +397,12 @@ def async_register_keymaster_listener(
         )
 
         def _record(disposition: str) -> None:
-            """Append a diagnostic entry to the coordinator ring buffer.
+            """Append a diagnostic entry and refresh the sensor state.
 
-            Only invoked when the diagnostics option is enabled.
+            Only invoked when the diagnostics option is enabled. Also
+            triggers ``async_write_ha_state`` on the check-in sensor (when
+            available) so the new entry becomes visible in HA without
+            waiting for the next coordinator update.
             """
             coordinator.keymaster_event_diagnostics.append(
                 {
@@ -411,6 +414,13 @@ def async_register_keymaster_listener(
                     "disposition": disposition,
                 }
             )
+            sensor = (
+                hass.data.get(DOMAIN, {})
+                .get(config_entry.entry_id, {})
+                .get(CHECKIN_SENSOR)
+            )
+            if sensor is not None and sensor.hass is not None:
+                sensor.async_write_ha_state()
 
         monitored = coordinator.monitored_locknames
         if event_lockname not in monitored:
