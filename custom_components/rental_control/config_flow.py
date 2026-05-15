@@ -32,6 +32,7 @@ from .const import CONF_CODE_GENERATION
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_DAYS
+from .const import CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from .const import CONF_EVENT_PREFIX
 from .const import CONF_GENERATE
 from .const import CONF_HONOR_EVENT_TIMES
@@ -50,6 +51,7 @@ from .const import DEFAULT_CLEANING_WINDOW
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_DAYS
+from .const import DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from .const import DEFAULT_EVENT_PREFIX
 from .const import DEFAULT_GENERATE
 from .const import DEFAULT_HONOR_EVENT_TIMES
@@ -254,7 +256,7 @@ def _get_schema(
         else:
             return None
 
-    return vol.Schema(
+    schema = vol.Schema(
         {
             vol.Required(CONF_NAME, default=_get_default(CONF_NAME)): cv.string,
             vol.Required(CONF_URL, default=_get_default(CONF_URL)): cv.string,
@@ -343,6 +345,19 @@ def _get_schema(
         },
         extra=ALLOW_EXTRA,
     )
+    if entry_id is not None:
+        schema = schema.extend(
+            {
+                vol.Optional(
+                    CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
+                    default=_get_default(
+                        CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
+                        DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
+                    ),
+                ): cv.boolean,
+            }
+        )
+    return schema
 
 
 def _show_config_form(

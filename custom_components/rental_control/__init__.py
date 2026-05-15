@@ -31,11 +31,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
 from .const import CHECKIN_SENSOR
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
+from .const import CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from .const import CONF_GENERATE
 from .const import CONF_HONOR_EVENT_TIMES
 from .const import CONF_MAX_NAME_LENGTH
@@ -44,6 +46,7 @@ from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_TRIM_NAMES
 from .const import COORDINATOR
 from .const import DEFAULT_CODE_LENGTH
+from .const import DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from .const import DEFAULT_GENERATE
 from .const import DEFAULT_MAX_NAME_LENGTH
 from .const import DOMAIN
@@ -386,21 +389,61 @@ def async_register_keymaster_listener(
             if raw_lockname and isinstance(raw_lockname, str)
             else ""
         )
+        code_slot_num = event_data.get("code_slot_num")
+
+        diagnostics_enabled = config_entry.data.get(
+            CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
+            DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
+        )
+
+        def _record(disposition: str) -> None:
+            """Append a diagnostic entry and refresh the sensor state.
+
+            Only invoked when the diagnostics option is enabled. Also
+            triggers ``async_write_ha_state`` on the check-in sensor (when
+            available) so the new entry becomes visible in HA without
+            waiting for the next coordinator update.
+            """
+            coordinator.keymaster_event_diagnostics.append(
+                {
+                    "timestamp": dt_util.utcnow().isoformat(),
+                    "lockname": str(raw_lockname),
+                    "lockname_slug": event_lockname,
+                    "state": event_data.get("state"),
+                    "code_slot_num": code_slot_num,
+                    "disposition": disposition,
+                }
+            )
+            sensor = (
+                hass.data.get(DOMAIN, {})
+                .get(config_entry.entry_id, {})
+                .get(CHECKIN_SENSOR)
+            )
+            if sensor is not None and sensor.hass is not None:
+                sensor.async_write_ha_state()
+
         monitored = coordinator.monitored_locknames
         if event_lockname not in monitored:
+            if diagnostics_enabled:
+                _record("rejected_not_monitored")
             return
 
         # Validate state is unlocked
         if event_data.get("state") != "unlocked":
+            if diagnostics_enabled:
+                _record("rejected_state")
             return
 
         # FR-017: Ignore code_slot_num == 0
-        code_slot_num = event_data.get("code_slot_num")
         if code_slot_num is None or code_slot_num == 0:
+            if diagnostics_enabled:
+                _record("rejected_slot_zero")
             return
 
         # Validate code slot is in managed range
         if not (start_slot <= code_slot_num < start_slot + max_events):
+            if diagnostics_enabled:
+                _record("rejected_out_of_range")
             return
 
         # Retrieve the checkin sensor and forward the unlock
@@ -412,6 +455,8 @@ def async_register_keymaster_listener(
                 "not yet available for entry %s",
                 config_entry.entry_id,
             )
+            if diagnostics_enabled:
+                _record("rejected_no_checkin_sensor")
             return
 
         # Check monitoring switch via stored entity reference
@@ -422,12 +467,16 @@ def async_register_keymaster_listener(
                 "switch not yet available for entry %s",
                 config_entry.entry_id,
             )
+            if diagnostics_enabled:
+                _record("rejected_monitoring_off")
             return
 
         if not monitoring_switch.is_on:
             _LOGGER.debug(
                 "Ignoring keymaster unlock: monitoring switch is off",
             )
+            if diagnostics_enabled:
+                _record("rejected_monitoring_off")
             return
 
         _LOGGER.debug(
@@ -435,6 +484,8 @@ def async_register_keymaster_listener(
             code_slot_num,
             raw_lockname,
         )
+        if diagnostics_enabled:
+            _record("accepted")
         checkin_sensor.async_handle_keymaster_unlock(
             code_slot_num=code_slot_num,
             lock_name=raw_lockname,

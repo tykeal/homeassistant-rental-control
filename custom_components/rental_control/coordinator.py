@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Mapping
 from datetime import datetime
 from datetime import time
@@ -140,6 +141,11 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
         # Child lock discovery (spec 006)
         self._parent_entry_id: str | None = None
         self._child_locknames: set[str] = set()
+
+        # Ring buffer of recent keymaster_lock_state_changed events seen
+        # by the listener, populated only when the diagnostics option is
+        # enabled. See spec for the entry shape and disposition values.
+        self.keymaster_event_diagnostics: deque[dict[str, Any]] = deque(maxlen=10)
 
         super().__init__(
             hass=hass,

@@ -81,7 +81,8 @@
           "max_name_length": "Maximum slot name length",
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
-          "verify_ssl": "Verify SSL certificates"
+          "verify_ssl": "Verify SSL certificates",
+          "enable_keymaster_event_diagnostics": "Enable keymaster event diagnostics (records last 10 keymaster_lock_state_changed events on the check-in sensor)"
         },
         "data_description": {
           "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)"

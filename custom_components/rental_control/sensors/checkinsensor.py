@@ -39,7 +39,9 @@ from ..const import CHECKIN_STATE_CHECKED_IN
 from ..const import CHECKIN_STATE_CHECKED_OUT
 from ..const import CHECKIN_STATE_NO_RESERVATION
 from ..const import CONF_CLEANING_WINDOW
+from ..const import CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from ..const import DEFAULT_CLEANING_WINDOW
+from ..const import DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from ..const import DOMAIN
 from ..const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from ..const import EVENT_RENTAL_CONTROL_CHECKIN
@@ -275,7 +277,7 @@ class CheckinTrackingSensor(
 
         Returns all tracked event attributes per data-model.md.
         """
-        return {
+        attrs: dict[str, Any] = {
             "checkin_state": self._state,
             "summary": self._tracked_event_summary,
             "start": self._tracked_event_start,
@@ -287,6 +289,14 @@ class CheckinTrackingSensor(
             "next_transition": self._transition_target_time,
             "lock_name": self._checkin_lock_name,
         }
+        if self._config_entry.data.get(
+            CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
+            DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
+        ):
+            attrs["keymaster_event_diagnostics"] = list(
+                self.coordinator.keymaster_event_diagnostics
+            )
+        return attrs
 
     @property
     def extra_restore_state_data(self) -> CheckinExtraStoredData:
