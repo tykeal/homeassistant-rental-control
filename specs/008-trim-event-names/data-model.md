@@ -74,7 +74,7 @@ async_fire_set_code(coordinator, event, slot)
 preserved verbatim by `async_fire_set_code()`; `max_length` here is
 the remaining budget after subtracting the prefix length.
 
-**Input**: Combined name string, maximum length
+**Input**: Guest/slot portion string, remaining-budget maximum length
 **Output**: Trimmed string ≤ max_length characters, no trailing whitespace
 
 **Algorithm**:

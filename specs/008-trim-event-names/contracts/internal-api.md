@@ -51,9 +51,9 @@ when assembled with a prefix.
 
 | `trim_name()` input | `trim_name()` output | Combined result (prefix + " " + output) |
 |-------|--------|------|
-| `("Christopher Montgomery", 9)` | `"Christop"` | `"Rental Christop"` (15 ≤ 16) |
+| `("Christopher Montgomery", 9)` | `"Christophe"` | `"Rental Christophe"` (16 ≤ 16; first word > 9 so it is hard-truncated to exactly 9 chars) |
 | `("Chris", 9)` | `"Chris"` | `"Rental Chris"` (12 ≤ 16) |
-| `("Christopher Montgomery", 21)` | `"Christopher"` | `"Rental Christopher"` (18 ≤ 25) |
+| `("Christopher Montgomery", 21)` | `"Christopher"` | `"Rental Christopher"` (18 ≤ 25; second word would make 22 chars, exceeding 21) |
 | `("Superlongname", 8)` | `"Superlon"` | first-word hard-truncate |
 | `("", 16)` | `""` | empty guest → only prefix is sent |
 | `("Hi", 16)` | `"Hi"` | under limit, unchanged |

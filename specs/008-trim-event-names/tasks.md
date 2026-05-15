@@ -70,7 +70,7 @@ to reflect the merged implementation.
   |-------|--------|
   | `("Rental Christopher Montgomery", 16)` | `"Rental"` |
   | `("Rental Chris", 16)` | `"Rental Chris"` |
-  | `("Rental Christopher Montgomery", 28)` | `"Rental Christopher Montgomery"` |
+  | `("Rental Christopher Montgomery", 28)` | `"Rental Christopher"` |
   | `("Superlongname", 8)` | `"Superlon"` |
   | `("", 16)` | `""` |
   | `("Hi", 16)` | `"Hi"` |
