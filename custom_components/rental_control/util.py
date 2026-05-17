@@ -284,17 +284,27 @@ def trim_name(name: str, max_length: int) -> str:
 
 
 def _apply_buffer(
-    start: datetime,
-    end: datetime,
+    start: date | datetime,
+    end: date | datetime,
     before_minutes: int,
     after_minutes: int,
-) -> tuple[datetime, datetime]:
-    """Return buffered start/end times for Keymaster date ranges."""
+    coordinator: object,
+) -> tuple[date | datetime, date | datetime]:
+    """Return buffered start/end times for Keymaster date ranges.
+
+    Normalises bare ``date`` values via ``_ensure_datetime`` before
+    applying offsets.  When both buffer values are zero the inputs
+    are returned unchanged.
+    """
+    if not before_minutes and not after_minutes:
+        return start, end
+    dt_start = _ensure_datetime(start, coordinator)
+    dt_end = _ensure_datetime(end, coordinator)
     if before_minutes:
-        start = start - timedelta(minutes=before_minutes)
+        dt_start = dt_start - timedelta(minutes=before_minutes)
     if after_minutes:
-        end = end + timedelta(minutes=after_minutes)
-    return start, end
+        dt_end = dt_end + timedelta(minutes=after_minutes)
+    return dt_start, dt_end
 
 
 async def async_fire_set_code(coordinator, event, slot: int) -> None:
@@ -367,6 +377,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
             event.extra_state_attributes["end"],
             coordinator.code_buffer_before,
             coordinator.code_buffer_after,
+            coordinator,
         )
 
         coro = add_call(
@@ -468,6 +479,7 @@ async def async_fire_update_times(coordinator, event, slot: int) -> None:
         event.extra_state_attributes["end"],
         coordinator.code_buffer_before,
         coordinator.code_buffer_after,
+        coordinator,
     )
 
     coro = add_call(

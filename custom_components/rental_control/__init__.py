@@ -284,8 +284,8 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         _LOGGER.debug("Migrating from version %s", version)
 
         data = config_entry.data.copy()
-        data[CONF_CODE_BUFFER_BEFORE] = DEFAULT_CODE_BUFFER_BEFORE
-        data[CONF_CODE_BUFFER_AFTER] = DEFAULT_CODE_BUFFER_AFTER
+        data.setdefault(CONF_CODE_BUFFER_BEFORE, DEFAULT_CODE_BUFFER_BEFORE)
+        data.setdefault(CONF_CODE_BUFFER_AFTER, DEFAULT_CODE_BUFFER_AFTER)
         hass.config_entries.async_update_entry(
             entry=config_entry,
             unique_id=config_entry.unique_id,
