@@ -50,6 +50,8 @@ import x_wr_timezone
 
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
+from .const import CONF_CODE_BUFFER_AFTER
+from .const import CONF_CODE_BUFFER_BEFORE
 from .const import CONF_CODE_GENERATION
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
@@ -65,6 +67,8 @@ from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_START_SLOT
 from .const import CONF_TIMEZONE
 from .const import CONF_TRIM_NAMES
+from .const import DEFAULT_CODE_BUFFER_AFTER
+from .const import DEFAULT_CODE_BUFFER_BEFORE
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_MAX_MISSES
@@ -127,6 +131,12 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
         self.trim_names: bool = bool(config.get(CONF_TRIM_NAMES, DEFAULT_TRIM_NAMES))
         self.max_name_length: int = int(
             str(config.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH))
+        )
+        self.code_buffer_before: int = int(
+            str(config.get(CONF_CODE_BUFFER_BEFORE, DEFAULT_CODE_BUFFER_BEFORE))
+        )
+        self.code_buffer_after: int = int(
+            str(config.get(CONF_CODE_BUFFER_AFTER, DEFAULT_CODE_BUFFER_AFTER))
         )
         if self.event_overrides is not None:
             self.event_overrides.trim_names = self.trim_names
@@ -579,6 +589,12 @@ Please update Keymaster to at least v0.1.0-b0
         self.trim_names = bool(config.get(CONF_TRIM_NAMES, DEFAULT_TRIM_NAMES))
         self.max_name_length = int(
             str(config.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH))
+        )
+        self.code_buffer_before = int(
+            str(config.get(CONF_CODE_BUFFER_BEFORE, DEFAULT_CODE_BUFFER_BEFORE))
+        )
+        self.code_buffer_after = int(
+            str(config.get(CONF_CODE_BUFFER_AFTER, DEFAULT_CODE_BUFFER_AFTER))
         )
         if self.event_overrides is not None:
             self.event_overrides.trim_names = self.trim_names
