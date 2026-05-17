@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from datetime import date
+from datetime import datetime
 from datetime import timedelta
 import logging
 from unittest.mock import AsyncMock
@@ -1376,6 +1377,8 @@ class TestAsyncFireSetCode:
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
         coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event()
@@ -1409,6 +1412,8 @@ class TestAsyncFireSetCode:
         coordinator.lockname = "front_door"
         coordinator.event_prefix = "Rental"
         coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event(slot_name="Guest")
@@ -1429,6 +1434,8 @@ class TestAsyncFireSetCode:
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
         coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event(slot_name="Guest")
@@ -1447,6 +1454,8 @@ class TestAsyncFireSetCode:
         coordinator.event_prefix = "Rental"
         coordinator.trim_names = True
         coordinator.max_name_length = 12
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event(slot_name="Very Long Guest Name")
@@ -1467,6 +1476,8 @@ class TestAsyncFireSetCode:
         coordinator.lockname = "front_door"
         coordinator.event_prefix = "Rental"
         coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event(slot_name="Very Long Guest Name")
@@ -1535,6 +1546,8 @@ class TestAsyncFireUpdateTimes:
         """Verify both datetime entities are updated."""
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
 
         event = self._make_event()
@@ -1573,6 +1586,8 @@ class TestAsyncFireUpdateTimes:
         """Verify a failing service call is logged but does not crash."""
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock(
             side_effect=ServiceNotFound("datetime", "set_value")
         )
@@ -1668,6 +1683,8 @@ class TestPreExecutionVerification:
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
         coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
 
@@ -1700,6 +1717,8 @@ class TestRetryEscalation:
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
         coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides._escalated = {10: True}
@@ -1729,6 +1748,8 @@ class TestRetryEscalation:
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
         coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides._escalated = {}
@@ -1898,6 +1919,8 @@ class TestSlugifiedLocknameEntityIds:
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
         coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
 
         event = MagicMock()
@@ -2190,3 +2213,255 @@ class TestTrimName:
     def test_skips_long_middle_word(self) -> None:
         """Verify accumulation stops at first non-fitting word."""
         assert trim_name("Hello LongWord A", 8) == "Hello"
+
+
+# ---------------------------------------------------------------------------
+# Lock code buffer tests (spec 009)
+# ---------------------------------------------------------------------------
+
+
+class TestBufferInSetCode:
+    """Tests for buffer offsets in async_fire_set_code."""
+
+    @staticmethod
+    def _make_event(
+        slot_name: str = "Guest",
+        slot_code: str = "1234",
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> MagicMock:
+        """Build a mock event with slot attributes."""
+        if start is None:
+            start = datetime(2025, 1, 15, 16, 0, 0)
+        if end is None:
+            end = datetime(2025, 1, 17, 11, 0, 0)
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": slot_name,
+            "slot_code": slot_code,
+            "start": start,
+            "end": end,
+        }
+        return event
+
+    async def test_before_buffer_shifts_start(self) -> None:
+        """Verify date_range_start is 30 minutes earlier."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.code_buffer_before = 30
+        coordinator.code_buffer_after = 0
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+
+        event = self._make_event()
+        await async_fire_set_code(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        start_calls = [
+            c
+            for c in calls
+            if "date_range_start" in c.kwargs.get("target", {}).get("entity_id", "")
+        ]
+        assert len(start_calls) == 1
+        sent = start_calls[0].kwargs["service_data"]["datetime"]
+        assert sent == datetime(2025, 1, 15, 15, 30, 0)
+
+    async def test_after_buffer_extends_end(self) -> None:
+        """Verify date_range_end is 15 minutes later."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 15
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+
+        event = self._make_event()
+        await async_fire_set_code(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        end_calls = [
+            c
+            for c in calls
+            if "date_range_end" in c.kwargs.get("target", {}).get("entity_id", "")
+        ]
+        assert len(end_calls) == 1
+        sent = end_calls[0].kwargs["service_data"]["datetime"]
+        assert sent == datetime(2025, 1, 17, 11, 15, 0)
+
+    async def test_both_buffers_applied(self) -> None:
+        """Verify both offsets applied simultaneously."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.code_buffer_before = 60
+        coordinator.code_buffer_after = 30
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+
+        event = self._make_event()
+        await async_fire_set_code(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        start_calls = [
+            c
+            for c in calls
+            if "date_range_start" in c.kwargs.get("target", {}).get("entity_id", "")
+        ]
+        end_calls = [
+            c
+            for c in calls
+            if "date_range_end" in c.kwargs.get("target", {}).get("entity_id", "")
+        ]
+        assert start_calls[0].kwargs["service_data"]["datetime"] == (
+            datetime(2025, 1, 15, 15, 0, 0)
+        )
+        assert end_calls[0].kwargs["service_data"]["datetime"] == (
+            datetime(2025, 1, 17, 11, 30, 0)
+        )
+
+    async def test_zero_buffer_unchanged(self) -> None:
+        """Verify zero buffers send unbuffered times."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+
+        start = datetime(2025, 1, 15, 16, 0, 0)
+        end = datetime(2025, 1, 17, 11, 0, 0)
+        event = self._make_event(start=start, end=end)
+        await async_fire_set_code(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        start_calls = [
+            c
+            for c in calls
+            if "date_range_start" in c.kwargs.get("target", {}).get("entity_id", "")
+        ]
+        end_calls = [
+            c
+            for c in calls
+            if "date_range_end" in c.kwargs.get("target", {}).get("entity_id", "")
+        ]
+        assert start_calls[0].kwargs["service_data"]["datetime"] == start
+        assert end_calls[0].kwargs["service_data"]["datetime"] == end
+
+
+class TestBufferInUpdateTimes:
+    """Tests for buffer offsets in async_fire_update_times."""
+
+    @staticmethod
+    def _make_event(
+        slot_name: str = "Guest",
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> MagicMock:
+        """Build a mock event with slot attributes."""
+        if start is None:
+            start = datetime(2025, 1, 15, 16, 0, 0)
+        if end is None:
+            end = datetime(2025, 1, 17, 11, 0, 0)
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": slot_name,
+            "start": start,
+            "end": end,
+        }
+        return event
+
+    async def test_before_buffer_shifts_start(self) -> None:
+        """Verify date_range_start is 30 minutes earlier."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.code_buffer_before = 30
+        coordinator.code_buffer_after = 0
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+
+        event = self._make_event()
+        await async_fire_update_times(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        start_calls = [
+            c
+            for c in calls
+            if "date_range_start" in c.kwargs.get("target", {}).get("entity_id", "")
+        ]
+        assert start_calls[0].kwargs["service_data"]["datetime"] == (
+            datetime(2025, 1, 15, 15, 30, 0)
+        )
+
+    async def test_after_buffer_extends_end(self) -> None:
+        """Verify date_range_end is 15 minutes later."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 15
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+
+        event = self._make_event()
+        await async_fire_update_times(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        end_calls = [
+            c
+            for c in calls
+            if "date_range_end" in c.kwargs.get("target", {}).get("entity_id", "")
+        ]
+        assert end_calls[0].kwargs["service_data"]["datetime"] == (
+            datetime(2025, 1, 17, 11, 15, 0)
+        )
+
+    async def test_zero_buffer_unchanged(self) -> None:
+        """Verify zero buffers produce unbuffered date ranges."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+
+        start = datetime(2025, 1, 15, 16, 0, 0)
+        end = datetime(2025, 1, 17, 11, 0, 0)
+        event = self._make_event(start=start, end=end)
+        await async_fire_update_times(coordinator, event, 10)
+
+        calls = coordinator.hass.services.async_call.await_args_list
+        start_calls = [
+            c
+            for c in calls
+            if "date_range_start" in c.kwargs.get("target", {}).get("entity_id", "")
+        ]
+        end_calls = [
+            c
+            for c in calls
+            if "date_range_end" in c.kwargs.get("target", {}).get("entity_id", "")
+        ]
+        assert start_calls[0].kwargs["service_data"]["datetime"] == start
+        assert end_calls[0].kwargs["service_data"]["datetime"] == end
+
+    async def test_event_attributes_unmodified(self) -> None:
+        """Verify event attributes remain unbuffered after call."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.code_buffer_before = 30
+        coordinator.code_buffer_after = 15
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+
+        original_start = datetime(2025, 1, 15, 16, 0, 0)
+        original_end = datetime(2025, 1, 17, 11, 0, 0)
+        event = self._make_event(start=original_start, end=original_end)
+        await async_fire_update_times(coordinator, event, 10)
+
+        assert event.extra_state_attributes["start"] == original_start
+        assert event.extra_state_attributes["end"] == original_end

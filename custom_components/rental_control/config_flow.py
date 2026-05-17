@@ -28,6 +28,8 @@ from .const import CODE_GENERATORS
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CLEANING_WINDOW
+from .const import CONF_CODE_BUFFER_AFTER
+from .const import CONF_CODE_BUFFER_BEFORE
 from .const import CONF_CODE_GENERATION
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
@@ -48,6 +50,8 @@ from .const import CONF_TRIM_NAMES
 from .const import DEFAULT_CHECKIN
 from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_CLEANING_WINDOW
+from .const import DEFAULT_CODE_BUFFER_AFTER
+from .const import DEFAULT_CODE_BUFFER_BEFORE
 from .const import DEFAULT_CODE_GENERATION
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_DAYS
@@ -77,7 +81,7 @@ class RentalControlFlowHandler(  # type: ignore[call-arg]
 ):
     """Handle the config flow for Rental Control."""
 
-    VERSION = 9
+    VERSION = 10
 
     DEFAULTS = {
         CONF_CHECKIN: DEFAULT_CHECKIN,
@@ -91,6 +95,8 @@ class RentalControlFlowHandler(  # type: ignore[call-arg]
         CONF_HONOR_EVENT_TIMES: DEFAULT_HONOR_EVENT_TIMES,
         CONF_TRIM_NAMES: DEFAULT_TRIM_NAMES,
         CONF_MAX_NAME_LENGTH: DEFAULT_MAX_NAME_LENGTH,
+        CONF_CODE_BUFFER_BEFORE: DEFAULT_CODE_BUFFER_BEFORE,
+        CONF_CODE_BUFFER_AFTER: DEFAULT_CODE_BUFFER_AFTER,
         CONF_TIMEZONE: str(dt.DEFAULT_TIME_ZONE),
         CONF_VERIFY_SSL: True,
     }
@@ -355,6 +361,20 @@ def _get_schema(
                         DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
                     ),
                 ): cv.boolean,
+                vol.Optional(
+                    CONF_CODE_BUFFER_BEFORE,
+                    default=_get_default(
+                        CONF_CODE_BUFFER_BEFORE,
+                        DEFAULT_CODE_BUFFER_BEFORE,
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0)),
+                vol.Optional(
+                    CONF_CODE_BUFFER_AFTER,
+                    default=_get_default(
+                        CONF_CODE_BUFFER_AFTER,
+                        DEFAULT_CODE_BUFFER_AFTER,
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0)),
             }
         )
     return schema

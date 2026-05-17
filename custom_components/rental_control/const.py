@@ -106,6 +106,11 @@ MIN_NAME_LENGTH = 4
 CONF_TRIM_NAMES = "trim_names"
 CONF_MAX_NAME_LENGTH = "max_name_length"
 
+CONF_CODE_BUFFER_BEFORE = "code_buffer_before"
+CONF_CODE_BUFFER_AFTER = "code_buffer_after"
+DEFAULT_CODE_BUFFER_BEFORE = 0
+DEFAULT_CODE_BUFFER_AFTER = 0
+
 CODE_GENERATORS = [
     {"type": "date_based", "description": "Start/End Date"},
     {"type": "static_random", "description": "Static Random"},

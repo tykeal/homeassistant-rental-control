@@ -283,6 +283,30 @@ def trim_name(name: str, max_length: int) -> str:
     return " ".join(result)
 
 
+def _apply_buffer(
+    start: date | datetime,
+    end: date | datetime,
+    before_minutes: int,
+    after_minutes: int,
+    coordinator: object,
+) -> tuple[date | datetime, date | datetime]:
+    """Return buffered start/end times for Keymaster date ranges.
+
+    When a non-zero buffer is applied, bare ``date`` values are
+    normalised via ``_ensure_datetime`` before arithmetic.  When
+    both buffer values are zero the inputs are returned unchanged.
+    """
+    if not before_minutes and not after_minutes:
+        return start, end
+    dt_start = _ensure_datetime(start, coordinator)
+    dt_end = _ensure_datetime(end, coordinator)
+    if before_minutes:
+        dt_start = dt_start - timedelta(minutes=before_minutes)
+    if after_minutes:
+        dt_end = dt_end + timedelta(minutes=after_minutes)
+    return dt_start, dt_end
+
+
 async def async_fire_set_code(coordinator, event, slot: int) -> None:
     """Set codes into a slot."""
     _LOGGER.debug("In async_fire_set_code - slot: %s", slot)
@@ -347,13 +371,22 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
             blocking=True,
         )
 
+        # Compute buffered validity window for Keymaster
+        buffered_start, buffered_end = _apply_buffer(
+            event.extra_state_attributes["start"],
+            event.extra_state_attributes["end"],
+            coordinator.code_buffer_before,
+            coordinator.code_buffer_after,
+            coordinator,
+        )
+
         coro = add_call(
             coordinator.hass,
             coro,
             DATETIME,
             "set_value",
             f"{DATETIME}.{lockname}_code_slot_{slot}_date_range_end",
-            {"datetime": event.extra_state_attributes["end"]},
+            {"datetime": buffered_end},
         )
 
         coro = add_call(
@@ -362,7 +395,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
             DATETIME,
             "set_value",
             f"{DATETIME}.{lockname}_code_slot_{slot}_date_range_start",
-            {"datetime": event.extra_state_attributes["start"]},
+            {"datetime": buffered_start},
         )
 
         coro = add_call(
@@ -440,13 +473,22 @@ async def async_fire_update_times(coordinator, event, slot: int) -> None:
         )
         return
 
+    # Compute buffered validity window for Keymaster
+    buffered_start, buffered_end = _apply_buffer(
+        event.extra_state_attributes["start"],
+        event.extra_state_attributes["end"],
+        coordinator.code_buffer_before,
+        coordinator.code_buffer_after,
+        coordinator,
+    )
+
     coro = add_call(
         coordinator.hass,
         coro,
         DATETIME,
         "set_value",
         f"datetime.{lockname}_code_slot_{slot}_date_range_end",
-        {"datetime": event.extra_state_attributes["end"]},
+        {"datetime": buffered_end},
     )
 
     coro = add_call(
@@ -455,7 +497,7 @@ async def async_fire_update_times(coordinator, event, slot: int) -> None:
         DATETIME,
         "set_value",
         f"datetime.{lockname}_code_slot_{slot}_date_range_start",
-        {"datetime": event.extra_state_attributes["start"]},
+        {"datetime": buffered_start},
     )
     # Update the slot details
     results = await asyncio.gather(*coro, return_exceptions=True)

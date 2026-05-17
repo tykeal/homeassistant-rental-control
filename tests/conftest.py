@@ -121,7 +121,7 @@ def mock_config_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Test Rental",
-        version=9,
+        version=10,
         unique_id="test-unique-id",
         data={
             "name": "Test Rental",
@@ -135,6 +135,8 @@ def mock_config_entry() -> MockConfigEntry:
             "verify_ssl": True,
             "ignore_non_reserved": False,
             "honor_event_times": False,
+            "code_buffer_before": 0,
+            "code_buffer_after": 0,
         },
         options={
             "refresh_frequency": 5,
@@ -153,7 +155,7 @@ def mock_config_entry_full() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Complete Rental",
-        version=9,
+        version=10,
         unique_id="test-full-unique-id",
         data={
             "name": "Complete Rental",
@@ -284,7 +286,7 @@ def mock_checkin_config_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Test Rental",
-        version=9,
+        version=10,
         unique_id="test-checkin-unique-id",
         data={
             "name": "Test Rental",
@@ -298,6 +300,8 @@ def mock_checkin_config_entry() -> MockConfigEntry:
             "verify_ssl": True,
             "ignore_non_reserved": False,
             "honor_event_times": False,
+            "code_buffer_before": 0,
+            "code_buffer_after": 0,
         },
         options={
             "refresh_frequency": 5,

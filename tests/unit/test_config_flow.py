@@ -1001,15 +1001,15 @@ async def test_config_flow_url_bad_content_type(hass: HomeAssistant) -> None:
     assert result["errors"] == {CONF_URL: "bad_ics"}
 
 
-async def test_honor_event_times_version_is_8(hass: HomeAssistant) -> None:
-    """Test that RentalControlFlowHandler VERSION is 9.
+async def test_config_flow_version_is_10(hass: HomeAssistant) -> None:
+    """Test that RentalControlFlowHandler VERSION is 10.
 
     Verifies that the config flow handler version has been bumped
-    to 9 to account for the new trim_names configuration keys.
+    to 10 to account for the new lock code buffer keys.
     """
     from custom_components.rental_control.config_flow import RentalControlFlowHandler
 
-    assert RentalControlFlowHandler.VERSION == 9
+    assert RentalControlFlowHandler.VERSION == 10
 
 
 async def test_honor_event_times_in_options_schema(hass: HomeAssistant) -> None:
