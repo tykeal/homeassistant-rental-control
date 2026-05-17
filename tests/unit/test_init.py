@@ -255,7 +255,7 @@ async def test_migrate_entry_rejects_version_below_3(
     assert result is False
 
 
-async def test_migrate_entry_v3_to_v8(
+async def test_migrate_entry_v3_to_v10(
     hass: HomeAssistant,
 ) -> None:
     """Verify a version-3 entry migrates through all steps to version 10.
@@ -300,7 +300,7 @@ async def test_migrate_entry_v3_to_v8(
     assert entry.data[CONF_HONOR_EVENT_TIMES] is False
 
 
-async def test_migrate_entry_v6_to_v8(
+async def test_migrate_entry_v6_to_v10(
     hass: HomeAssistant,
 ) -> None:
     """Verify a version-6 entry runs v6→7→8→9→10 steps."""
@@ -337,7 +337,7 @@ async def test_migrate_entry_v6_to_v8(
     assert entry.data[CONF_HONOR_EVENT_TIMES] is False
 
 
-async def test_migrate_entry_v7_to_v8_honor_event_times(
+async def test_migrate_entry_v7_to_v10_honor_event_times(
     hass: HomeAssistant,
 ) -> None:
     """Verify v7→v8→v9→v10 migration sets honor_event_times.
@@ -379,7 +379,7 @@ async def test_migrate_entry_v7_to_v8_honor_event_times(
     assert entry.data[CONF_HONOR_EVENT_TIMES] is False
 
 
-async def test_migrate_entry_v8_to_v9_trim_names(
+async def test_migrate_entry_v8_to_v10_trim_names(
     hass: HomeAssistant,
 ) -> None:
     """Verify v8→v9→v10 migration adds trim_names and max_name_length.

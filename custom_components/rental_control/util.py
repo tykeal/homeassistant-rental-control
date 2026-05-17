@@ -283,6 +283,20 @@ def trim_name(name: str, max_length: int) -> str:
     return " ".join(result)
 
 
+def _apply_buffer(
+    start: datetime,
+    end: datetime,
+    before_minutes: int,
+    after_minutes: int,
+) -> tuple[datetime, datetime]:
+    """Return buffered start/end times for Keymaster date ranges."""
+    if before_minutes:
+        start = start - timedelta(minutes=before_minutes)
+    if after_minutes:
+        end = end + timedelta(minutes=after_minutes)
+    return start, end
+
+
 async def async_fire_set_code(coordinator, event, slot: int) -> None:
     """Set codes into a slot."""
     _LOGGER.debug("In async_fire_set_code - slot: %s", slot)
@@ -348,16 +362,12 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         )
 
         # Compute buffered validity window for Keymaster
-        buffered_start = event.extra_state_attributes["start"]
-        buffered_end = event.extra_state_attributes["end"]
-        if coordinator.code_buffer_before:
-            buffered_start = buffered_start - timedelta(
-                minutes=coordinator.code_buffer_before
-            )
-        if coordinator.code_buffer_after:
-            buffered_end = buffered_end + timedelta(
-                minutes=coordinator.code_buffer_after
-            )
+        buffered_start, buffered_end = _apply_buffer(
+            event.extra_state_attributes["start"],
+            event.extra_state_attributes["end"],
+            coordinator.code_buffer_before,
+            coordinator.code_buffer_after,
+        )
 
         coro = add_call(
             coordinator.hass,
@@ -453,14 +463,12 @@ async def async_fire_update_times(coordinator, event, slot: int) -> None:
         return
 
     # Compute buffered validity window for Keymaster
-    buffered_start = event.extra_state_attributes["start"]
-    buffered_end = event.extra_state_attributes["end"]
-    if coordinator.code_buffer_before:
-        buffered_start = buffered_start - timedelta(
-            minutes=coordinator.code_buffer_before
-        )
-    if coordinator.code_buffer_after:
-        buffered_end = buffered_end + timedelta(minutes=coordinator.code_buffer_after)
+    buffered_start, buffered_end = _apply_buffer(
+        event.extra_state_attributes["start"],
+        event.extra_state_attributes["end"],
+        coordinator.code_buffer_before,
+        coordinator.code_buffer_after,
+    )
 
     coro = add_call(
         coordinator.hass,

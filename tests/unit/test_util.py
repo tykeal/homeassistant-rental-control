@@ -2253,6 +2253,7 @@ class TestBufferInSetCode:
         coordinator.code_buffer_before = 30
         coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
 
         event = self._make_event()
         await async_fire_set_code(coordinator, event, 10)
@@ -2276,6 +2277,7 @@ class TestBufferInSetCode:
         coordinator.code_buffer_before = 0
         coordinator.code_buffer_after = 15
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
 
         event = self._make_event()
         await async_fire_set_code(coordinator, event, 10)
@@ -2299,6 +2301,7 @@ class TestBufferInSetCode:
         coordinator.code_buffer_before = 60
         coordinator.code_buffer_after = 30
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
 
         event = self._make_event()
         await async_fire_set_code(coordinator, event, 10)
@@ -2330,6 +2333,7 @@ class TestBufferInSetCode:
         coordinator.code_buffer_before = 0
         coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
 
         start = datetime(2025, 1, 15, 16, 0, 0)
         end = datetime(2025, 1, 17, 11, 0, 0)
@@ -2380,6 +2384,7 @@ class TestBufferInUpdateTimes:
         coordinator.code_buffer_before = 30
         coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
 
         event = self._make_event()
         await async_fire_update_times(coordinator, event, 10)
@@ -2401,6 +2406,7 @@ class TestBufferInUpdateTimes:
         coordinator.code_buffer_before = 0
         coordinator.code_buffer_after = 15
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
 
         event = self._make_event()
         await async_fire_update_times(coordinator, event, 10)
@@ -2422,6 +2428,7 @@ class TestBufferInUpdateTimes:
         coordinator.code_buffer_before = 0
         coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
 
         start = datetime(2025, 1, 15, 16, 0, 0)
         end = datetime(2025, 1, 17, 11, 0, 0)
@@ -2449,6 +2456,7 @@ class TestBufferInUpdateTimes:
         coordinator.code_buffer_before = 30
         coordinator.code_buffer_after = 15
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
 
         original_start = datetime(2025, 1, 15, 16, 0, 0)
         original_end = datetime(2025, 1, 17, 11, 0, 0)
