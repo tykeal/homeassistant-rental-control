@@ -25,6 +25,8 @@ Auto-generated from all feature plans. Last updated: 2026-05-15
 - Home Assistant config entries (persisted via HA's `.storage/` JSON files) (007-honor-pms-times)
 - Python ≥3.14.2 + homeassistant core, voluptuous, icalendar, aiohttp (008-trim-event-names)
 - Home Assistant config entries (JSON-backed via `.storage/`) (008-trim-event-names)
+- Python ≥3.14.2 + Home Assistant core, Keymaster integration, icalendar, voluptuous (009-lock-code-buffer)
+- HA config entries (persisted via `config_entry.data`) (009-lock-code-buffer)
 
 ## Project Structure
 
@@ -43,9 +45,9 @@ uv run ruff check custom_components/ tests/
 Python ≥3.14.2: Follow standard conventions, ruff formatting
 
 ## Recent Changes
+- 009-lock-code-buffer: Added Python ≥3.14.2 + Home Assistant core, Keymaster integration, icalendar, voluptuous
 - 008-trim-event-names: Added Python ≥3.14.2 + homeassistant core, voluptuous, icalendar, aiohttp
 - 007-honor-pms-times: Added Python ≥ 3.14.2 + homeassistant (core), icalendar, voluptuous, x-wr-timezone, aiohttp
-- 005-fix-duplicate-slot: Added Python ≥3.13.2 + Home Assistant Core (≥2025.x), pytest-homeassistant-custom-component, Keymaster integration
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
