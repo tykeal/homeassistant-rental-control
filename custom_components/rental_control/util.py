@@ -292,9 +292,9 @@ def _apply_buffer(
 ) -> tuple[date | datetime, date | datetime]:
     """Return buffered start/end times for Keymaster date ranges.
 
-    Normalises bare ``date`` values via ``_ensure_datetime`` before
-    applying offsets.  When both buffer values are zero the inputs
-    are returned unchanged.
+    When a non-zero buffer is applied, bare ``date`` values are
+    normalised via ``_ensure_datetime`` before arithmetic.  When
+    both buffer values are zero the inputs are returned unchanged.
     """
     if not before_minutes and not after_minutes:
         return start, end
