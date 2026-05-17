@@ -20,6 +20,9 @@ and sensors for managing rental properties.
     - [Home Assistant Events](#home-assistant-events)
     - [Door Code Generation](#door-code-generation)
     - [Keymaster Integration](#keymaster-integration)
+        - [Slot Name Trimming](#slot-name-trimming)
+        - [Lock Code Buffer Times](#lock-code-buffer-times)
+        - [Keymaster Event Diagnostics](#keymaster-event-diagnostics)
 - [Installation](#installation)
     - [MANUAL INSTALLATION](#manual-installation)
     - [INSTALLATION VIA Home Assistant Community Store (HACS)](#installation-via-home-assistant-community-store-hacs)
@@ -127,6 +130,16 @@ integrations know the full set of valid states.
 The check-in sensor state **persists across Home Assistant restarts** and
 the integration validates stale states on startup automatically.
 
+**Keymaster event diagnostics:** When enabled in the options flow, the
+check-in sensor gains a `keymaster_event_diagnostics` attribute
+containing a ring buffer of the last 10
+`keymaster_lock_state_changed` events seen by the integration. Each
+entry includes the timestamp, lock name, slot number, state, and
+disposition (e.g., `accepted`, `rejected_state`, `rejected_slot_zero`,
+`rejected_out_of_range`). The integration only records events from
+monitored locks. This feature defaults to off; enable it in the
+options flow.
+
 **Debug action:** The integration provides a `rental_control.set_state`
 service action for testing and development. It forces the check-in sensor into
 any valid state (`no_reservation`, `awaiting_checkin`, `checked_in`,
@@ -210,6 +223,52 @@ Both events include attributes: `summary`, `guest_name`, `entity_id`, `start`,
 - Slot command retry with escalation: if a lock code set/clear command fails
   after 3 attempts the integration creates a persistent notification alerting
   the user to take manual action
+
+#### Slot Name Trimming
+
+Some locks (e.g., Schlage via Keymaster) impose a character limit
+for slot names. The integration can optionally trim event names to fit
+within a configured length on word boundaries. Enable this feature in
+the options flow when you configure a Keymaster lock:
+
+- **`trim_names`** (boolean, default: off) — enable slot name trimming
+- **`max_name_length`** (integer, default: 16, min: 4) — character
+  length cap for slot names
+
+When enabled, the integration trims names on word boundaries. If a
+single word exceeds the cap, the integration hard-truncates it. The
+event prefix counts toward the limit.
+
+#### Lock Code Buffer Times
+
+Configurable pre/post buffer times control when lock codes activate
+and deactivate relative to the reservation schedule:
+
+- **`code_buffer_before`** (integer, default: 0) — minutes before
+  check-in to activate the lock code
+- **`code_buffer_after`** (integer, default: 0) — minutes after
+  checkout to deactivate the lock code
+
+The buffer **only** affects when the physical lock code is valid on
+the lock. It does not change calendar event display times, check-in
+sensor timing, event override matching, or auto check-in/checkout
+scheduling. If a guest arrives during the buffer window and uses
+their code, the check-in sensor correctly transitions to `checked_in`
+(when you enable Keymaster monitoring).
+
+#### Keymaster Event Diagnostics
+
+An opt-in diagnostic attribute on the check-in tracking sensor records
+the last 10 `keymaster_lock_state_changed` events seen by the
+integration. Enable it in the options flow:
+
+- **`enable_keymaster_event_diagnostics`** (boolean, default: off)
+
+When enabled, the check-in sensor gains a
+`keymaster_event_diagnostics` attribute. Each entry includes the
+timestamp, lock name, slot number, state, and disposition. The
+integration only records events from monitored locks.
+
 - Custom calendars work as long as they provide a valid ICS file via an HTTPS
   connection.
     - Create rental events as all-day events (the way rental platforms provide
@@ -334,6 +393,17 @@ integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https:
           have a non-managed slot that has the same door code (or starting
           code, typically first 4 digits) as the generated code and thus
           causes the slot to not function properly
+    - **Slot name trimming**: if your lock has a character limit for slot
+      names, enable **`trim_names`** and set **`max_name_length`** (default
+      16, min 4). The integration trims names on word boundaries
+    - **Lock code buffers**: set **`code_buffer_before`** and
+      **`code_buffer_after`** (minutes) to make lock codes activate before
+      check-in or stay active after checkout. Buffers only affect the
+      physical lock code — not calendar times or sensor transitions
+    - **Keymaster event diagnostics**: enable
+      **`enable_keymaster_event_diagnostics`** to add a ring buffer of the
+      last 10 keymaster events as an attribute on the check-in sensor.
+      Useful for debugging lock code issues
 
 ## Reconfiguration
 
