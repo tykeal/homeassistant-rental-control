@@ -347,13 +347,25 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
             blocking=True,
         )
 
+        # Compute buffered validity window for Keymaster
+        buffered_start = event.extra_state_attributes["start"]
+        buffered_end = event.extra_state_attributes["end"]
+        if coordinator.code_buffer_before:
+            buffered_start = buffered_start - timedelta(
+                minutes=coordinator.code_buffer_before
+            )
+        if coordinator.code_buffer_after:
+            buffered_end = buffered_end + timedelta(
+                minutes=coordinator.code_buffer_after
+            )
+
         coro = add_call(
             coordinator.hass,
             coro,
             DATETIME,
             "set_value",
             f"{DATETIME}.{lockname}_code_slot_{slot}_date_range_end",
-            {"datetime": event.extra_state_attributes["end"]},
+            {"datetime": buffered_end},
         )
 
         coro = add_call(
@@ -362,7 +374,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
             DATETIME,
             "set_value",
             f"{DATETIME}.{lockname}_code_slot_{slot}_date_range_start",
-            {"datetime": event.extra_state_attributes["start"]},
+            {"datetime": buffered_start},
         )
 
         coro = add_call(
@@ -440,13 +452,23 @@ async def async_fire_update_times(coordinator, event, slot: int) -> None:
         )
         return
 
+    # Compute buffered validity window for Keymaster
+    buffered_start = event.extra_state_attributes["start"]
+    buffered_end = event.extra_state_attributes["end"]
+    if coordinator.code_buffer_before:
+        buffered_start = buffered_start - timedelta(
+            minutes=coordinator.code_buffer_before
+        )
+    if coordinator.code_buffer_after:
+        buffered_end = buffered_end + timedelta(minutes=coordinator.code_buffer_after)
+
     coro = add_call(
         coordinator.hass,
         coro,
         DATETIME,
         "set_value",
         f"datetime.{lockname}_code_slot_{slot}_date_range_end",
-        {"datetime": event.extra_state_attributes["end"]},
+        {"datetime": buffered_end},
     )
 
     coro = add_call(
@@ -455,7 +477,7 @@ async def async_fire_update_times(coordinator, event, slot: int) -> None:
         DATETIME,
         "set_value",
         f"datetime.{lockname}_code_slot_{slot}_date_range_start",
-        {"datetime": event.extra_state_attributes["start"]},
+        {"datetime": buffered_start},
     )
     # Update the slot details
     results = await asyncio.gather(*coro, return_exceptions=True)
