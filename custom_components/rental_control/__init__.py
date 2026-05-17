@@ -35,6 +35,8 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
 from .const import CHECKIN_SENSOR
+from .const import CONF_CODE_BUFFER_AFTER
+from .const import CONF_CODE_BUFFER_BEFORE
 from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
@@ -45,6 +47,8 @@ from .const import CONF_PATH
 from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_TRIM_NAMES
 from .const import COORDINATOR
+from .const import DEFAULT_CODE_BUFFER_AFTER
+from .const import DEFAULT_CODE_BUFFER_BEFORE
 from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from .const import DEFAULT_GENERATE
@@ -273,6 +277,23 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         )
 
         version = 9
+        _LOGGER.debug("Migration to version %s complete", config_entry.version)
+
+    # 9 -> 10: Add code buffer before/after to configuration
+    if version == 9:
+        _LOGGER.debug("Migrating from version %s", version)
+
+        data = config_entry.data.copy()
+        data[CONF_CODE_BUFFER_BEFORE] = DEFAULT_CODE_BUFFER_BEFORE
+        data[CONF_CODE_BUFFER_AFTER] = DEFAULT_CODE_BUFFER_AFTER
+        hass.config_entries.async_update_entry(
+            entry=config_entry,
+            unique_id=config_entry.unique_id,
+            data=data,
+            version=10,
+        )
+
+        version = 10
         _LOGGER.debug("Migration to version %s complete", config_entry.version)
 
     return True
