@@ -340,7 +340,7 @@ async def test_migrate_entry_v6_to_v10(
 async def test_migrate_entry_v7_to_v10_honor_event_times(
     hass: HomeAssistant,
 ) -> None:
-    """Verify v7→v8→v9→v10 migration sets honor_event_times.
+    """Verify v7→v8→v9→v10 migration sets honor_event_times to False.
 
     Verifies that an existing v7 config entry that lacks the
     honor_event_times key gets migrated through v8 to v10 with
