@@ -9,7 +9,7 @@ Add configurable pre-check-in and post-checkout buffer times (in minutes) for lo
 
 ## Technical Context
 
-**Language/Version**: Python 3.11+
+**Language/Version**: Python ≥3.14.2
 **Primary Dependencies**: Home Assistant core, Keymaster integration, icalendar, voluptuous
 **Storage**: HA config entries (persisted via `config_entry.data`)
 **Testing**: pytest via `uv run pytest tests/`
