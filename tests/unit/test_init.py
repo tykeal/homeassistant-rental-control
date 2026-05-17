@@ -258,11 +258,12 @@ async def test_migrate_entry_rejects_version_below_3(
 async def test_migrate_entry_v3_to_v8(
     hass: HomeAssistant,
 ) -> None:
-    """Verify a version-3 entry migrates through all steps to version 9.
+    """Verify a version-3 entry migrates through all steps to version 10.
 
-    The migration chain 3→4→5→6→7→8→9 adds code_length,
+    The migration chain 3→4→5→6→7→8→9→10 adds code_length,
     generate_package, removes packages_path, adds
-    should_update_code, honor_event_times, and trim fields.
+    should_update_code, honor_event_times, trim fields, and
+    code buffer fields.
     """
     from custom_components.rental_control import async_migrate_entry
 
@@ -291,7 +292,7 @@ async def test_migrate_entry_v3_to_v8(
     result = await async_migrate_entry(hass, entry)
 
     assert result is True
-    assert entry.version == 9
+    assert entry.version == 10
     assert entry.data[CONF_CODE_LENGTH] == DEFAULT_CODE_LENGTH
     assert entry.data[CONF_GENERATE] == DEFAULT_GENERATE
     assert CONF_PATH not in entry.data
@@ -302,7 +303,7 @@ async def test_migrate_entry_v3_to_v8(
 async def test_migrate_entry_v6_to_v8(
     hass: HomeAssistant,
 ) -> None:
-    """Verify a version-6 entry runs v6→7→8→9 steps."""
+    """Verify a version-6 entry runs v6→7→8→9→10 steps."""
     from custom_components.rental_control import async_migrate_entry
 
     entry = MockConfigEntry(
@@ -331,7 +332,7 @@ async def test_migrate_entry_v6_to_v8(
     result = await async_migrate_entry(hass, entry)
 
     assert result is True
-    assert entry.version == 9
+    assert entry.version == 10
     assert entry.data[CONF_SHOULD_UPDATE_CODE] is False
     assert entry.data[CONF_HONOR_EVENT_TIMES] is False
 
@@ -339,11 +340,11 @@ async def test_migrate_entry_v6_to_v8(
 async def test_migrate_entry_v7_to_v8_honor_event_times(
     hass: HomeAssistant,
 ) -> None:
-    """Verify v7→v8→v9 migration sets honor_event_times to False.
+    """Verify v7→v8→v9→v10 migration sets honor_event_times.
 
     Verifies that an existing v7 config entry that lacks the
-    honor_event_times key gets migrated through v8 to v9 with the
-    key set to False, preserving existing behavior.
+    honor_event_times key gets migrated through v8 to v10 with
+    the key set to False, preserving existing behavior.
     """
     from custom_components.rental_control import async_migrate_entry
 
@@ -374,19 +375,22 @@ async def test_migrate_entry_v7_to_v8_honor_event_times(
     result = await async_migrate_entry(hass, entry)
 
     assert result is True
-    assert entry.version == 9
+    assert entry.version == 10
     assert entry.data[CONF_HONOR_EVENT_TIMES] is False
 
 
 async def test_migrate_entry_v8_to_v9_trim_names(
     hass: HomeAssistant,
 ) -> None:
-    """Verify v8→v9 migration adds trim_names and max_name_length.
+    """Verify v8→v9→v10 migration adds trim_names and max_name_length.
 
     Verifies that an existing v8 config entry without trim fields
-    gets migrated to v9 with trim_names=False and max_name_length=16.
+    gets migrated to v10 with trim_names=False, max_name_length=16,
+    and both buffer fields defaulting to 0.
     """
     from custom_components.rental_control import async_migrate_entry
+    from custom_components.rental_control.const import CONF_CODE_BUFFER_AFTER
+    from custom_components.rental_control.const import CONF_CODE_BUFFER_BEFORE
     from custom_components.rental_control.const import CONF_MAX_NAME_LENGTH
     from custom_components.rental_control.const import CONF_TRIM_NAMES
 
@@ -417,6 +421,54 @@ async def test_migrate_entry_v8_to_v9_trim_names(
     result = await async_migrate_entry(hass, entry)
 
     assert result is True
-    assert entry.version == 9
+    assert entry.version == 10
     assert entry.data[CONF_TRIM_NAMES] is False
     assert entry.data[CONF_MAX_NAME_LENGTH] == 16
+    assert entry.data[CONF_CODE_BUFFER_BEFORE] == 0
+    assert entry.data[CONF_CODE_BUFFER_AFTER] == 0
+
+
+async def test_migrate_entry_v9_to_v10_code_buffer(
+    hass: HomeAssistant,
+) -> None:
+    """Verify v9→v10 migration adds buffer fields with default 0.
+
+    Verifies that an existing v9 config entry gets migrated to v10
+    with code_buffer_before=0 and code_buffer_after=0.
+    """
+    from custom_components.rental_control import async_migrate_entry
+    from custom_components.rental_control.const import CONF_CODE_BUFFER_AFTER
+    from custom_components.rental_control.const import CONF_CODE_BUFFER_BEFORE
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="V9 Entry",
+        version=9,
+        unique_id="v9-migration-test",
+        data={
+            "name": "V9 Entry",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "America/New_York",
+            "checkin": "16:00",
+            "checkout": "11:00",
+            "start_slot": 10,
+            "max_events": 3,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+            "code_length": 4,
+            "should_update_code": False,
+            "honor_event_times": False,
+            "trim_names": False,
+            "max_name_length": 16,
+        },
+        entry_id="v9_entry",
+    )
+    entry.add_to_hass(hass)
+
+    result = await async_migrate_entry(hass, entry)
+
+    assert result is True
+    assert entry.version == 10
+    assert entry.data[CONF_CODE_BUFFER_BEFORE] == 0
+    assert entry.data[CONF_CODE_BUFFER_AFTER] == 0
