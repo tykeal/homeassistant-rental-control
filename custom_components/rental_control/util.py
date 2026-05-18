@@ -283,7 +283,7 @@ def trim_name(name: str, max_length: int) -> str:
     return " ".join(result)
 
 
-def _apply_buffer(
+def apply_buffer(
     start: date | datetime,
     end: date | datetime,
     before_minutes: int,
@@ -372,7 +372,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         )
 
         # Compute buffered validity window for Keymaster
-        buffered_start, buffered_end = _apply_buffer(
+        buffered_start, buffered_end = apply_buffer(
             event.extra_state_attributes["start"],
             event.extra_state_attributes["end"],
             coordinator.code_buffer_before,
@@ -474,7 +474,7 @@ async def async_fire_update_times(coordinator, event, slot: int) -> None:
         return
 
     # Compute buffered validity window for Keymaster
-    buffered_start, buffered_end = _apply_buffer(
+    buffered_start, buffered_end = apply_buffer(
         event.extra_state_attributes["start"],
         event.extra_state_attributes["end"],
         coordinator.code_buffer_before,
