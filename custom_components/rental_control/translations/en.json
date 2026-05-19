@@ -79,13 +79,17 @@
           "honor_event_times": "Honor calendar event times from PMS instead of stored override times",
           "trim_names": "Trim slot names to maximum length",
           "max_name_length": "Maximum slot name length",
+          "code_buffer_before": "Lock code buffer before (minutes)",
+          "code_buffer_after": "Lock code buffer after (minutes)",
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates",
           "enable_keymaster_event_diagnostics": "Enable keymaster event diagnostics (records last 10 keymaster_lock_state_changed events on the check-in sensor)"
         },
         "data_description": {
-          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)"
+          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)",
+          "code_buffer_before": "Minutes before check-in to activate the lock code (0 = no buffer)",
+          "code_buffer_after": "Minutes after check-out to keep the lock code active (0 = no buffer)"
         }
       }
     }

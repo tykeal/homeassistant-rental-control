@@ -10,7 +10,9 @@
       "invalid_path": "Le chemin doit \u00eatre un chemin relatif, non absolu",
       "invalid_url": "L'URL est mal form\u00e9e ou invalide",
       "same_name": "Nom d\u00e9j\u00e0 utilis\u00e9",
-      "unknown": "Erreur inattendue, v\u00e9rifiez les journaux pour plus de d\u00e9tails"
+      "unknown": "Erreur inattendue, v\u00e9rifiez les journaux pour plus de d\u00e9tails",
+      "bad_max_name_length": "La longueur maximale du nom doit \u00eatre de 4 ou plus",
+      "prefix_too_long_for_trim": "Le pr\u00e9fixe d'\u00e9v\u00e9nement est trop long pour la longueur maximale du nom"
     },
     "step": {
       "user": {
@@ -32,7 +34,9 @@
           "honor_event_times": "Utiliser les heures des \u00e9v\u00e9nements du calendrier PMS au lieu des heures de remplacement enregistr\u00e9es",
           "timezone": "Fuseau horaire du calendrier",
           "url": "URL du calendrier",
-          "verify_ssl": "V\u00e9rifier les certificats SSL"
+          "verify_ssl": "V\u00e9rifier les certificats SSL",
+          "trim_names": "Tronquer les noms des cr\u00e9neaux \u00e0 la longueur maximale",
+          "max_name_length": "Longueur maximale du nom de cr\u00e9neau"
         },
         "data_description": {
           "cleaning_window": "Heures de maintien du statut de d\u00e9part avant le retour \u00e0 aucune r\u00e9servation (0,5\u201348)"
@@ -51,7 +55,9 @@
       "invalid_path": "Le chemin doit \u00eatre un chemin relatif, non absolu",
       "invalid_url": "L'URL est mal form\u00e9e ou invalide",
       "same_name": "Nom d\u00e9j\u00e0 utilis\u00e9",
-      "unknown": "Erreur inattendue, v\u00e9rifiez les journaux pour plus de d\u00e9tails"
+      "unknown": "Erreur inattendue, v\u00e9rifiez les journaux pour plus de d\u00e9tails",
+      "bad_max_name_length": "La longueur maximale du nom doit \u00eatre de 4 ou plus",
+      "prefix_too_long_for_trim": "Le pr\u00e9fixe d'\u00e9v\u00e9nement est trop long pour la longueur maximale du nom"
     },
     "step": {
       "init": {
@@ -73,10 +79,17 @@
           "honor_event_times": "Utiliser les heures des \u00e9v\u00e9nements du calendrier PMS au lieu des heures de remplacement enregistr\u00e9es",
           "timezone": "Fuseau horaire du calendrier",
           "url": "URL du calendrier",
-          "verify_ssl": "V\u00e9rifier les certificats SSL"
+          "verify_ssl": "V\u00e9rifier les certificats SSL",
+          "trim_names": "Tronquer les noms des cr\u00e9neaux \u00e0 la longueur maximale",
+          "max_name_length": "Longueur maximale du nom de cr\u00e9neau",
+          "enable_keymaster_event_diagnostics": "Activer les diagnostics d'\u00e9v\u00e9nements Keymaster (enregistre les 10 derniers \u00e9v\u00e9nements keymaster_lock_state_changed sur le capteur d'arriv\u00e9e)",
+          "code_buffer_before": "Tampon de code de verrouillage avant (minutes)",
+          "code_buffer_after": "Tampon de code de verrouillage apr\u00e8s (minutes)"
         },
         "data_description": {
-          "cleaning_window": "Heures de maintien du statut de d\u00e9part avant le retour \u00e0 aucune r\u00e9servation (0,5\u201348)"
+          "cleaning_window": "Heures de maintien du statut de d\u00e9part avant le retour \u00e0 aucune r\u00e9servation (0,5\u201348)",
+          "code_buffer_before": "Minutes avant l'arriv\u00e9e pour activer le code de verrouillage (0 = pas de tampon)",
+          "code_buffer_after": "Minutes apr\u00e8s le d\u00e9part pour garder le code de verrouillage actif (0 = pas de tampon)"
         }
       }
     }
@@ -110,6 +123,16 @@
         "force": {
           "name": "Forcer",
           "description": "Ignorer les gardes de date et de limites. Utiliser lorsque le capteur est bloqu\u00e9 et que vous devez forcer le d\u00e9part."
+        }
+      }
+    },
+    "set_state": {
+      "name": "D\u00e9finir l'\u00e9tat",
+      "description": "Forcer le capteur d'arriv\u00e9e dans n'importe quel \u00e9tat valide. Outil de d\u00e9bogage \u2014 contourne toutes les conditions de garde et ne d\u00e9clenche pas les \u00e9v\u00e9nements personnalis\u00e9s d'arriv\u00e9e/d\u00e9part de l'int\u00e9gration.",
+      "fields": {
+        "state": {
+          "name": "\u00c9tat",
+          "description": "\u00c9tat cible pour le capteur d'arriv\u00e9e."
         }
       }
     }
