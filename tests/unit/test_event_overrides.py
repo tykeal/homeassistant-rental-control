@@ -2134,51 +2134,42 @@ class TestSlotEvictionOnNewEarlierEvent:
     async def test_new_earlier_event_evicts_last_slot(self) -> None:
         """Verify that a new earlier event evicts the displaced slot.
 
-        Scenario (issue #535):
-        - 7 slots all assigned to events (ordered by start time)
-        - A new reservation arrives with an earlier start
-        - sensor_cal = cal[:7] now includes the new event + 6 old ones
-        - The 7th old event is no longer in sensor_cal
-        - Its slot should be cleared, making room for the new event
+        Minimal reproduction of issue #535:
+        - 2 slots both assigned to existing events
+        - A 3rd earlier reservation arrives
+        - sensor_cal = cal[:2] includes new + first old event
+        - The 2nd old event is displaced and its slot cleared
         """
-        eo = EventOverrides(start_slot=1, max_slots=7)
+        eo = EventOverrides(start_slot=1, max_slots=2)
 
-        # Create 7 events, each a week apart, starting 2025-07-07
-        base = _make_dt(2025, 7, 7)
-        events_data = []
-        for i in range(7):
-            start = base + timedelta(weeks=i)
-            end = start + timedelta(days=5)
-            name = f"Guest {chr(65 + i)}"  # Guest A through Guest G
-            events_data.append((name, start, end))
+        # Fill both slots
+        s1 = _make_dt(2025, 7, 10)
+        e1 = _make_dt(2025, 7, 15)
+        s2 = _make_dt(2025, 7, 20)
+        e2 = _make_dt(2025, 7, 25)
 
-        # Fill all 7 slots with these events
-        for i, (name, start, end) in enumerate(events_data):
-            slot = i + 1
-            eo.update(slot, "code", name, start, end)
-            eo._slot_uids[slot] = f"uid-{chr(65 + i)}"
+        eo.update(1, "c1", "Alpha", s1, e1)
+        eo._slot_uids[1] = "uid-A"
+        eo.update(2, "c2", "Beta", s2, e2)
+        eo._slot_uids[2] = "uid-B"
 
         assert eo.ready is True
         assert eo.next_slot is None  # all full
 
-        # New event arrives starting TOMORROW (before all existing)
+        # New earlier event arrives (starts tomorrow, before both)
         new_start = _make_dt(2025, 7, 2)
         new_end = _make_dt(2025, 7, 6)
 
-        # Build the full calendar: new event + all 7 old events = 8 total
-        # Sorted by start time: new, A, B, C, D, E, F, G
+        # Full calendar: [New, Alpha, Beta] — 3 events total
+        # sensor_cal = cal[:2] = [New, Alpha] — Beta displaced
         cal_events = [
             _make_event(new_end, "New Guest", start=new_start, uid="uid-new"),
+            _make_event(e1, "Alpha", start=s1, uid="uid-A"),
+            _make_event(e2, "Beta", start=s2, uid="uid-B"),
         ]
-        for name, start, end in events_data:
-            uid = f"uid-{name.split()[-1]}"
-            cal_events.append(_make_event(end, name, start=start, uid=uid))
-
-        # max_events=7 so sensor_cal = cal[:7] = [New, A, B, C, D, E, F]
-        # Guest G (slot 7) falls off
         coordinator = _make_coordinator(
             calendar_events=cal_events,
-            max_events=7,
+            max_events=2,
         )
 
         frozen = _make_dt(2025, 7, 1)
@@ -2191,9 +2182,9 @@ class TestSlotEvictionOnNewEarlierEvent:
         ):
             await eo.async_check_overrides(coordinator)
 
-            # Slot 7 (Guest G) should be evicted
-            mock_fire.assert_called_once_with(coordinator, 7, expected_name="Guest G")
-            assert eo.overrides[7] is None
+            # Slot 2 (Beta) should be evicted
+            mock_fire.assert_called_once_with(coordinator, 2, expected_name="Beta")
+            assert eo.overrides[2] is None
 
             # next_slot should now be available
             assert eo.next_slot is not None
@@ -2212,37 +2203,33 @@ class TestSlotEvictionOnNewEarlierEvent:
         slot, async_reserve_or_get_slot should successfully assign
         the new event to a slot.
         """
-        eo = EventOverrides(start_slot=1, max_slots=3)
+        eo = EventOverrides(start_slot=1, max_slots=2)
 
-        # Fill all 3 slots
+        # Fill both slots
         s1 = _make_dt(2025, 7, 10)
         e1 = _make_dt(2025, 7, 15)
         s2 = _make_dt(2025, 7, 20)
         e2 = _make_dt(2025, 7, 25)
-        s3 = _make_dt(2025, 7, 30)
-        e3 = _make_dt(2025, 8, 4)
 
         eo.update(1, "c1", "Alpha", s1, e1)
         eo.update(2, "c2", "Beta", s2, e2)
-        eo.update(3, "c3", "Gamma", s3, e3)
 
         assert eo.next_slot is None  # all slots full
 
-        # New earlier event pushes Gamma out of sensor_cal
+        # New earlier event pushes Beta out of sensor_cal
         new_s = _make_dt(2025, 7, 5)
         new_e = _make_dt(2025, 7, 9)
 
-        # Full calendar: [New, Alpha, Beta, Gamma] but max_events=3
-        # sensor_cal = [New, Alpha, Beta] — Gamma displaced
+        # Full calendar: [Delta, Alpha, Beta] but max_events=2
+        # sensor_cal = [Delta, Alpha] — Beta displaced
         cal_events = [
             _make_event(new_e, "Delta", start=new_s),
             _make_event(e1, "Alpha", start=s1),
             _make_event(e2, "Beta", start=s2),
-            _make_event(e3, "Gamma", start=s3),
         ]
         coordinator = _make_coordinator(
             calendar_events=cal_events,
-            max_events=3,
+            max_events=2,
         )
 
         frozen = _make_dt(2025, 7, 1)
@@ -2255,9 +2242,9 @@ class TestSlotEvictionOnNewEarlierEvent:
         ):
             await eo.async_check_overrides(coordinator)
 
-            # Gamma (slot 3) should be cleared
-            mock_fire.assert_called_once_with(coordinator, 3, expected_name="Gamma")
-            assert eo.overrides[3] is None
+            # Beta (slot 2) should be cleared
+            mock_fire.assert_called_once_with(coordinator, 2, expected_name="Beta")
+            assert eo.overrides[2] is None
             assert eo.next_slot is not None
 
             # Now reserve a slot for Delta
@@ -2275,23 +2262,20 @@ class TestSlotEvictionOnNewEarlierEvent:
         slot occupied, permanently blocking new events from being
         assigned a slot.
         """
-        eo = EventOverrides(start_slot=1, max_slots=3)
+        eo = EventOverrides(start_slot=1, max_slots=2)
 
-        # Fill all 3 slots
+        # Fill both slots
         s1 = _make_dt(2025, 7, 10)
         e1 = _make_dt(2025, 7, 15)
         s2 = _make_dt(2025, 7, 20)
         e2 = _make_dt(2025, 7, 25)
-        s3 = _make_dt(2025, 7, 30)
-        e3 = _make_dt(2025, 8, 4)
 
         eo.update(1, "c1", "Alpha", s1, e1)
         eo.update(2, "c2", "Beta", s2, e2)
-        eo.update(3, "c3", "Gamma", s3, e3)
 
         assert eo.next_slot is None  # all slots full
 
-        # New earlier event pushes Gamma out of sensor_cal
+        # New earlier event pushes Beta out of sensor_cal
         new_s = _make_dt(2025, 7, 5)
         new_e = _make_dt(2025, 7, 9)
 
@@ -2299,11 +2283,10 @@ class TestSlotEvictionOnNewEarlierEvent:
             _make_event(new_e, "Delta", start=new_s),
             _make_event(e1, "Alpha", start=s1),
             _make_event(e2, "Beta", start=s2),
-            _make_event(e3, "Gamma", start=s3),
         ]
         coordinator = _make_coordinator(
             calendar_events=cal_events,
-            max_events=3,
+            max_events=2,
         )
 
         frozen = _make_dt(2025, 7, 1)
@@ -2320,7 +2303,7 @@ class TestSlotEvictionOnNewEarlierEvent:
             await eo.async_check_overrides(coordinator)
 
             # Despite clear_code failure, slot should still be freed
-            assert eo.overrides[3] is None
+            assert eo.overrides[2] is None
             assert eo.next_slot is not None
 
             # New event can now reserve the freed slot
