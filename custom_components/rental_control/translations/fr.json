@@ -83,13 +83,13 @@
           "trim_names": "Tronquer les noms des cr\u00e9neaux \u00e0 la longueur maximale",
           "max_name_length": "Longueur maximale du nom de cr\u00e9neau",
           "enable_keymaster_event_diagnostics": "Activer les diagnostics d'\u00e9v\u00e9nements Keymaster (enregistre les 10 derniers \u00e9v\u00e9nements keymaster_lock_state_changed sur le capteur d'arriv\u00e9e)",
-          "code_buffer_before": "Tampon de code de verrouillage avant (minutes)",
-          "code_buffer_after": "Tampon de code de verrouillage apr\u00e8s (minutes)"
+          "code_buffer_before": "Tampon d'activation du code de verrouillage (minutes avant l'arriv\u00e9e)",
+          "code_buffer_after": "Tampon de d\u00e9sactivation du code de verrouillage (minutes apr\u00e8s le d\u00e9part)"
         },
         "data_description": {
           "cleaning_window": "Heures de maintien du statut de d\u00e9part avant le retour \u00e0 aucune r\u00e9servation (0,5\u201348)",
-          "code_buffer_before": "Minutes avant l'arriv\u00e9e pour activer le code de verrouillage (0 = pas de tampon)",
-          "code_buffer_after": "Minutes apr\u00e8s le d\u00e9part pour garder le code de verrouillage actif (0 = pas de tampon)"
+          "code_buffer_before": "Minutes avant l'heure d'arriv\u00e9e pour activer le code de verrouillage (0 = pas de tampon)",
+          "code_buffer_after": "Minutes apr\u00e8s l'heure de d\u00e9part pour d\u00e9sactiver le code de verrouillage (0 = pas de tampon)"
         }
       }
     }

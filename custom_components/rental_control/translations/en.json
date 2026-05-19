@@ -79,8 +79,8 @@
           "honor_event_times": "Honor calendar event times from PMS instead of stored override times",
           "trim_names": "Trim slot names to maximum length",
           "max_name_length": "Maximum slot name length",
-          "code_buffer_before": "Lock code buffer before (minutes)",
-          "code_buffer_after": "Lock code buffer after (minutes)",
+          "code_buffer_before": "Lock code activation buffer (minutes before check-in)",
+          "code_buffer_after": "Lock code deactivation buffer (minutes after checkout)",
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates",
@@ -88,8 +88,8 @@
         },
         "data_description": {
           "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)",
-          "code_buffer_before": "Minutes before check-in to activate the lock code (0 = no buffer)",
-          "code_buffer_after": "Minutes after check-out to keep the lock code active (0 = no buffer)"
+          "code_buffer_before": "Minutes before check-in time to activate the lock code (0 = no buffer)",
+          "code_buffer_after": "Minutes after checkout time to deactivate the lock code (0 = no buffer)"
         }
       }
     }
