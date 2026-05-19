@@ -986,7 +986,7 @@ class TestEdgeCases:
 
         Before #535 fix the slot remained occupied on failure, which
         permanently blocked new events from being assigned.  The new
-        behaviour frees the override so ``_next_slot`` becomes
+        behavior frees the override so ``next_slot`` becomes
         available; the stale Keymaster code will be overwritten when
         the replacement event is programmed.
         """
