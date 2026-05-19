@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from collections.abc import Coroutine
 from collections.abc import Mapping
 from datetime import datetime
 from datetime import time
@@ -83,7 +84,10 @@ from .const import VERSION
 from .description_parser import extract_checkin_time
 from .description_parser import extract_checkout_time
 from .event_overrides import EventOverrides
+from .util import add_call
+from .util import apply_buffer
 from .util import async_fire_clear_code
+from .util import check_gather_results
 from .util import get_slot_name
 from .util import normalize_uid
 
@@ -590,6 +594,8 @@ Please update Keymaster to at least v0.1.0-b0
         self.max_name_length = int(
             str(config.get(CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH))
         )
+        previous_buffer_before = self.code_buffer_before
+        previous_buffer_after = self.code_buffer_after
         self.code_buffer_before = int(
             str(config.get(CONF_CODE_BUFFER_BEFORE, DEFAULT_CODE_BUFFER_BEFORE))
         )
@@ -606,6 +612,67 @@ Please update Keymaster to at least v0.1.0-b0
         self.verify_ssl = bool(config.get(CONF_VERIFY_SSL))
 
         await self.async_request_refresh()
+
+        buffer_changed = (
+            self.code_buffer_before != previous_buffer_before
+            or self.code_buffer_after != previous_buffer_after
+        )
+        if buffer_changed:
+            await self._async_update_buffer_times(
+                previous_buffer_before, previous_buffer_after
+            )
+
+    async def _async_update_buffer_times(self, old_before: int, old_after: int) -> None:
+        """Re-apply buffer to all assigned slots after config change.
+
+        Override times are sourced from Keymaster entities which store
+        already-buffered values.  To avoid double-buffering, reverse
+        the previous buffer before applying the new one.
+        """
+        if not self.event_overrides or not self.lockname:
+            return
+        for slot in range(self.start_slot, self.start_slot + self.max_events):
+            override = self.event_overrides.overrides.get(slot)
+            if override is None:
+                continue
+            # Reverse the old buffer to recover unbuffered times
+            start = override["start_time"]
+            end = override["end_time"]
+            if old_before:
+                start = start + timedelta(minutes=old_before)
+            if old_after:
+                end = end - timedelta(minutes=old_after)
+            # Apply new buffer
+            buffered_start, buffered_end = apply_buffer(
+                start,
+                end,
+                self.code_buffer_before,
+                self.code_buffer_after,
+                self,
+            )
+            coro: list[Coroutine] = []
+            coro = add_call(
+                self.hass,
+                coro,
+                DATETIME,
+                "set_value",
+                f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_end",
+                {"datetime": buffered_end},
+            )
+            coro = add_call(
+                self.hass,
+                coro,
+                DATETIME,
+                "set_value",
+                f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_start",
+                {"datetime": buffered_start},
+            )
+            results = await asyncio.gather(*coro, return_exceptions=True)
+            check_gather_results(
+                results,
+                f"Buffer time update slot {slot} ({self.lockname})",
+                _LOGGER,
+            )
 
     async def update_event_overrides(
         self,
