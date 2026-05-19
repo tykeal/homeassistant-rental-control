@@ -672,8 +672,8 @@ class EventOverrides:
                         _LOGGER.exception(
                             "Failed to fire clear code for slot %d; "
                             "freeing slot so new events can be assigned. "
-                            "The stale code will be overwritten when the "
-                            "replacement event is programmed.",
+                            "The stale code may be overwritten when a "
+                            "future event is programmed into this slot.",
                             slot,
                         )
 
