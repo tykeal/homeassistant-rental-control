@@ -1110,6 +1110,7 @@ test = [
     { name = "aioresponses" },
     { name = "homeassistant" },
     { name = "pytest-homeassistant-custom-component" },
+    { name = "pytest-timeout" },
 ]
 
 [package.dev-dependencies]
@@ -1124,6 +1125,7 @@ requires-dist = [
     { name = "homeassistant", marker = "extra == 'test'", specifier = ">=2026.4.0" },
     { name = "icalendar", specifier = ">=7.0.0" },
     { name = "pytest-homeassistant-custom-component", marker = "extra == 'test'" },
+    { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.3.0" },
     { name = "x-wr-timezone", specifier = ">=2.0.0" },
 ]
 provides-extras = ["dev", "test"]

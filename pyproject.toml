@@ -36,6 +36,7 @@ test = [
     "aioresponses",
     "homeassistant>=2026.4.0",
     "pytest-homeassistant-custom-component",
+    "pytest-timeout>=2.3.0",
 ]
 
 [project.urls]
