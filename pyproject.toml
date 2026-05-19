@@ -61,7 +61,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-qq"
+addopts = "-qq --assert=plain"
 console_output_style = "count"
 testpaths = ["tests"]
 asyncio_mode = "auto"
