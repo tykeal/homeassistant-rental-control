@@ -36,6 +36,8 @@ test = [
     "aioresponses",
     "homeassistant>=2026.4.0",
     "pytest-homeassistant-custom-component",
+    # CI resolver picks pytest-timeout 1.4.2 without this constraint;
+    # 1.4.2 imports distutils which was removed in Python 3.12
     "pytest-timeout>=2.3.0",
 ]
 
@@ -62,7 +64,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-qq --assert=plain"
+addopts = "-qq"
 console_output_style = "count"
 testpaths = ["tests"]
 asyncio_mode = "auto"

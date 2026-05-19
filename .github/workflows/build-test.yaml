@@ -112,6 +112,11 @@ jobs:
         uses: lfreleng-actions/python-test-action@aa753462f090101dcb0c4708e9499f55e276e373  # v1.1.2
         with:
           python_version: ${{ matrix.python-version }}
+        env:
+          # CPython 3.14 strict AST validation breaks pytest assertion
+          # rewriting; disable until pytest upstream fixes the issue
+          # yamllint disable-line rule:line-length
+          PYTEST_ADDOPTS: "${{ startsWith(matrix.python-version, '3.14') && '--assert=plain' || '' }}"
 
   python-audit:
     name: 'Python Audit'
