@@ -671,10 +671,11 @@ class EventOverrides:
                     except Exception:
                         _LOGGER.exception(
                             "Failed to fire clear code for slot %d; "
-                            "keeping slot occupied",
+                            "freeing slot so new events can be assigned. "
+                            "The stale code may be overwritten when a "
+                            "future event is programmed into this slot.",
                             slot,
                         )
-                        continue
 
                     self._overrides[slot] = None
                     self._slot_uids.pop(slot, None)
