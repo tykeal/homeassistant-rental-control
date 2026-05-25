@@ -64,6 +64,7 @@ _CHECKIN_STATE_ICONS: dict[str, str] = {
     CHECKIN_STATE_CHECKED_OUT: "mdi:airplane",
     CHECKIN_STATE_NO_RESERVATION: "mdi:bed-empty",
 }
+_SELF_HEAL_FUTURE_THRESHOLD = timedelta(hours=24)
 
 
 class CheckinExtraStoredData(ExtraStoredData):
@@ -563,15 +564,16 @@ class CheckinTrackingSensor(
             if tracked is not None:
                 self._event_missing_warned = False
                 now = dt_util.now()
-                # Self-healing: if an automatically checked-in sensor
-                # is tracking an event that has not started yet, it is
-                # tracking the wrong event. Force checkout so
-                # re-evaluation picks up the correct event.
-                if tracked.start > now and self._checkin_source == "automatic":
+                # Self-healing: if the tracked event starts more than
+                # 24 hours from now, the sensor is tracking the wrong
+                # event regardless of how check-in was triggered.
+                # Events starting within 24 hours may be legitimate
+                # early arrivals via keymaster.
+                if tracked.start > now + _SELF_HEAL_FUTURE_THRESHOLD:
                     _LOGGER.warning(
                         "Self-healing: sensor is checked_in but "
                         "tracked event '%s' starts at %s which is "
-                        "in the future; forcing checkout for %s",
+                        "more than 24h in the future; forcing checkout for %s",
                         tracked.summary,
                         tracked.start,
                         self.coordinator.name,
@@ -1339,7 +1341,7 @@ class CheckinTrackingSensor(
 
         Auto-corrects stale state and reschedules timers:
 
-        * ``checked_in`` with ended event → ``checked_out``
+        * ``checked_in`` with far-future or ended event → ``checked_out``
         * ``awaiting_checkin`` with passed start (time-based) → ``checked_in``
         * ``checked_out`` with expired linger / new event → reprocess
         * Valid state with pending transition → reschedule timer
@@ -1348,6 +1350,32 @@ class CheckinTrackingSensor(
         current_state = self._state
 
         if current_state == CHECKIN_STATE_CHECKED_IN:
+            if (
+                self._tracked_event_start is not None
+                and self._tracked_event_start > now + _SELF_HEAL_FUTURE_THRESHOLD
+            ):
+                # Tracked event is far in the future — sensor was
+                # tracking the wrong event. Silent checkout so the
+                # coordinator update can pick up the correct event.
+                _LOGGER.debug(
+                    "Stale restore: checked_in but tracked event starts %s "
+                    "(>24h away), forcing checkout (silent)",
+                    self._tracked_event_start,
+                )
+                self._state = CHECKIN_STATE_CHECKED_OUT
+                self._checkout_source = "automatic"
+                self._checkout_time = now
+                if (
+                    self._tracked_event_summary is not None
+                    and self._tracked_event_start is not None
+                ):
+                    self._checked_out_event_key = self._event_key(
+                        self._tracked_event_summary,
+                        self._tracked_event_start,
+                    )
+                self._compute_linger_timing()
+                self.async_write_ha_state()
+                return
             if self._tracked_event_end is not None and self._tracked_event_end <= now:
                 # Event has ended while we were down → silent checkout
                 # (no HA bus event to avoid triggering automations on
