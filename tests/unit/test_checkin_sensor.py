@@ -5507,8 +5507,9 @@ class TestCheckedInSelfHealing:
             end=now + timedelta(days=4),
         )
 
-        # Manually put sensor in a bad state (simulating the bug)
+        # Manually put sensor in a bad automatic state (simulating the bug)
         sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._checkin_source = "automatic"
         sensor._tracked_event_summary = future_event.summary
         sensor._tracked_event_start = future_event.start
         sensor._tracked_event_end = future_event.end
@@ -5546,6 +5547,7 @@ class TestCheckedInSelfHealing:
         )
 
         sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._checkin_source = "automatic"
         sensor._tracked_event_summary = future_event.summary
         sensor._tracked_event_start = future_event.start
         sensor._tracked_event_end = future_event.end
@@ -5557,6 +5559,38 @@ class TestCheckedInSelfHealing:
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
         assert sensor._tracked_event_summary == active_event.summary
         assert sensor._checkin_source == "automatic"
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_no_self_healing_for_keymaster_early_arrival(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Keymaster early arrivals remain checked_in before event start."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        future_event = _make_event(
+            summary="Reserved - EarlyGuest",
+            start=now + timedelta(hours=4),
+            end=now + timedelta(days=3),
+        )
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._checkin_source = "keymaster"
+        sensor._tracked_event_summary = future_event.summary
+        sensor._tracked_event_start = future_event.start
+        sensor._tracked_event_end = future_event.end
+        sensor._tracked_event_slot_name = "EarlyGuest"
+
+        mock_checkin_coordinator.data = [future_event]
+        sensor._handle_coordinator_update()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+        assert sensor._checkout_source is None
 
     @freeze_time("2025-07-01T12:00:00+00:00")
     async def test_no_self_healing_when_event_already_started(
@@ -5579,6 +5613,7 @@ class TestCheckedInSelfHealing:
         )
 
         sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._checkin_source = "automatic"
         sensor._tracked_event_summary = active_event.summary
         sensor._tracked_event_start = active_event.start
         sensor._tracked_event_end = active_event.end

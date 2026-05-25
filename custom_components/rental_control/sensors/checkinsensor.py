@@ -568,7 +568,7 @@ class CheckinTrackingSensor(
                 # tracking the wrong event (likely from the bug fixed
                 # in PR #547).  Force checkout so re-evaluation picks
                 # up the correct event.
-                if tracked.start > now:
+                if tracked.start > now and self._checkin_source == "automatic":
                     _LOGGER.warning(
                         "Self-healing: sensor is checked_in but "
                         "tracked event '%s' starts at %s which is "
@@ -577,7 +577,6 @@ class CheckinTrackingSensor(
                         tracked.start,
                         self.coordinator.name,
                     )
-                    self._cancel_timer()
                     self._transition_to_checked_out(
                         source="automatic",
                         linger_baseline=now,
