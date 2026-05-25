@@ -1340,6 +1340,49 @@ class TestStaleStateValidation:
         # Checkout time should be anchored to event end, not restore time
         assert sensor._checkout_time == end
 
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_checked_in_transitions_to_checked_out_when_event_far_future(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test restored checked_in → checked_out for far-future event."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        start = now + timedelta(hours=25)
+        end = start + timedelta(hours=48)
+
+        data_dict = _make_extra_data_dict(
+            state=CHECKIN_STATE_CHECKED_IN,
+            summary="Reserved - John Smith",
+            start=start,
+            end=end,
+            slot_name="John Smith",
+            checkin_source="keymaster",
+        )
+
+        mock_checkin_coordinator.data = []
+        mock_checkin_coordinator.last_update_success = True
+
+        with patch.object(
+            sensor,
+            "async_get_last_extra_data",
+            new=AsyncMock(return_value=_mock_extra_data(data_dict)),
+        ):
+            await sensor.async_added_to_hass()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._checkout_source == "automatic"
+        assert sensor._checkout_time == now
+        assert (
+            sensor._checked_out_event_key
+            == f"Reserved - John Smith|{start.isoformat()}"
+        )
+
     async def test_awaiting_transitions_to_checked_in_when_start_passed(
         self,
         hass: HomeAssistant,
@@ -5488,26 +5531,24 @@ class TestCheckedInSelfHealing:
     """Tests for checked_in self-healing when tracking a future event."""
 
     @freeze_time("2025-07-01T12:00:00+00:00")
-    async def test_forces_checkout_when_tracked_event_in_future(
+    async def test_forces_checkout_when_tracked_event_far_future(
         self,
         hass: HomeAssistant,
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
-        """Sensor forces checkout when checked_in but tracked event hasn't started."""
+        """Sensor forces checkout when tracked event starts more than 24h away."""
         sensor = _create_sensor(
             hass, mock_checkin_coordinator, mock_checkin_config_entry
         )
 
         now = dt_util.now()
-        # Event starts tomorrow — should NOT be checked_in yet
         future_event = _make_event(
             summary="Reserved - FutureGuest",
-            start=now + timedelta(days=1),
+            start=now + timedelta(hours=25),
             end=now + timedelta(days=4),
         )
 
-        # Manually put sensor in a bad automatic state (simulating the bug)
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._checkin_source = "automatic"
         sensor._tracked_event_summary = future_event.summary
@@ -5518,7 +5559,6 @@ class TestCheckedInSelfHealing:
         mock_checkin_coordinator.data = [future_event]
         sensor._handle_coordinator_update()
 
-        # Should have self-healed to checked_out
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
         assert sensor._checkout_source == "automatic"
 
@@ -5542,7 +5582,7 @@ class TestCheckedInSelfHealing:
         )
         future_event = _make_event(
             summary="Reserved - FutureGuest",
-            start=now + timedelta(days=1),
+            start=now + timedelta(hours=25),
             end=now + timedelta(days=4),
         )
 
@@ -5559,6 +5599,38 @@ class TestCheckedInSelfHealing:
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
         assert sensor._tracked_event_summary == active_event.summary
         assert sensor._checkin_source == "automatic"
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_self_heals_for_keymaster_far_future_event(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Keymaster check-in heals when tracked event starts more than 24h away."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        future_event = _make_event(
+            summary="Reserved - WrongGuest",
+            start=now + timedelta(hours=25),
+            end=now + timedelta(days=3),
+        )
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._checkin_source = "keymaster"
+        sensor._tracked_event_summary = future_event.summary
+        sensor._tracked_event_start = future_event.start
+        sensor._tracked_event_end = future_event.end
+        sensor._tracked_event_slot_name = "WrongGuest"
+
+        mock_checkin_coordinator.data = [future_event]
+        sensor._handle_coordinator_update()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._checkout_source == "automatic"
 
     @freeze_time("2025-07-01T12:00:00+00:00")
     async def test_no_self_healing_for_keymaster_early_arrival(
