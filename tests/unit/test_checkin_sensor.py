@@ -5336,7 +5336,7 @@ class TestGetRelevantEvent:
 # ===========================================================================
 
 
-class TestKeyasterSlotValidation:
+class TestKeymasterSlotValidation:
     """Tests for keymaster slot validation in AWAITING state."""
 
     @freeze_time("2025-07-01T12:00:00+00:00")
