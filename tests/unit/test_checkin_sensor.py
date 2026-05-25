@@ -5482,3 +5482,110 @@ class TestKeymasterSlotValidation:
 
         # Should proceed — can't validate without ready overrides
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
+
+
+class TestCheckedInSelfHealing:
+    """Tests for checked_in self-healing when tracking a future event."""
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_forces_checkout_when_tracked_event_in_future(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Sensor forces checkout when checked_in but tracked event hasn't started."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        # Event starts tomorrow — should NOT be checked_in yet
+        future_event = _make_event(
+            summary="Reserved - FutureGuest",
+            start=now + timedelta(days=1),
+            end=now + timedelta(days=4),
+        )
+
+        # Manually put sensor in a bad state (simulating the bug)
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = future_event.summary
+        sensor._tracked_event_start = future_event.start
+        sensor._tracked_event_end = future_event.end
+        sensor._tracked_event_slot_name = "FutureGuest"
+
+        mock_checkin_coordinator.data = [future_event]
+        sensor._handle_coordinator_update()
+
+        # Should have self-healed to checked_out
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._checkout_source == "automatic"
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_self_heals_to_active_event_when_present(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Sensor re-evaluates to an active event after self-healing checkout."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        active_event = _make_event(
+            summary="Reserved - ActiveGuest",
+            start=now - timedelta(hours=2),
+            end=now + timedelta(days=3),
+        )
+        future_event = _make_event(
+            summary="Reserved - FutureGuest",
+            start=now + timedelta(days=1),
+            end=now + timedelta(days=4),
+        )
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = future_event.summary
+        sensor._tracked_event_start = future_event.start
+        sensor._tracked_event_end = future_event.end
+        sensor._tracked_event_slot_name = "FutureGuest"
+
+        mock_checkin_coordinator.data = [active_event, future_event]
+        sensor._handle_coordinator_update()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+        assert sensor._tracked_event_summary == active_event.summary
+        assert sensor._checkin_source == "automatic"
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_no_self_healing_when_event_already_started(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Sensor stays checked_in when tracked event has already started (normal)."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        # Event started 2 hours ago — normal checked_in state
+        active_event = _make_event(
+            summary="Reserved - ActiveGuest",
+            start=now - timedelta(hours=2),
+            end=now + timedelta(days=3),
+        )
+
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = active_event.summary
+        sensor._tracked_event_start = active_event.start
+        sensor._tracked_event_end = active_event.end
+        sensor._tracked_event_slot_name = "ActiveGuest"
+
+        mock_checkin_coordinator.data = [active_event]
+        sensor._handle_coordinator_update()
+
+        # Should remain checked_in
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN

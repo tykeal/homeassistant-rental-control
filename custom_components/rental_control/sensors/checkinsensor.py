@@ -563,6 +563,32 @@ class CheckinTrackingSensor(
             if tracked is not None:
                 self._event_missing_warned = False
                 now = dt_util.now()
+                # Self-healing: if the tracked event hasn't started
+                # yet but the sensor is in checked_in, the sensor is
+                # tracking the wrong event (likely from the bug fixed
+                # in PR #547).  Force checkout so re-evaluation picks
+                # up the correct event.
+                if tracked.start > now:
+                    _LOGGER.warning(
+                        "Self-healing: sensor is checked_in but "
+                        "tracked event '%s' starts at %s which is "
+                        "in the future; forcing checkout for %s",
+                        tracked.summary,
+                        tracked.start,
+                        self.coordinator.name,
+                    )
+                    self._cancel_timer()
+                    self._transition_to_checked_out(
+                        source="automatic",
+                        linger_baseline=now,
+                    )
+                    event = self._get_relevant_event()
+                    if event is not None and (
+                        self._event_key(event.summary, event.start)
+                        != self._checked_out_event_key
+                    ):
+                        self._transition_to_awaiting(event)
+                    return
                 if tracked.end <= now:
                     # Event has ended — force checkout as safety net
                     # in case the auto-checkout timer failed to fire.
