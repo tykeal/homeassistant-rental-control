@@ -358,12 +358,18 @@ class CheckinTrackingSensor(
     def _get_relevant_event(self) -> CalendarEvent | None:
         """Get the most relevant event from coordinator data.
 
+        Returns the first event whose end time is still in the future,
+        skipping events that have already ended.  This prevents the
+        sensor from tracking stale events that remain in coordinator
+        data until the next midnight filter removes them.
+
         Returns:
-            The first event from coordinator data (event 0), or None
-            if no events are available.
+            The first non-ended event, or None if no active events.
         """
-        if self.coordinator.data and len(self.coordinator.data) > 0:
-            return self.coordinator.data[0]
+        now = dt_util.now()
+        for event in self.coordinator.data or []:
+            if event.end > now:
+                return event
         return None
 
     def _get_next_event(self) -> CalendarEvent | None:
@@ -493,6 +499,38 @@ class CheckinTrackingSensor(
         elif current_state == CHECKIN_STATE_AWAITING:
             tracked = self._find_tracked_event()
             if tracked is not None:
+                # Check if a more relevant (earlier) event has appeared
+                # that the sensor should track instead. This handles the
+                # case where a nearer reservation is added to the calendar
+                # after the sensor already started tracking a future event.
+                relevant = self._get_relevant_event()
+                if (
+                    relevant is not None
+                    and self._tracked_event_start is not None
+                    and self._tracked_event_summary is not None
+                ):
+                    relevant_key = self._event_key(relevant.summary, relevant.start)
+                    tracked_key = self._event_key(
+                        self._tracked_event_summary,
+                        self._tracked_event_start,
+                    )
+                    if (
+                        relevant_key != tracked_key
+                        and relevant_key != self._checked_out_event_key
+                        and relevant.start < self._tracked_event_start
+                    ):
+                        _LOGGER.debug(
+                            "More relevant event found (%s starting "
+                            "%s) while awaiting %s starting %s; "
+                            "switching tracked event",
+                            relevant.summary,
+                            relevant.start,
+                            self._tracked_event_summary,
+                            self._tracked_event_start,
+                        )
+                        self._transition_to_awaiting(relevant)
+                        return
+
                 # Same event still in coordinator — update mutable fields
                 self._tracked_event_end = tracked.end
                 self._tracked_event_slot_name = self._extract_slot_name(tracked)
@@ -660,7 +698,9 @@ class CheckinTrackingSensor(
         self._checkin_source = None
         self._checkout_source = None
         self._checkout_time = None
-        self._checked_out_event_key = None
+        # Preserve _checked_out_event_key so that the awaiting
+        # re-evaluation logic can exclude the just-checked-out event
+        # and avoid same-day turnover regressions.
         self._next_event_start_day = None
         self._checkin_lock_name = None
         self._linger_followon_key = None
@@ -1471,7 +1511,11 @@ class CheckinTrackingSensor(
 
         - ``code_slot_num != 0`` (FR-017: ignore manual/RF unlocks)
         - ``code_slot_num`` is within the managed slot range
-        - Sensor is in ``awaiting_checkin`` state → transition to checked_in
+        - Sensor is in ``awaiting_checkin`` state and overrides are
+          ready: reject if the slot's guest name does not match the
+          tracked event (defense-in-depth against wrong-event check-in)
+        - Sensor is in ``awaiting_checkin`` state → transition to
+          checked_in
         - Sensor is in ``checked_in`` state → ignored (early checkout
           expiry is handled by ``async_checkout`` per FR-022/FR-023)
 
@@ -1523,6 +1567,28 @@ class CheckinTrackingSensor(
                 self._state,
             )
             return
+
+        # Validate unlock slot matches tracked event when overrides
+        # are ready.  If the slot belongs to a different guest, reject
+        # to prevent checking in the wrong event (defense-in-depth for
+        # the awaiting re-evaluation logic).
+        if self.coordinator.event_overrides and self.coordinator.event_overrides.ready:
+            incoming_slot_name = self.coordinator.event_overrides.get_slot_name(
+                code_slot_num
+            )
+            if (
+                incoming_slot_name
+                and self._tracked_event_slot_name
+                and incoming_slot_name != self._tracked_event_slot_name
+            ):
+                _LOGGER.debug(
+                    "Ignoring keymaster unlock: slot %d belongs to "
+                    "'%s' but tracked event is for '%s'",
+                    code_slot_num,
+                    incoming_slot_name,
+                    self._tracked_event_slot_name,
+                )
+                return
 
         # All conditions met — transition to checked_in
         _LOGGER.info(

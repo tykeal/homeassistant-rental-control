@@ -4038,6 +4038,7 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_slot_name = "John Smith"
         sensor._checkin_source = "keymaster"
 
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         # Switch ON — unlock should still be ignored
@@ -4071,6 +4072,7 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_slot_name = "John Smith"
         sensor._checkin_source = "keymaster"
 
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=False)
@@ -4181,6 +4183,7 @@ class TestEarlyCheckoutExpiry:
         sensor._checkin_source = "keymaster"
 
         mock_checkin_coordinator.data = []
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         # Set an existing timer that would fire at original_end
@@ -4287,6 +4290,7 @@ class TestEarlyCheckoutExpiry:
         sensor._checkin_source = "keymaster"
 
         mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
         mock_checkin_coordinator.data = []
 
@@ -4330,6 +4334,7 @@ class TestEarlyCheckoutExpiry:
         sensor._checkin_source = "keymaster"
 
         mock_checkin_coordinator.lockname = None
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
         mock_checkin_coordinator.data = []
 
@@ -4364,6 +4369,7 @@ class TestEarlyCheckoutExpiry:
         sensor._checkin_source = "keymaster"
 
         mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 0
         mock_checkin_coordinator.data = []
 
@@ -4401,6 +4407,7 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_slot_name = "John Smith"
         sensor._checkin_source = "keymaster"
 
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
@@ -5141,3 +5148,337 @@ class TestSetState:
         await hass.async_block_till_done()
 
         assert len(fired) == 0
+
+
+# ===========================================================================
+# Awaiting state re-evaluation (event tracking switch)
+# ===========================================================================
+
+
+class TestAwaitingReEvaluation:
+    """Tests for awaiting state re-evaluation when a more relevant event appears."""
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_switches_to_earlier_event(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Sensor switches to an earlier event appearing in coordinator data."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        # Initially tracking a future event (starts in 2 days)
+        far_event = _make_event(
+            summary="Reserved - FarGuest",
+            start=now + timedelta(days=2),
+            end=now + timedelta(days=5),
+        )
+        mock_checkin_coordinator.data = [far_event]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_summary == "Reserved - FarGuest"
+
+        # A nearer event appears (starts tomorrow)
+        near_event = _make_event(
+            summary="Reserved - NearGuest",
+            start=now + timedelta(days=1),
+            end=now + timedelta(days=3),
+        )
+        # Coordinator data is sorted by start
+        mock_checkin_coordinator.data = [near_event, far_event]
+        sensor._handle_coordinator_update()
+
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_summary == "Reserved - NearGuest"
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_does_not_switch_to_checked_out_event(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Sensor does not switch to an event it already checked out (same-day turnover)."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        # Simulate a just-checked-out event still in coordinator data
+        old_event = _make_event(
+            summary="Reserved - OldGuest",
+            start=now - timedelta(days=3),
+            end=now + timedelta(hours=2),
+        )
+        new_event = _make_event(
+            summary="Reserved - NewGuest",
+            start=now + timedelta(hours=4),
+            end=now + timedelta(days=3),
+        )
+
+        # Set up: track new_event, mark old_event as checked-out
+        sensor._state = CHECKIN_STATE_AWAITING
+        sensor._tracked_event_summary = new_event.summary
+        sensor._tracked_event_start = new_event.start
+        sensor._tracked_event_end = new_event.end
+        sensor._tracked_event_slot_name = None
+        old_key = sensor._event_key(old_event.summary, old_event.start)
+        sensor._checked_out_event_key = old_key
+
+        # old_event is earlier and still active (end > now) but should be skipped
+        mock_checkin_coordinator.data = [old_event, new_event]
+        sensor._handle_coordinator_update()
+
+        # Must remain tracking new_event, NOT switch back to old_event
+        assert sensor._tracked_event_summary == "Reserved - NewGuest"
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_does_not_switch_to_later_event(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Sensor does not switch when relevant event starts later than tracked."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        # Tracking an event that starts tomorrow
+        early_event = _make_event(
+            summary="Reserved - EarlyGuest",
+            start=now + timedelta(days=1),
+            end=now + timedelta(days=3),
+        )
+        mock_checkin_coordinator.data = [early_event]
+        sensor._handle_coordinator_update()
+        assert sensor._tracked_event_summary == "Reserved - EarlyGuest"
+
+        # Later event appears — data[0] is still early_event because sorted
+        late_event = _make_event(
+            summary="Reserved - LateGuest",
+            start=now + timedelta(days=5),
+            end=now + timedelta(days=8),
+        )
+        mock_checkin_coordinator.data = [early_event, late_event]
+        sensor._handle_coordinator_update()
+
+        # Must remain tracking early_event
+        assert sensor._tracked_event_summary == "Reserved - EarlyGuest"
+
+
+# ===========================================================================
+# _get_relevant_event skips ended events
+# ===========================================================================
+
+
+class TestGetRelevantEvent:
+    """Tests for _get_relevant_event filtering ended events."""
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_skips_ended_events(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """_get_relevant_event skips events whose end has passed."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        ended_event = _make_event(
+            summary="Reserved - EndedGuest",
+            start=now - timedelta(days=3),
+            end=now - timedelta(hours=1),
+        )
+        active_event = _make_event(
+            summary="Reserved - ActiveGuest",
+            start=now - timedelta(hours=2),
+            end=now + timedelta(days=1),
+        )
+        mock_checkin_coordinator.data = [ended_event, active_event]
+
+        result = sensor._get_relevant_event()
+        assert result is not None
+        assert result.summary == "Reserved - ActiveGuest"
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_returns_none_when_all_ended(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """_get_relevant_event returns None when all events have ended."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        ended1 = _make_event(
+            summary="Reserved - A",
+            start=now - timedelta(days=5),
+            end=now - timedelta(hours=2),
+        )
+        ended2 = _make_event(
+            summary="Reserved - B",
+            start=now - timedelta(days=2),
+            end=now - timedelta(hours=1),
+        )
+        mock_checkin_coordinator.data = [ended1, ended2]
+
+        result = sensor._get_relevant_event()
+        assert result is None
+
+
+# ===========================================================================
+# Keymaster slot validation in awaiting state
+# ===========================================================================
+
+
+class TestKeymasterSlotValidation:
+    """Tests for keymaster slot validation in AWAITING state."""
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_rejects_mismatched_slot(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Keymaster unlock is rejected when slot belongs to different guest."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        event = _make_event(
+            summary="Reserved - Alice",
+            start=now + timedelta(hours=4),
+            end=now + timedelta(days=3),
+        )
+        mock_checkin_coordinator.data = [event]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_slot_name == "Alice"
+
+        # Set up event_overrides to return a different guest for slot 10
+        mock_checkin_coordinator.event_overrides = MagicMock()
+        mock_checkin_coordinator.event_overrides.ready = True
+        mock_checkin_coordinator.event_overrides.get_slot_name.return_value = "Bob"
+        mock_checkin_coordinator.lockname = "front_door"
+
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+        await hass.async_block_till_done()
+
+        # Should remain in awaiting — mismatch rejected
+        assert sensor._state == CHECKIN_STATE_AWAITING
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_allows_when_slot_name_empty(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Keymaster unlock proceeds when slot has no name assigned yet."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        event = _make_event(
+            summary="Reserved - Alice",
+            start=now + timedelta(hours=4),
+            end=now + timedelta(days=3),
+        )
+        mock_checkin_coordinator.data = [event]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_slot_name == "Alice"
+
+        # event_overrides.ready is True but slot has no name
+        mock_checkin_coordinator.event_overrides = MagicMock()
+        mock_checkin_coordinator.event_overrides.ready = True
+        mock_checkin_coordinator.event_overrides.get_slot_name.return_value = ""
+        mock_checkin_coordinator.lockname = "front_door"
+
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+        await hass.async_block_till_done()
+
+        # Should proceed to checked_in (empty name = no validation possible)
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_allows_matching_slot(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Keymaster unlock proceeds when slot name matches tracked event."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        event = _make_event(
+            summary="Reserved - Alice",
+            start=now + timedelta(hours=4),
+            end=now + timedelta(days=3),
+        )
+        mock_checkin_coordinator.data = [event]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+        assert sensor._tracked_event_slot_name == "Alice"
+
+        # event_overrides returns matching name
+        mock_checkin_coordinator.event_overrides = MagicMock()
+        mock_checkin_coordinator.event_overrides.ready = True
+        mock_checkin_coordinator.event_overrides.get_slot_name.return_value = "Alice"
+        mock_checkin_coordinator.lockname = "front_door"
+
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+        await hass.async_block_till_done()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN
+
+    @freeze_time("2025-07-01T12:00:00+00:00")
+    async def test_allows_when_overrides_not_ready(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Keymaster unlock proceeds when overrides are not ready yet."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+
+        now = dt_util.now()
+        event = _make_event(
+            summary="Reserved - Alice",
+            start=now + timedelta(hours=4),
+            end=now + timedelta(days=3),
+        )
+        mock_checkin_coordinator.data = [event]
+        sensor._handle_coordinator_update()
+        assert sensor._state == CHECKIN_STATE_AWAITING
+
+        # event_overrides exists but not ready
+        mock_checkin_coordinator.event_overrides = MagicMock()
+        mock_checkin_coordinator.event_overrides.ready = False
+        mock_checkin_coordinator.lockname = "front_door"
+
+        sensor.async_handle_keymaster_unlock(code_slot_num=10)
+        await hass.async_block_till_done()
+
+        # Should proceed — can't validate without ready overrides
+        assert sensor._state == CHECKIN_STATE_CHECKED_IN

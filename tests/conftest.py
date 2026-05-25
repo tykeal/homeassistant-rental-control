@@ -266,6 +266,7 @@ def mock_checkin_coordinator(
     coordinator.checkin = time(16, 0)
     coordinator.checkout = time(11, 0)
     coordinator.event_prefix = ""
+    coordinator.event_overrides = None
     coordinator.unique_id = "test-checkin-unique-id"
     coordinator.name = "Test Rental"
     coordinator.device_info = {

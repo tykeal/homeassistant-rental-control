@@ -82,6 +82,7 @@ def _make_coordinator(hass: HomeAssistant) -> MagicMock:
     coordinator.start_slot = 10
     coordinator.max_events = 3
     coordinator.event_prefix = ""
+    coordinator.event_overrides = None
     coordinator.unique_id = "test-integration-checkin-id"
     coordinator.name = "Test Rental"
     coordinator.device_info = {
@@ -1105,6 +1106,9 @@ class TestFullLifecycleT043:
         """
         coordinator = _make_coordinator(hass)
         coordinator.lockname = "front_door"
+        coordinator.event_overrides = MagicMock()
+        coordinator.event_overrides.ready = True
+        coordinator.event_overrides.get_slot_name.return_value = "Guest2"
         config_entry = _make_config_entry()
         sensor = _create_sensor(hass, coordinator, config_entry)
 
