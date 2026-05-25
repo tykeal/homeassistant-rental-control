@@ -1511,7 +1511,11 @@ class CheckinTrackingSensor(
 
         - ``code_slot_num != 0`` (FR-017: ignore manual/RF unlocks)
         - ``code_slot_num`` is within the managed slot range
-        - Sensor is in ``awaiting_checkin`` state → transition to checked_in
+        - Sensor is in ``awaiting_checkin`` state and overrides are
+          ready: reject if the slot's guest name does not match the
+          tracked event (defense-in-depth against wrong-event check-in)
+        - Sensor is in ``awaiting_checkin`` state → transition to
+          checked_in
         - Sensor is in ``checked_in`` state → ignored (early checkout
           expiry is handled by ``async_checkout`` per FR-022/FR-023)
 

@@ -4038,6 +4038,7 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_slot_name = "John Smith"
         sensor._checkin_source = "keymaster"
 
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         # Switch ON — unlock should still be ignored
@@ -4071,6 +4072,7 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_slot_name = "John Smith"
         sensor._checkin_source = "keymaster"
 
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=False)
@@ -4181,6 +4183,7 @@ class TestEarlyCheckoutExpiry:
         sensor._checkin_source = "keymaster"
 
         mock_checkin_coordinator.data = []
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         # Set an existing timer that would fire at original_end
@@ -4287,6 +4290,7 @@ class TestEarlyCheckoutExpiry:
         sensor._checkin_source = "keymaster"
 
         mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
         mock_checkin_coordinator.data = []
 
@@ -4330,6 +4334,7 @@ class TestEarlyCheckoutExpiry:
         sensor._checkin_source = "keymaster"
 
         mock_checkin_coordinator.lockname = None
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
         mock_checkin_coordinator.data = []
 
@@ -4364,6 +4369,7 @@ class TestEarlyCheckoutExpiry:
         sensor._checkin_source = "keymaster"
 
         mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 0
         mock_checkin_coordinator.data = []
 
@@ -4401,6 +4407,7 @@ class TestEarlyCheckoutExpiry:
         sensor._tracked_event_slot_name = "John Smith"
         sensor._checkin_source = "keymaster"
 
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
 
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
@@ -5363,6 +5370,7 @@ class TestKeymasterSlotValidation:
         assert sensor._tracked_event_slot_name == "Alice"
 
         # Set up event_overrides to return a different guest for slot 10
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.ready = True
         mock_checkin_coordinator.event_overrides.get_slot_name.return_value = "Bob"
         mock_checkin_coordinator.lockname = "front_door"
@@ -5397,6 +5405,7 @@ class TestKeymasterSlotValidation:
         assert sensor._tracked_event_slot_name == "Alice"
 
         # event_overrides.ready is True but slot has no name
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.ready = True
         mock_checkin_coordinator.event_overrides.get_slot_name.return_value = ""
         mock_checkin_coordinator.lockname = "front_door"
@@ -5431,6 +5440,7 @@ class TestKeymasterSlotValidation:
         assert sensor._tracked_event_slot_name == "Alice"
 
         # event_overrides returns matching name
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.ready = True
         mock_checkin_coordinator.event_overrides.get_slot_name.return_value = "Alice"
         mock_checkin_coordinator.lockname = "front_door"
@@ -5463,6 +5473,7 @@ class TestKeymasterSlotValidation:
         assert sensor._state == CHECKIN_STATE_AWAITING
 
         # event_overrides exists but not ready
+        mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.ready = False
         mock_checkin_coordinator.lockname = "front_door"
 
