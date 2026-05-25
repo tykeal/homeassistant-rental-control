@@ -82,6 +82,9 @@ def _make_coordinator(hass: HomeAssistant) -> MagicMock:
     coordinator.start_slot = 10
     coordinator.max_events = 3
     coordinator.event_prefix = ""
+    coordinator.event_overrides = MagicMock()
+    coordinator.event_overrides.ready = False
+    coordinator.event_overrides.get_slot_name.return_value = ""
     coordinator.unique_id = "test-integration-checkin-id"
     coordinator.name = "Test Rental"
     coordinator.device_info = {
