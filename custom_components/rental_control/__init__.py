@@ -305,10 +305,15 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     if not config_entry.options:
         return
 
+    # Guard against listener firing after entry has been unloaded
+    entry_data = hass.data.get(DOMAIN, {}).get(config_entry.entry_id)
+    if entry_data is None:
+        return
+
     new_data = config_entry.options.copy()
     new_data.pop(CONF_GENERATE, None)
 
-    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
+    coordinator = entry_data[COORDINATOR]
 
     # do not update the creation datetime if it already exists (which it should)
     new_data[CONF_CREATION_DATETIME] = coordinator.created
@@ -324,12 +329,15 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     # Update the calendar config
     await coordinator.update_config(new_data)
 
+    entry_data = hass.data.get(DOMAIN, {}).get(config_entry.entry_id)
+    if entry_data is None:
+        return
+    coordinator = entry_data[COORDINATOR]
+
     # Unsubscribe to any listeners so we can create new ones
-    for unsub_listener in hass.data[DOMAIN][config_entry.entry_id].get(
-        UNSUB_LISTENERS, []
-    ):
+    for unsub_listener in entry_data.get(UNSUB_LISTENERS, []):
         unsub_listener()
-    hass.data[DOMAIN][config_entry.entry_id].get(UNSUB_LISTENERS, []).clear()
+    entry_data.get(UNSUB_LISTENERS, []).clear()
 
     if coordinator.lockname:
         await async_start_listener(hass, config_entry)
