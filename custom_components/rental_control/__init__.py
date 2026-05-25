@@ -305,6 +305,10 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     if not config_entry.options:
         return
 
+    # Guard against listener firing after entry has been unloaded
+    if config_entry.entry_id not in hass.data.get(DOMAIN, {}):
+        return
+
     new_data = config_entry.options.copy()
     new_data.pop(CONF_GENERATE, None)
 
