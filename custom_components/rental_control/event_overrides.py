@@ -38,6 +38,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+SLOT_MISS_THRESHOLD = 2
+
 
 def _to_utc(value: datetime) -> datetime:
     """Normalize a datetime to UTC for timezone-safe comparison.
@@ -115,6 +117,7 @@ class EventOverrides:
         self._overrides: dict[int, EventOverride | None] = {}
         self._ready: bool = False
         self._retry_counts: dict[int, int] = {}
+        self._slot_miss_counts: dict[int, int] = {}
         self._slot_uids: dict[int, str | None] = {}
         self._start_slot: int = start_slot
         self._trim_names: bool = False
@@ -381,6 +384,7 @@ class EventOverrides:
 
             existing = self._find_overlapping_slot(slot_name, start_time, end_time, uid)
             if existing is not None:
+                self._slot_miss_counts.pop(existing, None)
                 if uid is not None:
                     self._slot_uids[existing] = normalize_uid(uid)
                 override = self._overrides[existing]
@@ -404,6 +408,7 @@ class EventOverrides:
                     "end_time": end_time,
                 }
                 self._overrides[new_slot] = new_override
+                self._slot_miss_counts.pop(new_slot, None)
                 if uid is not None:
                     self._slot_uids[new_slot] = normalize_uid(uid)
                 self.__assign_next_slot()
@@ -461,9 +466,11 @@ class EventOverrides:
                     "end_time": end_time,
                 }
                 self._overrides[slot] = override
+                self._slot_miss_counts.pop(slot, None)
             else:
                 self._overrides[slot] = None
                 self._slot_uids.pop(slot, None)
+                self._slot_miss_counts.pop(slot, None)
 
             self.__assign_next_slot()
             if len(self._overrides) == self.max_slots:
@@ -623,15 +630,36 @@ class EventOverrides:
 
             for slot in assigned_slots:
                 clear_code = False
+                start_date = self.get_slot_start_date(slot)
 
                 if not self._slot_has_matching_event(slot, event_ids):
-                    _LOGGER.debug(
-                        "%s not in current events, clearing",
-                        self._overrides[slot],
-                    )
-                    clear_code = True
+                    if start_date >= cur_date_start:
+                        count = self._slot_miss_counts.get(slot, 0) + 1
+                        self._slot_miss_counts[slot] = count
+                        _LOGGER.debug(
+                            "Slot %d miss count: %d/%d for %s",
+                            slot,
+                            count,
+                            SLOT_MISS_THRESHOLD,
+                            self.get_slot_name(slot),
+                        )
+                        if count >= SLOT_MISS_THRESHOLD:
+                            _LOGGER.debug(
+                                "%s not in current events after %d consecutive misses, "
+                                "clearing",
+                                self._overrides[slot],
+                                count,
+                            )
+                            clear_code = True
+                    else:
+                        _LOGGER.debug(
+                            "%s not in current events, clearing",
+                            self._overrides[slot],
+                        )
+                        clear_code = True
+                else:
+                    self._slot_miss_counts.pop(slot, None)
 
-                start_date = self.get_slot_start_date(slot)
                 end_date = self.get_slot_end_date(slot)
 
                 if not len(cal):
@@ -679,6 +707,7 @@ class EventOverrides:
 
                     self._overrides[slot] = None
                     self._slot_uids.pop(slot, None)
+                    self._slot_miss_counts.pop(slot, None)
                     self.__assign_next_slot()
 
     def get_slot_name(self, slot: int) -> str:
@@ -802,6 +831,7 @@ class EventOverrides:
         else:
             overrides[slot] = None
 
+        self._slot_miss_counts.pop(slot, None)
         self._overrides = overrides
         self.__assign_next_slot()
         if len(overrides) == self.max_slots:

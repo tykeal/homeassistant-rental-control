@@ -523,6 +523,11 @@ class TestAsyncCheckOverrides:
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
             await eo.async_check_overrides(coordinator)
+            assert eo.overrides[1] is not None
+            assert eo._slot_miss_counts[1] == 1
+
+            await eo.async_check_overrides(coordinator)
+
             mock_fire.assert_called_once_with(
                 coordinator, 1, expected_name="Departed Guest"
             )
@@ -829,6 +834,11 @@ class TestAsyncCheckOverrides:
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
             await eo.async_check_overrides(coordinator)
+            assert eo.overrides[2] is not None
+            assert eo._slot_miss_counts[2] == 1
+
+            await eo.async_check_overrides(coordinator)
+
             # Slot 2 (uid-B) should be cleared
             mock_fire.assert_called_once_with(coordinator, 2, expected_name="John Doe")
             assert eo.overrides[1] is not None
@@ -1076,6 +1086,11 @@ class TestEdgeCases:
             patch.object(dt_util, "start_of_local_day", return_value=today),
         ):
             await eo.async_check_overrides(coordinator)
+            assert eo.overrides[2] is not None
+            assert eo._slot_miss_counts[2] == 1
+
+            await eo.async_check_overrides(coordinator)
+
             # "Old Guest" at index 2 is beyond max_events=2, clear it
             mock_fire.assert_called_once_with(coordinator, 2, expected_name="Old Guest")
             assert eo.overrides[2] is None
@@ -2313,3 +2328,227 @@ class TestSlotEvictionOnNewEarlierEvent:
             assert result.slot is not None
             assert result.is_new is True
             assert eo.overrides[result.slot]["slot_name"] == "Delta"
+
+
+class TestSlotEvictionTolerance:
+    """Tests for per-slot miss tolerance preventing transient eviction (#546)."""
+
+    @staticmethod
+    def _make_two_slot_eo(
+        alpha_start: datetime,
+        alpha_end: datetime,
+        beta_start: datetime,
+        beta_end: datetime,
+    ) -> EventOverrides:
+        """Build a ready overrides object with two assigned slots."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+        eo.update(1, "c1", "Alpha", alpha_start, alpha_end)
+        eo._slot_uids[1] = "uid-A"
+        eo.update(2, "c2", "Beta", beta_start, beta_end)
+        eo._slot_uids[2] = "uid-B"
+        return eo
+
+    async def test_single_miss_does_not_evict_upcoming_slot(self) -> None:
+        """A single refresh where an upcoming event is missing should NOT evict."""
+        alpha_start = _make_dt(2025, 7, 10)
+        alpha_end = _make_dt(2025, 7, 15)
+        beta_start = _make_dt(2025, 7, 20)
+        beta_end = _make_dt(2025, 7, 25)
+        later_start = _make_dt(2025, 7, 26)
+        later_end = _make_dt(2025, 7, 30)
+        eo = self._make_two_slot_eo(alpha_start, alpha_end, beta_start, beta_end)
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(alpha_end, "Alpha", start=alpha_start, uid="uid-A"),
+                _make_event(later_end, "Gamma", start=later_start, uid="uid-C"),
+            ],
+            max_events=2,
+        )
+
+        frozen = _make_dt(2025, 7, 1)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+
+        mock_fire.assert_not_called()
+        assert eo.overrides[2] is not None
+        assert eo._slot_miss_counts == {2: 1}
+
+    async def test_two_consecutive_misses_evicts_slot(self) -> None:
+        """Two consecutive refreshes with event missing should evict."""
+        alpha_start = _make_dt(2025, 7, 10)
+        alpha_end = _make_dt(2025, 7, 15)
+        beta_start = _make_dt(2025, 7, 20)
+        beta_end = _make_dt(2025, 7, 25)
+        later_start = _make_dt(2025, 7, 26)
+        later_end = _make_dt(2025, 7, 30)
+        eo = self._make_two_slot_eo(alpha_start, alpha_end, beta_start, beta_end)
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(alpha_end, "Alpha", start=alpha_start, uid="uid-A"),
+                _make_event(later_end, "Gamma", start=later_start, uid="uid-C"),
+            ],
+            max_events=2,
+        )
+
+        frozen = _make_dt(2025, 7, 1)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            assert eo._slot_miss_counts == {2: 1}
+
+            await eo.async_check_overrides(coordinator)
+
+        mock_fire.assert_called_once_with(coordinator, 2, expected_name="Beta")
+        assert eo.overrides[2] is None
+        assert 2 not in eo._slot_miss_counts
+
+    async def test_miss_counter_resets_on_event_return(self) -> None:
+        """If event reappears after 1 miss, counter resets."""
+        alpha_start = _make_dt(2025, 7, 10)
+        alpha_end = _make_dt(2025, 7, 15)
+        beta_start = _make_dt(2025, 7, 20)
+        beta_end = _make_dt(2025, 7, 25)
+        later_start = _make_dt(2025, 7, 26)
+        later_end = _make_dt(2025, 7, 30)
+        eo = self._make_two_slot_eo(alpha_start, alpha_end, beta_start, beta_end)
+        missing_coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(alpha_end, "Alpha", start=alpha_start, uid="uid-A"),
+                _make_event(later_end, "Gamma", start=later_start, uid="uid-C"),
+            ],
+            max_events=2,
+        )
+        restored_coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(alpha_end, "Alpha", start=alpha_start, uid="uid-A"),
+                _make_event(beta_end, "Beta", start=beta_start, uid="uid-B"),
+            ],
+            max_events=2,
+        )
+
+        frozen = _make_dt(2025, 7, 1)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(missing_coordinator)
+            assert eo._slot_miss_counts == {2: 1}
+
+            await eo.async_check_overrides(restored_coordinator)
+            assert 2 not in eo._slot_miss_counts
+
+            await eo.async_check_overrides(missing_coordinator)
+
+        mock_fire.assert_not_called()
+        assert eo.overrides[2] is not None
+        assert eo._slot_miss_counts == {2: 1}
+
+    async def test_past_event_evicted_immediately(self) -> None:
+        """Events with end_date < today bypass tolerance — evict immediately."""
+        alpha_start = _make_dt(2025, 7, 10)
+        alpha_end = _make_dt(2025, 7, 15)
+        beta_start = _make_dt(2025, 7, 6)
+        beta_end = _make_dt(2025, 7, 9)
+        later_start = _make_dt(2025, 7, 16)
+        later_end = _make_dt(2025, 7, 20)
+        eo = self._make_two_slot_eo(alpha_start, alpha_end, beta_start, beta_end)
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(alpha_end, "Alpha", start=alpha_start, uid="uid-A"),
+                _make_event(later_end, "Gamma", start=later_start, uid="uid-C"),
+            ],
+            max_events=2,
+        )
+
+        frozen = _make_dt(2025, 7, 10)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+
+        mock_fire.assert_called_once_with(coordinator, 2, expected_name="Beta")
+        assert eo.overrides[2] is None
+        assert 2 not in eo._slot_miss_counts
+
+    async def test_miss_counter_cleared_on_slot_free(self) -> None:
+        """When a slot is freed, its miss counter is removed."""
+        alpha_start = _make_dt(2025, 7, 10)
+        alpha_end = _make_dt(2025, 7, 15)
+        beta_start = _make_dt(2025, 7, 20)
+        beta_end = _make_dt(2025, 7, 25)
+        later_start = _make_dt(2025, 7, 26)
+        later_end = _make_dt(2025, 7, 30)
+        eo = self._make_two_slot_eo(alpha_start, alpha_end, beta_start, beta_end)
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(alpha_end, "Alpha", start=alpha_start, uid="uid-A"),
+                _make_event(later_end, "Gamma", start=later_start, uid="uid-C"),
+            ],
+            max_events=2,
+        )
+
+        frozen = _make_dt(2025, 7, 1)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            assert eo._slot_miss_counts == {2: 1}
+
+            await eo.async_check_overrides(coordinator)
+
+        assert eo.overrides[2] is None
+        assert eo._slot_miss_counts == {}
+
+    async def test_tolerance_does_not_affect_other_eviction_reasons(self) -> None:
+        """start > end, empty calendar, etc. still evict immediately."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        start = _make_dt(2025, 7, 20)
+        end = _make_dt(2025, 7, 10)
+        eo.update(1, "c1", "Broken", start, end)
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(
+                    _make_dt(2025, 7, 30),
+                    "Other",
+                    start=_make_dt(2025, 7, 25),
+                    uid="uid-other",
+                ),
+            ],
+            max_events=1,
+        )
+
+        frozen = _make_dt(2025, 7, 1)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+
+        mock_fire.assert_called_once_with(coordinator, 1, expected_name="Broken")
+        assert eo.overrides[1] is None
+        assert 1 not in eo._slot_miss_counts
