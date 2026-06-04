@@ -71,3 +71,21 @@ ignore:
       name: zeroconf
       version: "0.148.0"
       type: python
+
+  # aiohttp transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 3.14.0.
+  - vulnerability: GHSA-jg22-mg44-37j8
+    package:
+      name: aiohttp
+      version: "3.13.5"
+      type: python
+
+  # aiohttp transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 3.14.0.
+  - vulnerability: GHSA-hg6j-4rv6-33pg
+    package:
+      name: aiohttp
+      version: "3.13.5"
+      type: python
