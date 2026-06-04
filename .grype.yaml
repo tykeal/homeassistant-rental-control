@@ -37,10 +37,37 @@ ignore:
       version: "12.1.1"
       type: python
 
-  # uv build dependency — low severity, not shipped
-  # to users. Fixed in 0.11.6.
-  - vulnerability: GHSA-pjjw-68hj-v9mw
+  # uv transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 0.11.15.
+  - vulnerability: GHSA-4gg8-gxpx-9rph
     package:
       name: uv
-      version: "0.11.1"
+      version: "0.11.8"
+      type: python
+
+  # zeroconf transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 0.149.5.
+  - vulnerability: GHSA-9pgc-3ccv-5297
+    package:
+      name: zeroconf
+      version: "0.148.0"
+      type: python
+
+  # zeroconf transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 0.149.6.
+  - vulnerability: GHSA-phvx-9mgw-67r5
+    package:
+      name: zeroconf
+      version: "0.148.0"
+      type: python
+
+  # zeroconf transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 0.149.7.
+  - vulnerability: GHSA-rfg2-pjw2-56x2
+    package:
+      name: zeroconf
+      version: "0.148.0"
       type: python
