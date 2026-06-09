@@ -592,10 +592,10 @@ class EventOverrides:
                 continue
             ev_uid = normalize_uid(ev.uid)
             if ev_uid is not None:
-                preferred_slot = self._get_same_start_uid_bypass_slot(ev)
                 if stored_uid is None:
                     if self._event_has_other_uid_owner(ev, exclude_slot=slot):
                         continue
+                    preferred_slot = self._get_same_start_uid_bypass_slot(ev)
                     if preferred_slot is not None and preferred_slot != slot:
                         continue
                 elif stored_uid != ev_uid:
@@ -604,6 +604,7 @@ class EventOverrides:
                         continue
                     if self._event_has_other_uid_owner(ev, exclude_slot=slot):
                         continue
+                    preferred_slot = self._get_same_start_uid_bypass_slot(ev)
                     if preferred_slot != slot:
                         continue
             return True
@@ -641,10 +642,10 @@ class EventOverrides:
                     continue
                 ev_uid = normalize_uid(ev.uid)
                 if ev_uid is not None:
-                    preferred_slot = self._get_same_start_uid_bypass_slot(ev)
                     if stored_uid is None:
                         if self._event_has_other_uid_owner(ev, exclude_slot=slot):
                             continue
+                        preferred_slot = self._get_same_start_uid_bypass_slot(ev)
                         if preferred_slot is not None and preferred_slot != slot:
                             continue
                     elif stored_uid != ev_uid:
@@ -652,6 +653,7 @@ class EventOverrides:
                             continue
                         if self._event_has_other_uid_owner(ev, exclude_slot=slot):
                             continue
+                        preferred_slot = self._get_same_start_uid_bypass_slot(ev)
                         if preferred_slot != slot:
                             continue
                 if len(ev.name) > len(slot_name):
@@ -763,14 +765,6 @@ class EventOverrides:
                 best_exact = exact_name
 
         return best_slot
-
-    def _slot_wins_same_start_uid_bypass(
-        self,
-        slot: int,
-        event: EventIdentity,
-    ) -> bool:
-        """Return whether *slot* is the preferred same-start fallback match."""
-        return self._get_same_start_uid_bypass_slot(event) == slot
 
     async def async_check_overrides(
         self,
