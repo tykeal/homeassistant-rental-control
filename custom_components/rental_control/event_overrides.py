@@ -253,10 +253,12 @@ class EventOverrides:
         ensures that a reservation whose dates shifted beyond the
         original overlap window is still recognised as the same booking.
 
-        Phase 2 — Strict interval overlap with UID negative gate
-        (original logic).  ``start_a < end_b AND start_b < end_a``.
-        If both UIDs are non-None and differ the slot is skipped
-        (distinct reservations with the same guest name).
+        Phase 2 — Strict interval overlap with a UID-aware same-start
+        bypass. ``start_a < end_b AND start_b < end_a``. If both UIDs
+        are non-None and differ, different start times are rejected but
+        same-start candidates are reconsidered as possible date-change
+        updates. When multiple same-start candidates exist, the best
+        matching slot is chosen and any exact UID owner still wins.
 
         Phase 3 — Trim-aware fallback for trimmed names.  After a
         Home Assistant restart the override may contain a trimmed
@@ -559,10 +561,12 @@ class EventOverrides:
         event UID and the names match, the slot is considered matched
         regardless of time overlap.
 
-        Phase 2 — name + strict interval overlap + UID negative gate.
+        Phase 2 — name + strict interval overlap with the same-start
+        UID bypass and preferred-slot tie-breaking.
 
         Phase 3 — trim-aware fallback for trimmed names with time
-        overlap, restoring the full name on match.
+        overlap, restoring the full name on match. The same-start UID
+        bypass and preferred-slot tie-breaking apply here too.
         """
         override = self._overrides[slot]
         if override is None:
