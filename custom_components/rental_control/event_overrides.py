@@ -253,10 +253,12 @@ class EventOverrides:
         ensures that a reservation whose dates shifted beyond the
         original overlap window is still recognised as the same booking.
 
-        Phase 2 — Strict interval overlap with UID negative gate
-        (original logic).  ``start_a < end_b AND start_b < end_a``.
-        If both UIDs are non-None and differ the slot is skipped
-        (distinct reservations with the same guest name).
+        Phase 2 — Strict interval overlap with a UID-aware same-start
+        bypass. ``start_a < end_b AND start_b < end_a``. If both UIDs
+        are non-None and differ, different start times are rejected but
+        same-start candidates are reconsidered as possible date-change
+        updates. When multiple same-start candidates exist, the best
+        matching slot is chosen and any exact UID owner still wins.
 
         Phase 3 — Trim-aware fallback for trimmed names.  After a
         Home Assistant restart the override may contain a trimmed
@@ -286,9 +288,15 @@ class EventOverrides:
                     if override is not None and override["slot_name"] == slot_name:
                         return slot
 
-        # Phase 2: name + strict interval overlap + UID negative gate
+        # Phase 2: name + strict interval overlap with UID-aware bypass
         start_utc = _to_utc(start_time)
         end_utc = _to_utc(end_time)
+        preferred_same_start_slot: int | None = None
+        if uid is not None:
+            preferred_same_start_slot = self._get_same_start_uid_bypass_slot(
+                EventIdentity(slot_name, start_time, end_time, uid),
+                exclude_slot=exclude_slot,
+            )
         for slot in self.__get_slots_with_values():
             if slot == exclude_slot:
                 continue
@@ -303,8 +311,29 @@ class EventOverrides:
             ):
                 continue
             stored_uid = normalize_uid(self._slot_uids.get(slot))
-            if uid is not None and stored_uid is not None and uid != stored_uid:
-                continue
+            if uid is not None:
+                if stored_uid is None:
+                    if self._slot_has_other_uid_owner(
+                        slot_name, uid, exclude_slot=slot
+                    ):
+                        continue
+                    if (
+                        preferred_same_start_slot is not None
+                        and preferred_same_start_slot != slot
+                    ):
+                        continue
+                elif uid != stored_uid:
+                    # Same-start bypass: if start times match, this is likely
+                    # the same reservation with a regenerated UID (date
+                    # extension/shortening) rather than a different booking.
+                    if _to_utc(start_time) != _to_utc(override["start_time"]):
+                        continue
+                    if self._slot_has_other_uid_owner(
+                        slot_name, uid, exclude_slot=slot
+                    ):
+                        continue
+                    if preferred_same_start_slot != slot:
+                        continue
             return slot
 
         # Phase 3: trim-aware fallback for trimmed names.
@@ -353,8 +382,26 @@ class EventOverrides:
                 ):
                     continue
                 stored_uid = normalize_uid(self._slot_uids.get(slot))
-                if uid is not None and stored_uid is not None and uid != stored_uid:
-                    continue
+                if uid is not None:
+                    if stored_uid is None:
+                        if self._slot_has_other_uid_owner(
+                            slot_name, uid, exclude_slot=slot
+                        ):
+                            continue
+                        if (
+                            preferred_same_start_slot is not None
+                            and preferred_same_start_slot != slot
+                        ):
+                            continue
+                    elif uid != stored_uid:
+                        if _to_utc(start_time) != _to_utc(override["start_time"]):
+                            continue
+                        if self._slot_has_other_uid_owner(
+                            slot_name, uid, exclude_slot=slot
+                        ):
+                            continue
+                        if preferred_same_start_slot != slot:
+                            continue
                 # Update stored name to the full untrimmed version
                 if len(slot_name) > len(stored):
                     override["slot_name"] = slot_name
@@ -514,10 +561,12 @@ class EventOverrides:
         event UID and the names match, the slot is considered matched
         regardless of time overlap.
 
-        Phase 2 — name + strict interval overlap + UID negative gate.
+        Phase 2 — name + strict interval overlap with the same-start
+        UID bypass and preferred-slot tie-breaking.
 
         Phase 3 — trim-aware fallback for trimmed names with time
-        overlap, restoring the full name on match.
+        overlap, restoring the full name on match. The same-start UID
+        bypass and preferred-slot tie-breaking apply here too.
         """
         override = self._overrides[slot]
         if override is None:
@@ -535,7 +584,7 @@ class EventOverrides:
                 if ev_uid is not None and ev_uid == stored_uid and ev.name == slot_name:
                     return True
 
-        # Phase 2: name + strict interval overlap + UID negative gate
+        # Phase 2: name + strict interval overlap with UID-aware bypass
         slot_start_utc = _to_utc(slot_start)
         slot_end_utc = _to_utc(slot_end)
         for ev in events:
@@ -546,8 +595,22 @@ class EventOverrides:
             ):
                 continue
             ev_uid = normalize_uid(ev.uid)
-            if stored_uid is not None and ev_uid is not None and stored_uid != ev_uid:
-                continue
+            if ev_uid is not None:
+                if stored_uid is None:
+                    if self._event_has_other_uid_owner(ev, exclude_slot=slot):
+                        continue
+                    preferred_slot = self._get_same_start_uid_bypass_slot(ev)
+                    if preferred_slot is not None and preferred_slot != slot:
+                        continue
+                elif stored_uid != ev_uid:
+                    # Same-start bypass: UID regenerated on date change.
+                    if _to_utc(ev.start) != _to_utc(slot_start):
+                        continue
+                    if self._event_has_other_uid_owner(ev, exclude_slot=slot):
+                        continue
+                    preferred_slot = self._get_same_start_uid_bypass_slot(ev)
+                    if preferred_slot != slot:
+                        continue
             return True
 
         # Phase 3: trim-aware fallback for trimmed names.
@@ -582,17 +645,130 @@ class EventOverrides:
                 ):
                     continue
                 ev_uid = normalize_uid(ev.uid)
-                if (
-                    stored_uid is not None
-                    and ev_uid is not None
-                    and stored_uid != ev_uid
-                ):
-                    continue
+                if ev_uid is not None:
+                    if stored_uid is None:
+                        if self._event_has_other_uid_owner(ev, exclude_slot=slot):
+                            continue
+                        preferred_slot = self._get_same_start_uid_bypass_slot(ev)
+                        if preferred_slot is not None and preferred_slot != slot:
+                            continue
+                    elif stored_uid != ev_uid:
+                        if _to_utc(ev.start) != _to_utc(slot_start):
+                            continue
+                        if self._event_has_other_uid_owner(ev, exclude_slot=slot):
+                            continue
+                        preferred_slot = self._get_same_start_uid_bypass_slot(ev)
+                        if preferred_slot != slot:
+                            continue
                 if len(ev.name) > len(slot_name):
                     override["slot_name"] = ev.name
                 return True
 
         return False
+
+    def _event_has_other_uid_owner(
+        self,
+        event: EventIdentity,
+        exclude_slot: int,
+    ) -> bool:
+        """Return whether another slot claims *event* via an exact UID match."""
+        return self._slot_has_other_uid_owner(
+            event.name,
+            event.uid,
+            exclude_slot=exclude_slot,
+        )
+
+    def _slot_has_other_uid_owner(
+        self,
+        slot_name: str,
+        uid: str | None,
+        exclude_slot: int | None = None,
+    ) -> bool:
+        """Return whether another slot already owns *uid* for *slot_name*."""
+        uid = normalize_uid(uid)
+        if uid is None:
+            return False
+
+        guest_max = self._max_name_length - self._prefix_length
+        for candidate in self.__get_slots_with_values():
+            if candidate == exclude_slot:
+                continue
+            override = self._overrides[candidate]
+            if override is None:
+                continue
+
+            stored_uid = normalize_uid(self._slot_uids.get(candidate))
+            if stored_uid != uid:
+                continue
+
+            stored_name = override["slot_name"]
+            if stored_name == slot_name:
+                return True
+            if self._trim_names and _is_trimmed_match(
+                stored_name, slot_name, guest_max
+            ):
+                return True
+
+        return False
+
+    def _get_same_start_uid_bypass_slot(
+        self,
+        event: EventIdentity,
+        exclude_slot: int | None = None,
+    ) -> int | None:
+        """Return the preferred same-start fallback slot for *event*."""
+        event_start_utc = _to_utc(event.start)
+        event_end_utc = _to_utc(event.end)
+        guest_max = self._max_name_length - self._prefix_length
+
+        best_slot: int | None = None
+        best_distance: float | None = None
+        best_exact = False
+
+        for candidate in self.__get_slots_with_values():
+            if candidate == exclude_slot:
+                continue
+            override = self._overrides[candidate]
+            if override is None:
+                continue
+
+            stored_name = override["slot_name"]
+            exact_name = stored_name == event.name
+            if not exact_name:
+                if not self._trim_names or not _is_trimmed_match(
+                    stored_name, event.name, guest_max
+                ):
+                    continue
+
+            candidate_start_utc = _to_utc(override["start_time"])
+            candidate_end_utc = _to_utc(override["end_time"])
+            if not (
+                candidate_start_utc < event_end_utc
+                and event_start_utc < candidate_end_utc
+            ):
+                continue
+
+            if candidate_start_utc != event_start_utc:
+                continue
+
+            distance = abs((candidate_end_utc - event_end_utc).total_seconds())
+            if (
+                best_slot is None
+                or best_distance is None
+                or distance < best_distance
+                or (
+                    distance == best_distance
+                    and (
+                        (exact_name and not best_exact)
+                        or (exact_name == best_exact and candidate < best_slot)
+                    )
+                )
+            ):
+                best_slot = candidate
+                best_distance = distance
+                best_exact = exact_name
+
+        return best_slot
 
     async def async_check_overrides(
         self,
