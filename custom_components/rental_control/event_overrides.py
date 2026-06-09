@@ -288,7 +288,7 @@ class EventOverrides:
                     if override is not None and override["slot_name"] == slot_name:
                         return slot
 
-        # Phase 2: name + strict interval overlap + UID negative gate
+        # Phase 2: name + strict interval overlap with UID-aware bypass
         start_utc = _to_utc(start_time)
         end_utc = _to_utc(end_time)
         preferred_same_start_slot: int | None = None
@@ -584,7 +584,7 @@ class EventOverrides:
                 if ev_uid is not None and ev_uid == stored_uid and ev.name == slot_name:
                     return True
 
-        # Phase 2: name + strict interval overlap + UID negative gate
+        # Phase 2: name + strict interval overlap with UID-aware bypass
         slot_start_utc = _to_utc(slot_start)
         slot_end_utc = _to_utc(slot_end)
         for ev in events:
