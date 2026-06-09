@@ -740,18 +740,18 @@ class EventOverrides:
                 ):
                     continue
 
+            candidate_start_utc = _to_utc(override["start_time"])
+            candidate_end_utc = _to_utc(override["end_time"])
             if not (
-                _to_utc(override["start_time"]) < event_end_utc
-                and event_start_utc < _to_utc(override["end_time"])
+                candidate_start_utc < event_end_utc
+                and event_start_utc < candidate_end_utc
             ):
                 continue
 
-            if _to_utc(override["start_time"]) != event_start_utc:
+            if candidate_start_utc != event_start_utc:
                 continue
 
-            distance = abs(
-                (_to_utc(override["end_time"]) - event_end_utc).total_seconds()
-            )
+            distance = abs((candidate_end_utc - event_end_utc).total_seconds())
             if (
                 best_slot is None
                 or best_distance is None
