@@ -806,15 +806,16 @@ class TestAsyncCheckOverrides:
             assert eo.overrides[2] is not None
 
     async def test_uid_distinguishes_same_name_overlapping(self) -> None:
-        """Verify UID prevents false matches between same-name events."""
+        """Different UID with different start still counts as a miss."""
         eo = EventOverrides(start_slot=1, max_slots=2)
 
         start = _make_dt(2025, 7, 1)
         end = _make_dt(2025, 7, 10)
+        start_2 = _make_dt(2025, 7, 2)
 
         eo.update(1, "1234", "John Doe", start, end)
         eo._slot_uids[1] = "uid-A"
-        eo.update(2, "5678", "John Doe", start, end)
+        eo.update(2, "5678", "John Doe", start_2, end)
         eo._slot_uids[2] = "uid-B"
 
         # Only uid-A event remains
@@ -843,6 +844,248 @@ class TestAsyncCheckOverrides:
             mock_fire.assert_called_once_with(coordinator, 2, expected_name="John Doe")
             assert eo.overrides[1] is not None
             assert eo.overrides[2] is None
+
+    async def test_uid_same_start_duplicate_clears_stale_slot(self) -> None:
+        """Same-start bypass must still evict stale duplicates from old bug."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+
+        start = _make_dt(2025, 7, 1)
+        old_end = _make_dt(2025, 7, 5)
+        new_end = _make_dt(2025, 7, 10)
+
+        eo.update(1, "1234", "John Doe", start, old_end)
+        eo._slot_uids[1] = "uid-old"
+        eo.update(2, "5678", "John Doe", start, new_end)
+        eo._slot_uids[2] = "uid-new"
+
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(new_end, "John Doe", start=start, uid="uid-new"),
+            ],
+            max_events=5,
+        )
+
+        frozen = _make_dt(2025, 6, 25)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            assert eo._slot_miss_counts[1] == 1
+            assert eo.overrides[1] is not None
+            assert eo.overrides[2] is not None
+
+            await eo.async_check_overrides(coordinator)
+
+            mock_fire.assert_called_once_with(coordinator, 1, expected_name="John Doe")
+            assert eo.overrides[1] is None
+            assert eo.overrides[2] is not None
+
+    async def test_uid_same_start_duplicate_without_owner_ages_stale_slot(self) -> None:
+        """Closest same-start slot should win when all stored UIDs are stale."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+
+        start = _make_dt(2025, 7, 1)
+        stale_end = _make_dt(2025, 7, 5)
+        live_end = _make_dt(2025, 7, 10)
+        current_end = _make_dt(2025, 7, 12)
+
+        eo.update(1, "1234", "John Doe", start, stale_end)
+        eo._slot_uids[1] = "uid-old-1"
+        eo.update(2, "5678", "John Doe", start, live_end)
+        eo._slot_uids[2] = "uid-old-2"
+
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(current_end, "John Doe", start=start, uid="uid-new"),
+            ],
+            max_events=5,
+        )
+
+        frozen = _make_dt(2025, 6, 25)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            assert eo._slot_miss_counts[1] == 1
+            assert 2 not in eo._slot_miss_counts
+
+            await eo.async_check_overrides(coordinator)
+
+            mock_fire.assert_called_once_with(coordinator, 1, expected_name="John Doe")
+            assert eo.overrides[1] is None
+            assert eo.overrides[2] is not None
+
+    async def test_uid_same_start_duplicate_with_no_uid_and_stale_peer_ages_slot(
+        self,
+    ) -> None:
+        """A no-UID stale exact-name slot must not shadow a stale same-start peer."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+
+        start = _make_dt(2025, 7, 1)
+        stale_end = _make_dt(2025, 7, 5)
+        live_end = _make_dt(2025, 7, 10)
+        current_end = _make_dt(2025, 7, 12)
+
+        eo.update(1, "1234", "John Doe", start, stale_end)
+        eo.update(2, "5678", "John Doe", start, live_end)
+        eo._slot_uids[2] = "uid-old"
+
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(current_end, "John Doe", start=start, uid="uid-new"),
+            ],
+            max_events=5,
+        )
+
+        frozen = _make_dt(2025, 6, 25)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            assert eo._slot_miss_counts[1] == 1
+            assert 2 not in eo._slot_miss_counts
+
+            await eo.async_check_overrides(coordinator)
+
+            mock_fire.assert_called_once_with(coordinator, 1, expected_name="John Doe")
+            assert eo.overrides[1] is None
+            assert eo.overrides[2] is not None
+
+    async def test_uid_different_start_no_uid_slot_does_not_shadow_peer(self) -> None:
+        """A no-UID overlap on another start date must age out."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+
+        stale_start = _make_dt(2025, 7, 1)
+        live_start = _make_dt(2025, 7, 2)
+        stale_end = _make_dt(2025, 7, 5)
+        live_end = _make_dt(2025, 7, 10)
+        current_end = _make_dt(2025, 7, 12)
+
+        eo.update(1, "1234", "John Doe", stale_start, stale_end)
+        eo.update(2, "5678", "John Doe", live_start, live_end)
+        eo._slot_uids[2] = "uid-old"
+
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(current_end, "John Doe", start=live_start, uid="uid-new"),
+            ],
+            max_events=5,
+        )
+
+        frozen = _make_dt(2025, 6, 25)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            assert eo._slot_miss_counts[1] == 1
+            assert 2 not in eo._slot_miss_counts
+
+            await eo.async_check_overrides(coordinator)
+
+            mock_fire.assert_called_once_with(coordinator, 1, expected_name="John Doe")
+            assert eo.overrides[1] is None
+            assert eo.overrides[2] is not None
+
+    async def test_uid_same_start_mixed_trim_duplicate_ages_stale_slot(self) -> None:
+        """Trim-aware cleanup should keep the closest mixed-name duplicate."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+        eo.trim_names = True
+        eo.max_name_length = 11
+        eo.prefix_length = 7
+
+        start = _make_dt(2025, 7, 1)
+        stale_end = _make_dt(2025, 7, 5)
+        live_end = _make_dt(2025, 7, 10)
+        current_end = _make_dt(2025, 7, 12)
+
+        eo.update(1, "1234", "John Doe", start, stale_end)
+        eo._slot_uids[1] = "uid-old-1"
+        eo.update(2, "5678", "John", start, live_end)
+        eo._slot_uids[2] = "uid-old-2"
+
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(current_end, "John Doe", start=start, uid="uid-new"),
+            ],
+            max_events=5,
+        )
+
+        frozen = _make_dt(2025, 6, 25)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            assert eo._slot_miss_counts[1] == 1
+            assert 2 not in eo._slot_miss_counts
+
+            await eo.async_check_overrides(coordinator)
+
+            mock_fire.assert_called_once_with(coordinator, 1, expected_name="John Doe")
+            assert eo.overrides[1] is None
+            assert eo.overrides[2] is not None
+
+    async def test_uid_same_start_mixed_trim_duplicate_with_no_uid_ages_stale_slot(
+        self,
+    ) -> None:
+        """A no-UID stale exact-name slot must not shadow the live trimmed one."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+        eo.trim_names = True
+        eo.max_name_length = 11
+        eo.prefix_length = 7
+
+        start = _make_dt(2025, 7, 1)
+        stale_end = _make_dt(2025, 7, 5)
+        live_end = _make_dt(2025, 7, 10)
+        current_end = _make_dt(2025, 7, 12)
+
+        eo.update(1, "1234", "John Doe", start, stale_end)
+        eo.update(2, "5678", "John", start, live_end)
+        eo._slot_uids[2] = "uid-live"
+
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(current_end, "John Doe", start=start, uid="uid-live"),
+            ],
+            max_events=5,
+        )
+
+        frozen = _make_dt(2025, 6, 25)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            assert eo._slot_miss_counts[1] == 1
+            assert 2 not in eo._slot_miss_counts
+
+            await eo.async_check_overrides(coordinator)
+
+            mock_fire.assert_called_once_with(coordinator, 1, expected_name="John Doe")
+            assert eo.overrides[1] is None
+            assert eo.overrides[2] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -1536,15 +1779,18 @@ class TestUidTiebreaker:
     """T025 — different UIDs distinguish same-name overlapping stays."""
 
     async def test_different_uid_reserves_new_slot(self) -> None:
-        """Same name+overlap but different UIDs create separate slots.
+        """Different UID plus different start creates a separate slot.
 
         Setup: "Alice" reserved with uid="AAA".
-        Action: async_reserve_or_get_slot("Alice", same times, uid="BBB").
-        Expected: new slot reserved (UIDs prove distinct reservations).
+        Action: async_reserve_or_get_slot("Alice", shifted start,
+        uid="BBB").
+        Expected: new slot reserved because the same-start bypass does
+        not apply.
         """
         eo = _make_ready_eo()
         mon = _make_dt(2025, 7, 7)
         fri = _make_dt(2025, 7, 11)
+        wed = _make_dt(2025, 7, 9)
 
         # Seed first reservation to store uid
         result1 = await eo.async_reserve_or_get_slot(
@@ -1561,7 +1807,7 @@ class TestUidTiebreaker:
         result2 = await eo.async_reserve_or_get_slot(
             slot_name="Alice",
             slot_code="code4",
-            start_time=mon,
+            start_time=wed,
             end_time=fri,
             uid="BBB",
         )
@@ -1741,6 +1987,149 @@ class TestUidPositiveMatch:
         )
         assert r2.slot != r1.slot
         assert r2.is_new is True
+
+
+class TestDateExtensionUidChange:
+    """Tests for date extension/shortening when UID is regenerated."""
+
+    async def test_extension_with_new_uid_reuses_slot(self) -> None:
+        """Extending end date with a changed UID should reuse existing slot."""
+        eo = _make_ready_eo()
+        r1 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 5),
+            uid="UID-OLD",
+        )
+        assert r1.is_new is True
+
+        r2 = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2025, 8, 1),
+            end_time=_make_dt(2025, 8, 10),
+            uid="UID-NEW",
+        )
+        assert r2.slot == r1.slot
+        assert r2.slot is not None
+        assert r2.is_new is False
+        assert r2.times_updated is True
+        assert eo._slot_uids[r2.slot] == "UID-NEW"
+        override = eo.overrides[r2.slot]
+        assert override is not None
+        assert override["end_time"] == _make_dt(2025, 8, 10)
+
+    async def test_shortening_with_new_uid_reuses_slot(self) -> None:
+        """Shortening stay with a changed UID should reuse existing slot."""
+        eo = _make_ready_eo()
+        r1 = await eo.async_reserve_or_get_slot(
+            slot_name="Bob",
+            slot_code="5678",
+            start_time=_make_dt(2025, 9, 1),
+            end_time=_make_dt(2025, 9, 15),
+            uid="UID-ORIG",
+        )
+        assert r1.is_new is True
+
+        r2 = await eo.async_reserve_or_get_slot(
+            slot_name="Bob",
+            slot_code="5678",
+            start_time=_make_dt(2025, 9, 1),
+            end_time=_make_dt(2025, 9, 10),
+            uid="UID-MODIFIED",
+        )
+        assert r2.slot == r1.slot
+        assert r2.slot is not None
+        assert r2.is_new is False
+        assert r2.times_updated is True
+        override = eo.overrides[r2.slot]
+        assert override is not None
+        assert override["end_time"] == _make_dt(2025, 9, 10)
+
+    async def test_different_start_with_new_uid_creates_new_slot(self) -> None:
+        """Different start time + different UID = different booking."""
+        eo = _make_ready_eo()
+        r1 = await eo.async_reserve_or_get_slot(
+            slot_name="Carol",
+            slot_code="1111",
+            start_time=_make_dt(2025, 10, 1),
+            end_time=_make_dt(2025, 10, 5),
+            uid="UID-FIRST",
+        )
+        assert r1.is_new is True
+
+        r2 = await eo.async_reserve_or_get_slot(
+            slot_name="Carol",
+            slot_code="2222",
+            start_time=_make_dt(2025, 10, 3),
+            end_time=_make_dt(2025, 10, 8),
+            uid="UID-SECOND",
+        )
+        assert r2.slot != r1.slot
+        assert r2.is_new is True
+
+    async def test_eviction_check_respects_same_start_bypass(self) -> None:
+        """UID changes with same start should not trigger slot eviction."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+        now = _make_dt(2025, 8, 1)
+        eo.update(1, "1234", "Alice", now, _make_dt(2025, 8, 5))
+        eo._slot_uids[1] = "uid-old"
+        eo.update(2, "", "", now, now)
+
+        coordinator = _make_coordinator(
+            calendar_events=[
+                _make_event(
+                    _make_dt(2025, 8, 10),
+                    "Alice",
+                    start=_make_dt(2025, 8, 1),
+                    uid="uid-new",
+                ),
+            ],
+        )
+
+        frozen = _make_dt(2025, 7, 31)
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_fire,
+            patch.object(dt_util, "start_of_local_day", return_value=frozen),
+        ):
+            await eo.async_check_overrides(coordinator)
+            await eo.async_check_overrides(coordinator)
+            mock_fire.assert_not_called()
+            assert eo.overrides[1] is not None
+
+    async def test_duplicate_state_prefers_closest_same_start_slot(self) -> None:
+        """Later updates should stay on the live duplicate slot."""
+        eo = _make_ready_eo()
+        start = _make_dt(2025, 8, 1)
+        old_end = _make_dt(2025, 8, 5)
+        live_end = _make_dt(2025, 8, 10)
+        extended_end = _make_dt(2025, 8, 12)
+
+        eo.update(1, "1111", "Alice", start, old_end)
+        eo._slot_uids[1] = "UID-OLD"
+        eo.update(2, "2222", "Alice", start, live_end)
+        eo._slot_uids[2] = "UID-LIVE"
+
+        result = await eo.async_reserve_or_get_slot(
+            slot_name="Alice",
+            slot_code="2222",
+            start_time=start,
+            end_time=extended_end,
+            uid="UID-NEWEST",
+        )
+
+        assert result.slot == 2
+        assert result.is_new is False
+        assert result.times_updated is True
+        assert eo._slot_uids[1] == "UID-OLD"
+        assert eo._slot_uids[2] == "UID-NEWEST"
+        assert eo.overrides[1] is not None
+        assert eo.overrides[2] is not None
+        assert eo.overrides[2]["end_time"] == extended_end
 
 
 # ---------------------------------------------------------------------------
@@ -1973,7 +2362,7 @@ class TestPhase3TrimAwareMatching:
 
     @pytest.mark.asyncio
     async def test_find_overlapping_trim_uid_mismatch(self) -> None:
-        """Verify Phase 3 rejects UID mismatch."""
+        """Verify Phase 3 rejects UID mismatch when starts differ."""
         eo = self._ready_eo()
         eo.trim_names = True
         eo.max_name_length = 11
@@ -1981,14 +2370,174 @@ class TestPhase3TrimAwareMatching:
 
         start = _make_dt(2025, 6, 1)
         end = _make_dt(2025, 6, 5)
+        start_2 = _make_dt(2025, 6, 2)
 
         result = await eo.async_reserve_or_get_slot(
             "Chri", "1234", start, end, uid="UID-A"
         )
         assert result.slot == 1
 
-        slot = eo._find_overlapping_slot("Christopher", start, end, uid="UID-B")
+        slot = eo._find_overlapping_slot("Christopher", start_2, end, uid="UID-B")
         assert slot is None
+
+    @pytest.mark.asyncio
+    async def test_find_overlapping_trim_uid_same_start(self) -> None:
+        """Verify Phase 3 reuses slot when UID changes but start matches."""
+        eo = self._ready_eo()
+        eo.trim_names = True
+        eo.max_name_length = 11
+        eo.prefix_length = 7
+
+        start = _make_dt(2025, 6, 1)
+        end = _make_dt(2025, 6, 5)
+        extended_end = _make_dt(2025, 6, 8)
+
+        result = await eo.async_reserve_or_get_slot(
+            "Chri", "1234", start, end, uid="UID-A"
+        )
+        assert result.slot == 1
+
+        slot = eo._find_overlapping_slot(
+            "Christopher", start, extended_end, uid="UID-B"
+        )
+        assert slot == 1
+        assert eo._overrides[1] is not None
+        assert eo._overrides[1]["slot_name"] == "Christopher"
+
+    @pytest.mark.asyncio
+    async def test_find_overlapping_prefers_trimmed_uid_owner(self) -> None:
+        """Trimmed UID owner must win over stale full-name duplicate."""
+        eo = self._ready_eo()
+        eo.trim_names = True
+        eo.max_name_length = 11
+        eo.prefix_length = 7
+
+        start = _make_dt(2025, 6, 1)
+        stale_end = _make_dt(2025, 6, 5)
+        live_end = _make_dt(2025, 6, 8)
+        extended_end = _make_dt(2025, 6, 10)
+
+        eo.update(1, "1111", "Christopher", start, stale_end)
+        eo._slot_uids[1] = "UID-OLD"
+        eo.update(2, "2222", "Chri", start, live_end)
+        eo._slot_uids[2] = "UID-LIVE"
+
+        result = await eo.async_reserve_or_get_slot(
+            "Christopher",
+            "2222",
+            start,
+            extended_end,
+            uid="UID-LIVE",
+        )
+
+        assert result.slot == 2
+        assert result.is_new is False
+        assert result.times_updated is True
+        assert eo._overrides[2] is not None
+        assert eo._overrides[2]["slot_name"] == "Christopher"
+        assert eo._overrides[2]["end_time"] == extended_end
+
+    @pytest.mark.asyncio
+    async def test_find_overlapping_uid_owner_beats_closer_stale_slot(self) -> None:
+        """Exact UID owner must win even if stale full-name slot is closer."""
+        eo = self._ready_eo()
+        eo.trim_names = True
+        eo.max_name_length = 11
+        eo.prefix_length = 7
+
+        start = _make_dt(2025, 6, 1)
+        stale_end = _make_dt(2025, 6, 9)
+        live_end = _make_dt(2025, 6, 5)
+        extended_end = _make_dt(2025, 6, 10)
+
+        eo.update(1, "1111", "Christopher", start, stale_end)
+        eo._slot_uids[1] = "UID-OLD"
+        eo.update(2, "2222", "Chri", start, live_end)
+        eo._slot_uids[2] = "UID-LIVE"
+
+        result = await eo.async_reserve_or_get_slot(
+            "Christopher",
+            "2222",
+            start,
+            extended_end,
+            uid="UID-LIVE",
+        )
+
+        assert result.slot == 2
+        assert result.is_new is False
+        assert result.times_updated is True
+        assert eo._slot_uids[1] == "UID-OLD"
+        assert eo._slot_uids[2] == "UID-LIVE"
+        assert eo._overrides[2] is not None
+        assert eo._overrides[2]["slot_name"] == "Christopher"
+        assert eo._overrides[2]["end_time"] == extended_end
+
+    @pytest.mark.asyncio
+    async def test_find_overlapping_prefers_trimmed_uid_owner_over_no_uid(self) -> None:
+        """No-UID stale slot must not shadow the trimmed UID owner."""
+        eo = self._ready_eo()
+        eo.trim_names = True
+        eo.max_name_length = 11
+        eo.prefix_length = 7
+
+        start = _make_dt(2025, 6, 1)
+        stale_end = _make_dt(2025, 6, 5)
+        live_end = _make_dt(2025, 6, 8)
+        extended_end = _make_dt(2025, 6, 10)
+
+        eo.update(1, "1111", "Christopher", start, stale_end)
+        eo.update(2, "2222", "Chri", start, live_end)
+        eo._slot_uids[2] = "UID-LIVE"
+
+        result = await eo.async_reserve_or_get_slot(
+            "Christopher",
+            "2222",
+            start,
+            extended_end,
+            uid="UID-LIVE",
+        )
+
+        assert result.slot == 2
+        assert result.is_new is False
+        assert result.times_updated is True
+        assert eo._overrides[2] is not None
+        assert eo._overrides[2]["slot_name"] == "Christopher"
+        assert eo._overrides[2]["end_time"] == extended_end
+
+    @pytest.mark.asyncio
+    async def test_find_overlapping_prefers_same_start_trim_peer_over_no_uid_overlap(
+        self,
+    ) -> None:
+        """Different-start no-UID trim match must not shadow same-start peer."""
+        eo = self._ready_eo()
+        eo.trim_names = True
+        eo.max_name_length = 11
+        eo.prefix_length = 7
+
+        stale_start = _make_dt(2025, 6, 1)
+        live_start = _make_dt(2025, 6, 2)
+        stale_end = _make_dt(2025, 6, 5)
+        live_end = _make_dt(2025, 6, 8)
+        current_end = _make_dt(2025, 6, 10)
+
+        eo.update(1, "1111", "Christopher", stale_start, stale_end)
+        eo.update(2, "2222", "Chri", live_start, live_end)
+        eo._slot_uids[2] = "UID-OLD"
+
+        result = await eo.async_reserve_or_get_slot(
+            "Christopher",
+            "2222",
+            live_start,
+            current_end,
+            uid="UID-NEW",
+        )
+
+        assert result.slot == 2
+        assert result.is_new is False
+        assert result.times_updated is True
+        assert eo._overrides[2] is not None
+        assert eo._overrides[2]["slot_name"] == "Christopher"
+        assert eo._overrides[2]["end_time"] == current_end
 
     @pytest.mark.asyncio
     async def test_find_overlapping_trim_no_time_overlap(self) -> None:
@@ -2051,7 +2600,7 @@ class TestPhase3TrimAwareMatching:
 
     @pytest.mark.asyncio
     async def test_slot_matching_uid_mismatch(self) -> None:
-        """Verify _slot_has_matching_event rejects UID mismatch."""
+        """Verify _slot_has_matching_event rejects UID mismatch on new start."""
         eo = self._ready_eo()
         eo.trim_names = True
         eo.max_name_length = 11
@@ -2059,13 +2608,74 @@ class TestPhase3TrimAwareMatching:
 
         start = _make_dt(2025, 6, 1)
         end = _make_dt(2025, 6, 5)
+        start_2 = _make_dt(2025, 6, 2)
 
         await eo.async_reserve_or_get_slot("Chri", "1234", start, end, uid="UID-A")
 
         events = [
-            EventIdentity(name="Christopher", start=start, end=end, uid="UID-B"),
+            EventIdentity(name="Christopher", start=start_2, end=end, uid="UID-B"),
         ]
         assert eo._slot_has_matching_event(1, events) is False
+
+    @pytest.mark.asyncio
+    async def test_slot_matching_uid_same_start(self) -> None:
+        """Verify Phase 3 matches UID change when trimmed start is the same."""
+        eo = self._ready_eo()
+        eo.trim_names = True
+        eo.max_name_length = 11
+        eo.prefix_length = 7
+
+        start = _make_dt(2025, 6, 1)
+        end = _make_dt(2025, 6, 5)
+        extended_end = _make_dt(2025, 6, 8)
+
+        await eo.async_reserve_or_get_slot("Chri", "1234", start, end, uid="UID-A")
+
+        events = [
+            EventIdentity(
+                name="Christopher",
+                start=start,
+                end=extended_end,
+                uid="UID-B",
+            ),
+        ]
+        assert eo._slot_has_matching_event(1, events) is True
+        assert eo._overrides[1] is not None
+        assert eo._overrides[1]["slot_name"] == "Christopher"
+
+    @pytest.mark.asyncio
+    async def test_slot_matching_uid_same_start_prefers_closest_trimmed_slot(
+        self,
+    ) -> None:
+        """Closest trimmed same-start slot should own event when UIDs are stale."""
+        eo = self._ready_eo()
+        eo.trim_names = True
+        eo.max_name_length = 11
+        eo.prefix_length = 7
+
+        start = _make_dt(2025, 6, 1)
+        stale_end = _make_dt(2025, 6, 5)
+        live_end = _make_dt(2025, 6, 8)
+        current_end = _make_dt(2025, 6, 10)
+
+        eo.update(1, "1111", "Chri", start, stale_end)
+        eo._slot_uids[1] = "UID-OLD-1"
+        eo.update(2, "2222", "Chri", start, live_end)
+        eo._slot_uids[2] = "UID-OLD-2"
+
+        events = [
+            EventIdentity(
+                name="Christopher",
+                start=start,
+                end=current_end,
+                uid="UID-NEW",
+            ),
+        ]
+
+        assert eo._slot_has_matching_event(1, events) is False
+        assert eo._slot_has_matching_event(2, events) is True
+        assert eo._overrides[2] is not None
+        assert eo._overrides[2]["slot_name"] == "Christopher"
 
     @pytest.mark.asyncio
     async def test_slot_matching_word_boundary(self) -> None:
