@@ -43,7 +43,7 @@ jobs:
 
       - name: 'Validate with hassfest'
         # yamllint disable-line rule:line-length
-        uses: home-assistant/actions/hassfest@f6f29a7ee3fa0eccadf3620a7b9ee00ab54ec03b  # master (no tags published)
+        uses: home-assistant/actions/hassfest@868e6cb4607727d764341a158d98872cd63fa658  # master (no tags published)
 
   hacs:
     name: 'HACS'
