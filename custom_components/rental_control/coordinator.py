@@ -91,6 +91,8 @@ from .util import check_gather_results
 from .util import get_slot_name
 from .util import normalize_uid
 
+# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
+
 _LOGGER = logging.getLogger(__name__)
 
 

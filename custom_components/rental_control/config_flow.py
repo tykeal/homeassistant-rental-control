@@ -71,6 +71,8 @@ from .const import MIN_NAME_LENGTH
 from .const import REQUEST_TIMEOUT
 from .util import gen_uuid
 
+# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
+
 _LOGGER = logging.getLogger(__name__)
 
 sorted_tz = sorted(available_timezones())

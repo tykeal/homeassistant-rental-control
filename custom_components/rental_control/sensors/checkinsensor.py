@@ -1289,6 +1289,7 @@ class CheckinTrackingSensor(
         """
         await super().async_added_to_hass()
 
+        # aislop-ignore-next-line ai-slop/narrative-comment -- Navigation marker in a long state machine.
         # --- T018: Restore persisted state ---
         last_extra = await self.async_get_last_extra_data()
         if last_extra is not None:
@@ -1312,6 +1313,7 @@ class CheckinTrackingSensor(
                 "Restored state '%s' for %s", self._state, self.coordinator.name
             )
 
+            # aislop-ignore-next-line ai-slop/narrative-comment -- Navigation marker in a long state machine.
             # --- T020: Stale-state validation ---
             self._validate_restored_state()
 
