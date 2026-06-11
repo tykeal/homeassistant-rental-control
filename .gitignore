@@ -12,5 +12,6 @@ htmlcov/
 .pytest_cache/
 *.pyc
 *.pyo
+.aislop/history.jsonl
 .tox/
 *.log

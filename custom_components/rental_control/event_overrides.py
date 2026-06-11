@@ -276,8 +276,6 @@ class EventOverrides:
         """
         uid = normalize_uid(uid)
 
-        # aislop-ignore-next-line ai-slop/narrative-comment ai-slop/meta-comment -- Documents match order for the override algorithm.
-        # Phase 1: UID positive match
         if uid is not None:
             for slot in self.__get_slots_with_values():
                 if slot == exclude_slot:
@@ -288,8 +286,6 @@ class EventOverrides:
                     if override is not None and override["slot_name"] == slot_name:
                         return slot
 
-        # aislop-ignore-next-line ai-slop/narrative-comment ai-slop/meta-comment -- Documents match order for the override algorithm.
-        # Phase 2: name + strict interval overlap with UID-aware bypass
         start_utc = _to_utc(start_time)
         end_utc = _to_utc(end_time)
         preferred_same_start_slot: int | None = None
@@ -337,11 +333,6 @@ class EventOverrides:
                         continue
             return slot
 
-        # aislop-ignore-next-line ai-slop/narrative-comment ai-slop/meta-comment -- Documents match order for the override algorithm.
-        # Phase 3: trim-aware fallback for trimmed names.
-        # Only active when name trimming is enabled.  Uses the actual
-        # trim_name function so both word-boundary and hard-truncated
-        # single-word cases are handled correctly.
         if self._trim_names:
             guest_max = self._max_name_length - self._prefix_length
 
@@ -404,7 +395,6 @@ class EventOverrides:
                             continue
                         if preferred_same_start_slot != slot:
                             continue
-                # Update stored name to the full untrimmed version
                 if len(slot_name) > len(stored):
                     override["slot_name"] = slot_name
                 return slot
@@ -579,16 +569,12 @@ class EventOverrides:
         slot_end = override["end_time"]
         stored_uid = normalize_uid(self._slot_uids.get(slot))
 
-        # aislop-ignore-next-line ai-slop/narrative-comment ai-slop/meta-comment -- Documents match order for the override algorithm.
-        # Phase 1: UID positive match
         if stored_uid is not None:
             for ev in events:
                 ev_uid = normalize_uid(ev.uid)
                 if ev_uid is not None and ev_uid == stored_uid and ev.name == slot_name:
                     return True
 
-        # aislop-ignore-next-line ai-slop/narrative-comment ai-slop/meta-comment -- Documents match order for the override algorithm.
-        # Phase 2: name + strict interval overlap with UID-aware bypass
         slot_start_utc = _to_utc(slot_start)
         slot_end_utc = _to_utc(slot_end)
         for ev in events:
@@ -617,9 +603,6 @@ class EventOverrides:
                         continue
             return True
 
-        # aislop-ignore-next-line ai-slop/narrative-comment ai-slop/meta-comment -- Documents match order for the override algorithm.
-        # Phase 3: trim-aware fallback for trimmed names.
-        # Only active when name trimming is enabled.
         if self._trim_names:
             guest_max = self._max_name_length - self._prefix_length
 
