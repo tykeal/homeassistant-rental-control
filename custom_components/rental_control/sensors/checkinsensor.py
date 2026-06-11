@@ -1582,7 +1582,6 @@ class CheckinTrackingSensor(
             _LOGGER.debug("Ignoring keymaster unlock: code_slot_num == 0 (manual/RF)")
             return
 
-        # Validate code slot is in managed range
         start_slot = self.coordinator.start_slot
         max_events = self.coordinator.max_events
         if not (start_slot <= code_slot_num < start_slot + max_events):

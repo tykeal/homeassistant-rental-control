@@ -199,7 +199,6 @@ class EventOverrides:
         else:
             max_slot = self.start_slot - 1
 
-        # Get all the available slots greater than our current max
         avail_slots = self.__get_slots_without_values(max_slot)
         if len(avail_slots):
             _LOGGER.debug("Next slot is %s", avail_slots[0])

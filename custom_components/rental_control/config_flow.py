@@ -424,7 +424,6 @@ async def _start_config_flow(
         if hasattr(cls, "_get_unique_id"):
             errors.update(await cls._get_unique_id(user_input))
 
-        # Validate user input
         try:
             cv.url(user_input[CONF_URL])
             # cv.url() only accepts http:// and https:// schemes

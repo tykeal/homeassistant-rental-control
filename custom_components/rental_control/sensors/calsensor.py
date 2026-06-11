@@ -395,7 +395,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             if isinstance(uid, str):
                 uid = uid.strip() or None
             self._event_attributes["uid"] = uid
-            # get timedelta for eta
             td = start - datetime.now(start.tzinfo)
             eta_days = None
             eta_hours = None
