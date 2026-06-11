@@ -415,7 +415,6 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
             f"{TEXT}.{lockname}_code_slot_{slot}_name",
             {"value": slot_name},
         )
-        # Update the slot details
         results = await asyncio.gather(*coro, return_exceptions=True)
         check_gather_results(results, "Lock slot operation")
         _raise_first_gather_exception(results)
@@ -499,7 +498,6 @@ async def async_fire_update_times(coordinator, event, slot: int) -> None:
         f"datetime.{lockname}_code_slot_{slot}_date_range_start",
         {"datetime": buffered_start},
     )
-    # Update the slot details
     results = await asyncio.gather(*coro, return_exceptions=True)
     check_gather_results(results, "Lock slot operation")
 

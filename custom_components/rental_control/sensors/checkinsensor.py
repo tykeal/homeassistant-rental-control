@@ -619,7 +619,6 @@ class CheckinTrackingSensor(
                     self._tracked_event_slot_name = self._extract_slot_name(tracked)
                     self.async_write_ha_state()
                 else:
-                    # Update slot name in case it changed
                     self._tracked_event_slot_name = self._extract_slot_name(tracked)
                     self.async_write_ha_state()
             else:
@@ -1289,8 +1288,6 @@ class CheckinTrackingSensor(
         """
         await super().async_added_to_hass()
 
-        # aislop-ignore-next-line ai-slop/narrative-comment -- Navigation marker in a long state machine.
-        # --- T018: Restore persisted state ---
         last_extra = await self.async_get_last_extra_data()
         if last_extra is not None:
             data = last_extra.as_dict()
@@ -1313,8 +1310,6 @@ class CheckinTrackingSensor(
                 "Restored state '%s' for %s", self._state, self.coordinator.name
             )
 
-            # aislop-ignore-next-line ai-slop/narrative-comment -- Navigation marker in a long state machine.
-            # --- T020: Stale-state validation ---
             self._validate_restored_state()
 
             # After restoration and stale-state correction, reconcile with
@@ -1597,7 +1592,6 @@ class CheckinTrackingSensor(
         # Unlock while checked_in is ignored — early expiry is handled
         # by async_checkout per FR-022/FR-023
         if self._state == CHECKIN_STATE_CHECKED_IN:
-            # Validate the unlock slot matches the tracked event
             tracked_slot = 0
             if self._tracked_event_slot_name and self.coordinator.event_overrides:
                 tracked_slot = self.coordinator.event_overrides.get_slot_key_by_name(
