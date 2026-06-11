@@ -802,7 +802,6 @@ async def handle_state_change(
         end_time,
     )
 
-    # validate overrides
     await coordinator.event_overrides.async_check_overrides(coordinator)
 
 

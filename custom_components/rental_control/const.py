@@ -127,7 +127,6 @@ If you have any issues with this you need to open an issue here:
 -------------------------------------------------------------------
 """
 
-# Check-in tracking state constants
 CHECKIN_STATE_NO_RESERVATION = "no_reservation"
 CHECKIN_STATE_AWAITING = "awaiting_checkin"
 CHECKIN_STATE_CHECKED_IN = "checked_in"

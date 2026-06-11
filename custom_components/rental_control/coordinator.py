@@ -91,6 +91,8 @@ from .util import check_gather_results
 from .util import get_slot_name
 from .util import normalize_uid
 
+# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -175,7 +177,6 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
             if self._parent_entry_id is not None:
                 self._child_locknames = self._discover_child_locks()
 
-        # setup device
         device_registry = dr.async_get(hass)
         device_registry.async_get_or_create(
             config_entry_id=self._entry_id,
@@ -518,7 +519,6 @@ Please update Keymaster to at least v0.1.0-b0
                     self.event = event
                     break
 
-        # Check overrides against current calendar data
         if self.event_overrides:
             await self.event_overrides.async_check_overrides(
                 self, calendar=new_calendar

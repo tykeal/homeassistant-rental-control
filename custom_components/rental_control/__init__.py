@@ -326,7 +326,6 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
         options={},
     )
 
-    # Update the calendar config
     await coordinator.update_config(new_data)
 
     entry_data = hass.data.get(DOMAIN, {}).get(config_entry.entry_id)
@@ -465,7 +464,6 @@ def async_register_keymaster_listener(
             if sensor is not None and sensor.hass is not None:
                 sensor.async_write_ha_state()
 
-        # Validate state is unlocked
         if event_data.get("state") != "unlocked":
             if diagnostics_enabled:
                 _record("rejected_state")
@@ -477,7 +475,6 @@ def async_register_keymaster_listener(
                 _record("rejected_slot_zero")
             return
 
-        # Validate code slot is in managed range
         if not (start_slot <= code_slot_num < start_slot + max_events):
             if diagnostics_enabled:
                 _record("rejected_out_of_range")
@@ -496,7 +493,6 @@ def async_register_keymaster_listener(
                 _record("rejected_no_checkin_sensor")
             return
 
-        # Check monitoring switch via stored entity reference
         monitoring_switch = entry_data.get(KEYMASTER_MONITORING_SWITCH)
         if monitoring_switch is None:
             _LOGGER.debug(

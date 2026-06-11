@@ -71,6 +71,8 @@ from .const import MIN_NAME_LENGTH
 from .const import REQUEST_TIMEOUT
 from .util import gen_uuid
 
+# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
+
 _LOGGER = logging.getLogger(__name__)
 
 sorted_tz = sorted(available_timezones())
@@ -422,7 +424,6 @@ async def _start_config_flow(
         if hasattr(cls, "_get_unique_id"):
             errors.update(await cls._get_unique_id(user_input))
 
-        # Validate user input
         try:
             cv.url(user_input[CONF_URL])
             # cv.url() only accepts http:// and https:// schemes

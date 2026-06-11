@@ -23,6 +23,8 @@ from .const import DOMAIN
 from .sensors.calsensor import RentalControlCalSensor
 from .sensors.checkinsensor import CheckinTrackingSensor
 
+# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
+
 _LOGGER = logging.getLogger(__name__)
 
 
