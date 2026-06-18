@@ -29,6 +29,7 @@ from pathlib import Path
 import re
 from typing import Any
 from typing import NamedTuple
+from typing import cast
 import uuid
 
 from homeassistant.components.automation import DOMAIN as AUTO_DOMAIN
@@ -56,6 +57,19 @@ from .const import EARLY_CHECKOUT_GRACE_MINUTES
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def get_entry_data(hass: HomeAssistant, entry_id: str) -> dict[str, Any] | None:
+    """Return Rental Control entry data when domain and entry data exist."""
+    domain_data = cast("dict[str, dict[str, Any]] | None", hass.data.get(DOMAIN))
+    if domain_data is None:
+        return None
+
+    entry_data = domain_data.get(entry_id)
+    if entry_data is None:
+        return None
+
+    return entry_data
 
 
 def normalize_uid(value: str | None) -> str | None:
