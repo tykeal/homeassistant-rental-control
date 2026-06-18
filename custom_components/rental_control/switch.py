@@ -130,7 +130,16 @@ class KeymasterMonitoringSwitch(SwitchEntity, RestoreEntity):
             self._attr_is_on = last_state.state == "on"
 
         # Store entity reference in hass.data for the event bus listener
-        entry_data = get_entry_data(self.hass, self._config_entry.entry_id) or {}
+        entry_data = get_entry_data(self.hass, self._config_entry.entry_id)
+        if entry_data is None:
+            _LOGGER.debug(
+                "Keymaster monitoring switch restored without entry data: "
+                "is_on=%s, entity_id=%s",
+                self._attr_is_on,
+                self.entity_id,
+            )
+            return
+
         entry_data[KEYMASTER_MONITORING_SWITCH] = self
 
         _LOGGER.debug(

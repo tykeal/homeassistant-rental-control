@@ -482,7 +482,15 @@ def async_register_keymaster_listener(
             return
 
         # Retrieve the checkin sensor and forward the unlock
-        entry_data = get_entry_data(hass, config_entry.entry_id) or {}
+        entry_data = get_entry_data(hass, config_entry.entry_id)
+        if entry_data is None:
+            _LOGGER.debug(
+                "Keymaster unlock event received but entry data "
+                "not available for entry %s",
+                config_entry.entry_id,
+            )
+            return
+
         checkin_sensor = entry_data.get(CHECKIN_SENSOR)
         if checkin_sensor is None:
             _LOGGER.debug(

@@ -461,7 +461,10 @@ class CheckinTrackingSensor(
         active, so ``True`` is returned to prevent premature
         auto check-in during the setup race window.
         """
-        entry_data = get_entry_data(self._hass, self._config_entry.entry_id) or {}
+        entry_data = get_entry_data(self._hass, self._config_entry.entry_id)
+        if entry_data is None:
+            return self.coordinator.lockname is not None
+
         monitoring_switch = entry_data.get(KEYMASTER_MONITORING_SWITCH)
         if monitoring_switch is not None:
             return bool(monitoring_switch.is_on)
@@ -1195,8 +1198,12 @@ class CheckinTrackingSensor(
                 )
 
         # Early expiry: shorten lock code if switch is on (FR-022)
-        entry_data = get_entry_data(self._hass, self._config_entry.entry_id) or {}
-        early_expiry_switch = entry_data.get(EARLY_CHECKOUT_EXPIRY_SWITCH)
+        entry_data = get_entry_data(self._hass, self._config_entry.entry_id)
+        early_expiry_switch = (
+            entry_data.get(EARLY_CHECKOUT_EXPIRY_SWITCH)
+            if entry_data is not None
+            else None
+        )
 
         if early_expiry_switch is not None and early_expiry_switch.is_on:
             if self._tracked_event_end is not None:
