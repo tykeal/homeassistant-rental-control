@@ -110,7 +110,10 @@ class TestDiagnosticsBuffer:
         )
         await hass.async_block_till_done()
 
-        sensor.async_handle_keymaster_unlock.assert_called_once()
+        sensor.async_handle_keymaster_unlock.assert_called_once_with(
+            code_slot_num=11,
+            lock_name="Front Door",
+        )
         buf = list(mock_checkin_coordinator.keymaster_event_diagnostics)
         assert len(buf) == 1
         entry = buf[0]

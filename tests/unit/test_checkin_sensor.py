@@ -3538,6 +3538,46 @@ class TestChildLockMonitoringSwitch:
         sensor.async_handle_keymaster_unlock.assert_not_called()
 
 
+class TestKeymasterMonitoringEntryData:
+    """Tests for keymaster monitoring entry-data lookups."""
+
+    async def test_present_switch_on_wins_over_missing_lockname_fallback(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify an on switch enables monitoring even without lockname."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        mock_checkin_coordinator.lockname = None
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
+        }
+
+        assert sensor._is_keymaster_monitoring_enabled() is True
+
+    async def test_present_switch_off_wins_over_configured_lockname_fallback(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify an off switch disables monitoring despite lockname."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        mock_checkin_coordinator.lockname = "front_door"
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=False),
+        }
+
+        assert sensor._is_keymaster_monitoring_enabled() is False
+
+
 # ===========================================================================
 # T027: Manual checkout action (async_checkout)
 # ===========================================================================
