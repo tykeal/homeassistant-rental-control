@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import pytest
+
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import EARLY_CHECKOUT_EXPIRY_SWITCH
@@ -303,6 +305,34 @@ class TestKeymasterMonitoringSwitchRestore:
             KEYMASTER_MONITORING_SWITCH,
         )
         assert stored is switch
+
+    @pytest.mark.parametrize("remove_domain", [True, False])
+    async def test_added_to_hass_missing_entry_data_does_not_mutate_state(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_config_entry: MockConfigEntry,
+        *,
+        remove_domain: bool,
+    ) -> None:
+        """Test missing entry data does not create phantom switch state."""
+        coordinator = _make_coordinator(hass)
+        switch = _create_switch(hass, coordinator, mock_checkin_config_entry)
+        mock_state = MagicMock()
+        mock_state.state = "on"
+        if remove_domain:
+            hass.data.pop(DOMAIN)
+        else:
+            domain_data: dict[str, object] = {}
+            hass.data[DOMAIN] = domain_data
+
+        with patch.object(switch, "async_get_last_state", return_value=mock_state):
+            await switch.async_added_to_hass()
+
+        assert switch.is_on is True
+        if remove_domain:
+            assert DOMAIN not in hass.data
+        else:
+            assert hass.data[DOMAIN] == {}
 
 
 class TestSwitchPlatformSetup:

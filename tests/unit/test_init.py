@@ -237,6 +237,108 @@ async def test_update_listener_present_data_updates_config_and_listeners(
     register_listener.assert_called_once_with(hass, mock_config_entry)
 
 
+async def test_update_listener_missing_entry_before_update_returns(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Verify update_listener returns before mutation without entry data."""
+    mock_config_entry.add_to_hass(hass)
+    original_data = dict(mock_config_entry.data)
+    updated_options = dict(mock_config_entry.data)
+    updated_options[CONF_NAME] = "Updated Rental"
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options=updated_options,
+    )
+    hass.data[DOMAIN] = {}
+
+    with patch.object(
+        hass.config_entries,
+        "async_update_entry",
+        wraps=hass.config_entries.async_update_entry,
+    ) as update_entry:
+        await update_listener(hass, mock_config_entry)
+
+    update_entry.assert_not_called()
+    assert mock_config_entry.data == original_data
+    assert hass.data[DOMAIN] == {}
+
+
+async def test_update_listener_missing_domain_before_update_returns(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Verify update_listener returns before mutation without domain data."""
+    mock_config_entry.add_to_hass(hass)
+    original_data = dict(mock_config_entry.data)
+    updated_options = dict(mock_config_entry.data)
+    updated_options[CONF_NAME] = "Updated Rental"
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options=updated_options,
+    )
+    hass.data.pop(DOMAIN, None)
+
+    with patch.object(
+        hass.config_entries,
+        "async_update_entry",
+        wraps=hass.config_entries.async_update_entry,
+    ) as update_entry:
+        await update_listener(hass, mock_config_entry)
+
+    update_entry.assert_not_called()
+    assert mock_config_entry.data == original_data
+    assert DOMAIN not in hass.data
+
+
+async def test_update_listener_entry_vanishes_after_config_update_returns(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Verify listener refresh is skipped when entry data vanishes."""
+    mock_config_entry.add_to_hass(hass)
+    updated_options = dict(mock_config_entry.data)
+    updated_options[CONF_NAME] = "Updated Rental"
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options=updated_options,
+    )
+
+    coordinator = MagicMock()
+    coordinator.created = "2026-06-18T15:00:00+00:00"
+    coordinator.lockname = "front_door"
+    unsub_listener = MagicMock()
+
+    async def _remove_entry(_new_data: dict[str, object]) -> None:
+        """Remove entry data while update_listener is updating config."""
+        hass.data[DOMAIN].pop(mock_config_entry.entry_id)
+
+    coordinator.update_config = AsyncMock(side_effect=_remove_entry)
+    hass.data[DOMAIN] = {
+        mock_config_entry.entry_id: {
+            COORDINATOR: coordinator,
+            UNSUB_LISTENERS: [unsub_listener],
+        },
+    }
+
+    with (
+        patch(
+            "custom_components.rental_control.async_start_listener",
+            new_callable=AsyncMock,
+        ) as start_listener,
+        patch(
+            "custom_components.rental_control.async_register_keymaster_listener",
+        ) as register_listener,
+    ):
+        await update_listener(hass, mock_config_entry)
+
+    coordinator.update_config.assert_awaited_once()
+    unsub_listener.assert_not_called()
+    start_listener.assert_not_called()
+    register_listener.assert_not_called()
+    assert mock_config_entry.entry_id not in hass.data[DOMAIN]
+
+
 # Note: Tasks T039a-T039d test features that are either not yet implemented
 # or are better tested at the integration level:
 # - T039a (service_registration): No services currently registered in __init__.py

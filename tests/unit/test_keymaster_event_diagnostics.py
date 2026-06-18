@@ -226,6 +226,33 @@ class TestDiagnosticsBuffer:
         assert len(buf) == 1
         assert buf[0]["disposition"] == "rejected_monitoring_off"
 
+    @pytest.mark.parametrize("remove_domain", [True, False])
+    async def test_missing_entry_data_rejects_without_accepting(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+        *,
+        remove_domain: bool,
+    ) -> None:
+        """Missing domain or entry data must not forward or record accepted."""
+        sensor = _setup_entry(hass, mock_checkin_coordinator, mock_checkin_config_entry)
+        _set_diag(mock_checkin_config_entry, hass, True)
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+        if remove_domain:
+            hass.data.pop(DOMAIN)
+        else:
+            hass.data[DOMAIN].pop(mock_checkin_config_entry.entry_id)
+
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {"lockname": "front_door", "state": "unlocked", "code_slot_num": 11},
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_not_called()
+        assert list(mock_checkin_coordinator.keymaster_event_diagnostics) == []
+
     async def test_ring_buffer_truncates_at_ten(
         self,
         hass: HomeAssistant,
