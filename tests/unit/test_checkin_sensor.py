@@ -4082,6 +4082,65 @@ def _setup_early_expiry_switch(
     return mock_switch
 
 
+class TestSupportingComponentAbsence:
+    """Tests for missing supporting components inside present entry data."""
+
+    @pytest.mark.parametrize(
+        ("lockname", "expected"),
+        [("front_door", True), (None, False)],
+    )
+    async def test_missing_monitoring_switch_uses_lockname_fallback(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+        lockname: str | None,
+        *,
+        expected: bool,
+    ) -> None:
+        """Verify present entry without monitoring switch uses lockname."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        mock_checkin_coordinator.lockname = lockname
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+        }
+
+        assert sensor._is_keymaster_monitoring_enabled() is expected
+
+    async def test_checkout_missing_early_expiry_switch_continues(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify present entry without early-expiry switch continues checkout."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        original_end = now + timedelta(hours=4)
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(hours=2)
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        mock_checkin_coordinator.data = []
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+        }
+
+        await sensor.async_checkout()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._tracked_event_end == original_end
+
+
 class TestMissingEntryDataFallbacks:
     """Tests for missing entry-data fallback behavior."""
 
