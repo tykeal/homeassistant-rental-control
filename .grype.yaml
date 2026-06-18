@@ -89,3 +89,98 @@ ignore:
       name: aiohttp
       version: "3.13.5"
       type: python
+
+  # PyJWT transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 2.13.0.
+  - vulnerability: GHSA-w7vc-732c-9m39
+    package:
+      name: PyJWT
+      version: "2.12.1"
+      type: python
+
+  # PyJWT transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 2.13.0.
+  - vulnerability: GHSA-xgmm-8j9v-c9wx
+    package:
+      name: PyJWT
+      version: "2.12.1"
+      type: python
+
+  # PyJWT transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 2.13.0.
+  - vulnerability: GHSA-993g-76c3-p5m4
+    package:
+      name: PyJWT
+      version: "2.12.1"
+      type: python
+
+  # PyJWT transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 2.13.0.
+  - vulnerability: GHSA-jq35-7prp-9v3f
+    package:
+      name: PyJWT
+      version: "2.12.1"
+      type: python
+
+  # cryptography transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 48.0.1.
+  - vulnerability: GHSA-537c-gmf6-5ccf
+    package:
+      name: cryptography
+      version: "47.0.0"
+      type: python
+
+  # aiohttp transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 3.14.1.
+  - vulnerability: GHSA-4fvr-rgm6-gqmc
+    package:
+      name: aiohttp
+      version: "3.13.5"
+      type: python
+
+  # aiohttp transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 3.14.1.
+  - vulnerability: GHSA-63hw-fmq6-xxg2
+    package:
+      name: aiohttp
+      version: "3.13.5"
+      type: python
+
+  # aiohttp transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 3.14.1.
+  - vulnerability: GHSA-g3cq-j2xw-wf74
+    package:
+      name: aiohttp
+      version: "3.13.5"
+      type: python
+
+  # aiohttp transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 3.14.1.
+  - vulnerability: GHSA-hpj7-wq8m-9hgp
+    package:
+      name: aiohttp
+      version: "3.13.5"
+      type: python
+
+  # aiohttp transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 3.14.1.
+  - vulnerability: GHSA-xcgm-r5h9-7989
+    package:
+      name: aiohttp
+      version: "3.13.5"
+      type: python
+
+  # zeroconf transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 0.149.12.
+  - vulnerability: GHSA-9663-mqmp-p9mm
+    package:
+      name: zeroconf
+      version: "0.148.0"
+      type: python
