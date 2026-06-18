@@ -13,5 +13,6 @@ htmlcov/
 *.pyc
 *.pyo
 .aislop/history.jsonl
+.aislop/install_id
 .tox/
 *.log
