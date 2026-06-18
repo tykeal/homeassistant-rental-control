@@ -25,6 +25,7 @@ from .const import DOMAIN
 from .const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from .const import KEYMASTER_MONITORING_SWITCH
 from .util import gen_uuid
+from .util import get_entry_data
 
 if TYPE_CHECKING:
     from .coordinator import RentalControlCoordinator
@@ -129,7 +130,7 @@ class KeymasterMonitoringSwitch(SwitchEntity, RestoreEntity):
             self._attr_is_on = last_state.state == "on"
 
         # Store entity reference in hass.data for the event bus listener
-        entry_data = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id, {})
+        entry_data = get_entry_data(self.hass, self._config_entry.entry_id) or {}
         entry_data[KEYMASTER_MONITORING_SWITCH] = self
 
         _LOGGER.debug(
