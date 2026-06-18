@@ -20,7 +20,7 @@ or follows the existing component-absence fallback for that operation.
 
 ## Technical Context
 
-**Language/Version**: Python >=3.14.2
+**Language/Version**: Python ≥3.14.2
 **Primary Dependencies**: Home Assistant core, pytest-homeassistant-custom-component
 **Storage**: HA runtime storage in `hass.data[DOMAIN][entry_id]`; no persisted data changes
 **Testing**: pytest via `uv run pytest tests/`; ruff via `uv run ruff check ...`
