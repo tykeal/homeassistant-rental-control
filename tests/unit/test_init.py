@@ -6,12 +6,18 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import CONF_NAME
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.rental_control import update_listener
 from custom_components.rental_control.const import CONF_CODE_LENGTH
+from custom_components.rental_control.const import CONF_CREATION_DATETIME
 from custom_components.rental_control.const import CONF_GENERATE
 from custom_components.rental_control.const import CONF_HONOR_EVENT_TIMES
 from custom_components.rental_control.const import CONF_PATH
@@ -20,6 +26,7 @@ from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DEFAULT_CODE_LENGTH
 from custom_components.rental_control.const import DEFAULT_GENERATE
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import UNSUB_LISTENERS
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -181,6 +188,155 @@ async def test_config_entry_reload(
     updated_coordinator = hass.data[DOMAIN][mock_config_entry.entry_id][COORDINATOR]
     assert updated_coordinator.refresh_frequency == 30
     assert updated_coordinator.refresh_frequency != original_refresh_frequency
+
+
+async def test_update_listener_present_data_updates_config_and_listeners(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Verify update_listener preserves loaded-entry update behavior."""
+    mock_config_entry.add_to_hass(hass)
+    updated_options = dict(mock_config_entry.data)
+    updated_options[CONF_NAME] = "Updated Rental"
+    updated_options["refresh_frequency"] = 12
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options=updated_options,
+    )
+
+    coordinator = MagicMock()
+    coordinator.created = "2026-06-18T15:00:00+00:00"
+    coordinator.lockname = "front_door"
+    coordinator.update_config = AsyncMock()
+    unsub_listener = MagicMock()
+    hass.data[DOMAIN] = {
+        mock_config_entry.entry_id: {
+            COORDINATOR: coordinator,
+            UNSUB_LISTENERS: [unsub_listener],
+        },
+    }
+
+    with (
+        patch(
+            "custom_components.rental_control.async_start_listener",
+            new_callable=AsyncMock,
+        ) as start_listener,
+        patch(
+            "custom_components.rental_control.async_register_keymaster_listener",
+        ) as register_listener,
+    ):
+        await update_listener(hass, mock_config_entry)
+
+    assert mock_config_entry.data[CONF_NAME] == "Updated Rental"
+    assert mock_config_entry.data[CONF_CREATION_DATETIME] == coordinator.created
+    assert mock_config_entry.options == {}
+    coordinator.update_config.assert_awaited_once()
+    unsub_listener.assert_called_once_with()
+    assert hass.data[DOMAIN][mock_config_entry.entry_id][UNSUB_LISTENERS] == []
+    start_listener.assert_awaited_once_with(hass, mock_config_entry)
+    register_listener.assert_called_once_with(hass, mock_config_entry)
+
+
+async def test_update_listener_missing_entry_before_update_returns(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Verify update_listener returns before mutation without entry data."""
+    mock_config_entry.add_to_hass(hass)
+    original_data = dict(mock_config_entry.data)
+    updated_options = dict(mock_config_entry.data)
+    updated_options[CONF_NAME] = "Updated Rental"
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options=updated_options,
+    )
+    hass.data[DOMAIN] = {}
+
+    with patch.object(
+        hass.config_entries,
+        "async_update_entry",
+        wraps=hass.config_entries.async_update_entry,
+    ) as update_entry:
+        await update_listener(hass, mock_config_entry)
+
+    update_entry.assert_not_called()
+    assert mock_config_entry.data == original_data
+    assert hass.data[DOMAIN] == {}
+
+
+async def test_update_listener_missing_domain_before_update_returns(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Verify update_listener returns before mutation without domain data."""
+    mock_config_entry.add_to_hass(hass)
+    original_data = dict(mock_config_entry.data)
+    updated_options = dict(mock_config_entry.data)
+    updated_options[CONF_NAME] = "Updated Rental"
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options=updated_options,
+    )
+    hass.data.pop(DOMAIN, None)
+
+    with patch.object(
+        hass.config_entries,
+        "async_update_entry",
+        wraps=hass.config_entries.async_update_entry,
+    ) as update_entry:
+        await update_listener(hass, mock_config_entry)
+
+    update_entry.assert_not_called()
+    assert mock_config_entry.data == original_data
+    assert DOMAIN not in hass.data
+
+
+async def test_update_listener_entry_vanishes_after_config_update_returns(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Verify listener refresh is skipped when entry data vanishes."""
+    mock_config_entry.add_to_hass(hass)
+    updated_options = dict(mock_config_entry.data)
+    updated_options[CONF_NAME] = "Updated Rental"
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options=updated_options,
+    )
+
+    coordinator = MagicMock()
+    coordinator.created = "2026-06-18T15:00:00+00:00"
+    coordinator.lockname = "front_door"
+    unsub_listener = MagicMock()
+
+    async def _remove_entry(_new_data: dict[str, object]) -> None:
+        """Remove entry data while update_listener is updating config."""
+        hass.data[DOMAIN].pop(mock_config_entry.entry_id)
+
+    coordinator.update_config = AsyncMock(side_effect=_remove_entry)
+    hass.data[DOMAIN] = {
+        mock_config_entry.entry_id: {
+            COORDINATOR: coordinator,
+            UNSUB_LISTENERS: [unsub_listener],
+        },
+    }
+
+    with (
+        patch(
+            "custom_components.rental_control.async_start_listener",
+            new_callable=AsyncMock,
+        ) as start_listener,
+        patch(
+            "custom_components.rental_control.async_register_keymaster_listener",
+        ) as register_listener,
+    ):
+        await update_listener(hass, mock_config_entry)
+
+    coordinator.update_config.assert_awaited_once()
+    unsub_listener.assert_not_called()
+    start_listener.assert_not_called()
+    register_listener.assert_not_called()
+    assert mock_config_entry.entry_id not in hass.data[DOMAIN]
 
 
 # Note: Tasks T039a-T039d test features that are either not yet implemented

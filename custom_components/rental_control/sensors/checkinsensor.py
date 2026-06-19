@@ -42,7 +42,6 @@ from ..const import CONF_CLEANING_WINDOW
 from ..const import CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from ..const import DEFAULT_CLEANING_WINDOW
 from ..const import DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
-from ..const import DOMAIN
 from ..const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from ..const import EVENT_RENTAL_CONTROL_CHECKIN
 from ..const import EVENT_RENTAL_CONTROL_CHECKOUT
@@ -51,6 +50,7 @@ from ..util import add_call
 from ..util import check_gather_results
 from ..util import compute_early_expiry_time
 from ..util import gen_uuid
+from ..util import get_entry_data
 from ..util import get_slot_name
 
 if TYPE_CHECKING:
@@ -461,9 +461,10 @@ class CheckinTrackingSensor(
         active, so ``True`` is returned to prevent premature
         auto check-in during the setup race window.
         """
-        entry_data = self._hass.data.get(DOMAIN, {}).get(
-            self._config_entry.entry_id, {}
-        )
+        entry_data = get_entry_data(self._hass, self._config_entry.entry_id)
+        if entry_data is None:
+            return self.coordinator.lockname is not None
+
         monitoring_switch = entry_data.get(KEYMASTER_MONITORING_SWITCH)
         if monitoring_switch is not None:
             return bool(monitoring_switch.is_on)
@@ -1197,10 +1198,12 @@ class CheckinTrackingSensor(
                 )
 
         # Early expiry: shorten lock code if switch is on (FR-022)
-        entry_data = self._hass.data.get(DOMAIN, {}).get(
-            self._config_entry.entry_id, {}
+        entry_data = get_entry_data(self._hass, self._config_entry.entry_id)
+        early_expiry_switch = (
+            entry_data.get(EARLY_CHECKOUT_EXPIRY_SWITCH)
+            if entry_data is not None
+            else None
         )
-        early_expiry_switch = entry_data.get(EARLY_CHECKOUT_EXPIRY_SWITCH)
 
         if early_expiry_switch is not None and early_expiry_switch.is_on:
             if self._tracked_event_end is not None:

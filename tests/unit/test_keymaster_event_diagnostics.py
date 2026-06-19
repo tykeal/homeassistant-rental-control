@@ -40,6 +40,7 @@ def _setup_entry(
     *,
     monitoring_on: bool = True,
     include_sensor: bool = True,
+    include_monitoring_switch: bool = True,
 ) -> MagicMock:
     """Wire coordinator/sensor/switch into ``hass.data`` for the listener.
 
@@ -57,8 +58,9 @@ def _setup_entry(
     entry_data: dict = {
         COORDINATOR: coordinator,
         UNSUB_LISTENERS: [],
-        KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=monitoring_on),
     }
+    if include_monitoring_switch:
+        entry_data[KEYMASTER_MONITORING_SWITCH] = MagicMock(is_on=monitoring_on)
     if include_sensor:
         entry_data[CHECKIN_SENSOR] = sensor
     hass.data[DOMAIN][config_entry.entry_id] = entry_data
@@ -110,7 +112,10 @@ class TestDiagnosticsBuffer:
         )
         await hass.async_block_till_done()
 
-        sensor.async_handle_keymaster_unlock.assert_called_once()
+        sensor.async_handle_keymaster_unlock.assert_called_once_with(
+            code_slot_num=11,
+            lock_name="Front Door",
+        )
         buf = list(mock_checkin_coordinator.keymaster_event_diagnostics)
         assert len(buf) == 1
         entry = buf[0]
@@ -178,7 +183,7 @@ class TestDiagnosticsBuffer:
         mock_checkin_config_entry: MockConfigEntry,
     ) -> None:
         """Missing CHECKIN_SENSOR records rejected_no_checkin_sensor."""
-        _setup_entry(
+        sensor = _setup_entry(
             hass,
             mock_checkin_coordinator,
             mock_checkin_config_entry,
@@ -193,9 +198,37 @@ class TestDiagnosticsBuffer:
         )
         await hass.async_block_till_done()
 
+        sensor.async_handle_keymaster_unlock.assert_not_called()
         buf = list(mock_checkin_coordinator.keymaster_event_diagnostics)
         assert len(buf) == 1
         assert buf[0]["disposition"] == "rejected_no_checkin_sensor"
+
+    async def test_rejected_missing_monitoring_switch(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Missing monitoring switch records rejected_monitoring_off."""
+        sensor = _setup_entry(
+            hass,
+            mock_checkin_coordinator,
+            mock_checkin_config_entry,
+            include_monitoring_switch=False,
+        )
+        _set_diag(mock_checkin_config_entry, hass, True)
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {"lockname": "front_door", "state": "unlocked", "code_slot_num": 11},
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_not_called()
+        buf = list(mock_checkin_coordinator.keymaster_event_diagnostics)
+        assert len(buf) == 1
+        assert buf[0]["disposition"] == "rejected_monitoring_off"
 
     async def test_rejected_monitoring_off(
         self,
@@ -222,6 +255,33 @@ class TestDiagnosticsBuffer:
         buf = list(mock_checkin_coordinator.keymaster_event_diagnostics)
         assert len(buf) == 1
         assert buf[0]["disposition"] == "rejected_monitoring_off"
+
+    @pytest.mark.parametrize("remove_domain", [True, False])
+    async def test_missing_entry_data_rejects_without_accepting(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+        *,
+        remove_domain: bool,
+    ) -> None:
+        """Missing domain or entry data must not forward or record accepted."""
+        sensor = _setup_entry(hass, mock_checkin_coordinator, mock_checkin_config_entry)
+        _set_diag(mock_checkin_config_entry, hass, True)
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+        if remove_domain:
+            hass.data.pop(DOMAIN)
+        else:
+            hass.data[DOMAIN].pop(mock_checkin_config_entry.entry_id)
+
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {"lockname": "front_door", "state": "unlocked", "code_slot_num": 11},
+        )
+        await hass.async_block_till_done()
+
+        sensor.async_handle_keymaster_unlock.assert_not_called()
+        assert list(mock_checkin_coordinator.keymaster_event_diagnostics) == []
 
     async def test_ring_buffer_truncates_at_ten(
         self,

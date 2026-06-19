@@ -3538,6 +3538,46 @@ class TestChildLockMonitoringSwitch:
         sensor.async_handle_keymaster_unlock.assert_not_called()
 
 
+class TestKeymasterMonitoringEntryData:
+    """Tests for keymaster monitoring entry-data lookups."""
+
+    async def test_present_switch_on_wins_over_missing_lockname_fallback(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify an on switch enables monitoring even without lockname."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        mock_checkin_coordinator.lockname = None
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=True),
+        }
+
+        assert sensor._is_keymaster_monitoring_enabled() is True
+
+    async def test_present_switch_off_wins_over_configured_lockname_fallback(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify an off switch disables monitoring despite lockname."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        mock_checkin_coordinator.lockname = "front_door"
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            KEYMASTER_MONITORING_SWITCH: MagicMock(is_on=False),
+        }
+
+        assert sensor._is_keymaster_monitoring_enabled() is False
+
+
 # ===========================================================================
 # T027: Manual checkout action (async_checkout)
 # ===========================================================================
@@ -4040,6 +4080,151 @@ def _setup_early_expiry_switch(
     )
     hass.data[DOMAIN][config_entry.entry_id][EARLY_CHECKOUT_EXPIRY_SWITCH] = mock_switch
     return mock_switch
+
+
+class TestSupportingComponentAbsence:
+    """Tests for missing supporting components inside present entry data."""
+
+    @pytest.mark.parametrize(
+        ("lockname", "expected"),
+        [("front_door", True), (None, False)],
+    )
+    async def test_missing_monitoring_switch_uses_lockname_fallback(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+        lockname: str | None,
+        *,
+        expected: bool,
+    ) -> None:
+        """Verify present entry without monitoring switch uses lockname."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        mock_checkin_coordinator.lockname = lockname
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+        }
+
+        assert sensor._is_keymaster_monitoring_enabled() is expected
+
+    async def test_checkout_missing_early_expiry_switch_continues(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify present entry without early-expiry switch continues checkout."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        original_end = now + timedelta(hours=4)
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(hours=2)
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        mock_checkin_coordinator.data = []
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
+            COORDINATOR: mock_checkin_coordinator,
+            UNSUB_LISTENERS: [],
+        }
+
+        await sensor.async_checkout()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._tracked_event_end == original_end
+
+
+class TestMissingEntryDataFallbacks:
+    """Tests for missing entry-data fallback behavior."""
+
+    @pytest.mark.parametrize(
+        ("lockname", "expected"),
+        [("front_door", True), (None, False)],
+    )
+    async def test_monitoring_missing_domain_uses_lockname_fallback(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+        lockname: str | None,
+        *,
+        expected: bool,
+    ) -> None:
+        """Verify missing domain data falls back to configured lockname."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        mock_checkin_coordinator.lockname = lockname
+        hass.data.pop(DOMAIN, None)
+
+        assert sensor._is_keymaster_monitoring_enabled() is expected
+
+    @pytest.mark.parametrize(
+        ("lockname", "expected"),
+        [("front_door", True), (None, False)],
+    )
+    async def test_monitoring_missing_entry_uses_lockname_fallback(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+        lockname: str | None,
+        *,
+        expected: bool,
+    ) -> None:
+        """Verify missing entry data falls back to configured lockname."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        mock_checkin_coordinator.lockname = lockname
+        domain_data: dict[str, object] = {}
+        hass.data[DOMAIN] = domain_data
+
+        assert sensor._is_keymaster_monitoring_enabled() is expected
+        assert hass.data[DOMAIN] is domain_data
+
+    @pytest.mark.parametrize("remove_domain", [True, False])
+    async def test_checkout_missing_entry_data_continues_without_early_expiry(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+        *,
+        remove_domain: bool,
+    ) -> None:
+        """Verify checkout continues unchanged when entry data is missing."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        original_end = now + timedelta(hours=4)
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_summary = "Reserved - John Smith"
+        sensor._tracked_event_start = now - timedelta(hours=2)
+        sensor._tracked_event_end = original_end
+        sensor._tracked_event_slot_name = "John Smith"
+        mock_checkin_coordinator.data = []
+        if remove_domain:
+            hass.data.pop(DOMAIN, None)
+        else:
+            domain_data: dict[str, object] = {}
+            hass.data[DOMAIN] = domain_data
+
+        await sensor.async_checkout()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._tracked_event_end == original_end
+        if remove_domain:
+            assert DOMAIN not in hass.data
+        else:
+            assert hass.data[DOMAIN] == {}
 
 
 class TestEarlyCheckoutExpiry:

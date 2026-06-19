@@ -61,6 +61,7 @@ from .const import UNSUB_LISTENERS
 from .coordinator import RentalControlCoordinator
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
+from .util import get_entry_data
 from .util import handle_state_change
 
 _LOGGER = logging.getLogger(__name__)
@@ -306,7 +307,7 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
         return
 
     # Guard against listener firing after entry has been unloaded
-    entry_data = hass.data.get(DOMAIN, {}).get(config_entry.entry_id)
+    entry_data = get_entry_data(hass, config_entry.entry_id)
     if entry_data is None:
         return
 
@@ -328,7 +329,7 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
 
     await coordinator.update_config(new_data)
 
-    entry_data = hass.data.get(DOMAIN, {}).get(config_entry.entry_id)
+    entry_data = get_entry_data(hass, config_entry.entry_id)
     if entry_data is None:
         return
     coordinator = entry_data[COORDINATOR]
@@ -481,7 +482,15 @@ def async_register_keymaster_listener(
             return
 
         # Retrieve the checkin sensor and forward the unlock
-        entry_data = hass.data.get(DOMAIN, {}).get(config_entry.entry_id, {})
+        entry_data = get_entry_data(hass, config_entry.entry_id)
+        if entry_data is None:
+            _LOGGER.debug(
+                "Keymaster unlock event received but entry data "
+                "not available for entry %s",
+                config_entry.entry_id,
+            )
+            return
+
         checkin_sensor = entry_data.get(CHECKIN_SENSOR)
         if checkin_sensor is None:
             _LOGGER.debug(

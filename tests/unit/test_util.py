@@ -8,7 +8,10 @@ from __future__ import annotations
 from datetime import date
 from datetime import datetime
 from datetime import timedelta
+from importlib import import_module
 import logging
+from typing import TYPE_CHECKING
+from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -40,6 +43,73 @@ from custom_components.rental_control.util import get_slot_name
 from custom_components.rental_control.util import handle_state_change
 from custom_components.rental_control.util import normalize_uid
 from custom_components.rental_control.util import trim_name
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from homeassistant.core import HomeAssistant
+
+
+# ---------------------------------------------------------------------------
+# get_entry_data tests
+# ---------------------------------------------------------------------------
+
+
+def _get_entry_data_helper() -> Callable[
+    [HomeAssistant, str], dict[str, object] | None
+]:
+    """Return the entry data helper under test."""
+    helper = import_module("custom_components.rental_control.util").get_entry_data
+    return cast("Callable[[HomeAssistant, str], dict[str, object] | None]", helper)
+
+
+class TestGetEntryData:
+    """Tests for the shared entry-data lookup helper."""
+
+    def test_present_entry_data_returns_existing_dict(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Verify present entry data is returned by identity."""
+        entry_data: dict[str, object] = {COORDINATOR: object()}
+        hass.data[DOMAIN] = {"entry-id": entry_data}
+
+        assert _get_entry_data_helper()(hass, "entry-id") is entry_data
+
+    def test_missing_domain_data_returns_none(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Verify a missing domain bucket returns None."""
+        hass.data.pop(DOMAIN, None)
+
+        assert _get_entry_data_helper()(hass, "entry-id") is None
+        assert DOMAIN not in hass.data
+
+    def test_missing_entry_data_returns_none(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Verify a missing entry inside domain data returns None."""
+        domain_data: dict[str, dict[str, object]] = {}
+        hass.data[DOMAIN] = domain_data
+
+        assert _get_entry_data_helper()(hass, "entry-id") is None
+        assert hass.data[DOMAIN] is domain_data
+
+    def test_missing_entry_does_not_create_throwaway_state(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Verify missing lookups do not create phantom entry state."""
+        domain_data: dict[str, dict[str, object]] = {}
+        hass.data[DOMAIN] = domain_data
+
+        assert _get_entry_data_helper()(hass, "missing-entry") is None
+
+        assert hass.data[DOMAIN] is domain_data
+        assert "missing-entry" not in domain_data
+
 
 # ---------------------------------------------------------------------------
 # gen_uuid tests
