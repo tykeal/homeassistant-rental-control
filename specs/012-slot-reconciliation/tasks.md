@@ -35,6 +35,7 @@ latest reconciled plan.
 
 The implementation must change the live slot-management modules called out by
 PLAN and issue #589: `custom_components/rental_control/coordinator.py`,
+`custom_components/rental_control/__init__.py`,
 `custom_components/rental_control/event_overrides.py`,
 `custom_components/rental_control/sensors/calsensor.py`,
 `custom_components/rental_control/util.py`,
@@ -85,7 +86,7 @@ actual-state helpers, and coordinator wiring scaffolding that every story needs.
 - [ ] T018 Add persisted mapping ownership, pending-clear fence, duplicate-mapping rejection, and actual-state cache fields to EventOverrides in custom_components/rental_control/event_overrides.py
 - [ ] T019 Add observed Keymaster state collection and classification for free, occupied, phantom, partial_reset, unknown, and unmanaged slots in custom_components/rental_control/event_overrides.py
 - [ ] T020 Change async_fire_clear_code(), async_fire_set_code(), and async_fire_update_times() to return explicit verified operation results in custom_components/rental_control/util.py
-- [ ] T021 Add coordinator hooks to load Store during setup, pass normalized reservations into reconciliation, and persist changed mappings after each refresh in custom_components/rental_control/coordinator.py
+- [ ] T021 Add setup hooks to load Store before Keymaster bootstrap, pass normalized reservations into reconciliation, and persist changed mappings after each refresh in custom_components/rental_control/__init__.py and custom_components/rental_control/coordinator.py
 - [ ] T022 Add read-only reconciliation state accessors used by event sensors and check-in protection consumers in custom_components/rental_control/coordinator.py
 - [ ] T023 Run foundational pytest validation for tests/unit/test_slot_reconciliation.py, tests/unit/test_event_overrides.py, tests/unit/test_util.py, and tests/unit/test_coordinator.py
 
@@ -217,7 +218,7 @@ later confirmed clear succeeds.
 - [ ] T065 [US4] Implement verified clear, set, update_times, and redacted result objects for Keymaster service helpers in custom_components/rental_control/util.py
 - [ ] T066 [US4] Persist fenced operation tokens before service calls and verify matching tokens before clearing fences in custom_components/rental_control/event_overrides.py
 - [ ] T067 [US4] Keep pending-clear, blocked, and unknown slots unavailable to desired-plan assignment until confirmed free in custom_components/rental_control/reconciliation.py
-- [ ] T068 [US4] Serialize reconciliation and state-change callbacks through the existing single EventOverrides lock without re-entrant reconciliation in custom_components/rental_control/event_overrides.py
+- [ ] T068 [US4] Serialize reconciliation and state-change callbacks through the existing single EventOverrides lock and remove handle_state_change() re-entrant reconciliation calls in custom_components/rental_control/event_overrides.py and custom_components/rental_control/util.py
 - [ ] T069 [US4] Run US4 validation for tests/unit/test_util.py, tests/unit/test_event_overrides.py, tests/unit/test_slot_reconciliation.py, tests/integration/test_refresh_cycle.py, and tests/integration/test_slot_concurrency.py
 
 **Checkpoint**: US4 independently proves SC-006 and the confirmed-clear safety

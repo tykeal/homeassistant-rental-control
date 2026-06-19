@@ -86,6 +86,8 @@ interfaces are captured in [data-model.md](data-model.md) instead.
 
 ```text
 custom_components/rental_control/
+├── __init__.py                  # Load Store during async_setup_entry before
+│                                # Keymaster bootstrap and first refresh
 ├── coordinator.py             # Load/save Store; run one refresh-level
 │                              # reconciliation after calendar parsing and
 │                              # before coordinator data is published
