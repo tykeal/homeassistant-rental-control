@@ -18,7 +18,7 @@ foundational work. The redesign replaces per-`event_N` greedy slot mutation with
 coordinator-owned reconciliation; `event_N` sensors become read-only views of the
 latest reconciled plan.
 
-## Format: `[ID] [P?] [Story] Description`
+## Format: `- [ ] T### [P?] [Story?] Description with file path`
 
 - **[P]**: Can run in parallel (different files, no dependency on incomplete
   tasks)
@@ -359,7 +359,7 @@ implementation PR without mixing code and task-list completion commits.
 - [ ] T117 Run targeted feature tests from specs/012-slot-reconciliation/quickstart.md for tests/unit/test_slot_reconciliation.py, tests/unit/test_event_overrides.py, tests/unit/test_util.py, tests/integration/test_refresh_cycle.py, and tests/integration/test_slot_concurrency.py
 - [ ] T118 Run full test suite with coverage using `uv run pytest tests/ -x -q` for tests/
 - [ ] T119 Run ruff validation with `uv run ruff check custom_components/ tests/` for custom_components/rental_control/ and tests/
-- [ ] T120 Run mypy and interrogate through `pre-commit run mypy interrogate --all-files` for custom_components/rental_control/ and tests/
+- [ ] T120 Run mypy and interrogate through `uv run pre-commit run mypy interrogate --all-files` for custom_components/rental_control/ and tests/
 - [ ] T121 Run full pre-commit validation including reuse, yamllint, actionlint, aislop, gitlint, ruff, ruff-format, mypy, and interrogate for custom_components/rental_control/, tests/, and specs/012-slot-reconciliation/tasks.md
 - [ ] T122 Validate manual quickstart scenarios for overflow, active protection, manual drift, clear failure, restart, and UID churn against specs/012-slot-reconciliation/quickstart.md
 - [ ] T123 Commit only implementation code and tests in the atomic sequence below, then commit tasks.md status updates separately in specs/012-slot-reconciliation/tasks.md
