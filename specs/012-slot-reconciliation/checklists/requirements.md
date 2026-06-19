@@ -43,6 +43,8 @@ SPDX-License-Identifier: Apache-2.0
 - Copilot review iteration 3: made SC-010 binary for diagnostic captures
   and added a stable-identity tie-breaker for equal start times while
   preserving the non-overlap assumption. All checklist items still pass.
+- Copilot review iteration 4: standardized terminology for RC-managed
+  slots and feed-miss references. All checklist items still pass.
 - The spec encodes the owner-approved decisions for authoritative
   reconciliation, soonest-N overflow, active-guest protection, duplicate
   collapse, confirmed-clear safety, manual-edit recovery, persisted

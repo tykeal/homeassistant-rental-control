@@ -168,7 +168,7 @@ Control. Silent manual changes can otherwise cause wrong codes or confuse
 incident diagnosis.
 
 **Independent Test**: Can be fully tested by manually changing a
-Rental-Control-managed Keymaster slot, running a refresh, and verifying
+RC-managed Keymaster slot, running a refresh, and verifying
 the slot returns to the desired reservation mapping with a log entry that
 identifies the corrected manual change.
 
@@ -181,7 +181,7 @@ identifies the corrected manual change.
    **When** the correction is made, **Then** the system logs that a
    managed slot was manually changed and reconciled back to the desired
    state.
-3. **Given** a Keymaster slot is outside the Rental-Control-managed
+3. **Given** a Keymaster slot is outside the RC-managed
    range, **When** reconciliation runs, **Then** that slot is not changed
    by this feature.
 
@@ -190,7 +190,7 @@ identifies the corrected manual change.
 ### User Story 6 - Survive Restarts and Noisy Feeds (Priority: P2)
 
 As a property manager, I want reservation-to-slot identity to survive
-Home Assistant restarts and short-lived calendar feed misses, so booking
+Home Assistant restarts and short-lived feed-misses, so booking
 platform churn does not make Rental Control forget or prematurely clear
 valid guest codes.
 
@@ -426,7 +426,7 @@ self-healing.
   check-in status, consecutive feed-miss count, and whether it is eligible,
   protected, assigned, or overflow.
 - **Managed Slot**: A numbered Keymaster code slot within the
-  Rental-Control-managed range. Key attributes include slot number,
+  RC-managed range. Key attributes include slot number,
   observed guest name, observed access code, observed validity window,
   clear-confirmation status, blocked or available state, and whether the
   observed state matches Rental Control's desired mapping.
