@@ -35,30 +35,18 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
 from .const import CHECKIN_SENSOR
-from .const import CONF_CODE_BUFFER_AFTER
-from .const import CONF_CODE_BUFFER_BEFORE
-from .const import CONF_CODE_LENGTH
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from .const import CONF_GENERATE
-from .const import CONF_HONOR_EVENT_TIMES
-from .const import CONF_MAX_NAME_LENGTH
-from .const import CONF_PATH
-from .const import CONF_SHOULD_UPDATE_CODE
-from .const import CONF_TRIM_NAMES
 from .const import COORDINATOR
-from .const import DEFAULT_CODE_BUFFER_AFTER
-from .const import DEFAULT_CODE_BUFFER_BEFORE
-from .const import DEFAULT_CODE_LENGTH
 from .const import DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
-from .const import DEFAULT_GENERATE
-from .const import DEFAULT_MAX_NAME_LENGTH
 from .const import DOMAIN
 from .const import KEYMASTER_MONITORING_SWITCH
 from .const import NAME
 from .const import PLATFORMS
 from .const import UNSUB_LISTENERS
 from .coordinator import RentalControlCoordinator
+from .migrations import async_migrate_entry as async_migrate_entry
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
 from .util import get_entry_data
@@ -164,140 +152,6 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     async_dismiss(hass, notification_id)
 
     return unload_ok
-
-
-async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
-    """Migrate configuration."""
-
-    version = config_entry.version
-
-    # Versions 1 and 2 are no longer supported (oldest supported: v0.9.0 = version 3)
-    if version < 3:
-        _LOGGER.error(
-            "Config entry version %s is too old to migrate; "
-            "please remove and re-add the integration",
-            version,
-        )
-        return False
-
-    # 3 -> 4: Migrate code length
-    if version == 3:
-        _LOGGER.debug("Migrating from version %s", version)
-        if CONF_CODE_LENGTH not in config_entry.data:
-            data = config_entry.data.copy()
-            data[CONF_CODE_LENGTH] = DEFAULT_CODE_LENGTH
-            hass.config_entries.async_update_entry(
-                entry=config_entry,
-                unique_id=config_entry.unique_id,
-                data=data,
-                version=4,
-            )
-
-        version = 4
-        _LOGGER.debug("Migration to version %s complete", config_entry.version)
-
-    # 4 -> 5: Drop startup automation
-    if version == 4:
-        _LOGGER.debug("Migrating from version %s", version)
-
-        data = config_entry.data.copy()
-        data[CONF_GENERATE] = DEFAULT_GENERATE
-        hass.config_entries.async_update_entry(
-            entry=config_entry,
-            unique_id=config_entry.unique_id,
-            data=data,
-            version=5,
-        )
-
-        version = 5
-        _LOGGER.debug("Migration to version %s complete", config_entry.version)
-
-    # 5 -> 6: Drop package_path from configuration
-    if version == 5:
-        _LOGGER.debug("Migrating from version %s", version)
-
-        data = config_entry.data.copy()
-        data.pop(CONF_PATH, None)
-        hass.config_entries.async_update_entry(
-            entry=config_entry,
-            unique_id=config_entry.unique_id,
-            data=data,
-            version=6,
-        )
-
-        version = 6
-        _LOGGER.debug("Migration to version %s complete", config_entry.version)
-
-    # 6 -> 7: Add should_update_code to configuration
-    if version == 6:
-        _LOGGER.debug("Migrating from version %s", version)
-
-        data = config_entry.data.copy()
-        # Default to False since prior versions didn't have this
-        # new setups will default to True
-        data[CONF_SHOULD_UPDATE_CODE] = False
-        hass.config_entries.async_update_entry(
-            entry=config_entry,
-            unique_id=config_entry.unique_id,
-            data=data,
-            version=7,
-        )
-
-        version = 7
-        _LOGGER.debug("Migration to version %s complete", config_entry.version)
-
-    # 7 -> 8: Add honor_event_times to configuration
-    if version == 7:
-        _LOGGER.debug("Migrating from version %s", version)
-
-        data = config_entry.data.copy()
-        if CONF_HONOR_EVENT_TIMES not in data:
-            data[CONF_HONOR_EVENT_TIMES] = False
-        hass.config_entries.async_update_entry(
-            entry=config_entry,
-            unique_id=config_entry.unique_id,
-            data=data,
-            version=8,
-        )
-
-        version = 8
-        _LOGGER.debug("Migration to version %s complete", config_entry.version)
-
-    # 8 -> 9: Add trim_names and max_name_length to configuration
-    if version == 8:
-        _LOGGER.debug("Migrating from version %s", version)
-
-        data = config_entry.data.copy()
-        data[CONF_TRIM_NAMES] = False
-        data[CONF_MAX_NAME_LENGTH] = DEFAULT_MAX_NAME_LENGTH
-        hass.config_entries.async_update_entry(
-            entry=config_entry,
-            unique_id=config_entry.unique_id,
-            data=data,
-            version=9,
-        )
-
-        version = 9
-        _LOGGER.debug("Migration to version %s complete", config_entry.version)
-
-    # 9 -> 10: Add code buffer before/after to configuration
-    if version == 9:
-        _LOGGER.debug("Migrating from version %s", version)
-
-        data = config_entry.data.copy()
-        data.setdefault(CONF_CODE_BUFFER_BEFORE, DEFAULT_CODE_BUFFER_BEFORE)
-        data.setdefault(CONF_CODE_BUFFER_AFTER, DEFAULT_CODE_BUFFER_AFTER)
-        hass.config_entries.async_update_entry(
-            entry=config_entry,
-            unique_id=config_entry.unique_id,
-            data=data,
-            version=10,
-        )
-
-        version = 10
-        _LOGGER.debug("Migration to version %s complete", config_entry.version)
-
-    return True
 
 
 async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
