@@ -346,7 +346,10 @@ self-healing.
   deterministic desired reservation-to-slot plan for the RC-managed
   Keymaster slots from current eligible reservations, protected active
   reservations, persisted slot mappings, feed-miss tolerance state, and
-  observed actual Keymaster state.
+  observed actual Keymaster state. If input data presents equal start
+  times despite the non-overlap assumption, stable reservation identity
+  MUST provide a deterministic tie-breaker without defining overlap
+  resolution behavior.
 - **FR-002**: The desired plan MUST be authoritative for RC-managed slots;
   incremental in-memory slot assignment state MUST NOT be treated as the
   source of truth when it conflicts with the desired plan or actual
@@ -444,9 +447,9 @@ self-healing.
 
 ## Assumptions
 
-- Reservations represent whole-unit rentals and do not overlap; a clean
-  total ordering by reservation start time is valid for desired-plan
-  selection.
+- Reservations represent whole-unit rentals and do not overlap; normally,
+  distinct reservations have a clean total ordering by reservation start
+  time for desired-plan selection.
 - Existing configuration and eligibility rules continue to decide which
   reservations are in scope for lock-code programming; this feature
   changes how selected reservations are reconciled to slots, not which
@@ -528,11 +531,11 @@ self-healing.
 - **SC-009**: In 100% of transient calendar-miss scenarios, an assigned
   reservation remains assigned through two consecutive missing refreshes
   and is only eligible for clearing after that tolerance is exceeded.
-- **SC-010**: When diagnostics are captured for any RC-managed slot,
-  they should expose the desired reservation, actual Keymaster state,
-  pending correction or blocked reason, and overflow status in a single
-  diagnostic capture sufficient to diagnose the slot without additional
-  log correlation.
+- **SC-010**: For 100% of diagnostic captures that include an
+  RC-managed slot, the capture includes the desired reservation, actual
+  Keymaster state, pending correction or blocked reason, and overflow
+  status in a single capture sufficient to diagnose the slot without
+  additional log correlation.
 - **SC-011**: Existing behavior for slot-name trimming, lock-code buffers,
   honor-PMS-times, date-based code regeneration, should-update-code, and
   check-in tracking remains unchanged in 100% of corresponding regression

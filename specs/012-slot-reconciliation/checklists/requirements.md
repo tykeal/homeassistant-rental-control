@@ -40,6 +40,9 @@ SPDX-License-Identifier: Apache-2.0
 - Rubber-duck iteration 2: addressed findings by reframing FR-018 as a
   system verifiability requirement, making SC-010 directly testable, and
   moving the spec status to Review. All checklist items still pass.
+- Copilot review iteration 3: made SC-010 binary for diagnostic captures
+  and added a stable-identity tie-breaker for equal start times while
+  preserving the non-overlap assumption. All checklist items still pass.
 - The spec encodes the owner-approved decisions for authoritative
   reconciliation, soonest-N overflow, active-guest protection, duplicate
   collapse, confirmed-clear safety, manual-edit recovery, persisted
