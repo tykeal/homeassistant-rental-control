@@ -34,10 +34,10 @@ atomic work streams, with behavior preserved by existing tests.
 
 **Purpose**: Establish the issue #572 baseline before changing tests or code
 
-- [ ] T001 Run `.specify/scripts/bash/check-prerequisites.sh --json` with `SPECIFY_FEATURE=011-decompose-init` from the repository root and confirm `specs/011-decompose-init/` plus `research.md` and `quickstart.md` are reported
-- [ ] T002 Inventory the live migration, listener, and package-level import symbols in `custom_components/rental_control/__init__.py`, `tests/unit/test_init.py`, `tests/unit/test_keymaster_event_diagnostics.py`, and `tests/unit/test_checkin_sensor.py`
-- [ ] T003 Run the full unchanged baseline test suite with `uv run pytest tests/` against `tests/`
-- [ ] T004 Confirm the planned refactor scope is limited to `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, `custom_components/rental_control/listeners.py`, and import-stability coverage in `tests/unit/test_init.py`
+- [X] T001 Run `.specify/scripts/bash/check-prerequisites.sh --json` with `SPECIFY_FEATURE=011-decompose-init` from the repository root and confirm `specs/011-decompose-init/` plus `research.md` and `quickstart.md` are reported
+- [X] T002 Inventory the live migration, listener, and package-level import symbols in `custom_components/rental_control/__init__.py`, `tests/unit/test_init.py`, `tests/unit/test_keymaster_event_diagnostics.py`, and `tests/unit/test_checkin_sensor.py`
+- [X] T003 Run the full unchanged baseline test suite with `uv run pytest tests/` against `tests/`
+- [X] T004 Confirm the planned refactor scope is limited to `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, `custom_components/rental_control/listeners.py`, and import-stability coverage in `tests/unit/test_init.py`
 
 ---
 
@@ -48,15 +48,15 @@ points, preserve package-level re-exports, and avoid circular imports.
 
 **⚠️ CRITICAL**: No user story validation can complete until this phase is done.
 
-- [ ] T005 [P] Add `custom_components/rental_control/migrations.py` with SPDX headers, a module docstring, type hints, local `_LOGGER = logging.getLogger(__name__)`, and direct imports from Home Assistant and `custom_components/rental_control/const.py`
-- [ ] T006 [P] Add `custom_components/rental_control/listeners.py` with SPDX headers, a module docstring, type hints, local `_LOGGER = logging.getLogger(__name__)`, and direct imports from Home Assistant, `custom_components/rental_control/const.py`, and `custom_components/rental_control/util.py`
-- [ ] T007 Move `async_migrate_entry` from `custom_components/rental_control/__init__.py` into `custom_components/rental_control/migrations.py` without changing supported-version range, defaults, removals, update-entry calls, logging, or return values
-- [ ] T008 Split the moved migration flow in `custom_components/rental_control/migrations.py` into private per-version helpers for v3→v4, v4→v5, v5→v6, v6→v7, v7→v8, v8→v9, and v9→v10 while keeping each function at or below 80 lines
-- [ ] T009 Re-export `async_migrate_entry` from `custom_components/rental_control/__init__.py` via `from .migrations import async_migrate_entry` and remove migration-only imports from `custom_components/rental_control/__init__.py`
-- [ ] T010 Move `async_register_keymaster_listener` from `custom_components/rental_control/__init__.py` into `custom_components/rental_control/listeners.py` without changing event-bus registration, unsubscribe tracking, monitored-lock checks, diagnostics, or forwarding behavior
-- [ ] T011 Split the moved listener flow in `custom_components/rental_control/listeners.py` into private helpers for `_handle_keymaster_event`, diagnostic recording, check-in sensor refresh, monitoring checks, and unlock forwarding while keeping each function at or below 80 lines
-- [ ] T012 Re-export `async_register_keymaster_listener` from `custom_components/rental_control/__init__.py` via `from .listeners import async_register_keymaster_listener` and remove listener-only imports from `custom_components/rental_control/__init__.py`
-- [ ] T013 Confirm `custom_components/rental_control/migrations.py` and `custom_components/rental_control/listeners.py` import no symbols from `custom_components/rental_control/__init__.py` or `custom_components.rental_control`
+- [X] T005 [P] Add `custom_components/rental_control/migrations.py` with SPDX headers, a module docstring, type hints, local `_LOGGER = logging.getLogger(__name__)`, and direct imports from Home Assistant and `custom_components/rental_control/const.py`
+- [X] T006 [P] Add `custom_components/rental_control/listeners.py` with SPDX headers, a module docstring, type hints, local `_LOGGER = logging.getLogger(__name__)`, and direct imports from Home Assistant, `custom_components/rental_control/const.py`, and `custom_components/rental_control/util.py`
+- [X] T007 Move `async_migrate_entry` from `custom_components/rental_control/__init__.py` into `custom_components/rental_control/migrations.py` without changing supported-version range, defaults, removals, update-entry calls, logging, or return values
+- [X] T008 Split the moved migration flow in `custom_components/rental_control/migrations.py` into private per-version helpers for v3→v4, v4→v5, v5→v6, v6→v7, v7→v8, v8→v9, and v9→v10 while keeping each function at or below 80 lines
+- [X] T009 Re-export `async_migrate_entry` from `custom_components/rental_control/__init__.py` via `from .migrations import async_migrate_entry` and remove migration-only imports from `custom_components/rental_control/__init__.py`
+- [X] T010 Move `async_register_keymaster_listener` from `custom_components/rental_control/__init__.py` into `custom_components/rental_control/listeners.py` without changing event-bus registration, unsubscribe tracking, monitored-lock checks, diagnostics, or forwarding behavior
+- [X] T011 Split the moved listener flow in `custom_components/rental_control/listeners.py` into private helpers for `_handle_keymaster_event`, diagnostic recording, check-in sensor refresh, monitoring checks, and unlock forwarding while keeping each function at or below 80 lines
+- [X] T012 Re-export `async_register_keymaster_listener` from `custom_components/rental_control/__init__.py` via `from .listeners import async_register_keymaster_listener` and remove listener-only imports from `custom_components/rental_control/__init__.py`
+- [X] T013 Confirm `custom_components/rental_control/migrations.py` and `custom_components/rental_control/listeners.py` import no symbols from `custom_components/rental_control/__init__.py` or `custom_components.rental_control`
 
 **Checkpoint**: New modules own the detailed migration and keymaster listener
 logic. `__init__.py` still owns setup, unload, update-listener, and
@@ -77,15 +77,15 @@ entry points remain importable from `custom_components.rental_control`.
 > **NOTE: Keep existing behavior assertions unchanged. Add only import-stability
 > coverage if the current tests do not already assert the moved public names.**
 
-- [ ] T014 [US1] Add or confirm package-level import-stability assertions for `async_migrate_entry` and `async_register_keymaster_listener` in `tests/unit/test_init.py`
-- [ ] T015 [P] [US1] Run existing integration setup, unload, update-listener, and migration tests in `tests/unit/test_init.py`
-- [ ] T016 [P] [US1] Run existing keymaster diagnostics behavior tests in `tests/unit/test_keymaster_event_diagnostics.py`
-- [ ] T017 [P] [US1] Run existing keymaster forwarding and rejection behavior tests in `tests/unit/test_checkin_sensor.py`
+- [X] T014 [US1] Add or confirm package-level import-stability assertions for `async_migrate_entry` and `async_register_keymaster_listener` in `tests/unit/test_init.py`
+- [X] T015 [P] [US1] Run existing integration setup, unload, update-listener, and migration tests in `tests/unit/test_init.py`
+- [X] T016 [P] [US1] Run existing keymaster diagnostics behavior tests in `tests/unit/test_keymaster_event_diagnostics.py`
+- [X] T017 [P] [US1] Run existing keymaster forwarding and rejection behavior tests in `tests/unit/test_checkin_sensor.py`
 
 ### Implementation for User Story 1
 
-- [ ] T018 [US1] Preserve `async_setup_entry`, `async_unload_entry`, `update_listener`, and `async_start_listener` behavior in `custom_components/rental_control/__init__.py` while using the package-level `async_register_keymaster_listener` re-export
-- [ ] T019 [US1] Preserve Home Assistant and test-suite public imports for `async_migrate_entry` and `async_register_keymaster_listener` from `custom_components/rental_control/__init__.py`
+- [X] T018 [US1] Preserve `async_setup_entry`, `async_unload_entry`, `update_listener`, and `async_start_listener` behavior in `custom_components/rental_control/__init__.py` while using the package-level `async_register_keymaster_listener` re-export
+- [X] T019 [US1] Preserve Home Assistant and test-suite public imports for `async_migrate_entry` and `async_register_keymaster_listener` from `custom_components/rental_control/__init__.py`
 
 **Checkpoint**: The MVP behavior surface is unchanged and package-level imports
 continue to work for Home Assistant, project modules, and tests.
@@ -102,14 +102,14 @@ old-version path with unchanged expectations.
 
 ### Tests for User Story 2
 
-- [ ] T020 [US2] Confirm existing unsupported-version migration coverage remains unchanged in `tests/unit/test_init.py`
-- [ ] T021 [US2] Confirm existing v3→v10, v6→v10, v7→v10, v8→v10, and v9→v10 migration assertions remain unchanged in `tests/unit/test_init.py`
+- [X] T020 [US2] Confirm existing unsupported-version migration coverage remains unchanged in `tests/unit/test_init.py`
+- [X] T021 [US2] Confirm existing v3→v10, v6→v10, v7→v10, v8→v10, and v9→v10 migration assertions remain unchanged in `tests/unit/test_init.py`
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Preserve the unsupported version `< 3` safe-failure path and error logging in `custom_components/rental_control/migrations.py`
-- [ ] T023 [US2] Preserve per-version data mutations, defaults, removals, `unique_id`, `version`, and final success behavior in `custom_components/rental_control/migrations.py`
-- [ ] T024 [US2] Run targeted migration validation with `uv run pytest tests/unit/test_init.py -k migrate` against `tests/unit/test_init.py`
+- [X] T022 [US2] Preserve the unsupported version `< 3` safe-failure path and error logging in `custom_components/rental_control/migrations.py`
+- [X] T023 [US2] Preserve per-version data mutations, defaults, removals, `unique_id`, `version`, and final success behavior in `custom_components/rental_control/migrations.py`
+- [X] T024 [US2] Run targeted migration validation with `uv run pytest tests/unit/test_init.py -k migrate` against `tests/unit/test_init.py`
 
 **Checkpoint**: Migration behavior is reviewable in one module and remains
 behaviorally identical across every existing migration test.
@@ -127,15 +127,15 @@ check-in forwarding.
 
 ### Tests for User Story 3
 
-- [ ] T025 [P] [US3] Confirm existing diagnostics acceptance and rejection assertions remain unchanged in `tests/unit/test_keymaster_event_diagnostics.py`
-- [ ] T026 [P] [US3] Confirm existing keymaster forwarding, monitoring switch, entry-data, and slot-range assertions remain unchanged in `tests/unit/test_checkin_sensor.py`
+- [X] T025 [P] [US3] Confirm existing diagnostics acceptance and rejection assertions remain unchanged in `tests/unit/test_keymaster_event_diagnostics.py`
+- [X] T026 [P] [US3] Confirm existing keymaster forwarding, monitoring switch, entry-data, and slot-range assertions remain unchanged in `tests/unit/test_checkin_sensor.py`
 
 ### Implementation for User Story 3
 
-- [ ] T027 [US3] Preserve keymaster event hot-path ordering in `custom_components/rental_control/listeners.py`: slugify lock name, return early for unmonitored locks, then evaluate state, slot, range, entry data, check-in sensor, monitoring switch, diagnostics, and forwarding
-- [ ] T028 [US3] Preserve diagnostic ring-buffer entries, timestamps, dispositions, and check-in sensor state refresh behavior in `custom_components/rental_control/listeners.py`
-- [ ] T029 [US3] Preserve listener lifecycle behavior by appending the keymaster bus unsubscribe callback to `UNSUB_LISTENERS` in `custom_components/rental_control/listeners.py`
-- [ ] T030 [US3] Run targeted listener validation with `uv run pytest tests/unit/test_keymaster_event_diagnostics.py tests/unit/test_checkin_sensor.py -k keymaster` against `tests/unit/test_keymaster_event_diagnostics.py` and `tests/unit/test_checkin_sensor.py`
+- [X] T027 [US3] Preserve keymaster event hot-path ordering in `custom_components/rental_control/listeners.py`: slugify lock name, return early for unmonitored locks, then evaluate state, slot, range, entry data, check-in sensor, monitoring switch, diagnostics, and forwarding
+- [X] T028 [US3] Preserve diagnostic ring-buffer entries, timestamps, dispositions, and check-in sensor state refresh behavior in `custom_components/rental_control/listeners.py`
+- [X] T029 [US3] Preserve listener lifecycle behavior by appending the keymaster bus unsubscribe callback to `UNSUB_LISTENERS` in `custom_components/rental_control/listeners.py`
+- [X] T030 [US3] Run targeted listener validation with `uv run pytest tests/unit/test_keymaster_event_diagnostics.py tests/unit/test_checkin_sensor.py -k keymaster` against `tests/unit/test_keymaster_event_diagnostics.py` and `tests/unit/test_checkin_sensor.py`
 
 **Checkpoint**: Listener behavior is reviewable in one module and remains
 behaviorally identical across existing diagnostics and forwarding tests.
@@ -152,13 +152,13 @@ in-scope files only.
 
 ### Tests for User Story 4
 
-- [ ] T031 [US4] Confirm no existing behavior assertions were rewritten in `tests/unit/test_init.py`, `tests/unit/test_keymaster_event_diagnostics.py`, or `tests/unit/test_checkin_sensor.py` beyond import-stability coverage
+- [X] T031 [US4] Confirm no existing behavior assertions were rewritten in `tests/unit/test_init.py`, `tests/unit/test_keymaster_event_diagnostics.py`, or `tests/unit/test_checkin_sensor.py` beyond import-stability coverage
 
 ### Implementation for User Story 4
 
-- [ ] T032 [US4] Verify `async_start_listener` stays in `custom_components/rental_control/__init__.py` and is not moved into `custom_components/rental_control/listeners.py`
-- [ ] T033 [US4] Verify `custom_components/rental_control/__init__.py` contains setup, unload, update-listener, package-listener startup, and re-export orchestration only, with no detailed migration or keymaster event-handler bodies remaining
-- [ ] T034 [US4] Confirm the final implementation diff is limited to `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, `custom_components/rental_control/listeners.py`, and `tests/unit/test_init.py`
+- [X] T032 [US4] Verify `async_start_listener` stays in `custom_components/rental_control/__init__.py` and is not moved into `custom_components/rental_control/listeners.py`
+- [X] T033 [US4] Verify `custom_components/rental_control/__init__.py` contains setup, unload, update-listener, package-listener startup, and re-export orchestration only, with no detailed migration or keymaster event-handler bodies remaining
+- [X] T034 [US4] Confirm the final implementation diff is limited to `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, `custom_components/rental_control/listeners.py`, and `tests/unit/test_init.py`
 
 **Checkpoint**: Scope remains bounded to issue #572 and unrelated functionality or
 complexity warnings are not changed.
@@ -169,14 +169,14 @@ complexity warnings are not changed.
 
 **Purpose**: Final validation across all user stories and quality gates
 
-- [ ] T035 Run the full unchanged acceptance suite with `uv run pytest tests/` against `tests/`
-- [ ] T036 Run ruff validation for `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, `custom_components/rental_control/listeners.py`, `tests/unit/test_init.py`, `tests/unit/test_keymaster_event_diagnostics.py`, and `tests/unit/test_checkin_sensor.py`
-- [ ] T037 Run mypy validation through the existing pre-commit hook for `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, `custom_components/rental_control/listeners.py`, and `tests/unit/test_init.py`
-- [ ] T038 Run interrogate validation through the existing pre-commit hook for `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, and `custom_components/rental_control/listeners.py`
-- [ ] T039 Verify `custom_components/rental_control/__init__.py` has fewer than 400 lines and every function in `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, and `custom_components/rental_control/listeners.py` is at or below 80 lines using the AST check from `specs/011-decompose-init/quickstart.md`
-- [ ] T040 Run the staged aislop scan and confirm `custom_components/rental_control/__init__.py` no longer reports `complexity/file-too-large` and no in-scope function in `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, or `custom_components/rental_control/listeners.py` reports `complexity/function-too-long`
-- [ ] T041 Run the public import script from `specs/011-decompose-init/quickstart.md` and confirm `async_migrate_entry` and `async_register_keymaster_listener` are callable from `custom_components/rental_control/__init__.py`
-- [ ] T042 Run full pre-commit validation for `custom_components/rental_control/`, `tests/unit/test_init.py`, and `specs/011-decompose-init/tasks.md`
+- [X] T035 Run the full unchanged acceptance suite with `uv run pytest tests/` against `tests/`
+- [X] T036 Run ruff validation for `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, `custom_components/rental_control/listeners.py`, `tests/unit/test_init.py`, `tests/unit/test_keymaster_event_diagnostics.py`, and `tests/unit/test_checkin_sensor.py`
+- [X] T037 Run mypy validation through the existing pre-commit hook for `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, `custom_components/rental_control/listeners.py`, and `tests/unit/test_init.py`
+- [X] T038 Run interrogate validation through the existing pre-commit hook for `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, and `custom_components/rental_control/listeners.py`
+- [X] T039 Verify `custom_components/rental_control/__init__.py` has fewer than 400 lines and every function in `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, and `custom_components/rental_control/listeners.py` is at or below 80 lines using the AST check from `specs/011-decompose-init/quickstart.md`
+- [X] T040 Run the staged aislop scan and confirm `custom_components/rental_control/__init__.py` no longer reports `complexity/file-too-large` and no in-scope function in `custom_components/rental_control/__init__.py`, `custom_components/rental_control/migrations.py`, or `custom_components/rental_control/listeners.py` reports `complexity/function-too-long`
+- [X] T041 Run the public import script from `specs/011-decompose-init/quickstart.md` and confirm `async_migrate_entry` and `async_register_keymaster_listener` are callable from `custom_components/rental_control/__init__.py`
+- [X] T042 Run full pre-commit validation for `custom_components/rental_control/`, `tests/unit/test_init.py`, and `specs/011-decompose-init/tasks.md`
 
 ---
 
