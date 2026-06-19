@@ -26,26 +26,21 @@ from homeassistant.components.switch import DOMAIN as SWITCH
 from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
-from homeassistant.core import Event
 from homeassistant.core import HomeAssistant
-from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.util import dt as dt_util
-from homeassistant.util import slugify
 
-from .const import CHECKIN_SENSOR
 from .const import CONF_CREATION_DATETIME
-from .const import CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from .const import CONF_GENERATE
 from .const import COORDINATOR
-from .const import DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from .const import DOMAIN
-from .const import KEYMASTER_MONITORING_SWITCH
 from .const import NAME
 from .const import PLATFORMS
 from .const import UNSUB_LISTENERS
 from .coordinator import RentalControlCoordinator
+from .listeners import (
+    async_register_keymaster_listener as async_register_keymaster_listener,
+)
 from .migrations import async_migrate_entry as async_migrate_entry
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
@@ -227,171 +222,4 @@ async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -
             list(entities),
             functools.partial(handle_state_change, hass, config_entry),
         )
-    )
-
-
-@callback
-def async_register_keymaster_listener(
-    hass: HomeAssistant, config_entry: ConfigEntry
-) -> None:
-    """Register keymaster event bus listener for unlock detection (T024/T026).
-
-    Listens for ``keymaster_lock_state_changed`` events and forwards
-    matching unlock events to the check-in tracking sensor.
-
-    The listener validates:
-    - ``lockname`` is in ``coordinator.monitored_locknames`` (parent + children)
-    - ``state`` is ``"unlocked"``
-    - ``code_slot_num != 0`` (FR-017)
-    - ``code_slot_num`` is in ``[start_slot, start_slot + max_events)``
-
-    Args:
-        hass: Home Assistant instance.
-        config_entry: The integration config entry.
-    """
-    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
-    start_slot = coordinator.start_slot
-    max_events = coordinator.max_events
-
-    @callback
-    def _handle_keymaster_event(event: Event) -> None:
-        """Handle a keymaster_lock_state_changed event.
-
-        Args:
-            event: The HA event bus event.
-        """
-        event_data = event.data
-
-        # Validate lockname matches parent or any child lock.
-        # Keymaster sends the raw (friendly) lockname in event data,
-        # but monitored_locknames contains slugified names, so we
-        # must slugify before comparison.
-        raw_lockname = event_data.get("lockname", "")
-        event_lockname = (
-            slugify(raw_lockname)
-            if raw_lockname and isinstance(raw_lockname, str)
-            else ""
-        )
-
-        # Drop unmonitored-lock events as early as possible: in
-        # deployments with many RC integrations, every integration
-        # sees every event on the HA bus, and the unmonitored case
-        # is by far the hottest path. Recording these events with
-        # disposition "rejected_not_monitored" would flood the
-        # 10-entry diagnostics ring buffer with noise from other
-        # integrations' locks. The "rejected_not_monitored"
-        # disposition string is retained as a reserved value for
-        # schema stability with downstream consumers but is no
-        # longer emitted.
-        if event_lockname not in coordinator.monitored_locknames:
-            return
-
-        code_slot_num = event_data.get("code_slot_num")
-
-        diagnostics_enabled = config_entry.data.get(
-            CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
-            DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
-        )
-
-        def _record(disposition: str) -> None:
-            """Append a diagnostic entry and refresh the sensor state.
-
-            Only invoked when the diagnostics option is enabled. Also
-            triggers ``async_write_ha_state`` on the check-in sensor (when
-            available) so the new entry becomes visible in HA without
-            waiting for the next coordinator update.
-            """
-            coordinator.keymaster_event_diagnostics.append(
-                {
-                    "timestamp": dt_util.utcnow().isoformat(),
-                    "lockname": str(raw_lockname),
-                    "lockname_slug": event_lockname,
-                    "state": event_data.get("state"),
-                    "code_slot_num": code_slot_num,
-                    "disposition": disposition,
-                }
-            )
-            sensor = (
-                hass.data.get(DOMAIN, {})
-                .get(config_entry.entry_id, {})
-                .get(CHECKIN_SENSOR)
-            )
-            if sensor is not None and sensor.hass is not None:
-                sensor.async_write_ha_state()
-
-        if event_data.get("state") != "unlocked":
-            if diagnostics_enabled:
-                _record("rejected_state")
-            return
-
-        # FR-017: Ignore code_slot_num == 0
-        if code_slot_num is None or code_slot_num == 0:
-            if diagnostics_enabled:
-                _record("rejected_slot_zero")
-            return
-
-        if not (start_slot <= code_slot_num < start_slot + max_events):
-            if diagnostics_enabled:
-                _record("rejected_out_of_range")
-            return
-
-        # Retrieve the checkin sensor and forward the unlock
-        entry_data = get_entry_data(hass, config_entry.entry_id)
-        if entry_data is None:
-            _LOGGER.debug(
-                "Keymaster unlock event received but entry data "
-                "not available for entry %s",
-                config_entry.entry_id,
-            )
-            return
-
-        checkin_sensor = entry_data.get(CHECKIN_SENSOR)
-        if checkin_sensor is None:
-            _LOGGER.debug(
-                "Keymaster unlock event received but checkin sensor "
-                "not yet available for entry %s",
-                config_entry.entry_id,
-            )
-            if diagnostics_enabled:
-                _record("rejected_no_checkin_sensor")
-            return
-
-        monitoring_switch = entry_data.get(KEYMASTER_MONITORING_SWITCH)
-        if monitoring_switch is None:
-            _LOGGER.debug(
-                "Keymaster unlock event received but monitoring "
-                "switch not yet available for entry %s",
-                config_entry.entry_id,
-            )
-            if diagnostics_enabled:
-                _record("rejected_monitoring_off")
-            return
-
-        if not monitoring_switch.is_on:
-            _LOGGER.debug(
-                "Ignoring keymaster unlock: monitoring switch is off",
-            )
-            if diagnostics_enabled:
-                _record("rejected_monitoring_off")
-            return
-
-        _LOGGER.debug(
-            "Forwarding keymaster unlock (slot=%d, lock=%s) to checkin sensor",
-            code_slot_num,
-            raw_lockname,
-        )
-        if diagnostics_enabled:
-            _record("accepted")
-        checkin_sensor.async_handle_keymaster_unlock(
-            code_slot_num=code_slot_num,
-            lock_name=raw_lockname,
-        )
-
-    unsub = hass.bus.async_listen(
-        "keymaster_lock_state_changed", _handle_keymaster_event
-    )
-    hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(unsub)
-    _LOGGER.debug(
-        "Registered keymaster event bus listener for monitored locknames=%s",
-        sorted(coordinator.monitored_locknames),
     )
