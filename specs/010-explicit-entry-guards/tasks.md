@@ -33,8 +33,8 @@ implementation, so the MVP is complete only after both phases pass.
 
 **Purpose**: Establish the issue #571 baseline before changing tests or code
 
-- [ ] T001 Inventory the six chained entry-data lookups with `rg` in custom_components/rental_control/__init__.py, custom_components/rental_control/sensors/checkinsensor.py, and custom_components/rental_control/switch.py
-- [ ] T002 Run the baseline targeted pytest command for tests/unit/test_util.py, tests/unit/test_init.py, tests/unit/test_keymaster_event_diagnostics.py, tests/unit/test_checkin_sensor.py, tests/unit/test_switch.py, and tests/integration/test_full_setup.py
+- [X] T001 Inventory the six chained entry-data lookups with `rg` in custom_components/rental_control/__init__.py, custom_components/rental_control/sensors/checkinsensor.py, and custom_components/rental_control/switch.py
+- [X] T002 Run the baseline targeted pytest command for tests/unit/test_util.py, tests/unit/test_init.py, tests/unit/test_keymaster_event_diagnostics.py, tests/unit/test_checkin_sensor.py, tests/unit/test_switch.py, and tests/integration/test_full_setup.py
 
 ---
 
@@ -44,8 +44,8 @@ implementation, so the MVP is complete only after both phases pass.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T003 Add get_entry_data unit tests for present entry data, missing hass.data[DOMAIN], missing hass.data[DOMAIN][entry_id], and no throwaway mutation in tests/unit/test_util.py
-- [ ] T004 Implement get_entry_data(hass, entry_id) -> dict[str, Any] | None with a docstring and type hints in custom_components/rental_control/util.py
+- [X] T003 Add get_entry_data unit tests for present entry data, missing hass.data[DOMAIN], missing hass.data[DOMAIN][entry_id], and no throwaway mutation in tests/unit/test_util.py
+- [X] T004 Implement get_entry_data(hass, entry_id) -> dict[str, Any] | None with a docstring and type hints in custom_components/rental_control/util.py
 
 **Checkpoint**: Foundation ready — helper returns the existing entry dict when
 present and None for both missing-domain and missing-entry paths.
@@ -66,18 +66,18 @@ reported operation and verify the same externally observable behavior as before.
 > **NOTE: Write these tests FIRST, ensure they FAIL or protect current behavior
 > before implementation tasks preserve the loaded-entry path.**
 
-- [ ] T005 [P] [US1] Add update_listener present-data regression tests for config update and listener refresh behavior in tests/unit/test_init.py
-- [ ] T006 [P] [US1] Add keymaster event present-data accepted-forwarding regression coverage in tests/unit/test_keymaster_event_diagnostics.py
-- [ ] T007 [P] [US1] Add monitoring-switch present-data tests proving switch is_on and is_off states win over the lockname fallback in tests/unit/test_checkin_sensor.py
-- [ ] T008 [US1] Add async_checkout present-data early-expiry regression test proving an enabled early-expiry switch shortens expiry in tests/unit/test_checkin_sensor.py
-- [ ] T009 [P] [US1] Add KeymasterMonitoringSwitch present-data registration regression test in tests/unit/test_switch.py
+- [X] T005 [P] [US1] Add update_listener present-data regression tests for config update and listener refresh behavior in tests/unit/test_init.py
+- [X] T006 [P] [US1] Add keymaster event present-data accepted-forwarding regression coverage in tests/unit/test_keymaster_event_diagnostics.py
+- [X] T007 [P] [US1] Add monitoring-switch present-data tests proving switch is_on and is_off states win over the lockname fallback in tests/unit/test_checkin_sensor.py
+- [X] T008 [US1] Add async_checkout present-data early-expiry regression test proving an enabled early-expiry switch shortens expiry in tests/unit/test_checkin_sensor.py
+- [X] T009 [P] [US1] Add KeymasterMonitoringSwitch present-data registration regression test in tests/unit/test_switch.py
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] Replace both update_listener entry-data lookups with get_entry_data while preserving present-data config update and listener refresh behavior in custom_components/rental_control/__init__.py
-- [ ] T011 [US1] Replace the _handle_keymaster_event entry-data lookup with get_entry_data while preserving accepted unlock forwarding when components are present in custom_components/rental_control/__init__.py
-- [ ] T012 [US1] Replace _is_keymaster_monitoring_enabled and async_checkout entry-data lookups with get_entry_data while preserving present switch and early-expiry behavior in custom_components/rental_control/sensors/checkinsensor.py
-- [ ] T013 [US1] Replace KeymasterMonitoringSwitch.async_added_to_hass entry-data lookup with get_entry_data while preserving state restore, debug logging, and successful registration in custom_components/rental_control/switch.py
+- [X] T010 [US1] Replace both update_listener entry-data lookups with get_entry_data while preserving present-data config update and listener refresh behavior in custom_components/rental_control/__init__.py
+- [X] T011 [US1] Replace the _handle_keymaster_event entry-data lookup with get_entry_data while preserving accepted unlock forwarding when components are present in custom_components/rental_control/__init__.py
+- [X] T012 [US1] Replace _is_keymaster_monitoring_enabled and async_checkout entry-data lookups with get_entry_data while preserving present switch and early-expiry behavior in custom_components/rental_control/sensors/checkinsensor.py
+- [X] T013 [US1] Replace KeymasterMonitoringSwitch.async_added_to_hass entry-data lookup with get_entry_data while preserving state restore, debug logging, and successful registration in custom_components/rental_control/switch.py
 
 **Checkpoint**: Loaded-entry behavior is covered for all six call sites. The MVP
 is not complete until US2 missing-data tests also pass.
@@ -95,18 +95,18 @@ unhandled exceptions or throwaway state mutation.
 
 ### Tests for User Story 2
 
-- [ ] T014 [US2] Add update_listener missing-domain and missing-entry tests for first-lookup early return and second-lookup listener-refresh early return in tests/unit/test_init.py
-- [ ] T015 [P] [US2] Add keymaster event missing-domain and missing-entry rejection tests verifying no forwarding and no accepted disposition in tests/unit/test_keymaster_event_diagnostics.py
-- [ ] T016 [P] [US2] Add _is_keymaster_monitoring_enabled missing-domain and missing-entry tests verifying fallback to self.coordinator.lockname is not None in tests/unit/test_checkin_sensor.py
-- [ ] T017 [US2] Add async_checkout missing-domain and missing-entry tests verifying checkout continues without early expiry in tests/unit/test_checkin_sensor.py
-- [ ] T018 [P] [US2] Add KeymasterMonitoringSwitch missing-domain and missing-entry tests verifying no throwaway dict mutation while restore/logging behavior remains safe in tests/unit/test_switch.py
+- [X] T014 [US2] Add update_listener missing-domain and missing-entry tests for first-lookup early return and second-lookup listener-refresh early return in tests/unit/test_init.py
+- [X] T015 [P] [US2] Add keymaster event missing-domain and missing-entry rejection tests verifying no forwarding and no accepted disposition in tests/unit/test_keymaster_event_diagnostics.py
+- [X] T016 [P] [US2] Add _is_keymaster_monitoring_enabled missing-domain and missing-entry tests verifying fallback to self.coordinator.lockname is not None in tests/unit/test_checkin_sensor.py
+- [X] T017 [US2] Add async_checkout missing-domain and missing-entry tests verifying checkout continues without early expiry in tests/unit/test_checkin_sensor.py
+- [X] T018 [P] [US2] Add KeymasterMonitoringSwitch missing-domain and missing-entry tests verifying no throwaway dict mutation while restore/logging behavior remains safe in tests/unit/test_switch.py
 
 ### Implementation for User Story 2
 
-- [ ] T019 [US2] Ensure update_listener returns before config mutation when entry data is absent before update and before listener refresh when data vanishes after update in custom_components/rental_control/__init__.py
-- [ ] T020 [US2] Ensure _handle_keymaster_event rejects missing entry data before CHECKIN_SENSOR or KEYMASTER_MONITORING_SWITCH lookups and never records accepted forwarding in custom_components/rental_control/__init__.py
-- [ ] T021 [US2] Ensure _is_keymaster_monitoring_enabled falls back to self.coordinator.lockname is not None and async_checkout skips early expiry then continues checkout when get_entry_data returns None in custom_components/rental_control/sensors/checkinsensor.py
-- [ ] T022 [US2] Ensure KeymasterMonitoringSwitch.async_added_to_hass returns after state restore and debug logging, but without mutating entry state, when get_entry_data returns None in custom_components/rental_control/switch.py
+- [X] T019 [US2] Ensure update_listener returns before config mutation when entry data is absent before update and before listener refresh when data vanishes after update in custom_components/rental_control/__init__.py
+- [X] T020 [US2] Ensure _handle_keymaster_event rejects missing entry data before CHECKIN_SENSOR or KEYMASTER_MONITORING_SWITCH lookups and never records accepted forwarding in custom_components/rental_control/__init__.py
+- [X] T021 [US2] Ensure _is_keymaster_monitoring_enabled falls back to self.coordinator.lockname is not None and async_checkout skips early expiry then continues checkout when get_entry_data returns None in custom_components/rental_control/sensors/checkinsensor.py
+- [X] T022 [US2] Ensure KeymasterMonitoringSwitch.async_added_to_hass returns after state restore and debug logging, but without mutating entry state, when get_entry_data returns None in custom_components/rental_control/switch.py
 
 **Checkpoint**: Missing-domain and missing-entry behavior is explicit and safe
 for all six issue-reported paths. MVP is complete with US1 + US2.
@@ -123,13 +123,13 @@ supporting component at a time and verify the documented behavior.
 
 ### Tests for User Story 3
 
-- [ ] T023 [P] [US3] Add present-entry missing-CHECKIN_SENSOR and missing-KEYMASTER_MONITORING_SWITCH event rejection tests in tests/unit/test_keymaster_event_diagnostics.py
-- [ ] T024 [US3] Add present-entry missing KEYMASTER_MONITORING_SWITCH fallback tests for both configured and unconfigured lockname values in tests/unit/test_checkin_sensor.py
-- [ ] T025 [US3] Add present-entry missing EARLY_CHECKOUT_EXPIRY_SWITCH checkout test verifying skip-and-continue behavior in tests/unit/test_checkin_sensor.py
+- [X] T023 [P] [US3] Add present-entry missing-CHECKIN_SENSOR and missing-KEYMASTER_MONITORING_SWITCH event rejection tests in tests/unit/test_keymaster_event_diagnostics.py
+- [X] T024 [US3] Add present-entry missing KEYMASTER_MONITORING_SWITCH fallback tests for both configured and unconfigured lockname values in tests/unit/test_checkin_sensor.py
+- [X] T025 [US3] Add present-entry missing EARLY_CHECKOUT_EXPIRY_SWITCH checkout test verifying skip-and-continue behavior in tests/unit/test_checkin_sensor.py
 
 ### Implementation for User Story 3
 
-- [ ] T026 [US3] Keep supporting component lookups local with existing .get(...) fallback behavior after get_entry_data succeeds in custom_components/rental_control/__init__.py and custom_components/rental_control/sensors/checkinsensor.py
+- [X] T026 [US3] Keep supporting component lookups local with existing .get(...) fallback behavior after get_entry_data succeeds in custom_components/rental_control/__init__.py and custom_components/rental_control/sensors/checkinsensor.py
 
 **Checkpoint**: Missing components inside present entry data remain distinct
 from missing entry data and preserve their existing outcomes.
@@ -146,12 +146,12 @@ reported path is explicit and unrelated behavior is unchanged.
 
 ### Tests for User Story 4
 
-- [ ] T027 [P] [US4] Add or extend loaded-entry smoke coverage for normal setup and unload in tests/integration/test_full_setup.py only if unit tests do not already cover a changed behavior
+- [X] T027 [P] [US4] Add or extend loaded-entry smoke coverage for normal setup and unload in tests/integration/test_full_setup.py only if unit tests do not already cover a changed behavior
 
 ### Implementation for User Story 4
 
-- [ ] T028 [US4] Confirm no user-facing configuration, entity state, service, migration, or unrelated data-access changes were introduced outside custom_components/rental_control/util.py, custom_components/rental_control/__init__.py, custom_components/rental_control/sensors/checkinsensor.py, and custom_components/rental_control/switch.py
-- [ ] T029 [US4] Run the quickstart chained-get search and confirm the six issue-reported paths no longer use hass.data.get(DOMAIN, {}) defaults in custom_components/rental_control/__init__.py, custom_components/rental_control/sensors/checkinsensor.py, and custom_components/rental_control/switch.py
+- [X] T028 [US4] Confirm no user-facing configuration, entity state, service, migration, or unrelated data-access changes were introduced outside custom_components/rental_control/util.py, custom_components/rental_control/__init__.py, custom_components/rental_control/sensors/checkinsensor.py, and custom_components/rental_control/switch.py
+- [X] T029 [US4] Run the quickstart chained-get search and confirm the six issue-reported paths no longer use hass.data.get(DOMAIN, {}) defaults in custom_components/rental_control/__init__.py, custom_components/rental_control/sensors/checkinsensor.py, and custom_components/rental_control/switch.py
 
 **Checkpoint**: Scope remains bounded to issue #571 and all six reported paths
 have explicit domain and entry guards.
@@ -162,11 +162,11 @@ have explicit domain and entry guards.
 
 **Purpose**: Final validation across all stories
 
-- [ ] T030 Run targeted pytest validation for tests/unit/test_util.py, tests/unit/test_init.py, tests/unit/test_keymaster_event_diagnostics.py, tests/unit/test_checkin_sensor.py, tests/unit/test_switch.py, and tests/integration/test_full_setup.py
-- [ ] T031 Run ruff validation for custom_components/rental_control/util.py, custom_components/rental_control/__init__.py, custom_components/rental_control/sensors/checkinsensor.py, custom_components/rental_control/switch.py, tests/unit/test_util.py, tests/unit/test_init.py, tests/unit/test_keymaster_event_diagnostics.py, tests/unit/test_checkin_sensor.py, and tests/unit/test_switch.py
-- [ ] T032 Run full test suite via `uv run pytest tests/ -v` covering tests/unit/ and tests/integration/
-- [ ] T033 Run pre-commit hook validation for custom_components/rental_control/, tests/, and specs/010-explicit-entry-guards/tasks.md
-- [ ] T034 Validate the implementation against specs/010-explicit-entry-guards/quickstart.md acceptance checks
+- [X] T030 Run targeted pytest validation for tests/unit/test_util.py, tests/unit/test_init.py, tests/unit/test_keymaster_event_diagnostics.py, tests/unit/test_checkin_sensor.py, tests/unit/test_switch.py, and tests/integration/test_full_setup.py
+- [X] T031 Run ruff validation for custom_components/rental_control/util.py, custom_components/rental_control/__init__.py, custom_components/rental_control/sensors/checkinsensor.py, custom_components/rental_control/switch.py, tests/unit/test_util.py, tests/unit/test_init.py, tests/unit/test_keymaster_event_diagnostics.py, tests/unit/test_checkin_sensor.py, and tests/unit/test_switch.py
+- [X] T032 Run full test suite via `uv run pytest tests/ -v` covering tests/unit/ and tests/integration/
+- [X] T033 Run pre-commit hook validation for custom_components/rental_control/, tests/, and specs/010-explicit-entry-guards/tasks.md
+- [X] T034 Validate the implementation against specs/010-explicit-entry-guards/quickstart.md acceptance checks
 
 ---
 
