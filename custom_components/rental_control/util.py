@@ -18,14 +18,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import date
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
 from datetime import tzinfo
 import hashlib
-import inspect
 import logging
 from pathlib import Path
 import re
@@ -59,27 +57,6 @@ from .const import EARLY_CHECKOUT_GRACE_MINUTES
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class OperationResult:
-    """Result of a physical Keymaster slot service operation.
-
-    Returned by ``async_fire_clear_code()``, ``async_fire_set_code()``,
-    and ``async_fire_update_times()``. Successful helper paths set one
-    of ``confirmed``, ``unconfirmed``, or ``failed`` to ``True``.
-    ``lingering_name`` and ``lingering_pin`` are supplementary flags for
-    clear operations. Raw PIN values are never stored.
-    """
-
-    kind: str
-    slot: int
-    confirmed: bool = False
-    unconfirmed: bool = False
-    failed: bool = False
-    lingering_name: bool = False
-    lingering_pin: bool = False
-    error: str | None = None
 
 
 def get_entry_data(hass: HomeAssistant, entry_id: str) -> dict[str, Any] | None:
@@ -195,7 +172,7 @@ def delete_folder(absolute_path: str | Path, *relative_paths: str) -> None:
 
 async def async_fire_clear_code(
     coordinator, slot: int, expected_name: str | None = None
-) -> OperationResult:
+) -> None:
     """Fire a clear_code signal."""
     _LOGGER.debug(
         "In async_fire_clear_code - slot: %s, name: %s", slot, coordinator.name
@@ -204,7 +181,7 @@ async def async_fire_clear_code(
     reset_entity = f"{BUTTON}.{coordinator.lockname}_code_slot_{slot}_reset"
 
     if not coordinator.lockname:
-        return OperationResult(kind="clear", slot=slot, unconfirmed=True)
+        return
 
     if (
         expected_name is not None
@@ -215,7 +192,7 @@ async def async_fire_clear_code(
             slot,
             expected_name,
         )
-        return OperationResult(kind="clear", slot=slot, unconfirmed=True)
+        return
 
     try:
         # Reset the slot
@@ -225,9 +202,7 @@ async def async_fire_clear_code(
             target={"entity_id": reset_entity},
             blocking=True,
         )
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
+    except Exception:
         escalated = coordinator.event_overrides.record_retry_failure(slot)
         if escalated:
             pn_create(
@@ -237,26 +212,19 @@ async def async_fire_clear_code(
                 title="Rental Control: Lock Command Failure",
                 notification_id=f"rental_control_slot_{slot}_clear_failure",
             )
-        return OperationResult(
-            kind="clear",
-            slot=slot,
-            failed=True,
-            error=str(exc),
-        )
+        raise
 
     # Give Keymaster time to propagate the state change
     await asyncio.sleep(0.5)
 
-    unconfirmed = False
-    lingering_name = False
-    lingering_pin = False
+    # Verify the slot name was actually cleared
     name_entity = f"{TEXT}.{coordinator.lockname}_code_slot_{slot}_name"
-    pin_entity = f"{TEXT}.{coordinator.lockname}_code_slot_{slot}_pin"
-
     name_state = hass.states.get(name_entity)
-    if name_state is None:
-        unconfirmed = True
-    elif name_state.state not in ("", "unknown", "unavailable"):
+    if name_state is not None and name_state.state not in (
+        "",
+        "unknown",
+        "unavailable",
+    ):
         _LOGGER.warning(
             "Slot %d name '%s' persisted after reset; "
             "forcing name clear via text.set_value",
@@ -271,35 +239,11 @@ async def async_fire_clear_code(
                 service_data={"value": ""},
                 blocking=True,
             )
-        except asyncio.CancelledError:
-            raise
         except Exception:
             _LOGGER.exception(
                 "Failed to force-clear name for slot %d",
                 slot,
             )
-        name_state = hass.states.get(name_entity)
-        if name_state is None:
-            unconfirmed = True
-        elif name_state.state not in ("", "unknown", "unavailable"):
-            lingering_name = True
-
-    pin_state = hass.states.get(pin_entity)
-    if pin_state is None:
-        unconfirmed = True
-    elif pin_state.state not in ("", "unknown", "unavailable"):
-        lingering_pin = True
-
-    if lingering_name or lingering_pin:
-        return OperationResult(
-            kind="clear",
-            slot=slot,
-            unconfirmed=True,
-            lingering_name=lingering_name,
-            lingering_pin=lingering_pin,
-        )
-    if unconfirmed:
-        return OperationResult(kind="clear", slot=slot, unconfirmed=True)
 
     was_escalated = coordinator.event_overrides._escalated.get(slot, False)
     coordinator.event_overrides.record_retry_success(slot)
@@ -308,7 +252,6 @@ async def async_fire_clear_code(
             hass,
             notification_id=f"rental_control_slot_{slot}_clear_failure",
         )
-    return OperationResult(kind="clear", slot=slot, confirmed=True)
 
 
 def trim_name(name: str, max_length: int) -> str:
@@ -378,7 +321,7 @@ def apply_buffer(
     return dt_start, dt_end
 
 
-async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
+async def async_fire_set_code(coordinator, event, slot: int) -> None:
     """Set codes into a slot."""
     _LOGGER.debug("In async_fire_set_code - slot: %s", slot)
     _LOGGER.debug("Event: %s", event)
@@ -388,7 +331,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
     coro: list[Coroutine] = []
 
     if not lockname:
-        return OperationResult(kind="set", slot=slot, unconfirmed=True)
+        return
 
     if coordinator.event_prefix:
         prefix = f"{coordinator.event_prefix} "
@@ -409,7 +352,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
             slot,
             expected_name,
         )
-        return OperationResult(kind="set", slot=slot, unconfirmed=True)
+        return
 
     try:
         # Disable the slot, this should help avoid notices from Keymaster
@@ -504,9 +447,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
         results = await asyncio.gather(*coro, return_exceptions=True)
         check_gather_results(results, "Lock slot operation")
         _raise_first_gather_exception(results)
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
+    except Exception:
         escalated = coordinator.event_overrides.record_retry_failure(slot)
         if escalated:
             pn_create(
@@ -516,35 +457,18 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
                 title="Rental Control: Lock Command Failure",
                 notification_id=f"rental_control_slot_{slot}_failure",
             )
-        return OperationResult(
-            kind="set",
-            slot=slot,
-            failed=True,
-            error=str(exc),
+        raise
+
+    was_escalated = coordinator.event_overrides._escalated.get(slot, False)
+    coordinator.event_overrides.record_retry_success(slot)
+    if was_escalated:
+        pn_dismiss(
+            coordinator.hass,
+            notification_id=f"rental_control_slot_{slot}_failure",
         )
 
-    name_entity = f"{TEXT}.{lockname}_code_slot_{slot}_name"
-    block_till_done = getattr(coordinator.hass, "async_block_till_done", None)
-    if block_till_done is not None:
-        done_result = block_till_done()
-        if inspect.isawaitable(done_result):
-            await done_result
-    name_state = coordinator.hass.states.get(name_entity)
-    if name_state is None:
-        return OperationResult(kind="set", slot=slot, unconfirmed=True)
-    if name_state.state == slot_name:
-        was_escalated = coordinator.event_overrides._escalated.get(slot, False)
-        coordinator.event_overrides.record_retry_success(slot)
-        if was_escalated:
-            pn_dismiss(
-                coordinator.hass,
-                notification_id=f"rental_control_slot_{slot}_failure",
-            )
-        return OperationResult(kind="set", slot=slot, confirmed=True)
-    return OperationResult(kind="set", slot=slot, unconfirmed=True)
 
-
-async def async_fire_update_times(coordinator, event, slot: int) -> OperationResult:
+async def async_fire_update_times(coordinator, event, slot: int) -> None:
     """Update times on slot."""
 
     lockname: str = coordinator.lockname
@@ -552,7 +476,7 @@ async def async_fire_update_times(coordinator, event, slot: int) -> OperationRes
     slot_name: str = event.extra_state_attributes["slot_name"]
 
     if not slot or not lockname:
-        return OperationResult(kind="update_times", slot=slot, unconfirmed=True)
+        return
 
     if not coordinator.event_overrides.verify_slot_ownership(slot, slot_name):
         _LOGGER.warning(
@@ -560,7 +484,7 @@ async def async_fire_update_times(coordinator, event, slot: int) -> OperationRes
             slot,
             slot_name,
         )
-        return OperationResult(kind="update_times", slot=slot, unconfirmed=True)
+        return
 
     # Compute buffered validity window for Keymaster
     buffered_start, buffered_end = apply_buffer(
@@ -590,18 +514,6 @@ async def async_fire_update_times(coordinator, event, slot: int) -> OperationRes
     )
     results = await asyncio.gather(*coro, return_exceptions=True)
     check_gather_results(results, "Lock slot operation")
-    try:
-        _raise_first_gather_exception(results)
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        return OperationResult(
-            kind="update_times",
-            slot=slot,
-            failed=True,
-            error=str(exc),
-        )
-    return OperationResult(kind="update_times", slot=slot, confirmed=True)
 
 
 def _ensure_datetime(value: date | datetime, rc) -> datetime:
@@ -781,11 +693,6 @@ async def handle_state_change(
     await asyncio.sleep(0.1)
 
     entity_id = event.data["entity_id"]
-    event_new_state = event.data.get("new_state")
-    event_new_value = (
-        getattr(event_new_state, "state", None) if event_new_state is not None else None
-    )
-    event_has_new_value = event_new_value is not None
 
     _LOGGER.debug(
         "Handling state change for %s in %s with event: %s",
@@ -799,9 +706,6 @@ async def handle_state_change(
         _LOGGER.warning("Could not extract slot number from entity_id: %s", entity_id)
         return
     slot_num = int(slot_match.group(1))
-    existing_override: dict[str, Any] | None = None
-    if event_has_new_value and coordinator.event_overrides:
-        existing_override = coordinator.event_overrides.overrides.get(slot_num)
 
     if "_reset" in entity_id:
         _LOGGER.debug("Resetting overrides %s for %s.", slot_num, lockname)
@@ -810,29 +714,12 @@ async def handle_state_change(
         )
         return
 
-    if event_has_new_value and coordinator.event_overrides.should_suppress_state_change(
-        slot_num, entity_id, event_new_value
-    ):
-        _LOGGER.debug(
-            "Ignoring coordinator feedback for %s slot %s.",
-            lockname,
-            slot_num,
-        )
-        return
-
     slot_state = hass.states.get(f"switch.{lockname}_code_slot_{slot_num}_enabled")
     _LOGGER.debug("Slot %s state: %s", slot_num, slot_state)
     if slot_state is None:
         return
 
-    slot_enabled_entity_id = f"switch.{lockname}_code_slot_{slot_num}_enabled"
-    slot_enabled_state = (
-        event_new_value
-        if event_has_new_value and entity_id == slot_enabled_entity_id
-        else slot_state.state
-    )
-
-    if slot_enabled_state != "on":
+    if slot_state.state != "on":
         _LOGGER.debug(
             "Slot %s is not enabled, skipping update for %s.",
             slot_num,
@@ -840,86 +727,47 @@ async def handle_state_change(
         )
         return
 
-    slot_code_entity_id = f"text.{lockname}_code_slot_{slot_num}_pin"
-    slot_name_entity_id = f"text.{lockname}_code_slot_{slot_num}_name"
-    slot_code = hass.states.get(slot_code_entity_id)
-    slot_name = hass.states.get(slot_name_entity_id)
+    slot_code = hass.states.get(f"text.{lockname}_code_slot_{slot_num}_pin")
+    slot_name = hass.states.get(f"text.{lockname}_code_slot_{slot_num}_name")
 
-    use_date_range_entity_id = (
+    use_date_range = hass.states.get(
         f"switch.{lockname}_code_slot_{slot_num}_use_date_range_limits"
     )
-    use_date_range = hass.states.get(use_date_range_entity_id)
     _LOGGER.debug("Use Date Range: %s", use_date_range)
-    use_date_range_state = (
-        event_new_value
-        if event_has_new_value and entity_id == use_date_range_entity_id
-        else use_date_range.state
-        if use_date_range
-        else None
-    )
-    if use_date_range_state == "on":
-        start_time_entity_id = (
+    if use_date_range and use_date_range.state == "on":
+        g_start_time = hass.states.get(
             f"datetime.{lockname}_code_slot_{slot_num}_date_range_start"
         )
-        end_time_entity_id = f"datetime.{lockname}_code_slot_{slot_num}_date_range_end"
-        g_start_time = hass.states.get(start_time_entity_id)
-        g_end_time = hass.states.get(end_time_entity_id)
+        g_end_time = hass.states.get(
+            f"datetime.{lockname}_code_slot_{slot_num}_date_range_end"
+        )
     else:
-        start_time_entity_id = ""
-        end_time_entity_id = ""
         g_start_time = None
         g_end_time = None
 
     if slot_code is None:
         return
-    if event_has_new_value and entity_id == slot_code_entity_id:
-        slot_code_value = (
-            "" if event_new_value in ("unknown", "unavailable") else event_new_value
-        )
-    elif event_has_new_value and existing_override is not None:
-        slot_code_value = str(existing_override["slot_code"])
-    else:
-        slot_code_value = (
-            "" if slot_code.state in ("unknown", "unavailable") else slot_code.state
-        )
+    slot_code_value = (
+        "" if slot_code.state in ("unknown", "unavailable") else slot_code.state
+    )
     if slot_name is None:
         return
-    if event_has_new_value and entity_id == slot_name_entity_id:
-        slot_name_value = (
-            "" if event_new_value in ("unknown", "unavailable") else event_new_value
-        )
-    elif event_has_new_value and existing_override is not None:
-        slot_name_value = str(existing_override["slot_name"])
-    else:
-        slot_name_value = (
-            "" if slot_name.state in ("unknown", "unavailable") else slot_name.state
-        )
+    slot_name_value = (
+        "" if slot_name.state in ("unknown", "unavailable") else slot_name.state
+    )
 
     start_time = dt.start_of_local_day()
     end_time = dt.start_of_local_day()
-    if event_has_new_value and existing_override is not None:
-        start_time = existing_override["start_time"]
-        end_time = existing_override["end_time"]
 
     if g_start_time is not None:
-        if event_has_new_value and entity_id == start_time_entity_id:
-            p_start_time = dt.parse_datetime(event_new_value)
-            if p_start_time:
-                start_time = p_start_time
-        elif not (event_has_new_value and existing_override is not None):
-            p_start_time = dt.parse_datetime(g_start_time.state)
-            if p_start_time:
-                start_time = p_start_time
+        p_start_time = dt.parse_datetime(g_start_time.state)
+        if p_start_time:
+            start_time = p_start_time
 
     if g_end_time is not None:
-        if event_has_new_value and entity_id == end_time_entity_id:
-            p_end_time = dt.parse_datetime(event_new_value)
-            if p_end_time:
-                end_time = p_end_time
-        elif not (event_has_new_value and existing_override is not None):
-            p_end_time = dt.parse_datetime(g_end_time.state)
-            if p_end_time:
-                end_time = p_end_time
+        p_end_time = dt.parse_datetime(g_end_time.state)
+        if p_end_time:
+            end_time = p_end_time
 
     _LOGGER.debug(
         "updating overrides for %s slot %s. "
@@ -965,8 +813,8 @@ async def handle_state_change(
         start_time,
         end_time,
     )
-    # Reconciliation runs exclusively from coordinator apply_plan (R-007);
-    # callbacks must not launch reconciliation.
+
+    await coordinator.event_overrides.async_check_overrides(coordinator)
 
 
 async def async_reload_package_platforms(hass: HomeAssistant) -> bool:
