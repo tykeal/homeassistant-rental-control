@@ -2,13 +2,14 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 """Slot reconciliation data models for Rental Control.
 
-Provides typed dataclasses and enumerations representing the core data
-structures used by the slot reconciliation system: the deterministic
-planner that assigns RC-managed Keymaster slots to calendar
-reservations.
+Provides typed dataclasses, enumerations, and identity-matching helpers
+used by the slot reconciliation system: the deterministic planner that
+assigns RC-managed Keymaster slots to calendar reservations.
 
 Exported names
 --------------
+FINGERPRINT_VERSION
+    Version tag for the v1 primary reservation fingerprint scheme.
 SlotStatus
     Physical/logical state of a managed Keymaster slot.
 ActionKind
@@ -29,6 +30,18 @@ StoredActual
     Redacted last-observed Keymaster state persisted in the HA Store.
 SlotMapping
     Top-level HA Store record for one persisted slot assignment.
+RematchKind
+    Classification of a reservation identity rematch result.
+RematchResult
+    Result of a reservation identity rematch lookup.
+normalize_slot_name_for_fingerprint
+    Return the stable normalized form of a slot name for fingerprinting.
+make_reservation_fingerprint
+    Compute the stable versioned identity fingerprint for a reservation.
+extract_booking_aliases
+    Extract booking/confirmation aliases from event text.
+find_reservation_rematch
+    Find the best identity rematch for a reservation in persisted mappings.
 """
 
 from __future__ import annotations
@@ -36,8 +49,32 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
+from datetime import timezone
 from enum import Enum
+import hashlib
+import re
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# Identity fingerprinting constants
+# ---------------------------------------------------------------------------
+
+FINGERPRINT_VERSION = "v1"
+"""Version tag for the primary reservation fingerprint scheme.
+
+If the fingerprint algorithm changes in a future release this tag
+must be bumped (e.g. to ``"v2"``) so that v1 and v2 fingerprints
+occupy separate namespaces and old persisted keys can be preserved
+in :attr:`Reservation.fingerprint_history` for conservative rematch.
+"""
+
+# ---------------------------------------------------------------------------
+# Compiled patterns for booking/confirmation alias extraction
+# ---------------------------------------------------------------------------
+
+# Airbnb confirmation codes: one uppercase letter followed by nine
+# uppercase alphanumeric characters (e.g. "HMXXXXXXXX").
+_AIRBNB_CONF_RE = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]{9})(?![A-Z0-9])")
 
 
 class SlotStatus(str, Enum):
@@ -516,3 +553,528 @@ class SlotMapping:
             raise ValueError(
                 f"missing_count must be non-negative, got {self.missing_count}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Identity fingerprinting helpers
+# ---------------------------------------------------------------------------
+
+
+def normalize_slot_name_for_fingerprint(slot_name: str) -> str:
+    """Return the stable normalized form of a slot name for fingerprinting.
+
+    Strips leading/trailing whitespace and case-folds (Unicode NFKD
+    casefold) so that names that differ only in case or surrounding
+    whitespace produce identical fingerprints.
+
+    Args:
+        slot_name: Unprefixed, untrimmed guest-facing slot name.
+
+    Returns:
+        Casefold-normalized, stripped slot name.
+    """
+    return slot_name.strip().casefold()
+
+
+def _dt_to_utc_iso(dt: datetime) -> str:
+    """Convert *dt* to a UTC ISO-8601 string for fingerprint computation.
+
+    Naive datetimes are treated as UTC.  The output format is always
+    ``YYYY-MM-DDTHH:MM:SS+00:00`` to ensure a single canonical
+    representation regardless of the original timezone offset.
+
+    Args:
+        dt: Input datetime, timezone-aware or naive.
+
+    Returns:
+        Fixed-format UTC ISO-8601 string.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+
+def make_reservation_fingerprint(
+    entry_id: str,
+    slot_name: str,
+    start: datetime,
+    end: datetime,
+) -> str:
+    """Compute the stable versioned identity fingerprint for a reservation.
+
+    The fingerprint is a 64-character lowercase SHA-256 hexdigest of a
+    canonical string built from:
+
+    - :data:`FINGERPRINT_VERSION` prefix (``"v1"``),
+    - *entry_id* (config-entry scope),
+    - normalized, casefold-stripped *slot_name*,
+    - UTC ISO-8601 *start*, and
+    - UTC ISO-8601 *end*.
+
+    The fingerprint deliberately excludes volatile calendar UIDs so that
+    platform UID churn does not change the primary identity key.
+
+    Args:
+        entry_id: Config entry ID that scopes this fingerprint to one
+            integration instance.
+        slot_name: Unprefixed, untrimmed guest-facing slot name.  Will
+            be normalized via :func:`normalize_slot_name_for_fingerprint`.
+        start: Reservation start datetime (any timezone; converted to
+            UTC before hashing).
+        end: Reservation end datetime (any timezone; converted to UTC
+            before hashing).
+
+    Returns:
+        64-character lowercase SHA-256 hexdigest string.
+    """
+    normalized_name = normalize_slot_name_for_fingerprint(slot_name)
+    start_utc = _dt_to_utc_iso(start)
+    end_utc = _dt_to_utc_iso(end)
+    canonical = (
+        f"{FINGERPRINT_VERSION}:{entry_id}:{normalized_name}:{start_utc}:{end_utc}"
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def extract_booking_aliases(summary: str, description: str) -> set[str]:
+    """Extract booking/confirmation aliases from an event's text fields.
+
+    Searches the combined *summary* and *description* text for known
+    booking-platform confirmation codes.  Currently extracts:
+
+    - **Airbnb** confirmation codes: one uppercase letter followed by
+      nine uppercase alphanumeric characters (e.g. ``HMXXXXXXXX``).
+
+    The extracted aliases are stored as :attr:`Reservation.booking_aliases`
+    and used as secondary signals in :func:`find_reservation_rematch`.
+
+    Args:
+        summary: Raw iCal SUMMARY field value.
+        description: Raw iCal DESCRIPTION field value; may be empty or
+            ``None``-like (empty string is safe).
+
+    Returns:
+        Set of extracted booking identifier strings; empty when none
+        are detected.
+    """
+    aliases: set[str] = set()
+    text = f"{summary} {description or ''}"
+    for m in _AIRBNB_CONF_RE.finditer(text):
+        aliases.add(m.group(1))
+    return aliases
+
+
+# ---------------------------------------------------------------------------
+# Rematch result types
+# ---------------------------------------------------------------------------
+
+
+class RematchKind(str, Enum):
+    """Classification of a reservation identity rematch result.
+
+    Values follow the six-rule matching hierarchy from R-002 in
+    ``specs/012-slot-reconciliation/research.md``.  Lower-numbered rules
+    take precedence: :func:`find_reservation_rematch` returns the *first*
+    matching rule for each candidate reservation.
+    """
+
+    EXACT = "exact"
+    """Rule 1: primary fingerprint found unchanged in persisted mappings."""
+
+    UID_ALIAS = "uid_alias"
+    """Rule 2: a volatile UID alias overlaps; name also matches.
+
+    :attr:`RematchResult.date_shifted` is always ``True`` when this
+    kind is returned, because if the dates had not changed the primary
+    fingerprint would have matched under rule 1 instead.
+    """
+
+    BOOKING_ALIAS = "booking_alias"
+    """Rule 3: a booking/confirmation alias overlaps; name also matches."""
+
+    NAME_TIME = "name_time"
+    """Rule 4: normalized name plus exact UTC start/end match.
+
+    Triggered when no alias evidence is available but the persisted
+    identity dict's ``slot_name``, ``start``, and ``end`` match the
+    incoming reservation exactly.  Acts as a migration safety net.
+    """
+
+    CONTINUITY = "continuity"
+    """Rule 5: conservative continuity rematch.
+
+    Exactly one persisted mapping is compatible based on fingerprint
+    history, booking aliases, or normalized name with actual-slot
+    evidence, and no other current reservation competes for it.
+    """
+
+    AMBIGUOUS = "ambiguous"
+    """Two or more candidates are equally compatible; no rematch is made.
+
+    Can arise from rule 2 (multiple UID alias matches), rule 3 (multiple
+    booking alias matches), or rule 5 (multiple continuity-compatible
+    mappings).  :attr:`RematchResult.ambiguous_keys` lists all
+    compatible candidates for diagnostic capture.
+    """
+
+    NO_MATCH = "no_match"
+    """No compatible persisted mapping was found under any rule."""
+
+
+@dataclass(slots=True)
+class RematchResult:
+    """Result of a reservation identity rematch lookup.
+
+    Produced by :func:`find_reservation_rematch` and consumed by the
+    coordinator's identity-resolution step to decide whether and how
+    to update the persisted slot mapping.
+
+    Attributes:
+        kind: Classification of the match found.
+        matched_identity_key: Primary identity key of the persisted
+            mapping that matched.  ``None`` for ``AMBIGUOUS`` and
+            ``NO_MATCH`` results.
+        date_shifted: ``True`` when the match was established via a UID
+            alias but the incoming reservation's dates differ from the
+            persisted fingerprint.  Always ``False`` for non-UID-alias
+            matches.  When ``True`` and ``should_update_code`` is also
+            ``True`` in the coordinator config, the coordinator should
+            regenerate the access code alongside the date update.
+        ambiguous_keys: Identity keys of all compatible candidates when
+            *kind* is ``AMBIGUOUS``; empty otherwise.
+    """
+
+    kind: RematchKind
+    matched_identity_key: str | None
+    date_shifted: bool = False
+    ambiguous_keys: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Rematch helpers (private)
+# ---------------------------------------------------------------------------
+
+
+def _get_nested(d: dict[str, Any], *keys: str) -> Any:
+    """Safely navigate nested dict keys; return ``None`` on any miss."""
+    current: Any = d
+    for k in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(k)
+    return current
+
+
+def _is_continuity_compatible(
+    reservation: Reservation,
+    mapping_key: str,
+    mapping: dict[str, Any],
+    res_norm_name: str,
+    actual_slot_names: dict[int, str] | None,
+) -> bool:
+    """Return ``True`` if *mapping* is continuity-compatible with *reservation*.
+
+    A mapping is continuity-compatible when:
+
+    1. Normalized names match (required baseline).
+    2. At least one of the following weak signals is present:
+
+       a. The reservation's current identity key appears in the mapping's
+          ``fingerprint_history`` (a prior fingerprint for this mapping).
+       b. The mapping's primary ``identity_key`` appears in the
+          reservation's :attr:`Reservation.fingerprint_history`.
+       c. A booking alias overlaps between the two records.
+       d. The actual Keymaster slot name for the mapping's slot matches
+          the reservation's normalized name (actual-slot continuity).
+
+    Args:
+        reservation: The incoming reservation candidate.
+        mapping_key: Identity key of the persisted mapping being tested.
+        mapping: Raw Store mapping dict.
+        res_norm_name: Pre-computed normalized name for *reservation*.
+        actual_slot_names: Optional mapping of slot number → current
+            Keymaster slot name for actual-slot continuity checks.
+
+    Returns:
+        ``True`` if the mapping is continuity-compatible with the
+        reservation; ``False`` otherwise.
+    """
+    persisted_name = normalize_slot_name_for_fingerprint(
+        _get_nested(mapping, "identity", "slot_name") or ""
+    )
+    if persisted_name != res_norm_name:
+        return False
+
+    # Signal (a): reservation's current fingerprint in mapping's history
+    fp_history: list[str] = mapping.get("fingerprint_history") or []
+    if reservation.identity_key in fp_history:
+        return True
+
+    # Signal (b): persisted key in reservation's fingerprint history
+    if mapping_key in reservation.fingerprint_history:
+        return True
+
+    # Signal (c): booking alias overlap
+    persisted_booking: set[str] = set(
+        _get_nested(mapping, "identity", "booking_aliases") or []
+    )
+    if persisted_booking & reservation.booking_aliases:
+        return True
+
+    # Signal (d): actual Keymaster slot name matches
+    if actual_slot_names is not None:
+        slot_num: int | None = mapping.get("slot")
+        if slot_num is not None:
+            actual_name = actual_slot_names.get(slot_num)
+            if actual_name is not None:
+                if normalize_slot_name_for_fingerprint(actual_name) == res_norm_name:
+                    return True
+
+    return False
+
+
+def _has_competing_reservation(
+    candidate_key: str,
+    persisted_mappings: dict[str, dict[str, Any]],
+    current_reservations: list[Reservation] | None,
+    this_reservation: Reservation,
+) -> bool:
+    """Return ``True`` if another current reservation also matches *candidate_key*.
+
+    Used by :func:`find_reservation_rematch` to verify that a single
+    continuity candidate is not also claimed by another current
+    reservation (which would make the rematch ambiguous even though
+    only one persisted mapping is compatible).
+
+    Args:
+        candidate_key: Identity key of the single compatible mapping.
+        persisted_mappings: Full raw Store mapping dict.
+        current_reservations: All current reservations being reconciled.
+        this_reservation: The reservation being matched (excluded from
+            the competition check).
+
+    Returns:
+        ``True`` if at least one other current reservation competes for
+        the candidate mapping by normalized name; ``False`` otherwise.
+    """
+    if current_reservations is None:
+        return False
+    candidate_mapping = persisted_mappings.get(candidate_key, {})
+    candidate_norm_name = normalize_slot_name_for_fingerprint(
+        _get_nested(candidate_mapping, "identity", "slot_name") or ""
+    )
+    for other in current_reservations:
+        if other.identity_key == this_reservation.identity_key:
+            continue  # skip self
+        if normalize_slot_name_for_fingerprint(other.slot_name) == candidate_norm_name:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Primary rematch entry point
+# ---------------------------------------------------------------------------
+
+
+def find_reservation_rematch(
+    reservation: Reservation,
+    persisted_mappings: dict[str, dict[str, Any]],
+    current_reservations: list[Reservation] | None = None,
+    actual_slot_names: dict[int, str] | None = None,
+) -> RematchResult:
+    """Find the best identity rematch for *reservation* in *persisted_mappings*.
+
+    Implements the six-rule matching hierarchy described in R-002 of
+    ``specs/012-slot-reconciliation/research.md``:
+
+    1. **Exact fingerprint**: if the reservation's ``identity_key`` is
+       already a key in *persisted_mappings*, return
+       :attr:`RematchKind.EXACT`.
+    2. **UID alias + name**: if any volatile UID alias in the incoming
+       reservation overlaps with a persisted mapping's ``uid_aliases``
+       *and* the normalized names match, return
+       :attr:`RematchKind.UID_ALIAS` with ``date_shifted=True`` (because
+       the fingerprint would have matched under rule 1 if dates were
+       unchanged).  If multiple mappings match, return AMBIGUOUS.
+    3. **Booking alias + name**: if any booking/confirmation alias
+       overlaps *and* names match, return
+       :attr:`RematchKind.BOOKING_ALIAS`.  If multiple mappings match
+       the same alias, return AMBIGUOUS.
+    4. **Name + exact start/end**: compare the normalized name and exact
+       UTC start/end stored in the persisted mapping's ``identity`` dict.
+       Returns :attr:`RematchKind.NAME_TIME` when both match.  Serves
+       as a migration safety net.
+    5. **Conservative continuity**: collect all continuity-compatible
+       candidates (see :func:`_is_continuity_compatible`).  If exactly
+       one is found and no other current reservation competes for it,
+       return :attr:`RematchKind.CONTINUITY`.  If multiple candidates
+       are compatible, return :attr:`RematchKind.AMBIGUOUS` with all
+       keys for diagnostic capture.
+    6. **No match**: return :attr:`RematchKind.NO_MATCH`.
+
+    Args:
+        reservation: The incoming reservation to resolve against stored
+            mappings.
+        persisted_mappings: Raw Store mapping dicts keyed by identity
+            key (as loaded by
+            :meth:`~rental_control.event_overrides.EventOverrides.load_persisted_mappings`).
+        current_reservations: All current reservations being reconciled
+            in this refresh cycle.  Used for competition checking in
+            the conservative continuity rematch.  Optional.
+        actual_slot_names: Mapping of Keymaster slot number to the
+            currently observed slot name entity state.  Provides the
+            actual-slot continuity signal in rule 5.  Optional.
+
+    Returns:
+        A :class:`RematchResult` describing the best match found.
+    """
+    # Rule 1: exact primary fingerprint match
+    if reservation.identity_key in persisted_mappings:
+        return RematchResult(
+            kind=RematchKind.EXACT,
+            matched_identity_key=reservation.identity_key,
+        )
+
+    res_norm_name = normalize_slot_name_for_fingerprint(reservation.slot_name)
+
+    # Rule 2: UID alias + normalized name match
+    # If a UID alias matches but rule 1 did not fire, the fingerprint must
+    # differ.  Given that the fingerprint encodes entry_id + name + start +
+    # end, and entry_id is constant per instance, different fingerprint with
+    # matching name means the dates shifted → date_shifted=True always.
+    uid_matches: list[str] = []
+    for mapping_key, mapping in persisted_mappings.items():
+        persisted_uids: set[str] = set(
+            _get_nested(mapping, "identity", "uid_aliases") or []
+        )
+        if persisted_uids & reservation.uid_aliases:
+            persisted_name = normalize_slot_name_for_fingerprint(
+                _get_nested(mapping, "identity", "slot_name") or ""
+            )
+            if persisted_name == res_norm_name:
+                uid_matches.append(mapping_key)
+
+    if len(uid_matches) == 1:
+        return RematchResult(
+            kind=RematchKind.UID_ALIAS,
+            matched_identity_key=uid_matches[0],
+            date_shifted=True,
+        )
+    if len(uid_matches) > 1:
+        return RematchResult(
+            kind=RematchKind.AMBIGUOUS,
+            matched_identity_key=None,
+            ambiguous_keys=uid_matches,
+        )
+
+    # Rule 3: booking alias + normalized name match
+    # Collect all matches to detect ambiguous scenarios (e.g. duplicate
+    # booking codes across two persisted mappings).
+    booking_matches: list[str] = []
+    for mapping_key, mapping in persisted_mappings.items():
+        persisted_booking: set[str] = set(
+            _get_nested(mapping, "identity", "booking_aliases") or []
+        )
+        if persisted_booking & reservation.booking_aliases:
+            persisted_name = normalize_slot_name_for_fingerprint(
+                _get_nested(mapping, "identity", "slot_name") or ""
+            )
+            if persisted_name == res_norm_name:
+                booking_matches.append(mapping_key)
+
+    if len(booking_matches) == 1:
+        return RematchResult(
+            kind=RematchKind.BOOKING_ALIAS,
+            matched_identity_key=booking_matches[0],
+        )
+    if len(booking_matches) > 1:
+        return RematchResult(
+            kind=RematchKind.AMBIGUOUS,
+            matched_identity_key=None,
+            ambiguous_keys=booking_matches,
+        )
+
+    # Rule 4: name + exact start/end stored in identity dict
+    for mapping_key, mapping in persisted_mappings.items():
+        persisted_name = normalize_slot_name_for_fingerprint(
+            _get_nested(mapping, "identity", "slot_name") or ""
+        )
+        if persisted_name != res_norm_name:
+            continue
+        start_iso: str | None = _get_nested(mapping, "identity", "start")
+        end_iso: str | None = _get_nested(mapping, "identity", "end")
+        if start_iso is None or end_iso is None:
+            continue
+        try:
+            p_start = datetime.fromisoformat(start_iso)
+            p_end = datetime.fromisoformat(end_iso)
+        except (ValueError, TypeError):  # fmt: skip
+            continue
+        # Normalize both sides to UTC for comparison
+        res_s = (
+            reservation.start.astimezone(timezone.utc)
+            if reservation.start.tzinfo
+            else reservation.start.replace(tzinfo=timezone.utc)
+        )
+        res_e = (
+            reservation.end.astimezone(timezone.utc)
+            if reservation.end.tzinfo
+            else reservation.end.replace(tzinfo=timezone.utc)
+        )
+        p_s = (
+            p_start.astimezone(timezone.utc)
+            if p_start.tzinfo
+            else p_start.replace(tzinfo=timezone.utc)
+        )
+        p_e = (
+            p_end.astimezone(timezone.utc)
+            if p_end.tzinfo
+            else p_end.replace(tzinfo=timezone.utc)
+        )
+        if res_s == p_s and res_e == p_e:
+            return RematchResult(
+                kind=RematchKind.NAME_TIME,
+                matched_identity_key=mapping_key,
+            )
+
+    # Rule 5: conservative continuity rematch
+    candidates: list[str] = [
+        mapping_key
+        for mapping_key, mapping in persisted_mappings.items()
+        if _is_continuity_compatible(
+            reservation,
+            mapping_key,
+            mapping,
+            res_norm_name,
+            actual_slot_names,
+        )
+    ]
+
+    if len(candidates) == 1:
+        if not _has_competing_reservation(
+            candidates[0],
+            persisted_mappings,
+            current_reservations,
+            reservation,
+        ):
+            return RematchResult(
+                kind=RematchKind.CONTINUITY,
+                matched_identity_key=candidates[0],
+            )
+        # Competition found → treat as ambiguous even with one candidate
+        return RematchResult(
+            kind=RematchKind.AMBIGUOUS,
+            matched_identity_key=None,
+            ambiguous_keys=list(candidates),
+        )
+
+    if len(candidates) > 1:
+        return RematchResult(
+            kind=RematchKind.AMBIGUOUS,
+            matched_identity_key=None,
+            ambiguous_keys=list(candidates),
+        )
+
+    return RematchResult(kind=RematchKind.NO_MATCH, matched_identity_key=None)

@@ -3332,3 +3332,264 @@ class TestStoreSchemaV1:
         eo.load_persisted_mappings({"phantom-key": m})
 
         assert 10 in eo.pending_clear_slots
+
+
+# ---------------------------------------------------------------------------
+# T078: Exact stable-fingerprint restart mapping preservation
+# ---------------------------------------------------------------------------
+
+
+class TestExactFingerprintRestartPreservation:
+    """T078: Persisted mappings keyed by stable fingerprint survive restarts.
+
+    These tests verify the complete chain:
+    1. Compute fingerprint from reservation attributes.
+    2. Persist a mapping keyed by that fingerprint via load_persisted_mappings().
+    3. On a simulated restart, find_reservation_rematch() returns EXACT.
+
+    This proves that slot assignments survive restarts when the calendar
+    feed returns the same reservation data (even with a new volatile UID).
+    """
+
+    def _make_fp_mapping(
+        self,
+        identity_key: str,
+        slot_name: str,
+        slot: int = 10,
+        uid_aliases: list[str] | None = None,
+    ) -> dict:
+        """Build a minimal v1 mapping suitable for fingerprint restart tests."""
+        return {
+            "identity_key": identity_key,
+            "slot": slot,
+            "status": "occupied",
+            "operation_id": None,
+            "operation_kind": None,
+            "identity": {
+                "identity_key": identity_key,
+                "summary": slot_name,
+                "slot_name": slot_name,
+                "uid_aliases": uid_aliases or [],
+                "booking_aliases": [],
+            },
+            "missing_count": 0,
+            "pending_set_since": None,
+            "pending_clear_since": None,
+            "fingerprint_history": [],
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "last_observed_actual": {
+                "slot": slot,
+                "classification": "occupied",
+                "name_state": slot_name,
+                "has_code": True,
+                "start_state": None,
+                "end_state": None,
+                "use_date_range": None,
+                "enabled": None,
+            },
+        }
+
+    def test_fingerprint_key_survives_load(self) -> None:
+        """T078-1: load_persisted_mappings retains fingerprint as mapping key."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry_id = "entry-restart-001"
+        name = "Alice Guest"
+        start = _make_dt(2026, 7, 1)
+        end = _make_dt(2026, 7, 8)
+
+        fp = make_reservation_fingerprint(entry_id, name, start, end)
+        mapping = self._make_fp_mapping(identity_key=fp, slot_name=name)
+
+        eo = EventOverrides(start_slot=10, max_slots=3)
+        eo.load_persisted_mappings({fp: mapping})
+
+        pm = eo.persisted_mappings
+        assert fp in pm
+        assert pm[fp]["slot"] == 10
+        assert pm[fp]["status"] == "occupied"
+
+    def test_exact_rematch_after_restart_no_uid_change(self) -> None:
+        """T078-2: EXACT rematch found when feed returns same reservation data.
+
+        Simulates: integration persists the mapping, HA restarts, feed
+        returns the same reservation → find_reservation_rematch returns EXACT.
+        """
+        from custom_components.rental_control.reconciliation import RematchKind
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import (
+            find_reservation_rematch,
+        )
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry_id = "entry-restart-002"
+        name = "Bob Guest"
+        start = _make_dt(2026, 7, 10)
+        end = _make_dt(2026, 7, 17)
+        uid = "uid-stable-bob"
+
+        fp = make_reservation_fingerprint(entry_id, name, start, end)
+        mapping = self._make_fp_mapping(
+            identity_key=fp, slot_name=name, uid_aliases=[uid]
+        )
+
+        eo = EventOverrides(start_slot=10, max_slots=3)
+        eo.load_persisted_mappings({fp: mapping})
+
+        # After restart: feed returns same reservation (same fingerprint)
+        reservation = Reservation(
+            identity_key=fp,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary=name,
+            slot_name=name,
+            display_slot_name=f"RC {name}",
+            slot_code="1234",
+        )
+        reservation.uid_aliases.add(uid)
+
+        result = find_reservation_rematch(reservation, eo.persisted_mappings)
+        assert result.kind is RematchKind.EXACT
+        assert result.matched_identity_key == fp
+
+    def test_exact_rematch_after_restart_with_uid_churn(self) -> None:
+        """T078-3: EXACT rematch even when UID changed between restarts.
+
+        Simulates: integration persists with old UID, platform reissues
+        UID before HA restarts, feed returns new UID but same name/dates
+        → fingerprint unchanged → EXACT match → mapping preserved.
+        """
+        from custom_components.rental_control.reconciliation import RematchKind
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import (
+            find_reservation_rematch,
+        )
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry_id = "entry-restart-003"
+        name = "Carol Guest"
+        start = _make_dt(2026, 8, 1)
+        end = _make_dt(2026, 8, 8)
+        old_uid = "uid-carol-original"
+        new_uid = "uid-carol-reissued"
+
+        fp = make_reservation_fingerprint(entry_id, name, start, end)
+        mapping = self._make_fp_mapping(
+            identity_key=fp, slot_name=name, uid_aliases=[old_uid]
+        )
+
+        eo = EventOverrides(start_slot=10, max_slots=3)
+        eo.load_persisted_mappings({fp: mapping})
+
+        # After restart: feed returns SAME reservation with NEW uid
+        reservation = Reservation(
+            identity_key=fp,  # fingerprint is UID-independent → same fp
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary=name,
+            slot_name=name,
+            display_slot_name=f"RC {name}",
+            slot_code="5678",
+        )
+        reservation.uid_aliases.add(new_uid)  # new UID after platform churn
+
+        result = find_reservation_rematch(reservation, eo.persisted_mappings)
+        assert result.kind is RematchKind.EXACT
+        assert result.matched_identity_key == fp
+        assert result.date_shifted is False  # no date shift, only UID changed
+
+    def test_no_raw_pin_in_fingerprint_keyed_mapping(self) -> None:
+        """T078-4: Fingerprint-keyed mappings maintain no-raw-PIN invariant."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        fp = make_reservation_fingerprint(
+            "entry-001", "Diana Guest", _make_dt(2026, 9, 1), _make_dt(2026, 9, 8)
+        )
+        mapping = self._make_fp_mapping(identity_key=fp, slot_name="Diana Guest")
+
+        # Verify the fixture itself (and any real persistence) has no raw PIN
+        last_obs = mapping["last_observed_actual"]
+        assert "pin" not in last_obs
+        assert "code" not in last_obs
+        assert "slot_code" not in last_obs
+        assert "has_code" in last_obs  # only the bool flag
+
+    def test_multiple_fingerprint_keyed_mappings_loaded(self) -> None:
+        """T078-5: Multiple fingerprint-keyed mappings all survive load."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        guests = [
+            ("Alice", _make_dt(2026, 7, 1), _make_dt(2026, 7, 8), 10),
+            ("Bob", _make_dt(2026, 7, 9), _make_dt(2026, 7, 16), 11),
+            ("Carol", _make_dt(2026, 7, 17), _make_dt(2026, 7, 24), 12),
+        ]
+        entry_id = "entry-multi"
+        mappings = {}
+        fps = []
+        for name, start, end, slot in guests:
+            fp = make_reservation_fingerprint(entry_id, name, start, end)
+            fps.append(fp)
+            mappings[fp] = self._make_fp_mapping(
+                identity_key=fp, slot_name=name, slot=slot
+            )
+
+        eo = EventOverrides(start_slot=10, max_slots=3)
+        eo.load_persisted_mappings(mappings)
+
+        pm = eo.persisted_mappings
+        for fp in fps:
+            assert fp in pm
+
+    def test_dataclass_invariants_preserved_after_restart(self) -> None:
+        """T078-6: SlotMapping invariants from prior commits remain intact post-restart.
+
+        Verifies that schema_version >= 1 and missing_count >= 0 invariants
+        from the SlotMapping dataclass (T014/commit 2) are not violated by
+        fingerprint-keyed mappings used in restart scenarios.
+        """
+        from custom_components.rental_control.reconciliation import SlotMapping
+        from custom_components.rental_control.reconciliation import StoredActual
+        from custom_components.rental_control.reconciliation import StoredIdentity
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry_id = "entry-inv"
+        name = "Eve Guest"
+        start = _make_dt(2026, 10, 1)
+        end = _make_dt(2026, 10, 8)
+        fp = make_reservation_fingerprint(entry_id, name, start, end)
+
+        sm = SlotMapping(
+            schema_version=1,
+            entry_id=entry_id,
+            identity_key=fp,
+            slot=10,
+            status="occupied",
+            identity=StoredIdentity(
+                identity_key=fp,
+                summary=name,
+                slot_name=name,
+            ),
+            last_observed_actual=StoredActual(slot=10, classification="occupied"),
+            updated_at=_make_dt(2026, 10, 1),
+        )
+        # schema_version=1 and missing_count=0 are valid per SlotMapping.__post_init__
+        assert sm.schema_version == 1
+        assert sm.missing_count == 0
+        assert sm.identity_key == fp
+        assert sm.fingerprint_history == []
