@@ -42,6 +42,8 @@ extract_booking_aliases
     Extract booking/confirmation aliases from event text.
 find_reservation_rematch
     Find the best identity rematch for a reservation in persisted mappings.
+compute_desired_plan
+    Compute the deterministic desired slot plan for a set of reservations.
 """
 
 from __future__ import annotations
@@ -55,10 +57,6 @@ import hashlib
 import re
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Identity fingerprinting constants
-# ---------------------------------------------------------------------------
-
 FINGERPRINT_VERSION = "v1"
 """Version tag for the primary reservation fingerprint scheme.
 
@@ -67,10 +65,6 @@ must be bumped (e.g. to ``"v2"``) so that v1 and v2 fingerprints
 occupy separate namespaces and old persisted keys can be preserved
 in :attr:`Reservation.fingerprint_history` for conservative rematch.
 """
-
-# ---------------------------------------------------------------------------
-# Compiled patterns for booking/confirmation alias extraction
-# ---------------------------------------------------------------------------
 
 # Airbnb confirmation codes: one uppercase letter followed by nine
 # uppercase alphanumeric characters (e.g. "HMXXXXXXXX").
@@ -555,11 +549,6 @@ class SlotMapping:
             )
 
 
-# ---------------------------------------------------------------------------
-# Identity fingerprinting helpers
-# ---------------------------------------------------------------------------
-
-
 def normalize_slot_name_for_fingerprint(slot_name: str) -> str:
     """Return the stable normalized form of a slot name for fingerprinting.
 
@@ -666,11 +655,6 @@ def extract_booking_aliases(summary: str, description: str) -> set[str]:
     return aliases
 
 
-# ---------------------------------------------------------------------------
-# Rematch result types
-# ---------------------------------------------------------------------------
-
-
 class RematchKind(str, Enum):
     """Classification of a reservation identity rematch result.
 
@@ -750,11 +734,6 @@ class RematchResult:
     matched_identity_key: str | None
     date_shifted: bool = False
     ambiguous_keys: list[str] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Rematch helpers (private)
-# ---------------------------------------------------------------------------
 
 
 def _get_nested(d: dict[str, Any], *keys: str) -> Any:
@@ -871,11 +850,6 @@ def _has_competing_reservation(
         if normalize_slot_name_for_fingerprint(other.slot_name) == candidate_norm_name:
             return True
     return False
-
-
-# ---------------------------------------------------------------------------
-# Primary rematch entry point
-# ---------------------------------------------------------------------------
 
 
 def find_reservation_rematch(
@@ -1078,3 +1052,280 @@ def find_reservation_rematch(
         )
 
     return RematchResult(kind=RematchKind.NO_MATCH, matched_identity_key=None)
+
+
+def _find_persisted_slot_for_reservation(
+    managed_slots: list[ManagedSlot], identity_key: str
+) -> ManagedSlot | None:
+    """Return the managed slot that has *identity_key* as its persisted assignment.
+
+    Scans only slots where :attr:`ManagedSlot.managed` is ``True``.
+    Returns ``None`` if no such slot is found.
+
+    Args:
+        managed_slots: Full list of managed and unmanaged slots.
+        identity_key: Reservation identity key to look up.
+
+    Returns:
+        The first managed slot whose :attr:`ManagedSlot.persisted_identity_key`
+        matches *identity_key*, or ``None``.
+    """
+    for ms in managed_slots:
+        if ms.managed and ms.persisted_identity_key == identity_key:
+            return ms
+    return None
+
+
+def _is_slot_assignable(ms: ManagedSlot) -> bool:
+    """Return ``True`` when *ms* can receive a new desired assignment.
+
+    Slots with :attr:`SlotStatus.PENDING_CLEAR`, :attr:`SlotStatus.BLOCKED`,
+    or :attr:`SlotStatus.UNKNOWN` status cannot receive a different reservation
+    until their status resolves.  All other statuses (FREE, OCCUPIED, PHANTOM)
+    are considered assignable by the planner.
+
+    Args:
+        ms: Managed slot to evaluate.
+
+    Returns:
+        ``True`` if the slot may be included in a desired assignment;
+        ``False`` if the slot must be skipped.
+    """
+    return ms.status not in {
+        SlotStatus.PENDING_CLEAR,
+        SlotStatus.BLOCKED,
+        SlotStatus.UNKNOWN,
+    }
+
+
+def _filter_eligible(reservations: list[Reservation]) -> list[Reservation]:
+    """Return the subset of *reservations* eligible for slot planning.
+
+    Excludes ineligible, checked-out, and feed-missed reservations.
+    Protected active reservations bypass the missing-count filter because
+    an active guest must stay assigned regardless of feed gaps.
+
+    Args:
+        reservations: Full list of current reservations.
+
+    Returns:
+        Filtered list containing only candidates that may be selected.
+    """
+    result: list[Reservation] = []
+    for res in reservations:
+        if not res.eligible or res.checked_out:
+            continue
+        if res.missing_count >= 3 and not res.protected_active:
+            continue
+        result.append(res)
+    return result
+
+
+def _select_candidates(
+    eligible: list[Reservation],
+    max_events: int,
+) -> tuple[list[Reservation], list[Reservation], list[Reservation], int]:
+    """Partition *eligible* into protected, selected-non-protected, and overflow.
+
+    Protected active reservations are always selected first and count against
+    ``max_events``.  The remaining capacity is filled by the soonest
+    non-protected reservations sorted by ``(start, identity_key)``.
+
+    Args:
+        eligible: Pre-filtered list of eligible reservations.
+        max_events: Maximum total assignments allowed.
+
+    Returns:
+        A four-tuple of
+        ``(protected, selected_np, overflow_list, remaining_capacity)``
+        where *remaining_capacity* is ``max(0, max_events - len(protected))``.
+    """
+    protected = [r for r in eligible if r.protected_active]
+    non_protected = [r for r in eligible if not r.protected_active]
+    non_protected.sort(key=lambda r: (r.start, r.identity_key))
+    remaining_capacity = max(0, max_events - len(protected))
+    return (
+        protected,
+        non_protected[:remaining_capacity],
+        non_protected[remaining_capacity:],
+        remaining_capacity,
+    )
+
+
+def _build_slot_action(
+    ms: ManagedSlot,
+    desired_key: str | None,
+    res_by_key: dict[str, "Reservation"],
+) -> tuple[ActionKind, str | None]:
+    """Determine the reconciliation action for one managed slot.
+
+    Compares the desired assignment against the slot's current observed
+    state to produce the appropriate :class:`ActionKind` and an optional
+    human-readable reason string.
+
+    Args:
+        ms: The managed slot being evaluated.
+        desired_key: Identity key of the reservation the planner wants in
+            this slot, or ``None`` if the slot should be empty.
+        res_by_key: Mapping of identity key → :class:`Reservation` for
+            date comparison.
+
+    Returns:
+        A two-tuple ``(action, pending_reason)``.
+    """
+    if ms.status is SlotStatus.PENDING_CLEAR:
+        return ActionKind.RETRY_CLEAR, ms.blocked_reason or "pending_clear"
+
+    if ms.status in {SlotStatus.BLOCKED, SlotStatus.UNKNOWN}:
+        return ActionKind.BLOCKED, ms.blocked_reason or ms.status.value
+
+    if desired_key is None:
+        if ms.status is SlotStatus.FREE:
+            return ActionKind.NOOP, None
+        return ActionKind.CLEAR, None
+
+    desired_res = res_by_key.get(desired_key)
+    if ms.status is SlotStatus.FREE:
+        return ActionKind.SET, None
+
+    if ms.status is SlotStatus.OCCUPIED:
+        if ms.persisted_identity_key != desired_key:
+            return ActionKind.CLEAR, None
+        if desired_res is not None and (
+            ms.actual_start is not None or ms.actual_end is not None
+        ):
+            dates_match = (
+                ms.actual_start == desired_res.buffered_start
+                and ms.actual_end == desired_res.buffered_end
+            )
+            return (ActionKind.NOOP if dates_match else ActionKind.UPDATE_TIMES), None
+        return ActionKind.NOOP, None
+
+    return ActionKind.CLEAR, None
+
+
+def compute_desired_plan(
+    reservations: list[Reservation],
+    managed_slots: list[ManagedSlot],
+    max_events: int,
+    plan_id: str,
+    generated_at: datetime,
+) -> DesiredPlan:
+    """Compute the deterministic desired slot plan for the current set of reservations.
+
+    **Selection**: eligible candidates are filtered, protected active reservations
+    are always selected first (counting against ``max_events``), and remaining
+    capacity is filled by soonest non-protected sorted by ``(start, identity_key)``.
+    Overflow reservations receive reason ``"capacity"`` with per-entry rank.
+
+    **Slot assignment**: protected and selected reservations retain their persisted
+    slot when it is assignable; otherwise the lowest free managed slot is used.
+    ``PENDING_CLEAR``, ``BLOCKED``, and ``UNKNOWN`` slots are never assigned.
+
+    **Action generation**: ``SET`` for a free slot, ``UPDATE_TIMES`` when dates
+    differ, ``NOOP`` when already correct, ``CLEAR`` for stale/phantom/wrong
+    occupants, ``RETRY_CLEAR`` for pending clears, and ``BLOCKED`` for locked
+    slots.  ``NOOP`` actions are excluded from :attr:`DesiredPlan.actions`.
+
+    Args:
+        reservations: All current reservations (eligible and ineligible).
+        managed_slots: All managed slots with their current observed and
+            persisted state.
+        max_events: Maximum number of reservations that can be assigned.
+        plan_id: Refresh-scoped identifier for logging and operation tokens.
+        generated_at: Time at which the plan was computed.
+
+    Returns:
+        A fully populated :class:`DesiredPlan` with :attr:`~DesiredPlan.selected`,
+        :attr:`~DesiredPlan.protected`, :attr:`~DesiredPlan.overflow`,
+        :attr:`~DesiredPlan.slots`, :attr:`~DesiredPlan.actions`, and
+        :attr:`~DesiredPlan.diagnostics` populated.
+    """
+    plan = DesiredPlan(plan_id=plan_id, generated_at=generated_at)
+
+    eligible = _filter_eligible(reservations)
+    protected, selected_np, overflow_list, remaining_capacity = _select_candidates(
+        eligible, max_events
+    )
+    plan.protected = {r.identity_key for r in protected}
+
+    assigned: dict[int, str] = {}
+    free_slot_numbers: list[int] = sorted(
+        ms.slot for ms in managed_slots if ms.managed and ms.status is SlotStatus.FREE
+    )
+
+    def _try_assign(res: Reservation) -> bool:
+        """Try to assign *res* to its persisted slot or the lowest free slot."""
+        persisted = _find_persisted_slot_for_reservation(
+            managed_slots, res.identity_key
+        )
+        if (
+            persisted is not None
+            and _is_slot_assignable(persisted)
+            and persisted.slot not in assigned
+        ):
+            assigned[persisted.slot] = res.identity_key
+            if persisted.slot in free_slot_numbers:
+                free_slot_numbers.remove(persisted.slot)
+            return True
+        if free_slot_numbers:
+            assigned[free_slot_numbers.pop(0)] = res.identity_key
+            return True
+        return False
+
+    for res in protected:
+        if not _try_assign(res):
+            plan.diagnostics.setdefault("protected_capacity_violations", []).append(
+                res.identity_key
+            )
+
+    for res in selected_np:
+        if not _try_assign(res):
+            plan.overflow[res.identity_key] = "no_free_slot"
+
+    for slot_num, ikey in assigned.items():
+        plan.selected[ikey] = slot_num
+
+    for rank_offset, res in enumerate(overflow_list):
+        plan.overflow[res.identity_key] = "capacity"
+        plan.diagnostics.setdefault("overflow_details", {})[res.identity_key] = {
+            "rank": remaining_capacity + rank_offset + 1,
+            "reason": "capacity",
+            "start": res.start.isoformat(),
+            "identity_key": res.identity_key,
+        }
+
+    slot_to_identity: dict[int, str] = {v: k for k, v in plan.selected.items()}
+    res_by_key: dict[str, Reservation] = {r.identity_key: r for r in reservations}
+
+    for ms in sorted(managed_slots, key=lambda m: m.slot):
+        if not ms.managed:
+            continue
+        desired_key = slot_to_identity.get(ms.slot)
+        action, pending_reason = _build_slot_action(ms, desired_key, res_by_key)
+        if (
+            action is ActionKind.RETRY_CLEAR
+            and ms.persisted_identity_key in plan.protected
+        ):
+            action = ActionKind.BLOCKED
+            pending_reason = "protected_active_pending_clear"
+        ms.desired_identity_key = desired_key
+        plan.slots[ms.slot] = PlannedSlot(
+            slot=ms.slot,
+            desired_identity_key=desired_key,
+            actual_classification=ms.status.value,
+            action=action,
+            pending_reason=pending_reason,
+            retry_count=ms.retry_count,
+        )
+        if action is not ActionKind.NOOP:
+            plan.actions.append(
+                SlotAction(
+                    kind=action,
+                    slot=ms.slot,
+                    identity_key=desired_key,
+                    reason=pending_reason,
+                )
+            )
+
+    return plan

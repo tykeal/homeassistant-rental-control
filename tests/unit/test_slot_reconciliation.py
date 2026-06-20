@@ -48,6 +48,7 @@ from custom_components.rental_control.reconciliation import SlotMapping
 from custom_components.rental_control.reconciliation import SlotStatus
 from custom_components.rental_control.reconciliation import StoredActual
 from custom_components.rental_control.reconciliation import StoredIdentity
+from custom_components.rental_control.reconciliation import compute_desired_plan
 from custom_components.rental_control.reconciliation import extract_booking_aliases
 from custom_components.rental_control.reconciliation import find_reservation_rematch
 from custom_components.rental_control.reconciliation import make_reservation_fingerprint
@@ -137,6 +138,28 @@ def _make_desired_plan(
         plan_id=plan_id,
         generated_at=_dt(2026, 6, 19),
         selected=selected or {},
+    )
+
+
+def _make_managed_slot(
+    *,
+    slot: int = 5,
+    managed: bool = True,
+    status: SlotStatus = SlotStatus.FREE,
+    persisted_identity_key: str | None = None,
+    actual_start: datetime | None = None,
+    actual_end: datetime | None = None,
+    blocked_reason: str | None = None,
+) -> ManagedSlot:
+    """Return a minimal valid ManagedSlot for use in tests."""
+    return ManagedSlot(
+        slot=slot,
+        managed=managed,
+        status=status,
+        persisted_identity_key=persisted_identity_key,
+        actual_start=actual_start,
+        actual_end=actual_end,
+        blocked_reason=blocked_reason,
     )
 
 
@@ -2216,3 +2239,862 @@ class TestFindReservationRematchRulePriority:
         result = find_reservation_rematch(reservation, persisted_mappings)
         assert result.kind is RematchKind.CONTINUITY
         assert result.matched_identity_key == old_fp
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers for compute_desired_plan tests (T024, T025, T036, T037)
+# ---------------------------------------------------------------------------
+
+
+def _res(
+    identity_key: str,
+    start_day: int,
+    *,
+    start_month: int = 7,
+    eligible: bool = True,
+    protected_active: bool = False,
+    checked_out: bool = False,
+    missing_count: int = 0,
+) -> Reservation:
+    """Return a minimal Reservation for desired-plan tests.
+
+    Start is 2026-<start_month>-<start_day> 14:00 UTC;
+    end is 7 days later at 11:00 UTC (using timedelta to handle month boundaries).
+    """
+    from datetime import timedelta
+
+    start = datetime(2026, start_month, start_day, 14, tzinfo=_TZ)
+    end = (start + timedelta(days=7)).replace(hour=11)
+    return Reservation(
+        identity_key=identity_key,
+        start=start,
+        end=end,
+        buffered_start=start,
+        buffered_end=end,
+        summary=f"Guest {identity_key}",
+        slot_name=f"Guest {identity_key}",
+        display_slot_name=f"RC Guest {identity_key}",
+        slot_code="1234",
+        eligible=eligible,
+        protected_active=protected_active,
+        checked_out=checked_out,
+        missing_count=missing_count,
+    )
+
+
+def _free_slot(slot: int) -> ManagedSlot:
+    """Return a FREE managed slot with no persisted reservation."""
+    return _make_managed_slot(slot=slot, status=SlotStatus.FREE)
+
+
+def _occupied_slot(slot: int, persisted_key: str) -> ManagedSlot:
+    """Return an OCCUPIED managed slot with *persisted_key* as the stored identity."""
+    return _make_managed_slot(
+        slot=slot,
+        status=SlotStatus.OCCUPIED,
+        persisted_identity_key=persisted_key,
+    )
+
+
+# ---------------------------------------------------------------------------
+# T024: Pure soonest-N overflow tests (max_events=3, five eligible reservations)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeDesiredPlanSoonestN:
+    """T024: compute_desired_plan selects the earliest max_events reservations."""
+
+    def _five_reservations(self) -> list[Reservation]:
+        """Return five eligible reservations with sequential start dates."""
+        return [
+            _res("r-jul01", 1),  # earliest
+            _res("r-jul08", 8),
+            _res("r-jul15", 15),
+            _res("r-jul22", 22),
+            _res("r-jul29", 29),  # latest
+        ]
+
+    def _three_free_slots(self) -> list[ManagedSlot]:
+        """Return three free managed slots numbered 5, 6, 7."""
+        return [_free_slot(5), _free_slot(6), _free_slot(7)]
+
+    def test_selects_three_earliest_reservations(self) -> None:
+        """With five eligible reservations and max_events=3, the three earliest
+        by start time are selected."""
+        reservations = self._five_reservations()
+        slots = self._three_free_slots()
+
+        plan = compute_desired_plan(
+            reservations,
+            slots,
+            max_events=3,
+            plan_id="p1",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert set(plan.selected.keys()) == {"r-jul01", "r-jul08", "r-jul15"}
+
+    def test_selected_count_equals_max_events(self) -> None:
+        """selected dict has exactly max_events entries when enough eligible exist."""
+        plan = compute_desired_plan(
+            self._five_reservations(),
+            self._three_free_slots(),
+            max_events=3,
+            plan_id="p1",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert len(plan.selected) == 3
+
+    def test_two_latest_are_overflow(self) -> None:
+        """The two latest reservations end up in plan.overflow."""
+        plan = compute_desired_plan(
+            self._five_reservations(),
+            self._three_free_slots(),
+            max_events=3,
+            plan_id="p1",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-jul22" in plan.overflow
+        assert "r-jul29" in plan.overflow
+
+    def test_selected_and_overflow_are_disjoint(self) -> None:
+        """No identity key appears in both selected and overflow."""
+        plan = compute_desired_plan(
+            self._five_reservations(),
+            self._three_free_slots(),
+            max_events=3,
+            plan_id="p1",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert set(plan.selected.keys()).isdisjoint(plan.overflow.keys())
+
+    def test_overflow_reason_is_capacity(self) -> None:
+        """Overflow reservations have reason 'capacity'."""
+        plan = compute_desired_plan(
+            self._five_reservations(),
+            self._three_free_slots(),
+            max_events=3,
+            plan_id="p1",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.overflow["r-jul22"] == "capacity"
+        assert plan.overflow["r-jul29"] == "capacity"
+
+    def test_empty_reservations_returns_empty_plan(self) -> None:
+        """No reservations → empty selected and overflow."""
+        plan = compute_desired_plan(
+            [],
+            self._three_free_slots(),
+            max_events=3,
+            plan_id="p-empty",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.selected == {}
+        assert plan.overflow == {}
+
+    def test_fewer_reservations_than_max_events(self) -> None:
+        """Two eligible reservations and max_events=3 → both selected, no overflow."""
+        reservations = [_res("r-a", 1), _res("r-b", 8)]
+        plan = compute_desired_plan(
+            reservations,
+            self._three_free_slots(),
+            max_events=3,
+            plan_id="p-few",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert len(plan.selected) == 2
+        assert plan.overflow == {}
+
+    def test_selected_slots_are_unique(self) -> None:
+        """Each selected reservation receives a distinct slot number."""
+        plan = compute_desired_plan(
+            self._five_reservations(),
+            self._three_free_slots(),
+            max_events=3,
+            plan_id="p1",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        slot_values = list(plan.selected.values())
+        assert len(slot_values) == len(set(slot_values)), "duplicate slots in selected"
+
+    def test_selected_identity_keys_are_unique(self) -> None:
+        """Each identity key appears at most once in selected."""
+        plan = compute_desired_plan(
+            self._five_reservations(),
+            self._three_free_slots(),
+            max_events=3,
+            plan_id="p1",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert len(plan.selected) == len(set(plan.selected.keys()))
+
+    def test_plan_validate_returns_no_violations(self) -> None:
+        """compute_desired_plan produces a plan that passes its own validate()."""
+        plan = compute_desired_plan(
+            self._five_reservations(),
+            self._three_free_slots(),
+            max_events=3,
+            plan_id="p1",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.validate() == []
+
+    def test_ineligible_reservation_excluded(self) -> None:
+        """Reservations with eligible=False are never selected or overflowed."""
+        reservations = [
+            _res("r-elig", 1),
+            _res("r-inelig", 3, eligible=False),
+        ]
+        plan = compute_desired_plan(
+            reservations,
+            [_free_slot(5), _free_slot(6)],
+            max_events=3,
+            plan_id="p-inelig",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-inelig" not in plan.selected
+        assert "r-inelig" not in plan.overflow
+
+    def test_checked_out_reservation_excluded(self) -> None:
+        """Reservations with checked_out=True are never selected or overflowed."""
+        reservations = [
+            _res("r-active", 1),
+            _res("r-gone", 3, checked_out=True),
+        ]
+        plan = compute_desired_plan(
+            reservations,
+            [_free_slot(5), _free_slot(6)],
+            max_events=3,
+            plan_id="p-checkout",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-gone" not in plan.selected
+        assert "r-gone" not in plan.overflow
+
+    def test_missing_count_three_excluded_unless_protected(self) -> None:
+        """Reservations with missing_count >= 3 are excluded unless protected_active."""
+        r_missing = _res("r-miss", 1, missing_count=3)
+        r_present = _res("r-here", 3)
+        plan = compute_desired_plan(
+            [r_missing, r_present],
+            [_free_slot(5), _free_slot(6)],
+            max_events=3,
+            plan_id="p-miss",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-miss" not in plan.selected
+        assert "r-miss" not in plan.overflow
+        assert "r-here" in plan.selected
+
+    def test_set_actions_generated_for_free_slots(self) -> None:
+        """Selecting a reservation for a FREE slot produces a SET SlotAction."""
+        plan = compute_desired_plan(
+            [_res("r-a", 1)],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p-set",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        set_actions = [a for a in plan.actions if a.kind is ActionKind.SET]
+        assert len(set_actions) == 1
+        assert set_actions[0].slot == 5
+        assert set_actions[0].identity_key == "r-a"
+
+
+# ---------------------------------------------------------------------------
+# T025: No-farther-before-nearer, tie-breaker, churn minimization, overflow rank
+# ---------------------------------------------------------------------------
+
+
+class TestComputeDesiredPlanChurnAndDiagnostics:
+    """T025: determinism, churn minimization, and overflow-rank diagnostics."""
+
+    def test_no_farther_before_nearer(self) -> None:
+        """A farther persisted reservation is replaced by a nearer new reservation.
+
+        Given max_events=1 and a far reservation that was persisted in slot 5,
+        a nearer reservation should be selected and the far one overflowed.
+        """
+        r_near = _res("r-near", 1)  # July 1 — nearer
+        r_far = _res("r-far", 22)  # July 22 — farther
+
+        # Slot 5 is OCCUPIED with r-far as its persisted assignment; slot 6 is FREE.
+        slots = [
+            _occupied_slot(5, "r-far"),
+            _free_slot(6),
+        ]
+
+        plan = compute_desired_plan(
+            [r_near, r_far],
+            slots,
+            max_events=1,
+            plan_id="p-farther",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-near" in plan.selected
+        assert "r-far" in plan.overflow
+        assert plan.overflow["r-far"] == "capacity"
+
+    def test_equal_start_identity_key_tiebreaker(self) -> None:
+        """When two reservations share the same start, identity_key breaks the tie.
+
+        The lexicographically smaller identity_key is preferred (selected)
+        and the larger is overflowed.
+        """
+        same_start = datetime(2026, 7, 10, 14, tzinfo=_TZ)
+        same_end = datetime(2026, 7, 17, 11, tzinfo=_TZ)
+
+        r_zz = Reservation(
+            identity_key="zz-last",
+            start=same_start,
+            end=same_end,
+            buffered_start=same_start,
+            buffered_end=same_end,
+            summary="Guest ZZ",
+            slot_name="Guest ZZ",
+            display_slot_name="RC Guest ZZ",
+            slot_code="9999",
+        )
+        r_aa = Reservation(
+            identity_key="aa-first",
+            start=same_start,
+            end=same_end,
+            buffered_start=same_start,
+            buffered_end=same_end,
+            summary="Guest AA",
+            slot_name="Guest AA",
+            display_slot_name="RC Guest AA",
+            slot_code="1111",
+        )
+
+        plan = compute_desired_plan(
+            [r_zz, r_aa],
+            [_free_slot(5)],
+            max_events=1,
+            plan_id="p-tie",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        # "aa-first" < "zz-last" lexicographically → "aa-first" wins
+        assert "aa-first" in plan.selected
+        assert "zz-last" in plan.overflow
+
+    def test_churn_minimization_keeps_persisted_slot(self) -> None:
+        """A selected reservation keeps its persisted slot rather than moving.
+
+        R1 is persisted in slot 5 (OCCUPIED) and R2 is new.  With slot 5
+        OCCUPIED by R1 and slot 6 FREE, R1 stays in slot 5 and R2 goes to 6.
+        """
+        r1 = _res("r1", 1)
+        r2 = _res("r2", 8)
+
+        ms5 = _make_managed_slot(
+            slot=5,
+            status=SlotStatus.OCCUPIED,
+            persisted_identity_key="r1",
+            actual_start=r1.buffered_start,
+            actual_end=r1.buffered_end,
+        )
+        ms6 = _free_slot(6)
+
+        plan = compute_desired_plan(
+            [r1, r2],
+            [ms5, ms6],
+            max_events=3,
+            plan_id="p-churn",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        # R1 stays in slot 5 (churn minimization)
+        assert plan.selected.get("r1") == 5
+        # R2 goes to slot 6
+        assert plan.selected.get("r2") == 6
+
+    def test_churn_minimization_noop_action_for_same_reservation_same_dates(
+        self,
+    ) -> None:
+        """When persisted slot dates match desired buffered dates, action is NOOP."""
+        r1 = _res("r1", 1)
+        ms5 = _make_managed_slot(
+            slot=5,
+            status=SlotStatus.OCCUPIED,
+            persisted_identity_key="r1",
+            actual_start=r1.buffered_start,
+            actual_end=r1.buffered_end,
+        )
+
+        plan = compute_desired_plan(
+            [r1],
+            [ms5],
+            max_events=3,
+            plan_id="p-noop",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.slots[5].action is ActionKind.NOOP
+        assert ActionKind.NOOP not in [a.kind for a in plan.actions]
+
+    def test_churn_minimization_update_times_when_dates_differ(self) -> None:
+        """When persisted slot dates differ from desired buffered dates, UPDATE_TIMES."""
+        r1 = _res("r1", 1)
+        old_start = datetime(2026, 6, 25, 14, tzinfo=_TZ)
+        old_end = datetime(2026, 7, 2, 11, tzinfo=_TZ)
+        ms5 = _make_managed_slot(
+            slot=5,
+            status=SlotStatus.OCCUPIED,
+            persisted_identity_key="r1",
+            actual_start=old_start,  # different from r1.buffered_start
+            actual_end=old_end,
+        )
+
+        plan = compute_desired_plan(
+            [r1],
+            [ms5],
+            max_events=3,
+            plan_id="p-update",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.slots[5].action is ActionKind.UPDATE_TIMES
+        update_actions = [a for a in plan.actions if a.kind is ActionKind.UPDATE_TIMES]
+        assert len(update_actions) == 1
+
+    def test_overflow_rank_in_diagnostics(self) -> None:
+        """Overflow reservations have rank and reason recorded in diagnostics."""
+        reservations = [
+            _res("r1", 1),
+            _res("r2", 8),
+            _res("r3", 15),
+            _res("r4", 22),  # overflow rank 4
+            _res("r5", 29),  # overflow rank 5
+        ]
+        slots = [_free_slot(5), _free_slot(6), _free_slot(7)]
+
+        plan = compute_desired_plan(
+            reservations,
+            slots,
+            max_events=3,
+            plan_id="p-rank",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        details = plan.diagnostics.get("overflow_details", {})
+        assert "r4" in details
+        assert "r5" in details
+        assert details["r4"]["rank"] == 4
+        assert details["r5"]["rank"] == 5
+        assert details["r4"]["reason"] == "capacity"
+        assert details["r5"]["reason"] == "capacity"
+
+    def test_overflow_rank_start_after_selected_capacity(self) -> None:
+        """Overflow rank numbering begins right after the last selected position."""
+        # max_events=2 → selected positions 1, 2; overflow starts at 3
+        reservations = [_res(f"r{i}", i) for i in range(1, 6)]
+        slots = [_free_slot(5), _free_slot(6)]
+
+        plan = compute_desired_plan(
+            reservations,
+            slots,
+            max_events=2,
+            plan_id="p-rank2",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        details = plan.diagnostics.get("overflow_details", {})
+        # Overflow reservations should have ranks 3, 4, 5
+        ranks = {v["rank"] for v in details.values()}
+        assert ranks == {3, 4, 5}
+
+    def test_pending_clear_slot_not_used_for_assignment(self) -> None:
+        """A PENDING_CLEAR slot is unavailable; reservation assigned to lowest free."""
+        r1 = _res("r1", 1)
+        ms5 = _make_managed_slot(slot=5, status=SlotStatus.PENDING_CLEAR)
+        ms6 = _free_slot(6)
+
+        plan = compute_desired_plan(
+            [r1],
+            [ms5, ms6],
+            max_events=3,
+            plan_id="p-pending",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        # r1 must go to slot 6, not slot 5
+        assert plan.selected.get("r1") == 6
+        assert plan.slots[5].action is ActionKind.RETRY_CLEAR
+
+    def test_blocked_slot_not_used_for_assignment(self) -> None:
+        """A BLOCKED slot is unavailable; reservation assigned to lowest free."""
+        r1 = _res("r1", 1)
+        ms5 = _make_managed_slot(slot=5, status=SlotStatus.BLOCKED)
+        ms6 = _free_slot(6)
+
+        plan = compute_desired_plan(
+            [r1],
+            [ms5, ms6],
+            max_events=3,
+            plan_id="p-blocked",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.selected.get("r1") == 6
+        assert plan.slots[5].action is ActionKind.BLOCKED
+
+    def test_occupied_slot_with_no_desired_gets_clear_action(self) -> None:
+        """An OCCUPIED slot with no desired reservation produces a CLEAR action."""
+        # One slot occupied with an old reservation, no eligible reservations
+        ms5 = _occupied_slot(5, "r-old")
+
+        plan = compute_desired_plan(
+            [],
+            [ms5],
+            max_events=3,
+            plan_id="p-clear",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.slots[5].action is ActionKind.CLEAR
+
+
+# ---------------------------------------------------------------------------
+# T036: Active checked-in guest selected before overflow, retains slot
+# ---------------------------------------------------------------------------
+
+
+class TestComputeDesiredPlanProtectedActive:
+    """T036: protected active reservations are always selected first."""
+
+    def test_protected_selected_even_when_capacity_is_full(self) -> None:
+        """A protected active reservation is selected even when non-protected
+        reservations would fill all capacity.
+
+        With max_events=3 and one protected + four non-protected eligible
+        reservations, the plan selects: 1 protected + 2 earliest non-protected.
+        """
+        r_protected = _res("r-prot", 1, protected_active=True)
+        r_np1 = _res("r-np1", 3)  # soonest non-protected
+        r_np2 = _res("r-np2", 10)
+        r_np3 = _res("r-np3", 17)
+        r_np4 = _res("r-np4", 24)
+
+        slots = [_free_slot(5), _free_slot(6), _free_slot(7)]
+
+        plan = compute_desired_plan(
+            [r_protected, r_np1, r_np2, r_np3, r_np4],
+            slots,
+            max_events=3,
+            plan_id="p-prot",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-prot" in plan.selected
+        assert "r-np1" in plan.selected
+        assert "r-np2" in plan.selected
+        # np3 and np4 should be in overflow
+        assert "r-np3" in plan.overflow
+        assert "r-np4" in plan.overflow
+
+    def test_protected_identity_in_plan_protected_set(self) -> None:
+        """Protected reservations appear in plan.protected."""
+        r_prot = _res("r-prot", 1, protected_active=True)
+
+        plan = compute_desired_plan(
+            [r_prot],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p-pset",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-prot" in plan.protected
+
+    def test_non_protected_not_in_plan_protected_set(self) -> None:
+        """Non-protected selected reservations do not appear in plan.protected."""
+        r_np = _res("r-np", 1)
+
+        plan = compute_desired_plan(
+            [r_np],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p-notprot",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-np" not in plan.protected
+
+    def test_protected_retains_persisted_slot(self) -> None:
+        """A protected active reservation retains its persisted slot.
+
+        Even when a non-protected reservation was also in the system,
+        the protected guest keeps its previously-assigned slot.
+        """
+        r_prot = _res("r-prot", 1, protected_active=True)
+        r_np = _res("r-np", 8)
+
+        ms5 = _occupied_slot(5, "r-prot")
+        ms5.actual_start = r_prot.buffered_start
+        ms5.actual_end = r_prot.buffered_end
+        ms6 = _free_slot(6)
+
+        plan = compute_desired_plan(
+            [r_prot, r_np],
+            [ms5, ms6],
+            max_events=3,
+            plan_id="p-retain",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        # Protected reservation stays in slot 5
+        assert plan.selected.get("r-prot") == 5
+        # Non-protected gets slot 6
+        assert plan.selected.get("r-np") == 6
+
+    def test_protected_slot_gets_noop_when_dates_match(self) -> None:
+        """Protected reservation with matching dates produces NOOP for its slot."""
+        r_prot = _res("r-prot", 1, protected_active=True)
+        ms5 = _make_managed_slot(
+            slot=5,
+            status=SlotStatus.OCCUPIED,
+            persisted_identity_key="r-prot",
+            actual_start=r_prot.buffered_start,
+            actual_end=r_prot.buffered_end,
+        )
+
+        plan = compute_desired_plan(
+            [r_prot],
+            [ms5],
+            max_events=3,
+            plan_id="p-prot-noop",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.slots[5].action is ActionKind.NOOP
+
+    def test_protected_pending_clear_slot_is_blocked_not_retried(self) -> None:
+        """A protected active guest in pending-clear is not cleared mid-stay."""
+        r_prot = _res("r-prot", 1, protected_active=True)
+        ms5 = _make_managed_slot(
+            slot=5,
+            status=SlotStatus.PENDING_CLEAR,
+            persisted_identity_key="r-prot",
+            blocked_reason="pending_clear",
+        )
+
+        plan = compute_desired_plan(
+            [r_prot],
+            [ms5],
+            max_events=1,
+            plan_id="p-protected-pending",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.slots[5].action is ActionKind.BLOCKED
+        assert plan.slots[5].pending_reason == "protected_active_pending_clear"
+        assert all(action.kind is not ActionKind.RETRY_CLEAR for action in plan.actions)
+
+    def test_overflow_reservation_reason_is_capacity(self) -> None:
+        """Non-protected reservations overflow with reason 'capacity'."""
+        r_prot = _res("r-prot", 1, protected_active=True)
+        r_np1 = _res("r-np1", 8)
+        r_np2 = _res("r-np2", 15)  # overflows
+
+        slots = [_free_slot(5), _free_slot(6)]  # max capacity = 2
+
+        plan = compute_desired_plan(
+            [r_prot, r_np1, r_np2],
+            slots,
+            max_events=2,
+            plan_id="p-cap-reason",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.overflow.get("r-np2") == "capacity"
+
+    def test_protected_in_selected_not_overflow(self) -> None:
+        """A protected active reservation is never in overflow."""
+        r_prot = _res("r-prot", 1, protected_active=True)
+        r_np1 = _res("r-np1", 2)
+        r_np2 = _res("r-np2", 3)
+
+        # Protected reservation has its own persisted slot; one more free slot.
+        ms_prot = _occupied_slot(5, "r-prot")
+        ms_prot.actual_start = r_prot.buffered_start
+        ms_prot.actual_end = r_prot.buffered_end
+        ms6 = _free_slot(6)
+
+        plan = compute_desired_plan(
+            [r_prot, r_np1, r_np2],
+            [ms_prot, ms6],
+            max_events=2,
+            plan_id="p-prot-notov",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-prot" in plan.selected
+        assert "r-prot" not in plan.overflow
+
+
+# ---------------------------------------------------------------------------
+# T037: Protected guests count against capacity; protection-expiry tests
+# ---------------------------------------------------------------------------
+
+
+class TestComputeDesiredPlanProtectionCapacity:
+    """T037: protected_active counts against capacity; expiry scenarios."""
+
+    def test_two_protected_reduce_nonprotected_capacity(self) -> None:
+        """Two protected active reservations consume 2 of 3 max_events slots,
+        leaving only 1 slot for non-protected reservations."""
+        r_p1 = _res("r-p1", 1, protected_active=True)
+        r_p2 = _res("r-p2", 2, protected_active=True)
+        r_np1 = _res("r-np1", 5)
+        r_np2 = _res("r-np2", 12)
+        r_np3 = _res("r-np3", 19)
+
+        slots = [_free_slot(5), _free_slot(6), _free_slot(7)]
+
+        plan = compute_desired_plan(
+            [r_p1, r_p2, r_np1, r_np2, r_np3],
+            slots,
+            max_events=3,
+            plan_id="p-2prot",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        # Both protected selected
+        assert "r-p1" in plan.selected
+        assert "r-p2" in plan.selected
+        # Only soonest non-protected fills remaining capacity = max(0, 3-2) = 1
+        assert "r-np1" in plan.selected
+        assert "r-np2" in plan.overflow
+        assert "r-np3" in plan.overflow
+
+    def test_three_protected_fills_all_capacity_no_nonprotected(self) -> None:
+        """Three protected active reservations consume all max_events=3 slots;
+        no non-protected reservation is selected."""
+        protected = [_res(f"r-p{i}", i, protected_active=True) for i in range(1, 4)]
+        non_protected = [_res(f"r-np{i}", i + 5) for i in range(1, 4)]
+
+        slots = [_free_slot(5), _free_slot(6), _free_slot(7)]
+
+        plan = compute_desired_plan(
+            protected + non_protected,
+            slots,
+            max_events=3,
+            plan_id="p-3prot",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        for p in protected:
+            assert p.identity_key in plan.selected
+        for np in non_protected:
+            assert np.identity_key in plan.overflow
+
+    def test_protection_expiry_checked_out_not_selected(self) -> None:
+        """A reservation with checked_out=True loses protection and is excluded
+        from both selected and overflow — it is no longer an eligible candidate."""
+        r_expired = _res("r-exp", 1, checked_out=True)
+        r_active = _res("r-active", 8)
+
+        plan = compute_desired_plan(
+            [r_expired, r_active],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p-expiry",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-exp" not in plan.selected
+        assert "r-exp" not in plan.overflow
+        assert "r-active" in plan.selected
+
+    def test_protection_expiry_not_in_plan_protected_set(self) -> None:
+        """A checked-out reservation does not appear in plan.protected."""
+        r_expired = _res("r-exp", 1, checked_out=True)
+
+        plan = compute_desired_plan(
+            [r_expired],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p-pset-exp",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-exp" not in plan.protected
+
+    def test_missing_count_three_protected_still_selected(self) -> None:
+        """A protected active reservation with missing_count=3 is still selected.
+
+        Protection overrides the feed-miss clearability threshold.
+        """
+        r_prot_miss = _res("r-miss-prot", 1, protected_active=True, missing_count=3)
+
+        plan = compute_desired_plan(
+            [r_prot_miss],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p-miss-prot",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-miss-prot" in plan.selected
+        assert "r-miss-prot" in plan.protected
+
+    def test_missing_count_three_non_protected_excluded(self) -> None:
+        """A non-protected reservation with missing_count=3 is excluded entirely."""
+        r_miss = _res("r-miss", 1, missing_count=3)
+
+        plan = compute_desired_plan(
+            [r_miss],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p-miss-np",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-miss" not in plan.selected
+        assert "r-miss" not in plan.overflow
+
+    def test_protected_set_is_subset_of_selected(self) -> None:
+        """Every identity key in plan.protected is also in plan.selected."""
+        r_prot = _res("r-prot", 1, protected_active=True)
+        r_np = _res("r-np", 8)
+
+        plan = compute_desired_plan(
+            [r_prot, r_np],
+            [_free_slot(5), _free_slot(6)],
+            max_events=3,
+            plan_id="p-pset-sub",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.protected.issubset(plan.selected.keys())
+
+    def test_no_duplicate_slots_with_protected_and_nonprotected(self) -> None:
+        """Protected and non-protected reservations never share a slot."""
+        r_prot = _res("r-prot", 1, protected_active=True)
+        r_np = _res("r-np", 8)
+
+        plan = compute_desired_plan(
+            [r_prot, r_np],
+            [_free_slot(5), _free_slot(6)],
+            max_events=3,
+            plan_id="p-nodupe",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.validate() == []

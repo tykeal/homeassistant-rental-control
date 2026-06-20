@@ -3593,3 +3593,220 @@ class TestExactFingerprintRestartPreservation:
         assert sm.missing_count == 0
         assert sm.identity_key == fp
         assert sm.fingerprint_history == []
+
+
+# ---------------------------------------------------------------------------
+# T029: Desired-plan action scaffolding (set, update_times, noop, overflow)
+# ---------------------------------------------------------------------------
+# These tests verify that compute_desired_plan generates the correct action
+# kinds for the four fundamental scenarios that the EventOverrides apply-plan
+# phase (commits 5-6) will need to execute.  They are pure model tests:
+# no HA service calls, no coordinator wiring, no locks.
+# ---------------------------------------------------------------------------
+
+
+class TestDesiredPlanActionScaffold:
+    """T029: pure model tests for set/update_times/noop/overflow action types."""
+
+    from datetime import timezone as _tz_import
+
+    _TZ = _tz_import.utc
+
+    def _dt(self, year: int, month: int, day: int, hour: int = 14) -> datetime:
+        """Return a UTC-aware datetime."""
+        return datetime(year, month, day, hour, tzinfo=self._TZ)
+
+    def _make_res(
+        self,
+        identity_key: str,
+        *,
+        start_day: int = 1,
+        start_month: int = 8,
+    ):
+        """Return a minimal Reservation for action-scaffold tests."""
+        from datetime import timedelta
+
+        from custom_components.rental_control.reconciliation import Reservation
+
+        start = self._dt(2026, start_month, start_day)
+        end = (start + timedelta(days=7)).replace(hour=11)
+        return Reservation(
+            identity_key=identity_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary=f"Guest {identity_key}",
+            slot_name=f"Guest {identity_key}",
+            display_slot_name=f"RC Guest {identity_key}",
+            slot_code="5678",
+        )
+
+    def _make_ms(
+        self,
+        slot: int,
+        status,
+        persisted_key: str | None = None,
+        actual_start=None,
+        actual_end=None,
+    ):
+        """Return a minimal ManagedSlot for action-scaffold tests."""
+        from custom_components.rental_control.reconciliation import ManagedSlot
+
+        return ManagedSlot(
+            slot=slot,
+            managed=True,
+            status=status,
+            persisted_identity_key=persisted_key,
+            actual_start=actual_start,
+            actual_end=actual_end,
+        )
+
+    def test_free_slot_desired_reservation_generates_set_action(self) -> None:
+        """A FREE managed slot assigned a desired reservation → SET action.
+
+        This is the most common initial-assignment scenario: a new reservation
+        arrives and an empty slot is available.
+        """
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        res = self._make_res("res-set")
+        ms = self._make_ms(5, SlotStatus.FREE)
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t029-set",
+            generated_at=self._dt(2026, 8, 1),
+        )
+
+        assert "res-set" in plan.selected
+        set_actions = [a for a in plan.actions if a.kind is ActionKind.SET]
+        assert len(set_actions) == 1
+        assert set_actions[0].slot == 5
+        assert set_actions[0].identity_key == "res-set"
+
+    def test_occupied_same_reservation_different_dates_generates_update_times(
+        self,
+    ) -> None:
+        """OCCUPIED slot with same reservation but different buffered dates → UPDATE_TIMES.
+
+        This happens when a guest modifies check-in/check-out dates; Rental
+        Control must update the Keymaster date range without changing the PIN.
+        """
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        res = self._make_res("res-update")
+        # Slot has old dates (different from res.buffered_start / buffered_end)
+        old_start = self._dt(2026, 7, 25)
+        old_end = self._dt(2026, 8, 1, 11)
+        ms = self._make_ms(
+            5,
+            SlotStatus.OCCUPIED,
+            persisted_key="res-update",
+            actual_start=old_start,
+            actual_end=old_end,
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t029-update",
+            generated_at=self._dt(2026, 8, 1),
+        )
+
+        assert plan.slots[5].action is ActionKind.UPDATE_TIMES
+        update_actions = [a for a in plan.actions if a.kind is ActionKind.UPDATE_TIMES]
+        assert len(update_actions) == 1
+        assert update_actions[0].identity_key == "res-update"
+
+    def test_occupied_same_reservation_same_dates_generates_noop(self) -> None:
+        """OCCUPIED slot with same reservation and matching dates → no action (NOOP).
+
+        This is the steady-state scenario: everything is already correct and
+        the apply-plan phase should issue no Keymaster service call.
+        """
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        res = self._make_res("res-noop")
+        # Slot has exactly the same dates as res.buffered_start / buffered_end
+        ms = self._make_ms(
+            5,
+            SlotStatus.OCCUPIED,
+            persisted_key="res-noop",
+            actual_start=res.buffered_start,
+            actual_end=res.buffered_end,
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t029-noop",
+            generated_at=self._dt(2026, 8, 1),
+        )
+
+        assert plan.slots[5].action is ActionKind.NOOP
+        # NOOP must NOT appear in plan.actions (only non-noop actions are listed)
+        assert not any(a.kind is ActionKind.NOOP for a in plan.actions)
+
+    def test_overflow_reservation_not_in_selected(self) -> None:
+        """Reservations beyond max_events end up in overflow, not in selected.
+
+        The apply-plan phase must not attempt a SET action for overflow
+        reservations; it should only report them as unassigned.
+        """
+        from datetime import timezone
+
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        _TZ = timezone.utc
+
+        def _mk(key: str, day: int):
+            """Build a minimal August Reservation with *key* starting on *day*."""
+            from custom_components.rental_control.reconciliation import Reservation
+
+            s = datetime(2026, 8, day, 14, tzinfo=_TZ)
+            e = datetime(2026, 8, day + 7, 11, tzinfo=_TZ)
+            return Reservation(
+                identity_key=key,
+                start=s,
+                end=e,
+                buffered_start=s,
+                buffered_end=e,
+                summary=f"G {key}",
+                slot_name=f"G {key}",
+                display_slot_name=f"RC G {key}",
+                slot_code="0000",
+            )
+
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+
+        reservations = [_mk("ov-r1", 1), _mk("ov-r2", 8), _mk("ov-r3", 15)]
+        slots = [
+            ManagedSlot(slot=5, managed=True, status=SlotStatus.FREE),
+            ManagedSlot(slot=6, managed=True, status=SlotStatus.FREE),
+        ]
+
+        plan = compute_desired_plan(
+            reservations,
+            slots,
+            max_events=2,
+            plan_id="t029-ov",
+            generated_at=datetime(2026, 8, 1, tzinfo=_TZ),
+        )
+
+        assert "ov-r1" in plan.selected
+        assert "ov-r2" in plan.selected
+        assert "ov-r3" in plan.overflow
+        assert plan.overflow["ov-r3"] == "capacity"
+        assert "ov-r3" not in plan.selected
