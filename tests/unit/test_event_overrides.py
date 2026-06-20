@@ -4984,3 +4984,671 @@ class TestManualDriftLogging:
         assert not any(a.slot == 3 for a in overwrite_actions)
         # Unmanaged slot is absent from plan.slots entirely
         assert 3 not in plan.slots
+
+
+# ---------------------------------------------------------------------------
+# T045 – duplicate actual assignment: canonical slot and non-canonical clear
+# ---------------------------------------------------------------------------
+
+
+class TestDuplicateActualAssignment:
+    """T045: Tests for duplicate actual assignment handling.
+
+    When the same reservation identity key is found in multiple OCCUPIED
+    managed slots, the planner treats the lowest-numbered slot as canonical
+    (keeping the reservation) and generates CLEAR actions for all
+    non-canonical slots.
+    """
+
+    _TZ = dt_util.UTC
+
+    def _make_res(
+        self,
+        identity_key: str = "r-dup",
+        *,
+        start_day: int = 1,
+    ) -> Reservation:
+        """Return a minimal Reservation for duplicate tests."""
+        start = datetime(2026, 8, start_day, 14, tzinfo=self._TZ)
+        end = start + timedelta(days=7)
+        return Reservation(
+            identity_key=identity_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary=f"Guest {identity_key}",
+            slot_name=f"Guest {identity_key}",
+            display_slot_name=f"RC Guest {identity_key}",
+            slot_code="DUPPIN",
+        )
+
+    def _occupied_slot(self, slot: int, persisted_key: str):
+        """Return an OCCUPIED ManagedSlot with *persisted_key*."""
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+
+        return ManagedSlot(
+            slot=slot,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name=f"Guest {persisted_key}",
+            actual_code_present=True,
+            persisted_identity_key=persisted_key,
+        )
+
+    def test_canonical_slot_keeps_reservation(self) -> None:
+        """Lower-numbered slot is canonical and keeps the desired assignment.
+
+        Scenario: slots 3 and 5 both have persisted_identity_key='r-dup'
+        (OCCUPIED).  The planner selects slot 3 as canonical because it is
+        the lower slot number.  plan.selected must map 'r-dup' to slot 3.
+        """
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        res = self._make_res("r-dup")
+        slot3 = self._occupied_slot(3, "r-dup")
+        slot5 = self._occupied_slot(5, "r-dup")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot3, slot5],
+            max_events=3,
+            plan_id="t045-canonical",
+            generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+        )
+
+        assert "r-dup" in plan.selected
+        assert plan.selected["r-dup"] == 3
+
+    def test_non_canonical_slot_gets_clear_action(self) -> None:
+        """Non-canonical duplicate slot receives a CLEAR action.
+
+        Slot 5 is non-canonical (higher number than slot 3).  After
+        compute_desired_plan the actions list must contain exactly one CLEAR
+        targeting slot 5.
+        """
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        res = self._make_res("r-dup")
+        slot3 = self._occupied_slot(3, "r-dup")
+        slot5 = self._occupied_slot(5, "r-dup")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot3, slot5],
+            max_events=3,
+            plan_id="t045-noncanon",
+            generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+        )
+
+        clear_actions = [a for a in plan.actions if a.kind is ActionKind.CLEAR]
+        assert any(a.slot == 5 for a in clear_actions), (
+            f"Expected CLEAR on slot 5; actions were {plan.actions}"
+        )
+
+    def test_non_canonical_clear_reason_is_duplicate(self) -> None:
+        """CLEAR action for non-canonical slot carries reason 'duplicate_non_canonical'."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        res = self._make_res("r-dup")
+        slot3 = self._occupied_slot(3, "r-dup")
+        slot5 = self._occupied_slot(5, "r-dup")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot3, slot5],
+            max_events=3,
+            plan_id="t045-reason",
+            generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+        )
+
+        clear_slot5 = next(
+            (a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 5),
+            None,
+        )
+        assert clear_slot5 is not None
+        assert clear_slot5.reason == "duplicate_non_canonical"
+
+    async def test_non_canonical_slot_enters_pending_clear_after_apply(self) -> None:
+        """Applying CLEAR on non-canonical slot puts it in pending_clear state."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import SlotAction
+        from custom_components.rental_control.util import OperationResult
+
+        eo = EventOverrides(start_slot=3, max_slots=3)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(3, "DUPPIN", "Guest r-dup", now, now + timedelta(days=7))
+        eo.update(4, "", "", now, now + timedelta(days=7))
+        eo.update(5, "DUPPIN", "Guest r-dup", now, now + timedelta(days=7))
+
+        plan = DesiredPlan(plan_id="t045-pending", generated_at=now)
+        plan.actions = [
+            SlotAction(
+                kind=ActionKind.CLEAR,
+                slot=5,
+                identity_key=None,
+                reason="duplicate_non_canonical",
+            )
+        ]
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        # Unconfirmed clear → slot stays in pending_fences
+        unconfirmed = OperationResult(kind="clear", slot=5, confirmed=False)
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=unconfirmed,
+        ):
+            await eo.async_apply_plan(coordinator, plan, {})
+
+        # Slot 5 fence token must persist (clear unconfirmed)
+        assert 5 in eo.pending_fences
+
+    async def test_canonical_slot_noop_non_canonical_cleared(self) -> None:
+        """Full plan: canonical gets NOOP, non-canonical gets CLEAR applied."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+        from custom_components.rental_control.util import OperationResult
+
+        res = self._make_res("r-dup")
+        slot3 = ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="RC Guest r-dup",
+            actual_code_present=True,
+            persisted_identity_key="r-dup",
+            actual_start=res.buffered_start,
+            actual_end=res.buffered_end,
+        )
+        slot5 = self._occupied_slot(5, "r-dup")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot3, slot5],
+            max_events=3,
+            plan_id="t045-full",
+            generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+        )
+
+        # Canonical slot 3: NOOP (same reservation, same dates)
+        assert plan.slots[3].action is ActionKind.NOOP
+        # Non-canonical slot 5: CLEAR
+        assert plan.slots[5].action is ActionKind.CLEAR
+
+        eo = EventOverrides(start_slot=3, max_slots=3)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(3, "DUPPIN", "Guest r-dup", now, now + timedelta(days=7))
+        eo.update(4, "", "", now, now + timedelta(days=7))
+        eo.update(5, "DUPPIN", "Guest r-dup", now, now + timedelta(days=7))
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="clear", slot=5, confirmed=True)
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=confirmed,
+        ) as mock_clear:
+            await eo.async_apply_plan(coordinator, plan, {"r-dup": res})
+
+        # Clear was called exactly once for slot 5
+        assert mock_clear.called
+        # Slot 5 override cleared
+        assert eo.overrides.get(5) is None
+
+
+# ---------------------------------------------------------------------------
+# T053 – caplog coverage for corrupt-state self-heal log messages
+# ---------------------------------------------------------------------------
+
+
+class TestCorruptStateCaplog:
+    """T053: caplog tests for corrupt-state self-heal log messages.
+
+    Verifies that the reconciliation system emits WARNING-level log entries
+    for each class of corrupt-state correction:
+
+    - duplicate collapse
+    - overflow decision (no_free_slot)
+    - phantom recovery
+    - stale correction
+    - mis-assignment correction
+    """
+
+    _TZ = dt_util.UTC
+
+    def _mk_res(
+        self,
+        identity_key: str = "r-test",
+        *,
+        start_day: int = 1,
+    ) -> Reservation:
+        """Return a minimal Reservation for caplog tests."""
+        start = datetime(2026, 8, start_day, 14, tzinfo=self._TZ)
+        end = start + timedelta(days=7)
+        return Reservation(
+            identity_key=identity_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary=f"Guest {identity_key}",
+            slot_name=f"Guest {identity_key}",
+            display_slot_name=f"RC Guest {identity_key}",
+            slot_code="CAPLOGPIN",
+        )
+
+    def test_duplicate_collapse_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Duplicate assignment detection emits a WARNING log entry."""
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        res = self._mk_res("r-dup-caplog")
+        slot3 = ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest r-dup-caplog",
+            actual_code_present=True,
+            persisted_identity_key="r-dup-caplog",
+        )
+        slot5 = ManagedSlot(
+            slot=5,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest r-dup-caplog",
+            actual_code_present=True,
+            persisted_identity_key="r-dup-caplog",
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="custom_components.rental_control"
+        ):
+            compute_desired_plan(
+                [res],
+                [slot3, slot5],
+                max_events=3,
+                plan_id="t053-dup",
+                generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+            )
+
+        log_text = " ".join(r.message for r in caplog.records)
+        assert "duplicate" in log_text.lower() or "Duplicate" in log_text
+
+    async def test_duplicate_collapse_apply_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """async_apply_plan logs duplicate-collapse WARNING when clearing non-canonical slot."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import SlotAction
+        from custom_components.rental_control.util import OperationResult
+
+        eo = EventOverrides(start_slot=3, max_slots=3)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(3, "PIN3", "Guest dup", now, now + timedelta(days=7))
+        eo.update(4, "", "", now, now + timedelta(days=7))
+        eo.update(5, "PIN5", "Guest dup", now, now + timedelta(days=7))
+
+        plan = DesiredPlan(plan_id="t053-dup-apply", generated_at=now)
+        plan.actions = [
+            SlotAction(
+                kind=ActionKind.CLEAR,
+                slot=5,
+                identity_key=None,
+                reason="duplicate_non_canonical",
+            )
+        ]
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="clear", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo.async_apply_plan(coordinator, plan, {})
+
+        log_text = " ".join(
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        )
+        assert "duplicate" in log_text.lower() or "Duplicate" in log_text
+
+    def test_overflow_decision_no_free_slot_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Overflow (no_free_slot) emits a WARNING log entry."""
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        # max_events=1, slot 3 occupied by r-old; r-new needs a slot but all occupied
+        r_old = self._mk_res("r-old", start_day=10)
+        r_new = self._mk_res("r-new", start_day=1)
+        slot3 = ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest r-old",
+            actual_code_present=True,
+            persisted_identity_key="r-old",
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="custom_components.rental_control"
+        ):
+            plan = compute_desired_plan(
+                [r_old, r_new],
+                [slot3],
+                max_events=1,  # only r-new selected (nearer), but no free slot
+                plan_id="t053-overflow",
+                generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+            )
+
+        # r-new should overflow (no_free_slot) because slot 3 is OCCUPIED by r-old
+        assert "r-new" in plan.overflow
+
+        log_text = " ".join(
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        )
+        assert "overflow" in log_text.lower() or "Overflow" in log_text
+
+    async def test_phantom_recovery_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Phantom slot clear emits 'Phantom recovery' WARNING in async_apply_plan."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import SlotAction
+        from custom_components.rental_control.util import OperationResult
+
+        eo = EventOverrides(start_slot=5, max_slots=1)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "", "PhantomGuest", now, now + timedelta(days=7))
+
+        plan = DesiredPlan(plan_id="t053-phantom", generated_at=now)
+        plan.actions = [
+            SlotAction(
+                kind=ActionKind.CLEAR,
+                slot=5,
+                identity_key=None,
+                reason="phantom",
+            )
+        ]
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="clear", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo.async_apply_plan(coordinator, plan, {})
+
+        log_text = " ".join(
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        )
+        assert "phantom" in log_text.lower() or "Phantom" in log_text
+
+    async def test_stale_correction_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Stale assignment clear emits 'Stale correction' WARNING in async_apply_plan."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import SlotAction
+        from custom_components.rental_control.util import OperationResult
+
+        eo = EventOverrides(start_slot=5, max_slots=1)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "STALEPIN", "OldGuest", now, now + timedelta(days=7))
+
+        plan = DesiredPlan(plan_id="t053-stale", generated_at=now)
+        plan.actions = [
+            SlotAction(
+                kind=ActionKind.CLEAR,
+                slot=5,
+                identity_key=None,
+                reason="stale",
+            )
+        ]
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="clear", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo.async_apply_plan(coordinator, plan, {})
+
+        log_text = " ".join(
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        )
+        assert "stale" in log_text.lower() or "Stale" in log_text
+
+    async def test_misassignment_correction_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Mis-assigned slot clear emits 'Mis-assignment correction' WARNING."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import SlotAction
+        from custom_components.rental_control.util import OperationResult
+
+        eo = EventOverrides(start_slot=5, max_slots=1)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "WRONGPIN", "WrongGuest", now, now + timedelta(days=7))
+
+        plan = DesiredPlan(plan_id="t053-misassign", generated_at=now)
+        plan.actions = [
+            SlotAction(
+                kind=ActionKind.CLEAR,
+                slot=5,
+                identity_key="r-desired",
+                reason="mis_assigned",
+            )
+        ]
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="clear", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo.async_apply_plan(coordinator, plan, {})
+
+        log_text = " ".join(
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        )
+        assert "mis-assignment" in log_text.lower() or "Mis-assignment" in log_text
+
+
+# ---------------------------------------------------------------------------
+# T054 – unmanaged-slot ignored: outside managed range never changed
+# ---------------------------------------------------------------------------
+
+
+class TestUnmanagedSlotIgnoredCorrupt:
+    """T054: Slots outside the RC-managed range are never changed.
+
+    Even when an unmanaged slot has a corrupt name, phantom state, or
+    duplicate persisted key, compute_desired_plan must not generate any
+    action targeting it.  The managed-range invariant is enforced by the
+    ``managed=False`` attribute on ManagedSlot.
+    """
+
+    _TZ = dt_util.UTC
+
+    def _mk_res(self, identity_key: str = "r-um") -> Reservation:
+        """Return a minimal Reservation for unmanaged-slot tests."""
+        start = datetime(2026, 8, 1, 14, tzinfo=self._TZ)
+        end = start + timedelta(days=7)
+        return Reservation(
+            identity_key=identity_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary=f"Guest {identity_key}",
+            slot_name=f"Guest {identity_key}",
+            display_slot_name=f"RC Guest {identity_key}",
+            slot_code="UNMGDPIN",
+        )
+
+    def test_unmanaged_phantom_slot_never_cleared(self) -> None:
+        """PHANTOM unmanaged slot generates no action."""
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        res = self._mk_res()
+        unmanaged = ManagedSlot(
+            slot=3,
+            managed=False,
+            status=SlotStatus.PHANTOM,
+            actual_name="PhantomGuest",
+            actual_code_present=False,
+        )
+        managed_free = ManagedSlot(slot=5, managed=True, status=SlotStatus.FREE)
+
+        plan = compute_desired_plan(
+            [res],
+            [unmanaged, managed_free],
+            max_events=3,
+            plan_id="t054-phantom",
+            generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+        )
+
+        assert 3 not in plan.slots
+        assert not any(a.slot == 3 for a in plan.actions)
+
+    def test_unmanaged_stale_occupied_slot_never_cleared(self) -> None:
+        """Stale OCCUPIED unmanaged slot generates no action."""
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        res = self._mk_res()
+        # Unmanaged slot with stale reservation (expired key)
+        unmanaged = ManagedSlot(
+            slot=2,
+            managed=False,
+            status=SlotStatus.OCCUPIED,
+            actual_name="OldStaleGuest",
+            actual_code_present=True,
+            persisted_identity_key="r-expired-stale",
+        )
+        managed_free = ManagedSlot(slot=5, managed=True, status=SlotStatus.FREE)
+
+        plan = compute_desired_plan(
+            [res],
+            [unmanaged, managed_free],
+            max_events=3,
+            plan_id="t054-stale",
+            generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+        )
+
+        assert 2 not in plan.slots
+        assert not any(a.slot == 2 for a in plan.actions)
+
+    def test_unmanaged_duplicate_slot_never_cleared(self) -> None:
+        """Unmanaged slot sharing a persisted key with a managed slot is ignored."""
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        res = self._mk_res("r-shared-dup")
+        # Slot 2: unmanaged (outside range), has same persisted key
+        unmanaged_dup = ManagedSlot(
+            slot=2,
+            managed=False,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest r-shared-dup",
+            actual_code_present=True,
+            persisted_identity_key="r-shared-dup",
+        )
+        # Slot 5: managed, has same persisted key (canonical because managed)
+        managed_canon = ManagedSlot(
+            slot=5,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest r-shared-dup",
+            actual_code_present=True,
+            persisted_identity_key="r-shared-dup",
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [unmanaged_dup, managed_canon],
+            max_events=3,
+            plan_id="t054-dup",
+            generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+        )
+
+        assert 2 not in plan.slots
+        assert not any(a.slot == 2 for a in plan.actions)
+        # Managed canonical slot 5 must be present and assigned
+        assert "r-shared-dup" in plan.selected
+
+    def test_unmanaged_slot_outside_range_never_set(self) -> None:
+        """A reservation is never SET into an unmanaged slot."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        res = self._mk_res()
+        unmanaged_free = ManagedSlot(
+            slot=1,
+            managed=False,
+            status=SlotStatus.FREE,
+        )
+        managed_free = ManagedSlot(slot=5, managed=True, status=SlotStatus.FREE)
+
+        plan = compute_desired_plan(
+            [res],
+            [unmanaged_free, managed_free],
+            max_events=3,
+            plan_id="t054-set",
+            generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+        )
+
+        # No SET or CLEAR action references the unmanaged slot
+        assert not any(a.slot == 1 for a in plan.actions)
+        # Reservation must land in the managed slot 5
+        set_actions = [a for a in plan.actions if a.kind is ActionKind.SET]
+        assert len(set_actions) == 1
+        assert set_actions[0].slot == 5

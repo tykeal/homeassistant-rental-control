@@ -3748,3 +3748,198 @@ class TestManualDriftOverwriteAction:
         # No actions referencing slot 3
         assert not any(a.slot == 3 for a in plan.actions)
         assert 3 not in plan.slots
+
+
+# ---------------------------------------------------------------------------
+# T046 – no reservation in two desired slots; no slot with two reservations
+# ---------------------------------------------------------------------------
+
+
+class TestDesiredPlanInvariants:
+    """T046: Invariant tests for compute_desired_plan and DesiredPlan.validate().
+
+    Proves two structural invariants of the desired plan:
+
+    1. No single reservation identity appears in two desired slots
+       (plan.selected maps each identity key to at most one slot).
+    2. No single slot is claimed by two different reservations
+       (plan.selected maps each slot number to at most one identity).
+
+    Both invariants hold by construction because compute_desired_plan uses a
+    dict for slot assignment, but validate() also checks them so that any
+    future bug in the planner produces a clear diagnostic rather than silent
+    double-assignment.
+    """
+
+    _TZ = timezone.utc
+
+    def _mk(self, key: str, day: int) -> Reservation:
+        """Return a minimal Reservation starting on *day* of August 2026."""
+        s = _dt(2026, 8, day)
+        e = _dt(2026, 8, day + 7)
+        return Reservation(
+            identity_key=key,
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary=f"Guest {key}",
+            slot_name=f"Guest {key}",
+            display_slot_name=f"RC Guest {key}",
+            slot_code="INVPIN",
+        )
+
+    def _free(self, slot: int) -> ManagedSlot:
+        """Return a FREE managed slot."""
+        return ManagedSlot(slot=slot, managed=True, status=SlotStatus.FREE)
+
+    # ------------------------------------------------------------------
+    # Invariant 1: no reservation in two desired slots
+    # ------------------------------------------------------------------
+
+    def test_no_reservation_in_two_desired_slots_two_slots(self) -> None:
+        """A reservation can only be selected for one slot, even with two free slots."""
+        r = self._mk("r-once", 1)
+        plan = compute_desired_plan(
+            [r],
+            [self._free(3), self._free(5)],
+            max_events=3,
+            plan_id="t046-one-res",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        # plan.selected must have exactly one entry for r-once
+        assert list(plan.selected.keys()).count("r-once") == 1
+        # validate() must report no violations
+        assert plan.validate() == []
+
+    def test_no_reservation_in_two_desired_slots_many_reservations(self) -> None:
+        """Each of N reservations maps to exactly one slot (N ≤ max_events)."""
+        reservations = [self._mk(f"r-{i}", i + 1) for i in range(3)]
+        slots = [self._free(i + 1) for i in range(3)]
+
+        plan = compute_desired_plan(
+            reservations,
+            slots,
+            max_events=3,
+            plan_id="t046-n-res",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        # Each identity key appears exactly once in selected
+        for res in reservations:
+            assert list(plan.selected.keys()).count(res.identity_key) == 1
+        assert plan.validate() == []
+
+    # ------------------------------------------------------------------
+    # Invariant 2: no slot with two reservations
+    # ------------------------------------------------------------------
+
+    def test_no_slot_with_two_reservations_by_construction(self) -> None:
+        """Two reservations never end up in the same slot."""
+        r1 = self._mk("r-a", 1)
+        r2 = self._mk("r-b", 8)
+
+        plan = compute_desired_plan(
+            [r1, r2],
+            [self._free(3), self._free(5)],
+            max_events=2,
+            plan_id="t046-two-res",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        # Each slot must appear at most once across all selected values
+        slot_values = list(plan.selected.values())
+        assert len(slot_values) == len(set(slot_values))
+        assert plan.validate() == []
+
+    def test_no_slot_with_two_reservations_persisted_conflict(self) -> None:
+        """Two reservations with the same persisted slot still end up in different slots.
+
+        When two reservations both have persisted_identity_key pointing to the
+        same ManagedSlot, _try_assign assigns the first reservation to that slot
+        and the second to a different free slot.  The resulting plan.selected must
+        still have distinct slots for both.
+        """
+        r1 = self._mk("r-first", 1)
+        r2 = self._mk("r-second", 8)
+
+        # Both reservations' persisted identity is on slot 3 (only first wins)
+        slot3 = ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            persisted_identity_key="r-first",  # r-first wins the persisted slot
+            actual_start=r1.buffered_start,
+            actual_end=r1.buffered_end,
+        )
+        slot5 = ManagedSlot(slot=5, managed=True, status=SlotStatus.FREE)
+
+        plan = compute_desired_plan(
+            [r1, r2],
+            [slot3, slot5],
+            max_events=2,
+            plan_id="t046-conflict",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        if "r-first" in plan.selected and "r-second" in plan.selected:
+            assert plan.selected["r-first"] != plan.selected["r-second"]
+        assert plan.validate() == []
+
+    # ------------------------------------------------------------------
+    # validate() mutation tests
+    # ------------------------------------------------------------------
+
+    def test_validate_returns_empty_for_valid_plan(self) -> None:
+        """validate() returns [] when plan.selected has no conflicts."""
+        plan = DesiredPlan(
+            plan_id="t046-valid",
+            generated_at=_dt(2026, 8, 1),
+        )
+        plan.selected = {"r-a": 3, "r-b": 5}
+        assert plan.validate() == []
+
+    def test_validate_detects_slot_collision(self) -> None:
+        """validate() returns a violation when two identity keys map to the same slot.
+
+        This state cannot arise from compute_desired_plan normally, but validate()
+        is available to detect it defensively.
+        """
+        plan = DesiredPlan(
+            plan_id="t046-slot-collision",
+            generated_at=_dt(2026, 8, 1),
+        )
+        # Manually inject a slot collision by building the underlying dict directly
+        plan.selected["r-a"] = 3
+        plan.selected["r-b"] = 3  # same slot — collision
+
+        violations = plan.validate()
+        assert len(violations) >= 1
+        assert any("3" in v for v in violations)
+
+    def test_validate_empty_plan_no_violations(self) -> None:
+        """An empty plan (no selected reservations) validates cleanly."""
+        plan = DesiredPlan(plan_id="t046-empty", generated_at=_dt(2026, 8, 1))
+        assert plan.validate() == []
+
+    def test_invariant_holds_at_capacity(self) -> None:
+        """Invariants hold when reservations exactly fill managed capacity."""
+        reservations = [self._mk(f"r-{i}", i + 1) for i in range(5)]
+        slots = [self._free(i + 1) for i in range(5)]
+
+        plan = compute_desired_plan(
+            reservations,
+            slots,
+            max_events=5,
+            plan_id="t046-full",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        assert plan.validate() == []
+        # Each slot number appears exactly once
+        slot_values = list(plan.selected.values())
+        assert len(slot_values) == len(set(slot_values))
+        # Each identity key appears exactly once
+        key_values = list(plan.selected.keys())
+        assert len(key_values) == len(set(key_values))

@@ -54,6 +54,7 @@ from datetime import datetime
 from datetime import timezone
 from enum import Enum
 import hashlib
+import logging
 import re
 from typing import Any
 
@@ -68,6 +69,8 @@ in :attr:`Reservation.fingerprint_history` for conservative rematch.
 
 # Airbnb confirmation codes: one uppercase letter followed by nine
 # uppercase alphanumeric characters (e.g. "HMXXXXXXXX").
+_LOGGER = logging.getLogger(__name__)
+
 _AIRBNB_CONF_RE = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]{9})(?![A-Z0-9])")
 
 
@@ -1471,6 +1474,10 @@ def compute_desired_plan(
     for res in selected_np:
         if not _try_assign(res):
             plan.overflow[res.identity_key] = "no_free_slot"
+            _LOGGER.warning(
+                "Overflow: reservation %s selected but no free managed slot available",
+                res.identity_key,
+            )
 
     for slot_num, ikey in assigned.items():
         plan.selected[ikey] = slot_num
@@ -1486,6 +1493,34 @@ def compute_desired_plan(
 
     slot_to_identity: dict[int, str] = {v: k for k, v in plan.selected.items()}
     res_by_key: dict[str, Reservation] = {r.identity_key: r for r in reservations}
+
+    # Detect duplicate persisted assignments: same identity key in multiple OCCUPIED
+    # managed slots.  The canonical slot is the lowest-numbered one.  All others are
+    # non-canonical and will be cleared.
+    _persisted_to_slots: dict[str, list[int]] = {}
+    for _ms in managed_slots:
+        if (
+            _ms.managed
+            and _ms.persisted_identity_key is not None
+            and _ms.status is SlotStatus.OCCUPIED
+        ):
+            _persisted_to_slots.setdefault(_ms.persisted_identity_key, []).append(
+                _ms.slot
+            )
+    _non_canonical_slots: set[int] = set()
+    for _dup_key, _dup_slots in _persisted_to_slots.items():
+        if len(_dup_slots) > 1:
+            _canonical = min(_dup_slots)
+            _non_canonical = [s for s in _dup_slots if s != _canonical]
+            _non_canonical_slots.update(_non_canonical)
+            _LOGGER.warning(
+                "Duplicate assignment: identity %s found in slots %s; "
+                "slot %d is canonical, slots %s will be cleared (duplicate collapse)",
+                _dup_key,
+                sorted(_dup_slots),
+                _canonical,
+                sorted(_non_canonical),
+            )
 
     for ms in sorted(managed_slots, key=lambda m: m.slot):
         if not ms.managed:
@@ -1509,12 +1544,22 @@ def compute_desired_plan(
             last_error=ms.last_error,
         )
         if action is not ActionKind.NOOP:
+            clear_reason: str | None = pending_reason
+            if action is ActionKind.CLEAR:
+                if ms.slot in _non_canonical_slots:
+                    clear_reason = "duplicate_non_canonical"
+                elif ms.status is SlotStatus.PHANTOM:
+                    clear_reason = "phantom"
+                elif ms.status is SlotStatus.OCCUPIED and desired_key is None:
+                    clear_reason = "stale"
+                elif ms.status is SlotStatus.OCCUPIED and desired_key is not None:
+                    clear_reason = "mis_assigned"
             plan.actions.append(
                 SlotAction(
                     kind=action,
                     slot=ms.slot,
                     identity_key=desired_key,
-                    reason=pending_reason,
+                    reason=clear_reason,
                 )
             )
 

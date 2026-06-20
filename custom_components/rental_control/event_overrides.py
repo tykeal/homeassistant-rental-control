@@ -783,6 +783,31 @@ class EventOverrides:
                 identity_key = action.identity_key
 
                 if action.kind in {ActionKind.CLEAR, ActionKind.RETRY_CLEAR}:
+                    _clear_reason = action.reason
+                    if _clear_reason == "duplicate_non_canonical":
+                        _LOGGER.warning(
+                            "Duplicate collapse: clearing non-canonical slot %d "
+                            "(duplicate actual assignment)",
+                            slot,
+                        )
+                    elif _clear_reason == "phantom":
+                        _LOGGER.warning(
+                            "Phantom recovery: clearing slot %d "
+                            "(name-only state, no usable PIN)",
+                            slot,
+                        )
+                    elif _clear_reason == "stale":
+                        _LOGGER.warning(
+                            "Stale correction: clearing slot %d "
+                            "(expired or absent reservation)",
+                            slot,
+                        )
+                    elif _clear_reason == "mis_assigned":
+                        _LOGGER.warning(
+                            "Mis-assignment correction: clearing slot %d "
+                            "(wrong reservation in slot)",
+                            slot,
+                        )
                     result = await self._apply_clear(coordinator, slot)
                 elif action.kind is ActionKind.SET:
                     res = res_by_key.get(identity_key) if identity_key else None

@@ -946,3 +946,792 @@ class TestManualDriftCorrection:
         set_actions = [a for a in plan.actions if a.kind is ActionKind.SET]
         assert len(set_actions) == 1
         assert set_actions[0].slot == 5
+
+
+# ---------------------------------------------------------------------------
+# T047 – #589 triple-assignment duplicate-collapse regression
+# ---------------------------------------------------------------------------
+
+
+class TestTripleAssignmentCollapse:
+    """T047: Regression for #589 — triple duplicate assignment collapses.
+
+    In issue #589, the same reservation ended up programmed into three slots
+    simultaneously.  The reconciliation system must detect this and clear
+    the two non-canonical slots, converging the state in one or two
+    normal refreshes.
+    """
+
+    async def test_triple_assignment_converges_one_refresh(self) -> None:
+        """Three copies of same reservation collapse to one in a single refresh.
+
+        Setup:
+          - Slots 3, 4, 5 all OCCUPIED with persisted_identity_key='r-589'
+          - One active reservation 'r-589'
+          - max_events=3 (only 1 reservation, so slots 4 and 5 must be cleared)
+
+        After one refresh with confirmed clears, slots 4 and 5 are free and
+        slot 3 is the canonical owner.
+        """
+        from datetime import datetime
+        from datetime import timedelta
+        from datetime import timezone
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.event_overrides import EventOverrides
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+        from custom_components.rental_control.util import OperationResult
+
+        _TZ = timezone.utc
+        s = datetime(2026, 8, 1, 14, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+        res = Reservation(
+            identity_key="r-589",
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary="Guest 589",
+            slot_name="Guest 589",
+            display_slot_name="RC Guest 589",
+            slot_code="PIN589",
+        )
+
+        # Corrupt starting state: same reservation in 3 slots
+        slot3 = ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="RC Guest 589",
+            actual_code_present=True,
+            persisted_identity_key="r-589",
+            actual_start=s,
+            actual_end=e,
+        )
+        slot4 = ManagedSlot(
+            slot=4,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest 589",
+            actual_code_present=True,
+            persisted_identity_key="r-589",
+        )
+        slot5 = ManagedSlot(
+            slot=5,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest 589",
+            actual_code_present=True,
+            persisted_identity_key="r-589",
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [slot3, slot4, slot5],
+            max_events=3,
+            plan_id="t047-triple",
+            generated_at=s,
+        )
+
+        # Canonical slot 3 should keep the reservation
+        assert plan.selected.get("r-589") == 3
+        # Slots 4 and 5 must be cleared
+        clear_slots = {a.slot for a in plan.actions if a.kind is ActionKind.CLEAR}
+        assert 4 in clear_slots
+        assert 5 in clear_slots
+
+        # Apply plan with confirmed clears
+        eo = EventOverrides(start_slot=3, max_slots=3)
+        eo.update(3, "PIN589", "Guest 589", s, e)
+        eo.update(4, "PIN589", "Guest 589", s, e)
+        eo.update(5, "PIN589", "Guest 589", s, e)
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        async def mock_clear(coord, slot, **kwargs):
+            """Return a confirmed clear result for the given slot."""
+            return OperationResult(kind="clear", slot=slot, confirmed=True)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            side_effect=mock_clear,
+        ):
+            await eo.async_apply_plan(coordinator, plan, {"r-589": res})
+
+        # After confirmed clears: slots 4 and 5 freed, slot 3 still occupied
+        assert eo.overrides.get(4) is None
+        assert eo.overrides.get(5) is None
+        assert eo.overrides.get(3) is not None
+
+
+# ---------------------------------------------------------------------------
+# T048 – #521 phantom name-only slot pending-clear then reuse
+# ---------------------------------------------------------------------------
+
+
+class TestPhantomNameOnlySlot:
+    """T048: Regression for #521 — phantom slot becomes pending-clear then reusable.
+
+    In issue #521, a slot had a guest name but no PIN (phantom state).
+    Rental Control must classify it as PHANTOM, issue a CLEAR, and only
+    reuse the slot after a confirmed clear.
+    """
+
+    async def test_phantom_slot_pending_clear_then_free_then_reuse(self) -> None:
+        """PHANTOM slot is cleared then becomes free and reusable.
+
+        Refresh 1: slot has PHANTOM state → CLEAR action issued.
+        After clear confirmed: slot is FREE.
+        Refresh 2: a waiting reservation is assigned (SET) to the now-free slot.
+        """
+        from datetime import datetime
+        from datetime import timedelta
+        from datetime import timezone
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.event_overrides import EventOverrides
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+        from custom_components.rental_control.util import OperationResult
+
+        _TZ = timezone.utc
+        s = datetime(2026, 8, 1, 14, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+        res = Reservation(
+            identity_key="r-521",
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary="Guest 521",
+            slot_name="Guest 521",
+            display_slot_name="RC Guest 521",
+            slot_code="PIN521",
+        )
+
+        # Corrupt starting state: slot 5 is PHANTOM (name only, no PIN)
+        slot5_phantom = ManagedSlot(
+            slot=5,
+            managed=True,
+            status=SlotStatus.PHANTOM,
+            actual_name="OldPhantomGuest",
+            actual_code_present=False,
+        )
+
+        # Refresh 1: phantom slot must receive CLEAR, reservation overflows
+        plan1 = compute_desired_plan(
+            [res],
+            [slot5_phantom],
+            max_events=3,
+            plan_id="t048-r1",
+            generated_at=s,
+        )
+
+        assert plan1.slots[5].action is ActionKind.CLEAR
+        assert plan1.slots[5].action.value == "clear"
+
+        # Apply plan 1: confirmed clear
+        eo = EventOverrides(start_slot=5, max_slots=1)
+        eo.update(5, "", "OldPhantomGuest", s, e)
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed_clear = OperationResult(kind="clear", slot=5, confirmed=True)
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=confirmed_clear,
+        ):
+            await eo.async_apply_plan(coordinator, plan1, {})
+
+        # After clear: slot 5 should be free (override cleared)
+        assert eo.overrides.get(5) is None
+        assert 5 not in eo.pending_fences
+
+        # Refresh 2: slot 5 is now FREE → reservation gets SET
+        slot5_free = ManagedSlot(
+            slot=5,
+            managed=True,
+            status=SlotStatus.FREE,
+        )
+
+        plan2 = compute_desired_plan(
+            [res],
+            [slot5_free],
+            max_events=3,
+            plan_id="t048-r2",
+            generated_at=s,
+        )
+
+        assert "r-521" in plan2.selected
+        set_actions = [a for a in plan2.actions if a.kind is ActionKind.SET]
+        assert len(set_actions) == 1
+        assert set_actions[0].slot == 5
+
+
+# ---------------------------------------------------------------------------
+# T049 – stale expired assignment self-heal without restart/reload
+# ---------------------------------------------------------------------------
+
+
+class TestStaleExpiredAssignment:
+    """T049: Stale expired assignment self-heals on the next normal refresh.
+
+    A slot occupied by a reservation that is no longer in the calendar feed
+    (expired or cancelled) must be cleared and made available, all within
+    a normal coordinator refresh — no restart or reload required.
+    """
+
+    async def test_stale_assignment_cleared_on_next_refresh(self) -> None:
+        """Stale occupied slot receives CLEAR; slot is freed for a new reservation.
+
+        Setup:
+          - Slot 5 OCCUPIED with r-expired (NOT in current reservations)
+          - r-new needs assignment
+        Refresh 1: slot 5 gets CLEAR; r-new overflows (no free slot).
+        After clear confirmed: slot 5 is FREE.
+        Refresh 2: r-new gets SET to slot 5.
+        """
+        from datetime import datetime
+        from datetime import timedelta
+        from datetime import timezone
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.event_overrides import EventOverrides
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+        from custom_components.rental_control.util import OperationResult
+
+        _TZ = timezone.utc
+        s = datetime(2026, 8, 1, 14, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+
+        r_new = Reservation(
+            identity_key="r-new-t049",
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary="New Guest",
+            slot_name="New Guest",
+            display_slot_name="RC New Guest",
+            slot_code="PIN049",
+        )
+
+        # Slot 5 occupied by expired reservation (not in current list)
+        slot5_stale = ManagedSlot(
+            slot=5,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="OldExpiredGuest",
+            actual_code_present=True,
+            persisted_identity_key="r-expired-t049",
+        )
+
+        # Refresh 1: r-new needs slot, slot 5 is stale → CLEAR; r-new overflows
+        plan1 = compute_desired_plan(
+            [r_new],  # r-expired NOT in list
+            [slot5_stale],
+            max_events=3,
+            plan_id="t049-r1",
+            generated_at=s,
+        )
+
+        # Slot 5 gets CLEAR (stale)
+        assert plan1.slots[5].action is ActionKind.CLEAR
+        # r-new overflows (no free slot available)
+        assert "r-new-t049" in plan1.overflow
+
+        # Apply plan 1: confirmed clear
+        eo = EventOverrides(start_slot=5, max_slots=1)
+        eo.update(5, "PIN-EXPIRED", "OldExpiredGuest", s, e)
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed_clear = OperationResult(kind="clear", slot=5, confirmed=True)
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=confirmed_clear,
+        ):
+            await eo.async_apply_plan(coordinator, plan1, {})
+
+        assert eo.overrides.get(5) is None
+
+        # Refresh 2: slot 5 now FREE → r-new gets SET
+        slot5_free = ManagedSlot(slot=5, managed=True, status=SlotStatus.FREE)
+
+        plan2 = compute_desired_plan(
+            [r_new],
+            [slot5_free],
+            max_events=3,
+            plan_id="t049-r2",
+            generated_at=s,
+        )
+
+        assert "r-new-t049" in plan2.selected
+        set_actions = [a for a in plan2.actions if a.kind is ActionKind.SET]
+        assert any(a.slot == 5 for a in set_actions)
+
+
+# ---------------------------------------------------------------------------
+# T050 – stale mis-assigned slot replaced with desired reservation
+# ---------------------------------------------------------------------------
+
+
+class TestStaleMisassignedSlot:
+    """T050: Stale mis-assigned slot self-heals by clearing and reassigning.
+
+    A slot occupied by reservation A (stale) is cleared so that reservation
+    B (the desired, currently-active reservation) can take the slot on the
+    next refresh cycle.
+    """
+
+    async def test_misassigned_slot_replaced_with_desired_two_refreshes(
+        self,
+    ) -> None:
+        """Mis-assigned slot is cleared on refresh 1; desired reservation SET on refresh 2.
+
+        Setup:
+          - Slot 3 OCCUPIED with r-wrong (NOT in current reservations)
+          - Slot 5 FREE
+          - r-desired is the active reservation
+
+        Refresh 1:
+          - r-desired gets slot 5 (SET — free slot available)
+          - Slot 3 gets CLEAR (stale occupant)
+
+        After clear: slot 3 is FREE (slot 5 already has r-desired).
+        Convergence happens in 1 refresh (r-desired gets a slot immediately).
+        """
+        from datetime import datetime
+        from datetime import timedelta
+        from datetime import timezone
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.event_overrides import EventOverrides
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+        from custom_components.rental_control.util import OperationResult
+
+        _TZ = timezone.utc
+        s = datetime(2026, 8, 1, 14, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+
+        r_desired = Reservation(
+            identity_key="r-desired-t050",
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary="Desired Guest",
+            slot_name="Desired Guest",
+            display_slot_name="RC Desired Guest",
+            slot_code="PIN050",
+        )
+
+        slot3_wrong = ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="WrongGuest",
+            actual_code_present=True,
+            persisted_identity_key="r-wrong-t050",  # NOT in current list
+        )
+        slot5_free = ManagedSlot(slot=5, managed=True, status=SlotStatus.FREE)
+
+        plan = compute_desired_plan(
+            [r_desired],
+            [slot3_wrong, slot5_free],
+            max_events=3,
+            plan_id="t050-misassign",
+            generated_at=s,
+        )
+
+        # r-desired gets the free slot 5 (SET)
+        assert plan.selected.get("r-desired-t050") == 5
+        set_actions = [a for a in plan.actions if a.kind is ActionKind.SET]
+        assert any(a.slot == 5 for a in set_actions)
+
+        # Slot 3 gets CLEAR (stale r-wrong)
+        clear_actions = [a for a in plan.actions if a.kind is ActionKind.CLEAR]
+        assert any(a.slot == 3 for a in clear_actions)
+
+        # Apply plan with confirmed clears and set
+        eo = EventOverrides(start_slot=3, max_slots=3)
+        eo.update(3, "WRONGPIN", "WrongGuest", s, e)
+        eo.update(4, "", "", s, e)
+        eo.update(5, "", "", s, e)
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_prefix = ""
+        name_state = MagicMock()
+        name_state.state = "Desired Guest"
+        coordinator.hass.states.get.return_value = name_state
+
+        async def mock_clear(coord, slot, **kwargs):
+            """Return a confirmed clear result for the given slot."""
+            return OperationResult(kind="clear", slot=slot, confirmed=True)
+
+        async def mock_set(coord, event, slot):
+            """Return a confirmed set result for the given slot."""
+            return OperationResult(kind="set", slot=slot, confirmed=True)
+
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                side_effect=mock_clear,
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                side_effect=mock_set,
+            ),
+        ):
+            await eo.async_apply_plan(coordinator, plan, {"r-desired-t050": r_desired})
+
+        # Slot 3 cleared (stale removed)
+        assert eo.overrides.get(3) is None
+        # Slot 5 has r-desired
+        assert eo.overrides.get(5) is not None
+
+
+# ---------------------------------------------------------------------------
+# T051 – #535 nearer-not-programmed-when-full corrupt starting state
+# ---------------------------------------------------------------------------
+
+
+class TestNearerNotProgrammedWhenFull:
+    """T051: Regression for #535 — nearer reservation not programmed when all
+    slots are occupied by farther reservations.
+
+    When all managed slots are occupied by later-starting reservations and a
+    nearer reservation arrives, the reconciliation system must:
+    1. Overflow the farthest reservation.
+    2. Clear the farthest slot.
+    3. Assign the nearer reservation to the newly freed slot (may take 2 refreshes
+       if the clear is confirmed after the planning pass).
+    """
+
+    async def test_nearer_programmed_after_farther_cleared(self) -> None:
+        """Nearer reservation wins a slot within 2 refresh cycles.
+
+        Setup (corrupt starting state):
+          - Slot 3: OCCUPIED r-far1 (Aug 15)
+          - Slot 4: OCCUPIED r-far2 (Aug 20)
+          - r-near (Aug 1) arrives — must be assigned within 2 refreshes
+
+        Refresh 1:
+          - r-near selected (soonest); r-far2 overflows (farther, capacity=2)
+          - Slot 4 gets CLEAR (r-far2 not in plan)
+          - r-near overflows (no_free_slot — both slots still OCCUPIED)
+
+        After clear of slot 4: slot 4 FREE.
+        Refresh 2: r-near gets SET to slot 4.
+        """
+        from datetime import datetime
+        from datetime import timedelta
+        from datetime import timezone
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.event_overrides import EventOverrides
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+        from custom_components.rental_control.util import OperationResult
+
+        _TZ = timezone.utc
+
+        def _r(key: str, day: int) -> Reservation:
+            """Build a minimal August 2026 Reservation with *key* starting on *day*."""
+            s = datetime(2026, 8, day, 14, tzinfo=_TZ)
+            e = s + timedelta(days=7)
+            return Reservation(
+                identity_key=key,
+                start=s,
+                end=e,
+                buffered_start=s,
+                buffered_end=e,
+                summary=f"Guest {key}",
+                slot_name=f"Guest {key}",
+                display_slot_name=f"RC Guest {key}",
+                slot_code=f"PIN{key}",
+            )
+
+        r_near = _r("r-near-535", 1)
+        r_far1 = _r("r-far1-535", 15)
+        r_far2 = _r("r-far2-535", 20)
+
+        # Corrupt starting state: farther reservations occupy all slots
+        slot3 = ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="RC Guest r-far1-535",
+            actual_code_present=True,
+            persisted_identity_key="r-far1-535",
+            actual_start=r_far1.buffered_start,
+            actual_end=r_far1.buffered_end,
+        )
+        slot4 = ManagedSlot(
+            slot=4,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest r-far2-535",
+            actual_code_present=True,
+            persisted_identity_key="r-far2-535",
+            actual_start=r_far2.buffered_start,
+            actual_end=r_far2.buffered_end,
+        )
+
+        # Refresh 1
+        plan1 = compute_desired_plan(
+            [r_near, r_far1, r_far2],
+            [slot3, slot4],
+            max_events=2,
+            plan_id="t051-r1",
+            generated_at=datetime(2026, 8, 1, tzinfo=_TZ),
+        )
+
+        # r-far2 must overflow (farther than r-near and r-far1)
+        assert "r-far2-535" in plan1.overflow
+        # Slot 4 must get CLEAR (r-far2 overflows; its slot has no desired occupant)
+        clear_slot4 = [
+            a for a in plan1.actions if a.kind is ActionKind.CLEAR and a.slot == 4
+        ]
+        assert len(clear_slot4) == 1
+
+        # Apply refresh 1: confirm clear of slot 4
+        eo = EventOverrides(start_slot=3, max_slots=2)
+        eo.update(
+            3,
+            "PINr-far1-535",
+            "Guest r-far1-535",
+            r_far1.buffered_start,
+            r_far1.buffered_end,
+        )
+        eo.update(
+            4,
+            "PINr-far2-535",
+            "Guest r-far2-535",
+            r_far2.buffered_start,
+            r_far2.buffered_end,
+        )
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        async def mock_clear(coord, slot, **kwargs):
+            """Return a confirmed clear result for the given slot."""
+            return OperationResult(kind="clear", slot=slot, confirmed=True)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            side_effect=mock_clear,
+        ):
+            await eo.async_apply_plan(
+                coordinator, plan1, {"r-far1-535": r_far1, "r-near-535": r_near}
+            )
+
+        # Slot 4 freed after confirmed clear
+        assert eo.overrides.get(4) is None
+
+        # Refresh 2: slot 4 now FREE → r-near gets SET
+        slot3_r2 = ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest r-far1-535",
+            actual_code_present=True,
+            persisted_identity_key="r-far1-535",
+            actual_start=r_far1.buffered_start,
+            actual_end=r_far1.buffered_end,
+        )
+        slot4_r2 = ManagedSlot(slot=4, managed=True, status=SlotStatus.FREE)
+
+        plan2 = compute_desired_plan(
+            [r_near, r_far1, r_far2],
+            [slot3_r2, slot4_r2],
+            max_events=2,
+            plan_id="t051-r2",
+            generated_at=datetime(2026, 8, 1, tzinfo=_TZ),
+        )
+
+        # r-near must be assigned in refresh 2
+        assert "r-near-535" in plan2.selected
+        set_actions = [a for a in plan2.actions if a.kind is ActionKind.SET]
+        assert any(a.slot == 4 for a in set_actions)
+
+
+# ---------------------------------------------------------------------------
+# T052 – #546 farther-evicts-nearer corrupt starting state
+# ---------------------------------------------------------------------------
+
+
+class TestFartherEvictsNearer:
+    """T052: Regression for #546 — farther reservation evicted a nearer one.
+
+    In issue #546, a farther reservation was programmed into a slot while the
+    nearer reservation (which should have priority) was left unassigned.
+    The reconciliation system must detect and correct this within 1-2 refreshes.
+    """
+
+    async def test_farther_evicted_nearer_corrected_within_two_refreshes(
+        self,
+    ) -> None:
+        """Farther-evicts-nearer corrupt state corrected in ≤2 refresh cycles.
+
+        Setup (corrupt starting state):
+          - Slot 3 OCCUPIED by r-far (Aug 15) — farther has a slot it shouldn't
+          - r-near (Aug 1) — nearer, should have priority but has no slot
+
+        Desired plan (max_events=1):
+          - r-near selected (nearer start time, capacity=1)
+          - r-far overflows (farther, capacity exceeded)
+          - Slot 3: desired_key=None (r-far overflows) → CLEAR
+          - r-near: no free slot (slot 3 occupied) → no_free_slot overflow
+
+        Refresh 1: CLEAR slot 3; r-near overflows.
+        After clear: slot 3 FREE.
+        Refresh 2: r-near gets SET to slot 3.
+        """
+        from datetime import datetime
+        from datetime import timedelta
+        from datetime import timezone
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.event_overrides import EventOverrides
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+        from custom_components.rental_control.util import OperationResult
+
+        _TZ = timezone.utc
+
+        def _r(key: str, day: int) -> Reservation:
+            """Build a minimal August 2026 Reservation with *key* starting on *day*."""
+            s = datetime(2026, 8, day, 14, tzinfo=_TZ)
+            e = s + timedelta(days=7)
+            return Reservation(
+                identity_key=key,
+                start=s,
+                end=e,
+                buffered_start=s,
+                buffered_end=e,
+                summary=f"Guest {key}",
+                slot_name=f"Guest {key}",
+                display_slot_name=f"RC Guest {key}",
+                slot_code=f"PIN{key}",
+            )
+
+        r_near = _r("r-near-546", 1)
+        r_far = _r("r-far-546", 15)
+
+        # Corrupt starting state: far has the slot, near is unassigned
+        slot3_far = ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest r-far-546",
+            actual_code_present=True,
+            persisted_identity_key="r-far-546",
+            actual_start=r_far.buffered_start,
+            actual_end=r_far.buffered_end,
+        )
+
+        # Refresh 1: r-near selected (nearer), r-far overflows (farther)
+        # slot 3 has r-far but r-far is overflow → slot 3 gets CLEAR
+        # r-near has no persisted slot and no free slot → no_free_slot overflow
+        plan1 = compute_desired_plan(
+            [r_near, r_far],
+            [slot3_far],
+            max_events=1,
+            plan_id="t052-r1",
+            generated_at=datetime(2026, 8, 1, tzinfo=_TZ),
+        )
+
+        # r-far must overflow (farther, capacity=1)
+        assert "r-far-546" in plan1.overflow
+        # Slot 3 gets CLEAR (r-far is overflow, no desired occupant)
+        clear_slot3 = [
+            a for a in plan1.actions if a.kind is ActionKind.CLEAR and a.slot == 3
+        ]
+        assert len(clear_slot3) == 1
+
+        # Apply refresh 1: confirm clear of slot 3
+        eo = EventOverrides(start_slot=3, max_slots=1)
+        eo.update(
+            3,
+            "PINr-far-546",
+            "Guest r-far-546",
+            r_far.buffered_start,
+            r_far.buffered_end,
+        )
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        async def mock_clear(coord, slot, **kwargs):
+            """Return a confirmed clear result for the given slot."""
+            return OperationResult(kind="clear", slot=slot, confirmed=True)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            side_effect=mock_clear,
+        ):
+            await eo.async_apply_plan(coordinator, plan1, {})
+
+        # Slot 3 freed
+        assert eo.overrides.get(3) is None
+
+        # Refresh 2: slot 3 FREE → r-near gets SET
+        slot3_free = ManagedSlot(slot=3, managed=True, status=SlotStatus.FREE)
+
+        plan2 = compute_desired_plan(
+            [r_near, r_far],
+            [slot3_free],
+            max_events=1,
+            plan_id="t052-r2",
+            generated_at=datetime(2026, 8, 1, tzinfo=_TZ),
+        )
+
+        assert "r-near-546" in plan2.selected
+        assert plan2.selected["r-near-546"] == 3
+        set_actions = [a for a in plan2.actions if a.kind is ActionKind.SET]
+        assert any(a.slot == 3 for a in set_actions)
