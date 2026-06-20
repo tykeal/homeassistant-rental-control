@@ -160,6 +160,11 @@ class EventOverrides:
         self._actual_state_cache: dict[int, dict[str, Any]] = {}
         self._reconciliation_active: bool = False
 
+        # Per-slot error tracking for diagnostics (T096)
+        self._last_slot_errors: dict[int, str] = {}
+        # Latest diagnostics snapshot for HA diagnostics collection (T096)
+        self._diagnostics_snapshot: dict[str, Any] = {}
+
     @property
     def max_slots(self) -> int:
         """Return the max_slots known."""
@@ -234,6 +239,92 @@ class EventOverrides:
     def reconciliation_active(self) -> bool:
         """True while async_apply_plan is executing."""
         return self._reconciliation_active
+
+    @property
+    def diagnostics_snapshot(self) -> dict[str, Any]:
+        """Return the latest diagnostics snapshot for HA diagnostics collection.
+
+        The snapshot is built after each :meth:`async_apply_plan` call and
+        captures matched slots, pending corrections, blocked clear reasons,
+        retry counts, and last errors.  Raw slot codes are never included.
+
+        Returns:
+            A shallow copy of the current diagnostics snapshot dict, or an
+            empty dict if no plan has been applied yet.
+        """
+        return dict(self._diagnostics_snapshot)
+
+    def get_last_slot_error(self, slot: int) -> str | None:
+        """Return the last error string for *slot*, or ``None`` if no error.
+
+        Args:
+            slot: Keymaster slot number.
+
+        Returns:
+            The last recorded error string for the slot, or ``None``.
+        """
+        return self._last_slot_errors.get(slot)
+
+    def _record_slot_error(self, slot: int, error: str) -> None:
+        """Record a failed operation error for *slot*.
+
+        Args:
+            slot: Keymaster slot number.
+            error: Human-readable error description.
+        """
+        self._last_slot_errors[slot] = error
+
+    def _clear_slot_error(self, slot: int) -> None:
+        """Clear the recorded error for *slot* on a successful operation.
+
+        Args:
+            slot: Keymaster slot number.
+        """
+        self._last_slot_errors.pop(slot, None)
+
+    def update_diagnostics_snapshot(self, plan: "DesiredPlan") -> None:
+        """Build and store a diagnostics snapshot from the completed plan.
+
+        Called after :meth:`async_apply_plan` completes.  Captures matched
+        slots (those with desired assignments), pending corrections (slots
+        with ``retry_clear`` or ``blocked`` actions), blocked clear reasons,
+        per-slot retry counts, and last errors.  Raw slot codes are never
+        included.
+
+        Args:
+            plan: The :class:`~.reconciliation.DesiredPlan` that was just applied.
+        """
+        matched: dict[int, dict[str, Any]] = {}
+        pending_corrections: dict[int, dict[str, Any]] = {}
+
+        for slot_num, ps in plan.slots.items():
+            if ps.desired_identity_key is not None:
+                matched[slot_num] = {
+                    "identity_key": ps.desired_identity_key,
+                    "action": ps.action.value,
+                }
+            if ps.action.value in (
+                ActionKind.RETRY_CLEAR.value,
+                ActionKind.BLOCKED.value,
+            ):
+                pending_corrections[slot_num] = {
+                    "action": ps.action.value,
+                    "blocked_reason": ps.pending_reason,
+                    "retry_count": ps.retry_count,
+                }
+
+        self._diagnostics_snapshot = {
+            "plan_id": plan.plan_id,
+            "generated_at": plan.generated_at.isoformat(),
+            "matched_slots": matched,
+            "pending_corrections": pending_corrections,
+            "pending_clear_slots": sorted(self._pending_clear_slots.keys()),
+            "slot_retry_counts": {
+                slot: self._retry_counts.get(slot, 0)
+                for slot in range(self._start_slot, self._start_slot + self._max_slots)
+            },
+            "last_slot_errors": dict(self._last_slot_errors),
+        }
 
     def load_persisted_mappings(self, mappings: dict[str, dict[str, Any]]) -> None:
         """Load persisted slot mappings from the HA Store.
@@ -697,6 +788,7 @@ class EventOverrides:
 
                 results.append(result)
         finally:
+            self.update_diagnostics_snapshot(plan)
             async with self._lock:
                 self._reconciliation_active = False
 
@@ -741,6 +833,7 @@ class EventOverrides:
                 self._overrides[slot] = None
                 self._slot_uids.pop(slot, None)
                 self._slot_miss_counts.pop(slot, None)
+                self._clear_slot_error(slot)
                 self.__assign_next_slot()
             elif result.failed:
                 _LOGGER.warning(
@@ -748,6 +841,7 @@ class EventOverrides:
                     slot,
                     result.error,
                 )
+                self._record_slot_error(slot, result.error or "clear failed")
             elif result.lingering_name or result.lingering_pin:
                 _LOGGER.warning(
                     "Clear not fully confirmed for slot %d "
@@ -756,6 +850,11 @@ class EventOverrides:
                     slot,
                     result.lingering_name,
                     result.lingering_pin,
+                )
+                self._record_slot_error(
+                    slot,
+                    f"lingering state after clear: "
+                    f"name={result.lingering_name} pin={result.lingering_pin}",
                 )
             else:
                 _LOGGER.debug(
@@ -810,6 +909,7 @@ class EventOverrides:
                     res.identity_key,
                 )
                 self._pending_fences.pop(slot, None)
+                self._clear_slot_error(slot)
                 self.__assign_next_slot()
             elif result.failed:
                 _LOGGER.warning(
@@ -820,6 +920,7 @@ class EventOverrides:
                 self._pending_fences.pop(slot, None)
                 self._overrides[slot] = None
                 self._slot_uids.pop(slot, None)
+                self._record_slot_error(slot, result.error or "set failed")
                 self.__assign_next_slot()
             else:
                 _LOGGER.debug(

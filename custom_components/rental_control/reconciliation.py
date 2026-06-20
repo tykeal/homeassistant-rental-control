@@ -283,6 +283,10 @@ class ManagedSlot:
             callback echoes.
         dirty_during_operation: True when a callback observed state
             while an operation token was pending.
+        last_error: Description of the most recent failed operation for
+            this slot, if any.  Populated by the apply-plan phase and
+            carried forward to the next refresh cycle for diagnostics.
+            Not persisted in the HA Store.
     """
 
     slot: int
@@ -300,6 +304,7 @@ class ManagedSlot:
     retry_count: int = 0
     last_operation_id: str | None = None
     dirty_during_operation: bool = False
+    last_error: str | None = None
 
 
 @dataclass(slots=True)
@@ -1204,12 +1209,104 @@ def _build_slot_action(
     return ActionKind.CLEAR, None
 
 
+def _build_plan_diagnostics_snapshot(
+    plan: DesiredPlan,
+    reservations: list[Reservation],
+    max_events: int,
+    *,
+    entry_id: str | None = None,
+    lockname: str | None = None,
+    start_slot: int | None = None,
+) -> dict[str, Any]:
+    """Build a comprehensive diagnostics snapshot for *plan*.
+
+    Produces a dict capturing plan metadata, per-slot desired/actual/action/
+    blocked_reason/retry_count/last_error, and per-reservation
+    selected/protected/overflow/missing_count/assigned_slot/uid_aliases/
+    booking_aliases.  Raw slot codes are deliberately excluded.
+
+    Called once per refresh at the end of :func:`compute_desired_plan`
+    after ``plan.slots`` and ``plan.actions`` are fully populated.
+
+    Args:
+        plan: The partially-built :class:`DesiredPlan` whose
+            :attr:`~DesiredPlan.slots`, :attr:`~DesiredPlan.selected`,
+            :attr:`~DesiredPlan.protected`, and :attr:`~DesiredPlan.overflow`
+            are already set.
+        reservations: All current reservations (eligible and ineligible).
+        max_events: Maximum number of reservations that can be assigned.
+        entry_id: Optional config-entry scope for diagnostics context.
+        lockname: Optional Keymaster lock name for diagnostics context.
+        start_slot: Optional managed-range start for diagnostics context.
+
+    Returns:
+        Populated diagnostics dict suitable for
+        :attr:`DesiredPlan.diagnostics`.
+    """
+    existing_diag: dict[str, Any] = dict(plan.diagnostics)
+
+    diag: dict[str, Any] = {
+        "plan_id": plan.plan_id,
+        "generated_at": plan.generated_at.isoformat(),
+        "max_slots": max_events,
+    }
+    if entry_id is not None:
+        diag["entry_id"] = entry_id
+    if lockname is not None:
+        diag["lockname"] = lockname
+    if start_slot is not None:
+        diag["start_slot"] = start_slot
+
+    # Per-slot diagnostics (no raw codes)
+    slots_diag: dict[int, dict[str, Any]] = {}
+    for slot_num, ps in plan.slots.items():
+        slots_diag[slot_num] = {
+            "desired_identity_key": ps.desired_identity_key,
+            "actual_classification": ps.actual_classification,
+            "action": ps.action.value,
+            "blocked_reason": ps.pending_reason,
+            "retry_count": ps.retry_count,
+            "last_error": ps.last_error,
+        }
+    diag["slots"] = slots_diag
+
+    # Per-reservation diagnostics (slot_code intentionally excluded)
+    res_diag: dict[str, dict[str, Any]] = {}
+    for res in reservations:
+        ikey = res.identity_key
+        res_diag[ikey] = {
+            "selected": ikey in plan.selected,
+            "protected": ikey in plan.protected,
+            "overflow_reason": plan.overflow.get(ikey),
+            "missing_count": res.missing_count,
+            "assigned_slot": plan.selected.get(ikey),
+            "uid_aliases": sorted(res.uid_aliases),
+            "booking_aliases": sorted(res.booking_aliases),
+            "slot_name": res.slot_name,
+            "summary": res.summary,
+            "eligible": res.eligible,
+            "protected_active": res.protected_active,
+            "checked_out": res.checked_out,
+        }
+    diag["reservations"] = res_diag
+
+    # Carry over pre-existing diagnostics keys not overwritten above.
+    for k, v in existing_diag.items():
+        diag.setdefault(k, v)
+
+    return diag
+
+
 def compute_desired_plan(
     reservations: list[Reservation],
     managed_slots: list[ManagedSlot],
     max_events: int,
     plan_id: str,
     generated_at: datetime,
+    *,
+    entry_id: str | None = None,
+    lockname: str | None = None,
+    start_slot: int | None = None,
 ) -> DesiredPlan:
     """Compute the deterministic desired slot plan for the current set of reservations.
 
@@ -1227,6 +1324,12 @@ def compute_desired_plan(
     occupants, ``RETRY_CLEAR`` for pending clears, and ``BLOCKED`` for locked
     slots.  ``NOOP`` actions are excluded from :attr:`DesiredPlan.actions`.
 
+    **Diagnostics**: a comprehensive snapshot is stored in
+    :attr:`DesiredPlan.diagnostics` capturing ``plan_id``, ``generated_at``,
+    per-slot desired/actual/action/blocked_reason/retry_count/last_error, and
+    per-reservation selected/protected/overflow/missing_count/assigned_slot/
+    uid_aliases/booking_aliases.  Raw slot codes are never included.
+
     Args:
         reservations: All current reservations (eligible and ineligible).
         managed_slots: All managed slots with their current observed and
@@ -1234,6 +1337,9 @@ def compute_desired_plan(
         max_events: Maximum number of reservations that can be assigned.
         plan_id: Refresh-scoped identifier for logging and operation tokens.
         generated_at: Time at which the plan was computed.
+        entry_id: Optional config-entry scope for diagnostics context.
+        lockname: Optional Keymaster lock name for diagnostics context.
+        start_slot: Optional managed-range start for diagnostics context.
 
     Returns:
         A fully populated :class:`DesiredPlan` with :attr:`~DesiredPlan.selected`,
@@ -1317,6 +1423,7 @@ def compute_desired_plan(
             action=action,
             pending_reason=pending_reason,
             retry_count=ms.retry_count,
+            last_error=ms.last_error,
         )
         if action is not ActionKind.NOOP:
             plan.actions.append(
@@ -1327,5 +1434,14 @@ def compute_desired_plan(
                     reason=pending_reason,
                 )
             )
+
+    plan.diagnostics = _build_plan_diagnostics_snapshot(
+        plan,
+        reservations,
+        max_events,
+        entry_id=entry_id,
+        lockname=lockname,
+        start_slot=start_slot,
+    )
 
     return plan

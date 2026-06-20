@@ -35,3 +35,9 @@ path = "uv.lock"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2021 Andrew Grimberg <tykeal@bardicgrove.org>"
 SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ".aislop/baseline.json"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Andrew Grimberg <tykeal@bardicgrove.org>"
+SPDX-License-Identifier = "Apache-2.0"

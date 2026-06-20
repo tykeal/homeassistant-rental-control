@@ -3115,3 +3115,341 @@ class TestComputeDesiredPlanProtectionCapacity:
         )
 
         assert plan.validate() == []
+
+
+# ---------------------------------------------------------------------------
+# T092: Per-reservation diagnostics in compute_desired_plan
+# ---------------------------------------------------------------------------
+
+
+class TestComputeDesiredPlanDiagnostics:
+    """T092: Verify per-reservation and per-slot diagnostics in plan.diagnostics.
+
+    Checks that plan.diagnostics contains the expected keys and that
+    per-reservation entries expose selected/protected/overflow/missing_count/
+    assigned_slot/uid_aliases/booking_aliases without leaking slot_code.
+    """
+
+    def test_diagnostics_has_plan_id_and_generated_at(self) -> None:
+        """plan.diagnostics contains plan_id and generated_at."""
+        r = _res("r-diag-001", 1)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="test-diag-plan",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert plan.diagnostics["plan_id"] == "test-diag-plan"
+        assert "generated_at" in plan.diagnostics
+
+    def test_diagnostics_has_entry_id_when_provided(self) -> None:
+        """entry_id keyword arg appears in plan.diagnostics."""
+        r = _res("r-entry", 1)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+            entry_id="entry-001",
+        )
+        assert plan.diagnostics["entry_id"] == "entry-001"
+
+    def test_diagnostics_has_lockname_and_start_slot_when_provided(self) -> None:
+        """lockname and start_slot keyword args appear in plan.diagnostics."""
+        r = _res("r-lock", 1)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+            lockname="front_door",
+            start_slot=5,
+        )
+        assert plan.diagnostics["lockname"] == "front_door"
+        assert plan.diagnostics["start_slot"] == 5
+
+    def test_diagnostics_has_reservations_key(self) -> None:
+        """plan.diagnostics['reservations'] is present."""
+        r = _res("r-dict", 1)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert "reservations" in plan.diagnostics
+
+    def test_per_reservation_selected_true_when_assigned(self) -> None:
+        """A reservation in plan.selected has selected=True in diagnostics."""
+        r = _res("r-sel", 1)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert plan.diagnostics["reservations"]["r-sel"]["selected"] is True
+
+    def test_per_reservation_selected_false_when_overflow(self) -> None:
+        """An overflow reservation has selected=False in diagnostics."""
+        reservations = [_res("r-a", 1), _res("r-b", 8), _res("r-c", 15)]
+        plan = compute_desired_plan(
+            reservations,
+            [_free_slot(5), _free_slot(6)],
+            max_events=2,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        # r-c is the third reservation; max_events=2 so it overflows
+        assert plan.diagnostics["reservations"]["r-c"]["selected"] is False
+
+    def test_per_reservation_protected_true_when_active(self) -> None:
+        """A protected active reservation has protected=True in diagnostics."""
+        r_prot = _res("r-prot", 1, protected_active=True)
+        r_np = _res("r-np", 8)
+        plan = compute_desired_plan(
+            [r_prot, r_np],
+            [_free_slot(5), _free_slot(6)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert plan.diagnostics["reservations"]["r-prot"]["protected"] is True
+        assert plan.diagnostics["reservations"]["r-np"]["protected"] is False
+
+    def test_per_reservation_overflow_reason_capacity(self) -> None:
+        """An overflow reservation has overflow_reason='capacity' in diagnostics."""
+        reservations = [_res("r-a", 1), _res("r-b", 8), _res("r-c", 15)]
+        plan = compute_desired_plan(
+            reservations,
+            [_free_slot(5), _free_slot(6)],
+            max_events=2,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert plan.diagnostics["reservations"]["r-c"]["overflow_reason"] == "capacity"
+
+    def test_per_reservation_overflow_reason_none_when_selected(self) -> None:
+        """A selected reservation has overflow_reason=None in diagnostics."""
+        r = _res("r-sel", 1)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert plan.diagnostics["reservations"]["r-sel"]["overflow_reason"] is None
+
+    def test_per_reservation_missing_count(self) -> None:
+        """missing_count is reflected in per-reservation diagnostics."""
+        r = _res("r-miss", 1, missing_count=2)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert plan.diagnostics["reservations"]["r-miss"]["missing_count"] == 2
+
+    def test_per_reservation_assigned_slot_matches_selected(self) -> None:
+        """assigned_slot in diagnostics matches plan.selected."""
+        r = _res("r-as", 1)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert plan.diagnostics["reservations"]["r-as"]["assigned_slot"] == 5
+
+    def test_per_reservation_assigned_slot_none_when_overflow(self) -> None:
+        """Overflow reservations have assigned_slot=None in diagnostics."""
+        reservations = [_res("r-a", 1), _res("r-ov", 8)]
+        plan = compute_desired_plan(
+            reservations,
+            [_free_slot(5)],
+            max_events=1,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert plan.diagnostics["reservations"]["r-ov"]["assigned_slot"] is None
+
+    def test_per_reservation_uid_aliases_present(self) -> None:
+        """uid_aliases are included in per-reservation diagnostics."""
+        from datetime import timedelta
+
+        start = _dt(2026, 7, 1, 14)
+        end = start + timedelta(days=7)
+        r = Reservation(
+            identity_key="r-uid",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Guest UID",
+            slot_name="Guest UID",
+            display_slot_name="RC Guest UID",
+            slot_code="5678",
+            uid_aliases={"uid-abc123"},
+        )
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert "uid-abc123" in plan.diagnostics["reservations"]["r-uid"]["uid_aliases"]
+
+    def test_per_reservation_booking_aliases_present(self) -> None:
+        """booking_aliases are included in per-reservation diagnostics."""
+        from datetime import timedelta
+
+        start = _dt(2026, 7, 1, 14)
+        end = start + timedelta(days=7)
+        r = Reservation(
+            identity_key="r-book",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Guest Book",
+            slot_name="Guest Book",
+            display_slot_name="RC Guest Book",
+            slot_code="5678",
+            booking_aliases={"HMABCDEF1234"},
+        )
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert (
+            "HMABCDEF1234"
+            in plan.diagnostics["reservations"]["r-book"]["booking_aliases"]
+        )
+
+    def test_per_reservation_slot_code_not_in_diagnostics(self) -> None:
+        """slot_code is never exposed in per-reservation diagnostics."""
+        from datetime import timedelta
+
+        start = _dt(2026, 7, 1, 14)
+        end = start + timedelta(days=7)
+        r = Reservation(
+            identity_key="r-code",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Guest Code",
+            slot_name="Guest Code",
+            display_slot_name="RC Guest Code",
+            slot_code="SECRETPIN",
+        )
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        res_diag = plan.diagnostics["reservations"]["r-code"]
+        assert "slot_code" not in res_diag
+        # The secret PIN must not appear anywhere in the diagnostics string
+        assert "SECRETPIN" not in str(plan.diagnostics)
+
+    def test_diagnostics_has_slots_key(self) -> None:
+        """plan.diagnostics['slots'] contains per-slot entries."""
+        r = _res("r-slotkey", 1)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert "slots" in plan.diagnostics
+        assert 5 in plan.diagnostics["slots"]
+
+    def test_per_slot_desired_identity_key(self) -> None:
+        """Per-slot diagnostics includes the desired_identity_key."""
+        r = _res("r-dik", 1)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        slot_diag = plan.diagnostics["slots"][5]
+        assert slot_diag["desired_identity_key"] == "r-dik"
+        assert "actual_classification" in slot_diag
+        assert "action" in slot_diag
+        assert "retry_count" in slot_diag
+
+    def test_per_slot_last_error_from_managed_slot(self) -> None:
+        """last_error from ManagedSlot is carried into per-slot diagnostics."""
+        r = _res("r-err", 1)
+        ms = ManagedSlot(
+            slot=5,
+            managed=True,
+            status=SlotStatus.FREE,
+            last_error="previous set failed",
+        )
+        plan = compute_desired_plan(
+            [r],
+            [ms],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert plan.diagnostics["slots"][5]["last_error"] == "previous set failed"
+
+    def test_per_slot_last_error_none_when_no_error(self) -> None:
+        """last_error is None in diagnostics when ManagedSlot has no error."""
+        r = _res("r-noerr", 1)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert plan.diagnostics["slots"][5]["last_error"] is None
+
+    def test_diagnostics_no_optional_keys_when_not_provided(self) -> None:
+        """entry_id, lockname, start_slot absent when not passed."""
+        r = _res("r-noopt", 1)
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert "entry_id" not in plan.diagnostics
+        assert "lockname" not in plan.diagnostics
+        assert "start_slot" not in plan.diagnostics
+
+    def test_overflow_details_preserved_in_diagnostics(self) -> None:
+        """Existing overflow_details from overflow list survive the merge."""
+        reservations = [_res("r-a", 1), _res("r-b", 8), _res("r-c", 15)]
+        plan = compute_desired_plan(
+            reservations,
+            [_free_slot(5), _free_slot(6)],
+            max_events=2,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        assert "overflow_details" in plan.diagnostics
+        assert "r-c" in plan.diagnostics["overflow_details"]

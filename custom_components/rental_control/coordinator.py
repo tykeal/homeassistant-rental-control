@@ -319,10 +319,30 @@ Please update Keymaster to at least v0.1.0-b0
 
     @property
     def latest_reconciliation_diagnostics(self) -> dict[str, Any]:
-        """Return diagnostics dict from latest plan."""
-        if self._latest_plan is None:
-            return {}
-        return dict(self._latest_plan.diagnostics)
+        """Return a combined diagnostics snapshot from the latest plan.
+
+        Merges the plan-level diagnostics (per-slot desired/actual/action/
+        retry_count/last_error and per-reservation selected/overflow/aliases)
+        with the :class:`~.event_overrides.EventOverrides` diagnostics snapshot
+        (matched_slots, pending_corrections, pending_clear_slots,
+        slot_retry_counts, last_slot_errors).
+
+        Raw PIN / slot-code values are never included: ``slot_code``, ``pin``,
+        and ``code`` keys are stripped before returning.
+
+        Returns:
+            Combined diagnostics dict; empty when no plan has been computed.
+        """
+        result: dict[str, Any] = {}
+        if self._latest_plan is not None:
+            result.update(self._latest_plan.diagnostics)
+        if self.event_overrides is not None:
+            result["event_overrides"] = self.event_overrides.diagnostics_snapshot
+        # Safety: strip any raw code/PIN values that might have leaked
+        result.pop("slot_code", None)
+        result.pop("pin", None)
+        result.pop("code", None)
+        return result
 
     def get_slot_assignment(self, identity_key: str) -> int | None:
         """Return slot number assigned to identity_key in latest plan, or None."""
@@ -944,13 +964,17 @@ Please update Keymaster to at least v0.1.0-b0
                     actual_end = dt.parse_datetime(end_dt_state.state)
 
             persisted_key = slot_to_persisted_key.get(i)
+            persisted_mapping = (
+                persisted.get(persisted_key) if persisted_key is not None else None
+            )
+            persisted_status = (
+                persisted_mapping.get("status")
+                if persisted_mapping is not None
+                else None
+            )
             if i in pending_clear:
                 status = _SlotStatus.PENDING_CLEAR
-            elif (
-                persisted_key is not None
-                and persisted.get(persisted_key, {}).get("status")
-                == SLOT_STATUS_BLOCKED
-            ):
+            elif persisted_status == SLOT_STATUS_BLOCKED:
                 status = _SlotStatus.BLOCKED
             elif name_value and has_code:
                 status = _SlotStatus.OCCUPIED
@@ -970,6 +994,7 @@ Please update Keymaster to at least v0.1.0-b0
                 date_range_enabled=date_range_on,
                 enabled=enabled,
                 persisted_identity_key=persisted_key,
+                last_error=self.event_overrides.get_last_slot_error(i),
             )
             slots.append(ms)
 
@@ -1005,8 +1030,9 @@ Please update Keymaster to at least v0.1.0-b0
             reservations: Mutable list of reservations for the current
                 refresh cycle.  Modified in-place.
         """
-        entry_data: dict[str, Any] = self.hass.data.get(DOMAIN, {}).get(
-            self._entry_id, {}
+        domain_data: dict[str, Any] | None = self.hass.data.get(DOMAIN)
+        entry_data: dict[str, Any] = (
+            domain_data.get(self._entry_id, {}) if domain_data is not None else {}
         )
         checkin_sensor = entry_data.get(CHECKIN_SENSOR)
         if checkin_sensor is None:
@@ -1158,6 +1184,9 @@ Please update Keymaster to at least v0.1.0-b0
                     max_events=self.max_events,
                     plan_id=plan_id,
                     generated_at=dt.now(),
+                    entry_id=self._entry_id,
+                    lockname=self.lockname,
+                    start_slot=self.start_slot,
                 )
 
                 violations = plan.validate()
@@ -1185,7 +1214,6 @@ Please update Keymaster to at least v0.1.0-b0
                     "Reconciliation failed for %s; skipping cycle", self._name
                 )
 
-        # Save store after each reconciliation cycle
         await self.async_save_slot_store()
 
         # Refresh child lock discovery each cycle
@@ -1560,3 +1588,6 @@ Please update Keymaster to at least v0.1.0-b0
 
         _LOGGER.debug("Event to add: %s", cal_event)
         return cal_event
+
+
+# test

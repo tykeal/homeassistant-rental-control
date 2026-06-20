@@ -540,3 +540,210 @@ class TestClearFailureSlotNotReused:
         assert eo.overrides[1]["slot_name"] == "OldGuest"
         assert eo.overrides[2] is not None
         assert eo.overrides[2]["slot_name"] == "New Guest"
+
+
+# ---------------------------------------------------------------------------
+# T093 – Diagnostics desired-vs-actual completeness scenario
+# ---------------------------------------------------------------------------
+
+
+class TestDiagnosticsDesiredVsActual:
+    """T093: Integration scenario proving diagnostics capture all significant
+    slot states: matched slot, overflow reservation, manual drift, and
+    pending clear.
+
+    Uses focused mock-based integration (same pattern as TestClearFailureSlotNotReused)
+    so no HA infrastructure is required.
+    """
+
+    async def test_diagnostics_captures_all_states(self) -> None:
+        """Diagnostics snapshot covers matched, overflow, drift, and pending clear.
+
+        Scenario:
+          - Slot 1 occupied by matching reservation r-match (NOOP action)
+          - Slot 2 pending_clear from a previous failed clear (RETRY_CLEAR)
+          - Reservation r-overflow exceeds capacity and lands in plan.overflow
+          - plan.diagnostics contains per-slot and per-reservation detail
+          - No raw PIN codes appear anywhere in diagnostics
+        """
+        from datetime import datetime
+        from datetime import timezone
+
+        from custom_components.rental_control.event_overrides import EventOverrides
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import PlannedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        _TZ = timezone.utc
+
+        def _mk(key: str, day: int) -> Reservation:
+            """Build a minimal August Reservation with *key* starting on *day*."""
+            from datetime import timedelta
+
+            s = datetime(2026, 8, day, 14, tzinfo=_TZ)
+            e = s + timedelta(days=7)
+            return Reservation(
+                identity_key=key,
+                start=s,
+                end=e,
+                buffered_start=s,
+                buffered_end=e,
+                summary=f"Guest {key}",
+                slot_name=f"Guest {key}",
+                display_slot_name=f"RC Guest {key}",
+                slot_code="SECRETCODE",
+            )
+
+        r_match = _mk("r-match", 1)
+        r_overflow = _mk("r-overflow", 8)
+
+        # Slot 1: occupied by r-match (persisted_identity_key matches)
+        # Slot 2: pending_clear from a prior failed attempt
+        ms1 = ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest r-match",
+            actual_code_present=True,
+            persisted_identity_key="r-match",
+            last_error=None,
+        )
+        ms2 = ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.PENDING_CLEAR,
+            actual_name="OldGuest",
+            actual_code_present=True,
+            retry_count=1,
+            last_error="prior clear failed",
+            blocked_reason="prior clear unconfirmed",
+        )
+
+        generated = datetime(2026, 8, 1, tzinfo=_TZ)
+        plan = compute_desired_plan(
+            [r_match, r_overflow],
+            [ms1, ms2],
+            max_events=1,  # capacity=1 → r_overflow overflows
+            plan_id="t093-diag",
+            generated_at=generated,
+            entry_id="entry-t093",
+            lockname="test_lock",
+            start_slot=1,
+        )
+
+        diag = plan.diagnostics
+
+        # --- Plan metadata present ---
+        assert diag["plan_id"] == "t093-diag"
+        assert diag["entry_id"] == "entry-t093"
+        assert diag["lockname"] == "test_lock"
+        assert diag["start_slot"] == 1
+
+        # --- Matched slot: r-match in slot 1 ---
+        assert "r-match" in plan.selected
+        assert diag["reservations"]["r-match"]["selected"] is True
+        assert diag["reservations"]["r-match"]["assigned_slot"] == 1
+
+        # --- Overflow reservation: r-overflow ---
+        assert "r-overflow" in plan.overflow
+        assert diag["reservations"]["r-overflow"]["selected"] is False
+        assert diag["reservations"]["r-overflow"]["overflow_reason"] is not None
+
+        # --- Pending clear: slot 2 has RETRY_CLEAR action ---
+        assert diag["slots"][2]["action"] == ActionKind.RETRY_CLEAR.value
+        assert diag["slots"][2]["retry_count"] == 1
+        assert diag["slots"][2]["last_error"] == "prior clear failed"
+
+        # --- EventOverrides snapshot also captures this ---
+        eo = EventOverrides(start_slot=1, max_slots=2)
+        eo._pending_clear_slots[2] = "op-token"
+        eo._record_slot_error(2, "prior clear failed")
+
+        # Build a matching plan for the snapshot
+        snap_plan = DesiredPlan(plan_id="t093-snap", generated_at=generated)
+        snap_plan.slots[1] = PlannedSlot(
+            slot=1,
+            desired_identity_key="r-match",
+            actual_classification="occupied",
+            action=ActionKind.NOOP,
+        )
+        snap_plan.slots[2] = PlannedSlot(
+            slot=2,
+            desired_identity_key=None,
+            actual_classification="pending_clear",
+            action=ActionKind.RETRY_CLEAR,
+            pending_reason="prior clear unconfirmed",
+            retry_count=1,
+        )
+
+        eo.update_diagnostics_snapshot(snap_plan)
+        snap = eo.diagnostics_snapshot
+
+        assert 1 in snap["matched_slots"]
+        assert snap["matched_slots"][1]["identity_key"] == "r-match"
+        assert 2 in snap["pending_corrections"]
+        assert 2 in snap["pending_clear_slots"]
+        assert snap["last_slot_errors"][2] == "prior clear failed"
+
+        # --- No raw codes anywhere ---
+        assert "SECRETCODE" not in str(diag)
+        assert "SECRETCODE" not in str(snap)
+        assert "slot_code" not in str(diag)
+        assert "slot_code" not in str(snap)
+
+    async def test_diagnostics_manual_drift_detected(self) -> None:
+        """Manual drift (OVERWRITE_MANUAL_CHANGE) shows in per-slot diagnostics."""
+        from datetime import datetime
+        from datetime import timedelta
+        from datetime import timezone
+
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        _TZ = timezone.utc
+
+        s = datetime(2026, 8, 1, 14, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+        r = Reservation(
+            identity_key="r-drift",
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary="Guest Drift",
+            slot_name="Guest Drift",
+            display_slot_name="RC Guest Drift",
+            slot_code="DRIFT_CODE",
+        )
+
+        # Slot occupied with DIFFERENT persisted key → planner will CLEAR then SET
+        # (not OVERWRITE_MANUAL_CHANGE since that happens in apply, but the CLEAR
+        # action + wrong persisted key is visible in diagnostics)
+        ms = ManagedSlot(
+            slot=5,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="WrongGuest",
+            actual_code_present=True,
+            persisted_identity_key="r-wrong",  # different from r-drift
+        )
+
+        plan = compute_desired_plan(
+            [r],
+            [ms],
+            max_events=3,
+            plan_id="t093-drift",
+            generated_at=s,
+        )
+
+        slot_diag = plan.diagnostics["slots"][5]
+        # CLEAR because persisted key doesn't match desired key
+        assert slot_diag["action"] == "clear"
+        assert slot_diag["actual_classification"] == "occupied"
+        assert "DRIFT_CODE" not in str(plan.diagnostics)

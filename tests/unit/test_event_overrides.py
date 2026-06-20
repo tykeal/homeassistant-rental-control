@@ -4248,3 +4248,278 @@ class TestDesiredPlanActionScaffold:
         assert "ov-r3" in plan.overflow
         assert plan.overflow["ov-r3"] == "capacity"
         assert "ov-r3" not in plan.selected
+
+
+# ---------------------------------------------------------------------------
+# T091: EventOverrides diagnostics snapshot tests
+# ---------------------------------------------------------------------------
+
+
+class TestDiagnosticsSnapshot:
+    """T091: Diagnostics snapshot tests for matched slots, pending corrections,
+    blocked clear reasons, retry count, last error, and no raw codes."""
+
+    _TZ = dt_util.UTC
+
+    def _make_dt(self, day: int) -> datetime:
+        """Return a UTC-aware datetime for Aug *day* 2026 at 14:00."""
+        return datetime(2026, 8, day, 14, tzinfo=self._TZ)
+
+    def _make_plan(
+        self,
+        *,
+        plan_id: str = "diag-plan-001",
+    ) -> DesiredPlan:
+        """Return a minimal DesiredPlan for snapshot tests."""
+        return DesiredPlan(
+            plan_id=plan_id,
+            generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+        )
+
+    def _make_planned_slot(
+        self,
+        slot: int,
+        *,
+        desired_identity_key: str | None = None,
+        actual_classification: str = "free",
+        action: ActionKind = ActionKind.NOOP,
+        pending_reason: str | None = None,
+        retry_count: int = 0,
+        last_error: str | None = None,
+    ):
+        """Return a minimal PlannedSlot for snapshot tests."""
+        from custom_components.rental_control.reconciliation import PlannedSlot
+
+        return PlannedSlot(
+            slot=slot,
+            desired_identity_key=desired_identity_key,
+            actual_classification=actual_classification,
+            action=action,
+            pending_reason=pending_reason,
+            retry_count=retry_count,
+            last_error=last_error,
+        )
+
+    def test_initial_snapshot_is_empty(self) -> None:
+        """Before any plan is applied, diagnostics_snapshot is an empty dict."""
+        eo = EventOverrides(start_slot=5, max_slots=3)
+        assert eo.diagnostics_snapshot == {}
+
+    def test_snapshot_has_matched_slots(self) -> None:
+        """After update_diagnostics_snapshot, matched slots appear in snapshot."""
+        eo = EventOverrides(start_slot=5, max_slots=3)
+        plan = self._make_plan()
+        plan.slots[5] = self._make_planned_slot(
+            5,
+            desired_identity_key="res-abc",
+            actual_classification="occupied",
+            action=ActionKind.NOOP,
+        )
+        plan.slots[6] = self._make_planned_slot(6)  # no desired key → not matched
+
+        eo.update_diagnostics_snapshot(plan)
+        snap = eo.diagnostics_snapshot
+
+        assert 5 in snap["matched_slots"]
+        assert snap["matched_slots"][5]["identity_key"] == "res-abc"
+        assert 6 not in snap["matched_slots"]
+
+    def test_snapshot_has_pending_corrections_for_retry_clear(self) -> None:
+        """RETRY_CLEAR action appears in pending_corrections."""
+        eo = EventOverrides(start_slot=5, max_slots=3)
+        plan = self._make_plan()
+        plan.slots[5] = self._make_planned_slot(
+            5,
+            desired_identity_key=None,
+            actual_classification="pending_clear",
+            action=ActionKind.RETRY_CLEAR,
+            pending_reason="prior clear unconfirmed",
+            retry_count=2,
+        )
+
+        eo.update_diagnostics_snapshot(plan)
+        snap = eo.diagnostics_snapshot
+
+        assert 5 in snap["pending_corrections"]
+        correction = snap["pending_corrections"][5]
+        assert correction["action"] == ActionKind.RETRY_CLEAR.value
+        assert correction["retry_count"] == 2
+
+    def test_snapshot_has_pending_corrections_for_blocked(self) -> None:
+        """BLOCKED action appears in pending_corrections."""
+        eo = EventOverrides(start_slot=5, max_slots=3)
+        plan = self._make_plan()
+        plan.slots[6] = self._make_planned_slot(
+            6,
+            actual_classification="blocked",
+            action=ActionKind.BLOCKED,
+            pending_reason="manual change detected",
+        )
+
+        eo.update_diagnostics_snapshot(plan)
+        snap = eo.diagnostics_snapshot
+
+        assert 6 in snap["pending_corrections"]
+        assert snap["pending_corrections"][6]["action"] == ActionKind.BLOCKED.value
+
+    def test_snapshot_has_blocked_clear_reasons(self) -> None:
+        """blocked_reason from PlannedSlot appears in pending_corrections."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        plan = self._make_plan()
+        plan.slots[5] = self._make_planned_slot(
+            5,
+            actual_classification="blocked",
+            action=ActionKind.BLOCKED,
+            pending_reason="slot entity unavailable",
+        )
+
+        eo.update_diagnostics_snapshot(plan)
+        snap = eo.diagnostics_snapshot
+
+        assert (
+            snap["pending_corrections"][5]["blocked_reason"]
+            == "slot entity unavailable"
+        )
+
+    def test_snapshot_has_slot_retry_counts(self) -> None:
+        """slot_retry_counts includes all managed slots."""
+        eo = EventOverrides(start_slot=5, max_slots=3)
+        # Record a failure to bump retry count
+        eo.record_retry_failure(5)
+        eo.record_retry_failure(5)
+
+        plan = self._make_plan()
+        eo.update_diagnostics_snapshot(plan)
+        snap = eo.diagnostics_snapshot
+
+        # All three managed slots (5, 6, 7) appear
+        assert 5 in snap["slot_retry_counts"]
+        assert 6 in snap["slot_retry_counts"]
+        assert 7 in snap["slot_retry_counts"]
+        assert snap["slot_retry_counts"][5] == 2
+
+    def test_snapshot_has_last_errors_after_failed_clear(self) -> None:
+        """After a failed clear, last_slot_errors appears in snapshot."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        # Directly use the private helper to simulate a recorded error
+        eo._record_slot_error(5, "lock offline")
+
+        plan = self._make_plan()
+        eo.update_diagnostics_snapshot(plan)
+        snap = eo.diagnostics_snapshot
+
+        assert 5 in snap["last_slot_errors"]
+        assert snap["last_slot_errors"][5] == "lock offline"
+
+    async def test_snapshot_captures_error_from_failed_apply(self) -> None:
+        """apply_plan with a failed clear records the error in the snapshot."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "c1", "OldGuest", now, now + timedelta(days=7))
+        eo.update(6, "", "", now, now + timedelta(days=7))
+
+        plan = self._make_plan()
+        plan.actions = [SlotAction(kind=ActionKind.CLEAR, slot=5, identity_key=None)]
+        plan.slots[5] = self._make_planned_slot(
+            5,
+            desired_identity_key=None,
+            actual_classification="occupied",
+            action=ActionKind.CLEAR,
+        )
+        plan.slots[6] = self._make_planned_slot(6)
+
+        failed_result = OperationResult(
+            kind="clear",
+            slot=5,
+            failed=True,
+            error="lock unreachable",
+        )
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=failed_result,
+        ):
+            await eo.async_apply_plan(coordinator, plan, {})
+
+        snap = eo.diagnostics_snapshot
+        assert 5 in snap["last_slot_errors"]
+        assert snap["last_slot_errors"][5] == "lock unreachable"
+
+    async def test_snapshot_clears_error_after_successful_clear(self) -> None:
+        """After a successful clear, the slot error is removed from snapshot."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "c1", "OldGuest", now, now + timedelta(days=7))
+        eo.update(6, "", "", now, now + timedelta(days=7))
+        # Pre-seed an error from a previous failed attempt
+        eo._record_slot_error(5, "previous error")
+
+        plan = self._make_plan()
+        plan.actions = [SlotAction(kind=ActionKind.CLEAR, slot=5, identity_key=None)]
+        plan.slots[5] = self._make_planned_slot(
+            5,
+            desired_identity_key=None,
+            actual_classification="occupied",
+            action=ActionKind.CLEAR,
+        )
+        plan.slots[6] = self._make_planned_slot(6)
+
+        success_result = OperationResult(kind="clear", slot=5, confirmed=True)
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=success_result,
+        ):
+            await eo.async_apply_plan(coordinator, plan, {})
+
+        snap = eo.diagnostics_snapshot
+        assert 5 not in snap["last_slot_errors"]
+
+    def test_snapshot_has_no_raw_slot_codes(self) -> None:
+        """Diagnostics snapshot contains no slot_code or PIN values."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "secret1234", "Guest A", now, now + timedelta(days=7))
+
+        plan = self._make_plan()
+        plan.slots[5] = self._make_planned_slot(
+            5,
+            desired_identity_key="res-001",
+            actual_classification="occupied",
+            action=ActionKind.NOOP,
+        )
+        eo.update_diagnostics_snapshot(plan)
+
+        snap = eo.diagnostics_snapshot
+        snap_str = str(snap)
+        assert "secret1234" not in snap_str
+        assert "slot_code" not in snap_str
+        assert "pin" not in snap_str.lower()
+
+    def test_snapshot_has_plan_id_and_timestamp(self) -> None:
+        """Snapshot includes plan_id and generated_at from the plan."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        plan = self._make_plan(plan_id="unique-plan-xyz")
+        eo.update_diagnostics_snapshot(plan)
+
+        snap = eo.diagnostics_snapshot
+        assert snap["plan_id"] == "unique-plan-xyz"
+        assert "generated_at" in snap
+
+    def test_snapshot_pending_clear_slots_list(self) -> None:
+        """pending_clear_slots in snapshot matches internal state."""
+        eo = EventOverrides(start_slot=5, max_slots=3)
+        # Manually simulate pending clear state
+        eo._pending_clear_slots[5] = "op-token-abc"
+
+        plan = self._make_plan()
+        eo.update_diagnostics_snapshot(plan)
+        snap = eo.diagnostics_snapshot
+
+        assert 5 in snap["pending_clear_slots"]
