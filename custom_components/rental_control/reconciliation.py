@@ -1103,6 +1103,64 @@ def _is_slot_assignable(ms: ManagedSlot) -> bool:
     }
 
 
+def _compute_drift_fields(ms: ManagedSlot, res: Reservation) -> list[str]:
+    """Return the list of field names that differ between actual and desired state.
+
+    Compares the observed :class:`ManagedSlot` fields against the desired
+    :class:`Reservation` to detect manual or external changes to a managed
+    Keymaster slot.  Only fields where an observed value is available are
+    checked; ``None`` observations are skipped rather than treated as drift.
+
+    Raw PIN values are never compared or returned; only code *presence* is
+    checked via :attr:`ManagedSlot.actual_code_present`.
+
+    Fields checked:
+
+    - **name**: :attr:`~ManagedSlot.actual_name` vs
+      :attr:`~Reservation.display_slot_name`.
+    - **code**: :attr:`~ManagedSlot.actual_code_present` is ``False`` when
+      a code should be present (i.e., the slot is occupied).
+    - **start**: :attr:`~ManagedSlot.actual_start` vs
+      :attr:`~Reservation.buffered_start`.
+    - **end**: :attr:`~ManagedSlot.actual_end` vs
+      :attr:`~Reservation.buffered_end`.
+    - **date_range_enabled**: :attr:`~ManagedSlot.date_range_enabled` is
+      ``False`` when dates are configured, indicating the switch was turned
+      off manually.
+
+    Args:
+        ms: The managed slot with observed Keymaster state.
+        res: The desired reservation whose fields represent the expected state.
+
+    Returns:
+        Sorted list of field name strings that differ; empty when no drift is
+        detected.
+    """
+    fields: list[str] = []
+
+    # Name drift: actual Keymaster display name differs from desired
+    if ms.actual_name is not None and ms.actual_name != res.display_slot_name:
+        fields.append("name")
+
+    # Code presence drift: slot should have a code but one was removed
+    if ms.actual_code_present is False:
+        fields.append("code")
+
+    # Start date drift
+    if ms.actual_start is not None and ms.actual_start != res.buffered_start:
+        fields.append("start")
+
+    # End date drift
+    if ms.actual_end is not None and ms.actual_end != res.buffered_end:
+        fields.append("end")
+
+    # Date-range switch drift: switch should be enabled for date-ranged slots
+    if ms.date_range_enabled is False:
+        fields.append("date_range_enabled")
+
+    return fields
+
+
 def _filter_eligible(reservations: list[Reservation]) -> list[Reservation]:
     """Return the subset of *reservations* eligible for slot planning.
 
@@ -1196,6 +1254,20 @@ def _build_slot_action(
     if ms.status is SlotStatus.OCCUPIED:
         if ms.persisted_identity_key != desired_key:
             return ActionKind.CLEAR, None
+
+        # Detect non-date drift (manual/external name, code, or switch change).
+        # Date-only drift is handled below as UPDATE_TIMES to preserve the
+        # churn-minimisation invariant.  Unmanaged slots never reach this path
+        # because compute_desired_plan iterates only managed == True slots.
+        if desired_res is not None:
+            drift_fields = _compute_drift_fields(ms, desired_res)
+            non_date_drift = [f for f in drift_fields if f not in ("start", "end")]
+            if non_date_drift:
+                # Include all drifted fields (including dates if also wrong) in
+                # the reason so diagnostics capture the full picture.
+                reason = "drifted fields: " + ", ".join(drift_fields)
+                return ActionKind.OVERWRITE_MANUAL_CHANGE, reason
+
         if desired_res is not None and (
             ms.actual_start is not None or ms.actual_end is not None
         ):
@@ -1260,7 +1332,7 @@ def _build_plan_diagnostics_snapshot(
     # Per-slot diagnostics (no raw codes)
     slots_diag: dict[int, dict[str, Any]] = {}
     for slot_num, ps in plan.slots.items():
-        slots_diag[slot_num] = {
+        slot_entry: dict[str, Any] = {
             "desired_identity_key": ps.desired_identity_key,
             "actual_classification": ps.actual_classification,
             "action": ps.action.value,
@@ -1268,6 +1340,17 @@ def _build_plan_diagnostics_snapshot(
             "retry_count": ps.retry_count,
             "last_error": ps.last_error,
         }
+        # Include parsed drift fields for OVERWRITE_MANUAL_CHANGE actions so
+        # diagnostics consumers can enumerate exactly which fields were wrong.
+        if ps.action is ActionKind.OVERWRITE_MANUAL_CHANGE and ps.pending_reason:
+            prefix = "drifted fields: "
+            if ps.pending_reason.startswith(prefix):
+                slot_entry["drift_fields"] = [
+                    f.strip()
+                    for f in ps.pending_reason[len(prefix) :].split(",")
+                    if f.strip()
+                ]
+        slots_diag[slot_num] = slot_entry
     diag["slots"] = slots_diag
 
     # Per-reservation diagnostics (slot_code intentionally excluded)

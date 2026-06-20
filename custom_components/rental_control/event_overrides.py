@@ -34,6 +34,7 @@ from .const import SLOT_STATUS_PENDING_CLEAR
 from .reconciliation import ActionKind
 from .reconciliation import DesiredPlan
 from .reconciliation import Reservation
+from .reconciliation import SlotAction
 from .util import EventIdentity
 from .util import OperationResult
 from .util import async_fire_clear_code
@@ -287,15 +288,17 @@ class EventOverrides:
 
         Called after :meth:`async_apply_plan` completes.  Captures matched
         slots (those with desired assignments), pending corrections (slots
-        with ``retry_clear`` or ``blocked`` actions), blocked clear reasons,
-        per-slot retry counts, and last errors.  Raw slot codes are never
-        included.
+        with ``retry_clear`` or ``blocked`` actions), manual drift slots
+        (those with ``overwrite_manual_change`` actions), blocked clear
+        reasons, per-slot retry counts, and last errors.  Raw slot codes
+        are never included.
 
         Args:
             plan: The :class:`~.reconciliation.DesiredPlan` that was just applied.
         """
         matched: dict[int, dict[str, Any]] = {}
         pending_corrections: dict[int, dict[str, Any]] = {}
+        manual_drift_slots: dict[int, dict[str, Any]] = {}
 
         for slot_num, ps in plan.slots.items():
             if ps.desired_identity_key is not None:
@@ -312,12 +315,28 @@ class EventOverrides:
                     "blocked_reason": ps.pending_reason,
                     "retry_count": ps.retry_count,
                 }
+            if ps.action is ActionKind.OVERWRITE_MANUAL_CHANGE:
+                drift_fields: list[str] = []
+                if ps.pending_reason and ps.pending_reason.startswith(
+                    "drifted fields: "
+                ):
+                    drift_fields = [
+                        f.strip()
+                        for f in ps.pending_reason[len("drifted fields: ") :].split(",")
+                        if f.strip()
+                    ]
+                manual_drift_slots[slot_num] = {
+                    "action": ps.action.value,
+                    "identity_key": ps.desired_identity_key,
+                    "drift_fields": drift_fields,
+                }
 
         self._diagnostics_snapshot = {
             "plan_id": plan.plan_id,
             "generated_at": plan.generated_at.isoformat(),
             "matched_slots": matched,
             "pending_corrections": pending_corrections,
+            "manual_drift_slots": manual_drift_slots,
             "pending_clear_slots": sorted(self._pending_clear_slots.keys()),
             "slot_retry_counts": {
                 slot: self._retry_counts.get(slot, 0)
@@ -783,6 +802,18 @@ class EventOverrides:
                         )
                         continue
                     result = await self._apply_update_times(coordinator, slot, res)
+                elif action.kind is ActionKind.OVERWRITE_MANUAL_CHANGE:
+                    res = res_by_key.get(identity_key) if identity_key else None
+                    if res is None:
+                        _LOGGER.warning(
+                            "OVERWRITE_MANUAL_CHANGE action for slot %d has no "
+                            "reservation; skipping",
+                            slot,
+                        )
+                        continue
+                    result = await self._apply_overwrite_manual_change(
+                        coordinator, slot, res, action
+                    )
                 else:
                     continue
 
@@ -955,6 +986,131 @@ class EventOverrides:
                         "update_times confirmed for slot %d; in-memory dates updated",
                         slot,
                     )
+
+        return result
+
+    async def _apply_overwrite_manual_change(
+        self,
+        coordinator: Any,
+        slot: int,
+        res: Reservation,
+        action: "SlotAction",
+    ) -> OperationResult:
+        """Apply an OVERWRITE_MANUAL_CHANGE action for one slot.
+
+        Logs a warning with all drift details — slot number, changed field
+        names, desired reservation identity, observed name and
+        classification from the actual-state cache — and then restores the
+        desired state via :func:`~.util.async_fire_set_code`.  Raw PIN
+        values are never written to logs; only code *presence* (boolean) is
+        reported.
+
+        Unmanaged slots never trigger this path because
+        :func:`~.reconciliation.compute_desired_plan` iterates only over
+        managed slots.
+
+        Args:
+            coordinator: The active coordinator instance.
+            slot: Keymaster slot number to overwrite.
+            res: Desired :class:`~.reconciliation.Reservation` for this slot.
+            action: The :class:`~.reconciliation.SlotAction` carrying the
+                ``OVERWRITE_MANUAL_CHANGE`` kind and drift reason string.
+
+        Returns:
+            An :class:`~.util.OperationResult` from the underlying
+            :func:`~.util.async_fire_set_code` call.
+        """
+        import hashlib as _hashlib
+
+        # Parse drift fields from the reason string.
+        drift_fields: list[str] = []
+        if action.reason and action.reason.startswith("drifted fields: "):
+            drift_fields = [
+                f.strip()
+                for f in action.reason[len("drifted fields: ") :].split(",")
+                if f.strip()
+            ]
+
+        # Gather observed state for the log message.  The actual-state cache
+        # is populated by the coordinator before async_apply_plan is called.
+        # Raw PIN values are never stored in the cache; only has_code (bool).
+        actual = self._actual_state_cache.get(slot) or {}
+        observed_name: str = actual.get("name_state") or "(unknown)"
+        observed_classification: str = actual.get("classification") or "(unknown)"
+        observed_has_code: bool | None = actual.get("has_code")
+
+        _LOGGER.warning(
+            "Manual/external drift detected on managed slot %d "
+            "(reservation %s, desired name %r): "
+            "changed fields=%s, "
+            "observed name=%r, observed classification=%s, "
+            "observed has_code=%s; "
+            "restoring desired state.",
+            slot,
+            res.identity_key,
+            res.display_slot_name,
+            drift_fields,
+            observed_name,
+            observed_classification,
+            observed_has_code,
+        )
+
+        operation_id = (
+            f"overwrite-{slot}-"
+            f"{_hashlib.sha256(res.identity_key.encode()).hexdigest()[:8]}"
+        )
+
+        async with self._lock:
+            self._pending_fences[slot] = operation_id
+            self._overrides[slot] = {
+                "slot_name": res.slot_name,
+                "slot_code": res.slot_code,
+                "start_time": res.buffered_start,
+                "end_time": res.buffered_end,
+            }
+            self._slot_miss_counts.pop(slot, None)
+
+        event = _SlotEvent(
+            slot_name=res.slot_name,
+            slot_code=res.slot_code,
+            start=res.buffered_start,
+            end=res.buffered_end,
+        )
+        result = await async_fire_set_code(coordinator, event, slot)
+
+        async with self._lock:
+            current_token = self._pending_fences.get(slot)
+            if current_token != operation_id:
+                _LOGGER.warning(
+                    "Stale overwrite token for slot %d; discarding result", slot
+                )
+                return OperationResult(kind="set", slot=slot, unconfirmed=True)
+
+            if result.confirmed:
+                _LOGGER.debug(
+                    "Overwrite confirmed for slot %d; desired state restored "
+                    "for reservation %s.",
+                    slot,
+                    res.identity_key,
+                )
+                self._pending_fences.pop(slot, None)
+                self._clear_slot_error(slot)
+                self.__assign_next_slot()
+            elif result.failed:
+                _LOGGER.warning(
+                    "Overwrite failed for slot %d (error: %s); "
+                    "slot may remain drifted.",
+                    slot,
+                    result.error,
+                )
+                self._pending_fences.pop(slot, None)
+                self._record_slot_error(slot, result.error or "overwrite failed")
+            else:
+                _LOGGER.debug(
+                    "Overwrite unconfirmed for slot %d; keeping tentative assignment.",
+                    slot,
+                )
+                self._pending_fences.pop(slot, None)
 
         return result
 

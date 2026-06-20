@@ -747,3 +747,202 @@ class TestDiagnosticsDesiredVsActual:
         assert slot_diag["action"] == "clear"
         assert slot_diag["actual_classification"] == "occupied"
         assert "DRIFT_CODE" not in str(plan.diagnostics)
+
+
+# ---------------------------------------------------------------------------
+# T072 / T073: Manual drift correction and unmanaged-slot ignore scenarios
+# ---------------------------------------------------------------------------
+
+
+class TestManualDriftCorrection:
+    """T072 + T073: Integration scenarios for manual/external slot drift.
+
+    T072 verifies that when a managed slot's actual state drifts from the
+    desired plan (name changed), async_apply_plan issues a WARNING log
+    containing the slot number, changed field names, and desired identity —
+    without exposing the raw PIN — and then restores the desired state via
+    async_fire_set_code.
+
+    T073 verifies that edits to unmanaged (out-of-range) slots produce no
+    OVERWRITE_MANUAL_CHANGE action because compute_desired_plan iterates
+    only managed == True slots.
+
+    Uses a focused mock-based approach (no HA infrastructure) mirroring
+    TestClearFailureSlotNotReused.
+    """
+
+    async def test_manual_edit_corrected_and_caplog(self, caplog) -> None:
+        """T072: Name-drifted managed slot is corrected and WARNING logged.
+
+        Scenario:
+          - Reservation r-drift-t072 is assigned to slot 5.
+          - Actual Keymaster name is 'WRONG NAME' (manual drift).
+          - compute_desired_plan generates OVERWRITE_MANUAL_CHANGE for slot 5.
+          - async_apply_plan calls async_fire_set_code and emits WARNING with:
+              slot number, changed field names, desired identity_key.
+          - Raw PIN value never appears in logs.
+          - diagnostics snapshot captures manual_drift_slots entry.
+        """
+        from datetime import datetime
+        from datetime import timedelta
+        from datetime import timezone
+        import logging
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.event_overrides import EventOverrides
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+        from custom_components.rental_control.util import OperationResult
+
+        _TZ = timezone.utc
+        s = datetime(2026, 8, 1, 14, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+        r = Reservation(
+            identity_key="r-drift-t072",
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary="Guest Drift",
+            slot_name="Guest Drift",
+            display_slot_name="RC Guest Drift",
+            slot_code="SECRETPIN72",
+        )
+
+        ms = ManagedSlot(
+            slot=5,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="WRONG NAME",  # manual drift
+            actual_code_present=True,
+            persisted_identity_key="r-drift-t072",
+        )
+
+        plan = compute_desired_plan(
+            [r],
+            [ms],
+            max_events=3,
+            plan_id="t072-drift",
+            generated_at=s,
+        )
+
+        overwrite_actions = [
+            a for a in plan.actions if a.kind is ActionKind.OVERWRITE_MANUAL_CHANGE
+        ]
+        assert len(overwrite_actions) == 1
+        assert overwrite_actions[0].slot == 5
+
+        eo = EventOverrides(start_slot=5, max_slots=1)
+        eo.update(5, "SECRETPIN72", "Guest Drift", s, e)
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="set", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                return_value=confirmed,
+            ) as mock_set,
+        ):
+            await eo.async_apply_plan(coordinator, plan, {"r-drift-t072": r})
+
+        # async_fire_set_code was called to restore desired state
+        assert mock_set.called
+
+        # WARNING log contains slot number, field names, and identity
+        log_text = " ".join(r.message for r in caplog.records)
+        assert "slot 5" in log_text
+        assert "name" in log_text
+        assert "r-drift-t072" in log_text
+
+        # Raw PIN never appears in WARNING (or above) log records
+        for record in (r for r in caplog.records if r.levelno >= logging.WARNING):
+            assert "SECRETPIN72" not in record.message
+
+        # Diagnostics snapshot captures the drift entry
+        snap = eo.diagnostics_snapshot
+        assert "manual_drift_slots" in snap
+        assert 5 in snap["manual_drift_slots"]
+        drift_info = snap["manual_drift_slots"][5]
+        assert drift_info["identity_key"] == "r-drift-t072"
+        assert "name" in drift_info["drift_fields"]
+        # No raw codes in snapshot
+        assert "SECRETPIN72" not in str(snap)
+
+    async def test_unmanaged_slot_manual_edit_ignored(self) -> None:
+        """T073: Manual edits to unmanaged slots produce no OVERWRITE action.
+
+        Scenario:
+          - Slot 3 is outside the RC-managed range (managed=False).
+          - Its actual_name differs — any drift would normally trigger
+            OVERWRITE_MANUAL_CHANGE, but unmanaged slots are invisible to
+            compute_desired_plan.
+          - Slot 5 is managed and free; the reservation lands there via SET.
+        """
+        from datetime import datetime
+        from datetime import timedelta
+        from datetime import timezone
+
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        _TZ = timezone.utc
+        s = datetime(2026, 8, 1, 14, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+        r = Reservation(
+            identity_key="r-unmanaged-t073",
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary="Guest Unmanaged",
+            slot_name="Guest Unmanaged",
+            display_slot_name="RC Guest Unmanaged",
+            slot_code="SECRETPIN73",
+        )
+
+        # Slot 3: unmanaged, heavily drifted — must be completely ignored
+        unmanaged = ManagedSlot(
+            slot=3,
+            managed=False,
+            status=SlotStatus.OCCUPIED,
+            actual_name="EDITED BY OWNER",
+            actual_code_present=True,
+            persisted_identity_key="r-unmanaged-t073",
+        )
+        # Slot 5: managed and free
+        managed_free = ManagedSlot(slot=5, managed=True, status=SlotStatus.FREE)
+
+        plan = compute_desired_plan(
+            [r],
+            [unmanaged, managed_free],
+            max_events=3,
+            plan_id="t073-unmanaged",
+            generated_at=s,
+        )
+
+        # Unmanaged slot 3 must not appear in slots or actions
+        assert 3 not in plan.slots
+        assert not any(a.slot == 3 for a in plan.actions)
+
+        # No OVERWRITE_MANUAL_CHANGE actions at all
+        overwrite_actions = [
+            a for a in plan.actions if a.kind is ActionKind.OVERWRITE_MANUAL_CHANGE
+        ]
+        assert len(overwrite_actions) == 0
+
+        # Reservation assigned to managed slot 5 via SET
+        set_actions = [a for a in plan.actions if a.kind is ActionKind.SET]
+        assert len(set_actions) == 1
+        assert set_actions[0].slot == 5

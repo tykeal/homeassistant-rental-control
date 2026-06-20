@@ -4523,3 +4523,464 @@ class TestDiagnosticsSnapshot:
         snap = eo.diagnostics_snapshot
 
         assert 5 in snap["pending_clear_slots"]
+
+
+# ---------------------------------------------------------------------------
+# T070: Manual managed-slot drift tests (name, code, start, end, switch)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestManualDriftLogging:
+    """T070: Tests for manual/external managed-slot drift detection and logging.
+
+    Verifies that EventOverrides correctly handles OVERWRITE_MANUAL_CHANGE
+    actions: logging drift details with redacted code fields, restoring the
+    desired state, and surfacing manual drift in the diagnostics snapshot.
+    Unmanaged slot edits are invisible to the reconciliation system because
+    compute_desired_plan only iterates managed slots.
+    """
+
+    _TZ = dt_util.UTC
+
+    def _make_res(
+        self,
+        identity_key: str = "r-drift-001",
+        *,
+        slot_name: str = "Alice Smith",
+        display_slot_name: str = "RC Alice Smith",
+        slot_code: str = "SECRETPIN",
+        start_day: int = 1,
+    ) -> Reservation:
+        """Return a minimal Reservation for drift tests."""
+        start = datetime(2026, 8, start_day, 14, tzinfo=self._TZ)
+        end = start + timedelta(days=7)
+        return Reservation(
+            identity_key=identity_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary=f"Guest {slot_name}",
+            slot_name=slot_name,
+            display_slot_name=display_slot_name,
+            slot_code=slot_code,
+        )
+
+    def _make_overwrite_action(
+        self,
+        slot: int = 5,
+        identity_key: str = "r-drift-001",
+        drift_fields: list[str] | None = None,
+    ) -> SlotAction:
+        """Return a minimal OVERWRITE_MANUAL_CHANGE SlotAction."""
+        fields = drift_fields if drift_fields is not None else ["name"]
+        reason = "drifted fields: " + ", ".join(fields)
+        return SlotAction(
+            kind=ActionKind.OVERWRITE_MANUAL_CHANGE,
+            slot=slot,
+            identity_key=identity_key,
+            reason=reason,
+        )
+
+    async def test_name_drift_logged_at_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Name drift triggers a WARNING log including the field name."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "SECRETPIN", "Alice Smith", now, now + timedelta(days=7))
+
+        res = self._make_res()
+        action = self._make_overwrite_action(drift_fields=["name"])
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="set", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
+
+        assert any(
+            "name" in r.message and "slot 5" in r.message for r in caplog.records
+        )
+
+    async def test_code_drift_logged_at_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Code drift triggers a WARNING log including the 'code' field."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "SECRETPIN", "Alice Smith", now, now + timedelta(days=7))
+
+        res = self._make_res()
+        action = self._make_overwrite_action(drift_fields=["code"])
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="set", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
+
+        assert any(
+            "code" in r.message and "slot 5" in r.message for r in caplog.records
+        )
+
+    async def test_start_date_drift_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Start-date drift is included in the WARNING log's field list."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "SECRETPIN", "Alice Smith", now, now + timedelta(days=7))
+
+        res = self._make_res()
+        action = self._make_overwrite_action(drift_fields=["name", "start"])
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="set", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
+
+        log_text = " ".join(r.message for r in caplog.records)
+        assert "start" in log_text
+
+    async def test_end_date_drift_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """End-date drift is included in the WARNING log's field list."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "SECRETPIN", "Alice Smith", now, now + timedelta(days=7))
+
+        res = self._make_res()
+        action = self._make_overwrite_action(drift_fields=["name", "end"])
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="set", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
+
+        log_text = " ".join(r.message for r in caplog.records)
+        assert "end" in log_text
+
+    async def test_date_range_switch_drift_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """date_range_enabled drift is included in the WARNING log's field list."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "SECRETPIN", "Alice Smith", now, now + timedelta(days=7))
+
+        res = self._make_res()
+        action = self._make_overwrite_action(
+            drift_fields=["name", "date_range_enabled"]
+        )
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="set", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
+
+        log_text = " ".join(r.message for r in caplog.records)
+        assert "date_range_enabled" in log_text
+
+    async def test_raw_pin_never_in_log(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Raw PIN value must never appear in WARNING (or above) log records during overwrite.
+
+        The existing EventOverrides.update() debug log includes the overrides
+        dict; that is pre-existing behaviour outside this commit's scope.  This
+        test targets WARNING-and-above records to verify that the new
+        OVERWRITE_MANUAL_CHANGE log message never exposes the raw PIN.
+        """
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "SUPERSECRETPIN", "Alice Smith", now, now + timedelta(days=7))
+
+        res = self._make_res(slot_code="SUPERSECRETPIN")
+        action = self._make_overwrite_action(drift_fields=["name"])
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="set", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
+
+        # Only WARNING+ records are captured; none must contain the raw PIN.
+        for record in (r for r in caplog.records if r.levelno >= logging.WARNING):
+            assert "SUPERSECRETPIN" not in record.message
+
+    async def test_desired_identity_in_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The desired reservation identity_key appears in the WARNING log."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "SECRETPIN", "Alice Smith", now, now + timedelta(days=7))
+
+        res = self._make_res(identity_key="r-identity-check")
+        action = self._make_overwrite_action(
+            identity_key="r-identity-check", drift_fields=["name"]
+        )
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="set", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
+
+        log_text = " ".join(r.message for r in caplog.records)
+        assert "r-identity-check" in log_text
+
+    async def test_observed_name_from_actual_state_cache_in_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Observed name from actual-state cache appears in the WARNING log."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "SECRETPIN", "Alice Smith", now, now + timedelta(days=7))
+        # Simulate actual-state cache with a different observed name
+        eo.update_actual_state(
+            5,
+            {
+                "slot": 5,
+                "classification": "occupied",
+                "name_state": "MANUALLY CHANGED",
+                "has_code": True,
+                "start_state": None,
+                "end_state": None,
+                "use_date_range": True,
+                "enabled": True,
+            },
+        )
+
+        res = self._make_res()
+        action = self._make_overwrite_action(drift_fields=["name"])
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="set", slot=5, confirmed=True)
+        with (
+            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                return_value=confirmed,
+            ),
+        ):
+            await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
+
+        log_text = " ".join(r.message for r in caplog.records)
+        assert "MANUALLY CHANGED" in log_text
+
+    async def test_async_apply_plan_routes_overwrite_manual_change(self) -> None:
+        """async_apply_plan dispatches OVERWRITE_MANUAL_CHANGE to the handler."""
+        from custom_components.rental_control.reconciliation import PlannedSlot
+
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "SECRETPIN", "Alice Smith", now, now + timedelta(days=7))
+        eo.update(6, "", "", now, now + timedelta(days=7))
+
+        res = self._make_res()
+        action = self._make_overwrite_action(slot=5, drift_fields=["name"])
+
+        plan = DesiredPlan(
+            plan_id="t070-route",
+            generated_at=now,
+        )
+        plan.actions = [action]
+        plan.slots[5] = PlannedSlot(
+            slot=5,
+            desired_identity_key=res.identity_key,
+            actual_classification="occupied",
+            action=ActionKind.OVERWRITE_MANUAL_CHANGE,
+            pending_reason=action.reason,
+        )
+        plan.slots[6] = PlannedSlot(
+            slot=6,
+            desired_identity_key=None,
+            actual_classification="free",
+            action=ActionKind.NOOP,
+        )
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        confirmed = OperationResult(kind="set", slot=5, confirmed=True)
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_set_code",
+            return_value=confirmed,
+        ) as mock_set:
+            results = await eo.async_apply_plan(
+                coordinator, plan, {res.identity_key: res}
+            )
+
+        assert mock_set.called
+        assert len(results) == 1
+        assert results[0].confirmed is True
+
+    async def test_snapshot_includes_manual_drift_slot(self) -> None:
+        """update_diagnostics_snapshot captures OVERWRITE_MANUAL_CHANGE slots."""
+        from custom_components.rental_control.reconciliation import PlannedSlot
+
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        plan = DesiredPlan(
+            plan_id="t070-snap",
+            generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+        )
+        plan.slots[5] = PlannedSlot(
+            slot=5,
+            desired_identity_key="r-drift-snap",
+            actual_classification="occupied",
+            action=ActionKind.OVERWRITE_MANUAL_CHANGE,
+            pending_reason="drifted fields: name",
+        )
+        plan.slots[6] = PlannedSlot(
+            slot=6,
+            desired_identity_key=None,
+            actual_classification="free",
+            action=ActionKind.NOOP,
+        )
+
+        eo.update_diagnostics_snapshot(plan)
+        snap = eo.diagnostics_snapshot
+
+        assert "manual_drift_slots" in snap
+        assert 5 in snap["manual_drift_slots"]
+        drift_entry = snap["manual_drift_slots"][5]
+        assert drift_entry["identity_key"] == "r-drift-snap"
+        assert "name" in drift_entry["drift_fields"]
+
+    async def test_snapshot_manual_drift_no_raw_codes(self) -> None:
+        """manual_drift_slots in snapshot must not contain raw PIN values."""
+        from custom_components.rental_control.reconciliation import PlannedSlot
+
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        plan = DesiredPlan(
+            plan_id="t070-nodrift",
+            generated_at=datetime(2026, 8, 1, tzinfo=self._TZ),
+        )
+        plan.slots[5] = PlannedSlot(
+            slot=5,
+            desired_identity_key="r-drift-check",
+            actual_classification="occupied",
+            action=ActionKind.OVERWRITE_MANUAL_CHANGE,
+            pending_reason="drifted fields: name",
+        )
+
+        eo.update_diagnostics_snapshot(plan)
+        snap = eo.diagnostics_snapshot
+
+        snap_str = str(snap)
+        assert "slot_code" not in snap_str
+        # No raw PIN values (no standalone 'pin' token outside expected keys)
+        assert "SECRETPIN" not in snap_str
+
+    async def test_unmanaged_slot_edit_not_in_actions(self) -> None:
+        """Unmanaged slots never appear in plan.actions and are ignored."""
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        _TZ = self._TZ
+        s = datetime(2026, 8, 1, 14, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+        r = Reservation(
+            identity_key="r-unmanaged",
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary="Guest Unmanaged",
+            slot_name="Guest Unmanaged",
+            display_slot_name="RC Guest Unmanaged",
+            slot_code="SECRETPIN",
+        )
+
+        # Slot 3 is NOT managed; slot 5 is managed and free
+        unmanaged_slot = ManagedSlot(
+            slot=3,
+            managed=False,  # not in RC range
+            status=SlotStatus.OCCUPIED,
+            actual_name="MANUALLY EDITED NAME",
+            actual_code_present=True,
+        )
+        managed_slot = ManagedSlot(slot=5, managed=True, status=SlotStatus.FREE)
+
+        plan = compute_desired_plan(
+            [r],
+            [unmanaged_slot, managed_slot],
+            max_events=3,
+            plan_id="t070-unmanaged",
+            generated_at=s,
+        )
+
+        # No OVERWRITE_MANUAL_CHANGE action must reference slot 3
+        overwrite_actions = [
+            a for a in plan.actions if a.kind is ActionKind.OVERWRITE_MANUAL_CHANGE
+        ]
+        assert not any(a.slot == 3 for a in overwrite_actions)
+        # Unmanaged slot is absent from plan.slots entirely
+        assert 3 not in plan.slots

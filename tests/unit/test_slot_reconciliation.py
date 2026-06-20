@@ -3453,3 +3453,298 @@ class TestComputeDesiredPlanDiagnostics:
         )
         assert "overflow_details" in plan.diagnostics
         assert "r-c" in plan.diagnostics["overflow_details"]
+
+
+# ---------------------------------------------------------------------------
+# T071: Manual drift overwrite action tests
+# ---------------------------------------------------------------------------
+
+
+class TestManualDriftOverwriteAction:
+    """T071: Tests that compute_desired_plan generates OVERWRITE_MANUAL_CHANGE
+    actions for managed-slot drift while preserving desired reservation identity
+    and excluding raw PIN data from all diagnostics.
+
+    Drift scenarios covered: name, code absence, date-range switch off, and
+    combined field drift.  Pure date-only drift preserves the existing
+    UPDATE_TIMES behaviour.  Unmanaged slots are always ignored.
+    """
+
+    def _drift_res(
+        self,
+        identity_key: str = "r-drift",
+        *,
+        slot_name: str = "Guest Drift",
+        display_slot_name: str = "RC Guest Drift",
+        slot_code: str = "DRIFTPIN",
+    ) -> Reservation:
+        """Return a Reservation suitable for drift tests."""
+        from datetime import timedelta
+
+        s = datetime(2026, 8, 1, 14, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+        return Reservation(
+            identity_key=identity_key,
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary=f"Guest {identity_key}",
+            slot_name=slot_name,
+            display_slot_name=display_slot_name,
+            slot_code=slot_code,
+        )
+
+    def _occupied_drifted_slot(
+        self,
+        slot: int,
+        persisted_key: str,
+        *,
+        actual_name: str | None = None,
+        actual_code_present: bool | None = None,
+        date_range_enabled: bool | None = None,
+        actual_start=None,
+        actual_end=None,
+    ) -> ManagedSlot:
+        """Return an OCCUPIED ManagedSlot with specified observed state."""
+        return ManagedSlot(
+            slot=slot,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name=actual_name,
+            actual_code_present=actual_code_present,
+            date_range_enabled=date_range_enabled,
+            actual_start=actual_start,
+            actual_end=actual_end,
+            persisted_identity_key=persisted_key,
+        )
+
+    def test_name_drift_generates_overwrite_action(self) -> None:
+        """OCCUPIED slot with wrong name → OVERWRITE_MANUAL_CHANGE action."""
+        res = self._drift_res(display_slot_name="RC Guest Drift")
+        ms = self._occupied_drifted_slot(
+            5,
+            "r-drift",
+            actual_name="WRONG NAME",  # differs from display_slot_name
+            actual_code_present=True,
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t071-name",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        overwrite_actions = [
+            a for a in plan.actions if a.kind is ActionKind.OVERWRITE_MANUAL_CHANGE
+        ]
+        assert len(overwrite_actions) == 1
+        assert overwrite_actions[0].slot == 5
+
+    def test_overwrite_action_preserves_desired_identity_key(self) -> None:
+        """OVERWRITE_MANUAL_CHANGE action carries the desired reservation's identity."""
+        res = self._drift_res(identity_key="r-preserve-id")
+        ms = self._occupied_drifted_slot(
+            5,
+            "r-preserve-id",
+            actual_name="WRONG NAME",
+            actual_code_present=True,
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t071-identity",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        overwrite_actions = [
+            a for a in plan.actions if a.kind is ActionKind.OVERWRITE_MANUAL_CHANGE
+        ]
+        assert overwrite_actions[0].identity_key == "r-preserve-id"
+
+    def test_overwrite_reason_contains_drifted_field_names(self) -> None:
+        """Action reason string lists the drifted field names."""
+        res = self._drift_res(display_slot_name="RC Guest Drift")
+        ms = self._occupied_drifted_slot(
+            5,
+            "r-drift",
+            actual_name="WRONG NAME",
+            actual_code_present=True,
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t071-reason",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        overwrite_actions = [
+            a for a in plan.actions if a.kind is ActionKind.OVERWRITE_MANUAL_CHANGE
+        ]
+        assert overwrite_actions[0].reason is not None
+        assert "name" in (overwrite_actions[0].reason or "")
+
+    def test_date_range_switch_off_generates_overwrite_action(self) -> None:
+        """date_range_enabled=False with matching name → OVERWRITE_MANUAL_CHANGE."""
+        res = self._drift_res(display_slot_name="RC Guest Drift")
+        ms = self._occupied_drifted_slot(
+            5,
+            "r-drift",
+            actual_name="RC Guest Drift",  # name matches
+            actual_code_present=True,
+            date_range_enabled=False,  # switch was turned off manually
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t071-switch",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        overwrite_actions = [
+            a for a in plan.actions if a.kind is ActionKind.OVERWRITE_MANUAL_CHANGE
+        ]
+        assert len(overwrite_actions) == 1
+        reason = overwrite_actions[0].reason or ""
+        assert "date_range_enabled" in reason
+
+    def test_pure_date_drift_still_generates_update_times(self) -> None:
+        """When only dates differ (no name/code/switch drift), UPDATE_TIMES is used."""
+        res = self._drift_res()
+        from datetime import timedelta
+
+        old_start = datetime(2026, 7, 25, 14, tzinfo=_TZ)
+        old_end = old_start + timedelta(days=7)
+        ms = self._occupied_drifted_slot(
+            5,
+            "r-drift",
+            actual_name=None,  # no observed name → no name drift check
+            date_range_enabled=None,  # no switch observation
+            actual_start=old_start,
+            actual_end=old_end,
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t071-dates",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        update_actions = [a for a in plan.actions if a.kind is ActionKind.UPDATE_TIMES]
+        overwrite_actions = [
+            a for a in plan.actions if a.kind is ActionKind.OVERWRITE_MANUAL_CHANGE
+        ]
+        assert len(update_actions) == 1
+        assert len(overwrite_actions) == 0
+
+    def test_name_and_date_drift_combined_generates_overwrite(self) -> None:
+        """Name drift combined with date drift → OVERWRITE_MANUAL_CHANGE with both fields."""
+        from datetime import timedelta
+
+        res = self._drift_res(display_slot_name="RC Guest Drift")
+        old_start = datetime(2026, 7, 25, 14, tzinfo=_TZ)
+        old_end = old_start + timedelta(days=7)
+        ms = self._occupied_drifted_slot(
+            5,
+            "r-drift",
+            actual_name="WRONG NAME",
+            actual_code_present=True,
+            actual_start=old_start,
+            actual_end=old_end,
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t071-combo",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        overwrite_actions = [
+            a for a in plan.actions if a.kind is ActionKind.OVERWRITE_MANUAL_CHANGE
+        ]
+        assert len(overwrite_actions) == 1
+        reason = overwrite_actions[0].reason or ""
+        assert "name" in reason
+        # Dates are also included in the reason for completeness
+        assert "start" in reason or "end" in reason
+
+    def test_diagnostics_includes_drift_fields_for_overwrite_action(self) -> None:
+        """plan.diagnostics['slots'] captures drift_fields for OVERWRITE action."""
+        res = self._drift_res(display_slot_name="RC Guest Drift")
+        ms = self._occupied_drifted_slot(
+            5,
+            "r-drift",
+            actual_name="WRONG NAME",
+            actual_code_present=True,
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t071-diag",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        slot_diag = plan.diagnostics["slots"][5]
+        assert slot_diag["action"] == ActionKind.OVERWRITE_MANUAL_CHANGE.value
+        assert "drift_fields" in slot_diag
+        assert "name" in slot_diag["drift_fields"]
+
+    def test_diagnostics_no_raw_pin_in_overwrite_context(self) -> None:
+        """Raw PIN values must not appear anywhere in plan diagnostics."""
+        res = self._drift_res(slot_code="SUPERSECRETPIN")
+        ms = self._occupied_drifted_slot(
+            5,
+            "r-drift",
+            actual_name="WRONG NAME",
+            actual_code_present=True,
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t071-nopin",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        assert "SUPERSECRETPIN" not in str(plan.diagnostics)
+        assert "slot_code" not in str(plan.diagnostics)
+
+    def test_unmanaged_slot_with_name_drift_is_ignored(self) -> None:
+        """Unmanaged slot with drifted name generates no action whatsoever."""
+        res = self._drift_res()
+        unmanaged = ManagedSlot(
+            slot=3,
+            managed=False,  # outside RC range
+            status=SlotStatus.OCCUPIED,
+            actual_name="WRONG NAME",
+            actual_code_present=True,
+            persisted_identity_key="r-drift",
+        )
+        managed_free = ManagedSlot(slot=5, managed=True, status=SlotStatus.FREE)
+
+        plan = compute_desired_plan(
+            [res],
+            [unmanaged, managed_free],
+            max_events=3,
+            plan_id="t071-unmanaged",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        # No actions referencing slot 3
+        assert not any(a.slot == 3 for a in plan.actions)
+        assert 3 not in plan.slots
