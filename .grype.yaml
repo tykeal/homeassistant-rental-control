@@ -128,7 +128,7 @@ ignore:
   - vulnerability: GHSA-537c-gmf6-5ccf
     package:
       name: cryptography
-      version: "47.0.0"
+      version: "48.0.0"
       type: python
 
   # aiohttp transitive dependency via
