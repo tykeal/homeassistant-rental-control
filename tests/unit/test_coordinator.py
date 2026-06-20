@@ -5737,6 +5737,62 @@ class TestCoordinatorPersistenceUpdate:
 
         assert identity_key not in coordinator._slot_mappings["mappings"]
 
+    def test_sync_store_serializes_actual_datetimes(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-13: Store last-observed datetimes as ISO strings."""
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.util import OperationResult
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+        start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        actual_start = start - timedelta(minutes=30)
+        actual_end = end + timedelta(minutes=30)
+        identity_key = "datetime." + "e" * 55
+        reservation = Reservation(
+            identity_key=identity_key,
+            start=start,
+            end=end,
+            buffered_start=actual_start,
+            buffered_end=actual_end,
+            summary="Datetime Guest",
+            slot_name="Datetime Guest",
+            display_slot_name="Datetime Guest",
+            slot_code="1234",
+        )
+        coordinator.event_overrides.update_actual_state(
+            10,
+            {
+                "slot": 10,
+                "classification": "occupied",
+                "name_state": "Datetime Guest",
+                "has_code": True,
+                "start_state": actual_start,
+                "end_state": actual_end,
+                "use_date_range": True,
+                "enabled": True,
+            },
+        )
+        plan = DesiredPlan(plan_id="datetime-store", generated_at=start)
+        plan.selected = {identity_key: 10}
+
+        coordinator._sync_slot_store_from_plan(
+            plan,
+            {identity_key: reservation},
+            [OperationResult(kind="set", slot=10, confirmed=True)],
+        )
+
+        observed = coordinator._slot_mappings["mappings"][identity_key][
+            "last_observed_actual"
+        ]
+        assert observed["start_state"] == actual_start.isoformat()
+        assert observed["end_state"] == actual_end.isoformat()
+
     def test_sync_store_does_not_readd_confirmed_clear_selection(
         self, hass: "HomeAssistant"
     ) -> None:

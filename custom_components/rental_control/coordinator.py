@@ -122,6 +122,13 @@ from .util import trim_name
 _LOGGER = logging.getLogger(__name__)
 
 
+def _store_datetime(value: Any) -> Any:
+    """Return a JSON-serializable datetime value for Store payloads."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
 class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
     """Coordinator for managing rental control calendar data."""
 
@@ -1246,9 +1253,10 @@ Please update Keymaster to at least v0.1.0-b0
                     "name_state": actual.get("name_state") or res.display_slot_name,
                     "has_code": actual.get("has_code", bool(res.slot_code)),
                     "start_state": (
-                        actual.get("start_state") or res.buffered_start.isoformat()
+                        _store_datetime(actual.get("start_state"))
+                        or res.buffered_start.isoformat()
                     ),
-                    "end_state": actual.get("end_state")
+                    "end_state": _store_datetime(actual.get("end_state"))
                     or res.buffered_end.isoformat(),
                     "use_date_range": actual.get("use_date_range"),
                     "enabled": actual.get("enabled"),
