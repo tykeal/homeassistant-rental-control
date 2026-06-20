@@ -4111,7 +4111,6 @@ class TestSupportingComponentAbsence:
 
         assert sensor._is_keymaster_monitoring_enabled() is expected
 
-    @freeze_time("2025-07-15T10:00:00+00:00")
     async def test_checkout_missing_early_expiry_switch_continues(
         self,
         hass: HomeAssistant,
@@ -4192,7 +4191,6 @@ class TestMissingEntryDataFallbacks:
         assert hass.data[DOMAIN] is domain_data
 
     @pytest.mark.parametrize("remove_domain", [True, False])
-    @freeze_time("2025-07-15T10:00:00+00:00")
     async def test_checkout_missing_entry_data_continues_without_early_expiry(
         self,
         hass: HomeAssistant,
@@ -4663,12 +4661,6 @@ class TestEventTrackingStability:
     (summary + start) rather than list position, preventing
     state oscillation when coordinator data reorders.
     """
-
-    @pytest.fixture(autouse=True)
-    def _freeze_midday(self) -> Generator[None, None, None]:
-        """Pin now away from day boundaries for stable follow-on timing tests."""
-        with freeze_time("2025-06-19T12:00:00+00:00"):
-            yield
 
     async def test_find_tracked_event_at_position_zero(
         self,
@@ -5889,125 +5881,3 @@ class TestCheckedInSelfHealing:
 
         # Should remain checked_in
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
-
-
-class TestCheckinTrackingReconciliationRegression:
-    """T105 regression: Check-in state machine preserved under reconciliation.
-
-    Pins two behaviours: the sensor stays checked_in when the reconciler
-    reassigns the tracked reservation to a different slot (the slot_name
-    match is what matters, not the slot number), and the checked_out
-    state is preserved through coordinator updates.
-    """
-
-    @freeze_time("2025-07-01T12:00:00+00:00")
-    async def test_checked_in_preserved_when_slot_reassigned(
-        self,
-        hass: HomeAssistant,
-        mock_checkin_coordinator: MagicMock,
-        mock_checkin_config_entry: MockConfigEntry,
-    ) -> None:
-        """Checked-in state survives reconciliation slot reassignment."""
-        sensor = _create_sensor(
-            hass, mock_checkin_coordinator, mock_checkin_config_entry
-        )
-        now = dt_util.now()
-        tracked_event = _make_event(
-            summary="Reserved - John Smith",
-            start=now - timedelta(hours=2),
-            end=now + timedelta(days=2),
-        )
-
-        sensor._state = CHECKIN_STATE_CHECKED_IN
-        sensor._tracked_event_summary = tracked_event.summary
-        sensor._tracked_event_start = tracked_event.start
-        sensor._tracked_event_end = tracked_event.end
-        sensor._tracked_event_slot_name = "John Smith"
-        mock_checkin_coordinator.get_slot_assignment.return_value = 12
-        mock_checkin_coordinator.data = [tracked_event]
-
-        sensor._handle_coordinator_update()
-
-        assert sensor._state == CHECKIN_STATE_CHECKED_IN
-        assert sensor._tracked_event_slot_name == "John Smith"
-
-    @freeze_time("2025-07-01T12:00:00+00:00")
-    async def test_checked_out_state_preserved_through_coordinator_update(
-        self,
-        hass: HomeAssistant,
-        mock_checkin_coordinator: MagicMock,
-        mock_checkin_config_entry: MockConfigEntry,
-    ) -> None:
-        """Checked-out state is preserved during later coordinator refreshes."""
-        sensor = _create_sensor(
-            hass, mock_checkin_coordinator, mock_checkin_config_entry
-        )
-        sensor._state = CHECKIN_STATE_CHECKED_OUT
-        sensor._tracked_event_slot_name = "John Smith"
-        sensor._checkout_time = dt_util.now() - timedelta(hours=1)
-        sensor._unsub_timer = MagicMock()
-        mock_checkin_coordinator.data = []
-
-        sensor._handle_coordinator_update()
-
-        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
-
-    async def test_apply_checkin_protection_marks_checked_in_reservation(
-        self,
-        hass: HomeAssistant,
-        mock_checkin_coordinator: MagicMock,
-        mock_checkin_config_entry: MockConfigEntry,
-    ) -> None:
-        """Active checked-in guests are marked protected for reconciliation."""
-        from custom_components.rental_control.coordinator import (
-            RentalControlCoordinator,
-        )
-        from custom_components.rental_control.reconciliation import Reservation
-
-        sensor = _create_sensor(
-            hass, mock_checkin_coordinator, mock_checkin_config_entry
-        )
-        sensor._state = CHECKIN_STATE_CHECKED_IN
-        sensor._tracked_event_slot_name = "John Smith"
-
-        hass.data.setdefault(DOMAIN, {})
-        hass.data[DOMAIN][mock_checkin_config_entry.entry_id] = {
-            CHECKIN_SENSOR: sensor,
-            COORDINATOR: mock_checkin_coordinator,
-        }
-        mock_checkin_coordinator.hass = hass
-        mock_checkin_coordinator._entry_id = mock_checkin_config_entry.entry_id
-
-        now = dt_util.now()
-        reservations = [
-            Reservation(
-                identity_key="res-john",
-                start=now,
-                end=now + timedelta(days=2),
-                buffered_start=now,
-                buffered_end=now + timedelta(days=2),
-                summary="Reserved - John Smith",
-                slot_name="John Smith",
-                display_slot_name="RC John Smith",
-                slot_code="1234",
-            ),
-            Reservation(
-                identity_key="res-other",
-                start=now,
-                end=now + timedelta(days=2),
-                buffered_start=now,
-                buffered_end=now + timedelta(days=2),
-                summary="Reserved - Other Guest",
-                slot_name="Other Guest",
-                display_slot_name="RC Other Guest",
-                slot_code="5678",
-            ),
-        ]
-
-        RentalControlCoordinator._apply_checkin_protection(
-            mock_checkin_coordinator,
-            reservations,
-        )
-
-        assert reservations[0].protected_active is True
-        assert reservations[1].protected_active is False

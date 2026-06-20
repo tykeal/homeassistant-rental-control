@@ -20,27 +20,15 @@ from datetime import date
 from datetime import datetime
 from datetime import time
 import logging
-from time import monotonic
 from typing import TYPE_CHECKING
-from typing import Any
 from typing import NamedTuple
 from typing import TypedDict
-import uuid
 
 from homeassistant.util import dt
 
 from .const import DEFAULT_MAX_RETRY_CYCLES
-from .const import SLOT_STATUS_OCCUPIED
-from .const import SLOT_STATUS_PENDING_CLEAR
-from .reconciliation import ActionKind
-from .reconciliation import DesiredPlan
-from .reconciliation import Reservation
-from .reconciliation import SlotAction
 from .util import EventIdentity
-from .util import OperationResult
 from .util import async_fire_clear_code
-from .util import async_fire_set_code
-from .util import async_fire_update_times
 from .util import get_event_identities
 from .util import normalize_uid
 from .util import trim_name
@@ -51,7 +39,6 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 SLOT_MISS_THRESHOLD = 2
-SUPPRESSED_STATE_CHANGE_TTL = 5.0
 
 
 def _to_utc(value: datetime) -> datetime:
@@ -73,18 +60,6 @@ def _to_utc(value: datetime) -> datetime:
         return result
     utc: datetime = dt.as_utc(value)
     return utc
-
-
-def _states_match(expected: str, actual: str) -> bool:
-    """Compare raw HA state strings, normalizing datetimes when possible."""
-    if expected == actual:
-        return True
-
-    expected_dt = dt.parse_datetime(expected)
-    actual_dt = dt.parse_datetime(actual)
-    if expected_dt is not None and actual_dt is not None:
-        return _to_utc(expected_dt) == _to_utc(actual_dt)
-    return False
 
 
 def _strip_prefix(slot_name: str, prefix: str) -> str:
@@ -129,25 +104,6 @@ class EventOverride(TypedDict):
     end_time: datetime
 
 
-class _SlotEvent:
-    """Minimal event adapter for util slot-operation helpers."""
-
-    def __init__(
-        self,
-        slot_name: str,
-        slot_code: str,
-        start: datetime,
-        end: datetime,
-    ) -> None:
-        """Populate the attributes expected by util service helpers."""
-        self.extra_state_attributes: dict[str, Any] = {
-            "slot_name": slot_name,
-            "slot_code": slot_code,
-            "start": start,
-            "end": end,
-        }
-
-
 class EventOverrides:
     """Event Overrides object and methods."""
 
@@ -168,20 +124,6 @@ class EventOverrides:
         self._max_name_length: int = 0
         self._prefix_length: int = 0
 
-        # Store-backed fields (T018)
-        self._persisted_mappings: dict[str, dict[str, Any]] = {}
-        self._pending_clear_slots: dict[int, str] = {}
-        self._pending_fences: dict[int, str] = {}
-        self._actual_state_cache: dict[int, dict[str, Any]] = {}
-        self._reconciliation_active: bool = False
-
-        # Per-slot error tracking for diagnostics (T096)
-        self._last_slot_errors: dict[int, str] = {}
-        # Coordinator-originated state feedback awaiting callback suppression
-        self._suppressed_state_changes: dict[int, dict[str, tuple[str, float]]] = {}
-        # Latest diagnostics snapshot for HA diagnostics collection (T096)
-        self._diagnostics_snapshot: dict[str, Any] = {}
-
     @property
     def max_slots(self) -> int:
         """Return the max_slots known."""
@@ -189,16 +131,7 @@ class EventOverrides:
 
     @property
     def next_slot(self) -> int | None:
-        """Return the next available slot index for the greedy path.
-
-        .. deprecated::
-            This property is part of the retired greedy slot-assignment path.
-            The reconciliation coordinator (``compute_desired_plan`` /
-            ``async_apply_plan``) owns slot selection and does not consult
-            ``_next_slot``.  The property is retained as a backward-compatible
-            shim for tests that exercise :meth:`async_reserve_or_get_slot`
-            directly; production code must not read it.
-        """
+        """Return the next_slot available."""
         return self._next_slot
 
     @property
@@ -246,238 +179,8 @@ class EventOverrides:
         """Set the event prefix length including separator."""
         self._prefix_length = value
 
-    @property
-    def persisted_mappings(self) -> dict[str, dict[str, Any]]:
-        """Return a read-only copy of the persisted slot mappings."""
-        return dict(self._persisted_mappings)
-
-    @property
-    def pending_clear_slots(self) -> dict[int, str]:
-        """Return a read-only copy of the pending-clear slot map."""
-        return dict(self._pending_clear_slots)
-
-    @property
-    def pending_fences(self) -> dict[int, str]:
-        """Return a read-only copy of pending operation fences."""
-        return dict(self._pending_fences)
-
-    @property
-    def reconciliation_active(self) -> bool:
-        """True while async_apply_plan is executing."""
-        return self._reconciliation_active
-
-    def suppress_state_changes(self, slot: int, changes: dict[str, Any]) -> None:
-        """Mark coordinator-originated state changes to ignore in callbacks."""
-        now = monotonic()
-        pending = self._suppressed_state_changes.setdefault(slot, {})
-        for entity_id, value in changes.items():
-            pending[entity_id] = (str(value), now)
-
-    def should_suppress_state_change(
-        self, slot: int, entity_id: str, state: str
-    ) -> bool:
-        """Return True when a callback is feedback from our own service call."""
-        pending = self._suppressed_state_changes.get(slot)
-        if not pending:
-            return False
-
-        now = monotonic()
-        for pending_entity_id, (_, created) in list(pending.items()):
-            if now - created > SUPPRESSED_STATE_CHANGE_TTL:
-                pending.pop(pending_entity_id, None)
-
-        expected = pending.get(entity_id)
-        if expected is None:
-            if not pending:
-                self._suppressed_state_changes.pop(slot, None)
-            return False
-
-        expected_state, _ = expected
-        if _states_match(expected_state, state):
-            pending.pop(entity_id, None)
-            if not pending:
-                self._suppressed_state_changes.pop(slot, None)
-            return True
-        return False
-
-    @property
-    def diagnostics_snapshot(self) -> dict[str, Any]:
-        """Return the latest diagnostics snapshot for HA diagnostics collection.
-
-        The snapshot is built after each :meth:`async_apply_plan` call and
-        captures matched slots, pending corrections, blocked clear reasons,
-        retry counts, and last errors.  Raw slot codes are never included.
-
-        Returns:
-            A shallow copy of the current diagnostics snapshot dict, or an
-            empty dict if no plan has been applied yet.
-        """
-        return dict(self._diagnostics_snapshot)
-
-    def get_last_slot_error(self, slot: int) -> str | None:
-        """Return the last error string for *slot*, or ``None`` if no error.
-
-        Args:
-            slot: Keymaster slot number.
-
-        Returns:
-            The last recorded error string for the slot, or ``None``.
-        """
-        return self._last_slot_errors.get(slot)
-
-    def _record_slot_error(self, slot: int, error: str) -> None:
-        """Record a failed operation error for *slot*.
-
-        Args:
-            slot: Keymaster slot number.
-            error: Human-readable error description.
-        """
-        self._last_slot_errors[slot] = error
-
-    def _clear_slot_error(self, slot: int) -> None:
-        """Clear the recorded error for *slot* on a successful operation.
-
-        Args:
-            slot: Keymaster slot number.
-        """
-        self._last_slot_errors.pop(slot, None)
-
-    def update_diagnostics_snapshot(self, plan: "DesiredPlan") -> None:
-        """Build and store a diagnostics snapshot from the completed plan.
-
-        Called after :meth:`async_apply_plan` completes.  Captures matched
-        slots (those with desired assignments), pending corrections (slots
-        with ``retry_clear`` or ``blocked`` actions), manual drift slots
-        (those with ``overwrite_manual_change`` actions), blocked clear
-        reasons, per-slot retry counts, and last errors.  Raw slot codes
-        are never included.
-
-        Args:
-            plan: The :class:`~.reconciliation.DesiredPlan` that was just applied.
-        """
-        matched: dict[int, dict[str, Any]] = {}
-        pending_corrections: dict[int, dict[str, Any]] = {}
-        manual_drift_slots: dict[int, dict[str, Any]] = {}
-
-        for slot_num, ps in plan.slots.items():
-            if ps.desired_identity_key is not None:
-                matched[slot_num] = {
-                    "identity_key": ps.desired_identity_key,
-                    "action": ps.action.value,
-                }
-            if ps.action.value in (
-                ActionKind.RETRY_CLEAR.value,
-                ActionKind.BLOCKED.value,
-            ):
-                pending_corrections[slot_num] = {
-                    "action": ps.action.value,
-                    "blocked_reason": ps.pending_reason,
-                    "retry_count": ps.retry_count,
-                }
-            if ps.action is ActionKind.OVERWRITE_MANUAL_CHANGE:
-                drift_fields: list[str] = []
-                if ps.pending_reason and ps.pending_reason.startswith(
-                    "drifted fields: "
-                ):
-                    drift_fields = [
-                        f.strip()
-                        for f in ps.pending_reason[len("drifted fields: ") :].split(",")
-                        if f.strip()
-                    ]
-                manual_drift_slots[slot_num] = {
-                    "action": ps.action.value,
-                    "identity_key": ps.desired_identity_key,
-                    "drift_fields": drift_fields,
-                }
-
-        self._diagnostics_snapshot = {
-            "plan_id": plan.plan_id,
-            "generated_at": plan.generated_at.isoformat(),
-            "matched_slots": matched,
-            "pending_corrections": pending_corrections,
-            "manual_drift_slots": manual_drift_slots,
-            "pending_clear_slots": sorted(self._pending_clear_slots.keys()),
-            "slot_retry_counts": {
-                slot: self._retry_counts.get(slot, 0)
-                for slot in range(self._start_slot, self._start_slot + self._max_slots)
-            },
-            "last_slot_errors": dict(self._last_slot_errors),
-        }
-
-    def load_persisted_mappings(self, mappings: dict[str, dict[str, Any]]) -> None:
-        """Load persisted slot mappings from the HA Store.
-
-        Validates that no two mappings both claim the same slot with
-        status ``occupied``; raises ``ValueError`` on conflict.
-
-        Args:
-            mappings: Identity-key → mapping dict from the HA Store.
-
-        Raises:
-            ValueError: If two mappings claim the same slot and both
-                have ``occupied`` status.
-        """
-        slot_owners: dict[int, str] = {}
-        for identity_key, mapping in mappings.items():
-            slot = mapping.get("slot")
-            status = mapping.get("status")
-            if slot is not None and status == SLOT_STATUS_OCCUPIED:
-                if slot in slot_owners:
-                    raise ValueError(
-                        f"Duplicate occupied slot {slot}: claimed by both "
-                        f"{slot_owners[slot]!r} and {identity_key!r}"
-                    )
-                slot_owners[slot] = identity_key
-
-        self._persisted_mappings = {k: dict(v) for k, v in mappings.items()}
-
-        self._pending_clear_slots = {}
-        for identity_key, mapping in mappings.items():
-            if mapping.get("status") == SLOT_STATUS_PENDING_CLEAR:
-                slot = mapping.get("slot")
-                if slot is not None:
-                    operation_id = mapping.get("operation_id")
-                    self._pending_clear_slots[slot] = (
-                        operation_id if operation_id is not None else identity_key
-                    )
-
-    def update_actual_state(self, slot: int, state: dict[str, Any]) -> None:
-        """Store the observed Keymaster state snapshot for a slot.
-
-        Args:
-            slot: Keymaster slot number.
-            state: Dict capturing the observed entity states for the slot.
-        """
-        self._actual_state_cache[slot] = state
-
-    def get_actual_state(self, slot: int) -> dict[str, Any] | None:
-        """Return the cached actual state for a slot, or None.
-
-        Args:
-            slot: Keymaster slot number.
-
-        Returns:
-            The cached state dict, or ``None`` if not yet observed.
-        """
-        return self._actual_state_cache.get(slot)
-
     def __assign_next_slot(self) -> None:
-        """Recompute ``_next_slot`` for the deprecated greedy path.
-
-        Called only from the greedy-path methods (:meth:`update`,
-        :meth:`async_update`, :meth:`async_reserve_or_get_slot`,
-        :meth:`async_check_overrides`) so that :attr:`next_slot` stays
-        accurate for callers that still use the legacy API.
-
-        Reconciliation methods (:meth:`_apply_clear`, :meth:`_apply_set`,
-        :meth:`_apply_overwrite_manual_change`) do *not* call this helper;
-        slot selection in the reconciliation path is determined by
-        ``compute_desired_plan``, not by ``_next_slot``.
-
-        .. deprecated::
-            Do not call from new code.  Will be removed when the greedy
-            path shims are retired.
-        """
+        """Assign the next slot."""
 
         _LOGGER.debug("In EventOverrides.assign_next_slot")
 
@@ -707,19 +410,10 @@ class EventOverrides:
         uid: str | None = None,
         prefix: str | None = None,
     ) -> ReserveResult:
-        """Atomically find existing slot or reserve next available (greedy path).
+        """Atomically find existing slot or reserve next available.
 
         All work is performed under ``_lock`` so concurrent callers
         are serialised.
-
-        .. deprecated::
-            This method is the retired greedy slot-assignment path.  The
-            reconciliation coordinator (``compute_desired_plan`` /
-            ``async_apply_plan``) is now the sole authority for slot
-            assignments and does not call this method.  The method is
-            retained as a backward-compatible shim for tests that exercise
-            the greedy path directly; it must not be called from production
-            coordinator or sensor code.
         """
         async with self._lock:
             if prefix is None:
@@ -845,430 +539,6 @@ class EventOverrides:
         """Reset failure tracking for slot."""
         self._retry_counts[slot] = 0
         self._escalated[slot] = False
-
-    async def async_apply_plan(
-        self,
-        coordinator: Any,
-        plan: DesiredPlan,
-        res_by_key: dict[str, Reservation],
-    ) -> list[OperationResult]:
-        """Apply a desired plan by executing slot actions."""
-        async with self._lock:
-            self._reconciliation_active = True
-
-        results: list[OperationResult] = []
-        try:
-            for action in plan.actions:
-                if action.kind in {ActionKind.NOOP, ActionKind.BLOCKED}:
-                    continue
-
-                slot = action.slot
-                identity_key = action.identity_key
-
-                if action.kind in {ActionKind.CLEAR, ActionKind.RETRY_CLEAR}:
-                    _clear_reason = action.reason
-                    if _clear_reason == "duplicate_non_canonical":
-                        _LOGGER.warning(
-                            "Duplicate collapse: clearing non-canonical slot %d "
-                            "(duplicate actual assignment)",
-                            slot,
-                        )
-                    elif _clear_reason == "phantom":
-                        _LOGGER.warning(
-                            "Phantom recovery: clearing slot %d "
-                            "(name-only state, no usable PIN)",
-                            slot,
-                        )
-                    elif _clear_reason == "stale":
-                        _LOGGER.warning(
-                            "Stale correction: clearing slot %d "
-                            "(expired or absent reservation)",
-                            slot,
-                        )
-                    elif _clear_reason == "mis_assigned":
-                        _LOGGER.warning(
-                            "Mis-assignment correction: clearing slot %d "
-                            "(wrong reservation in slot)",
-                            slot,
-                        )
-                    result = await self._apply_clear(coordinator, slot)
-                elif action.kind is ActionKind.SET:
-                    res = res_by_key.get(identity_key) if identity_key else None
-                    if res is None:
-                        _LOGGER.warning(
-                            "SET action for slot %d has no reservation; skipping", slot
-                        )
-                        continue
-                    result = await self._apply_set(coordinator, slot, res, plan.plan_id)
-                elif action.kind is ActionKind.UPDATE_TIMES:
-                    res = res_by_key.get(identity_key) if identity_key else None
-                    if res is None:
-                        _LOGGER.warning(
-                            "UPDATE_TIMES action for slot %d has no reservation; "
-                            "skipping",
-                            slot,
-                        )
-                        continue
-                    result = await self._apply_update_times(coordinator, slot, res)
-                elif action.kind is ActionKind.OVERWRITE_MANUAL_CHANGE:
-                    res = res_by_key.get(identity_key) if identity_key else None
-                    if res is None:
-                        _LOGGER.warning(
-                            "OVERWRITE_MANUAL_CHANGE action for slot %d has no "
-                            "reservation; skipping",
-                            slot,
-                        )
-                        continue
-                    result = await self._apply_overwrite_manual_change(
-                        coordinator, slot, res, action
-                    )
-                else:
-                    continue
-
-                results.append(result)
-        finally:
-            self.update_diagnostics_snapshot(plan)
-            async with self._lock:
-                self._reconciliation_active = False
-
-        return results
-
-    async def _apply_clear(
-        self,
-        coordinator: Any,
-        slot: int,
-    ) -> OperationResult:
-        """Apply a CLEAR or RETRY_CLEAR action for one slot."""
-        operation_id = str(uuid.uuid4())
-        expected_name: str | None = None
-
-        async with self._lock:
-            self._pending_fences[slot] = operation_id
-            self._pending_clear_slots[slot] = operation_id
-            override = self._overrides.get(slot)
-            if override is not None:
-                expected_name = override.get("slot_name")
-
-        result = await async_fire_clear_code(
-            coordinator, slot, expected_name=expected_name
-        )
-
-        async with self._lock:
-            current_token = self._pending_fences.get(slot)
-            if current_token != operation_id:
-                _LOGGER.warning(
-                    "Stale clear token for slot %d "
-                    "(expected %s, got %s); discarding result",
-                    slot,
-                    operation_id,
-                    current_token,
-                )
-                return OperationResult(kind="clear", slot=slot, unconfirmed=True)
-
-            if result.confirmed:
-                _LOGGER.debug("Clear confirmed for slot %d; marking free", slot)
-                self._pending_fences.pop(slot, None)
-                self._pending_clear_slots.pop(slot, None)
-                self._overrides[slot] = None
-                self._slot_uids.pop(slot, None)
-                self._slot_miss_counts.pop(slot, None)
-                self._clear_slot_error(slot)
-                # NOTE: __assign_next_slot() is intentionally NOT called here.
-                # Slot selection in the reconciliation path is determined by
-                # compute_desired_plan(), not by the deprecated _next_slot field.
-            elif result.failed:
-                _LOGGER.warning(
-                    "Clear failed for slot %d (error: %s); slot remains pending-clear",
-                    slot,
-                    result.error,
-                )
-                self._record_slot_error(slot, result.error or "clear failed")
-            elif result.lingering_name or result.lingering_pin:
-                _LOGGER.warning(
-                    "Clear not fully confirmed for slot %d "
-                    "(lingering_name=%s, lingering_pin=%s); "
-                    "slot remains pending-clear",
-                    slot,
-                    result.lingering_name,
-                    result.lingering_pin,
-                )
-                self._record_slot_error(
-                    slot,
-                    f"lingering state after clear: "
-                    f"name={result.lingering_name} pin={result.lingering_pin}",
-                )
-            else:
-                _LOGGER.debug(
-                    "Clear unconfirmed for slot %d; slot remains pending-clear", slot
-                )
-
-        return result
-
-    async def _apply_set(
-        self,
-        coordinator: Any,
-        slot: int,
-        res: Reservation,
-        plan_id: str,
-    ) -> OperationResult:
-        """Apply a SET action for one slot."""
-        import hashlib as _hashlib
-
-        operation_id = (
-            f"{plan_id}-set-{slot}-"
-            f"{_hashlib.sha256(res.identity_key.encode()).hexdigest()[:8]}"
-        )
-
-        async with self._lock:
-            self._pending_fences[slot] = operation_id
-            self._overrides[slot] = {
-                "slot_name": res.slot_name,
-                "slot_code": res.slot_code,
-                "start_time": res.buffered_start,
-                "end_time": res.buffered_end,
-            }
-            self._slot_miss_counts.pop(slot, None)
-            self.suppress_state_changes(
-                slot,
-                {
-                    f"switch.{coordinator.lockname}_code_slot_"
-                    f"{slot}_use_date_range_limits": "on",
-                    f"text.{coordinator.lockname}_code_slot_{slot}_name": (
-                        res.display_slot_name
-                    ),
-                    f"text.{coordinator.lockname}_code_slot_{slot}_pin": res.slot_code,
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_start": res.buffered_start.isoformat(),
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_end": res.buffered_end.isoformat(),
-                },
-            )
-
-        event = _SlotEvent(
-            slot_name=res.slot_name,
-            slot_code=res.slot_code,
-            start=res.start,
-            end=res.end,
-        )
-        result = await async_fire_set_code(coordinator, event, slot)
-
-        async with self._lock:
-            current_token = self._pending_fences.get(slot)
-            if current_token != operation_id:
-                _LOGGER.warning("Stale set token for slot %d; discarding result", slot)
-                return OperationResult(kind="set", slot=slot, unconfirmed=True)
-
-            if result.confirmed:
-                _LOGGER.debug(
-                    "Set confirmed for slot %d for reservation %s",
-                    slot,
-                    res.identity_key,
-                )
-                self._pending_fences.pop(slot, None)
-                self._clear_slot_error(slot)
-                # NOTE: __assign_next_slot() is intentionally NOT called here.
-                # Slot selection in the reconciliation path is determined by
-                # compute_desired_plan(), not by the deprecated _next_slot field.
-            elif result.failed:
-                _LOGGER.warning(
-                    "Set failed for slot %d (error: %s); reverting pre-assignment",
-                    slot,
-                    result.error,
-                )
-                self._pending_fences.pop(slot, None)
-                self._overrides[slot] = None
-                self._slot_uids.pop(slot, None)
-                self._record_slot_error(slot, result.error or "set failed")
-                # NOTE: __assign_next_slot() is intentionally NOT called here.
-                # Slot selection in the reconciliation path is determined by
-                # compute_desired_plan(), not by the deprecated _next_slot field.
-            else:
-                _LOGGER.debug(
-                    "Set unconfirmed for slot %d; keeping tentative assignment", slot
-                )
-                self._pending_fences.pop(slot, None)
-
-        return result
-
-    async def _apply_update_times(
-        self,
-        coordinator: Any,
-        slot: int,
-        res: Reservation,
-    ) -> OperationResult:
-        """Apply an UPDATE_TIMES action for one slot."""
-        async with self._lock:
-            self.suppress_state_changes(
-                slot,
-                {
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_start": res.buffered_start.isoformat(),
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_end": res.buffered_end.isoformat(),
-                },
-            )
-
-        event = _SlotEvent(
-            slot_name=res.slot_name,
-            slot_code=res.slot_code,
-            start=res.start,
-            end=res.end,
-        )
-        result = await async_fire_update_times(coordinator, event, slot)
-
-        if result.confirmed:
-            async with self._lock:
-                override = self._overrides.get(slot)
-                if override is not None:
-                    override["start_time"] = res.buffered_start
-                    override["end_time"] = res.buffered_end
-                    _LOGGER.debug(
-                        "update_times confirmed for slot %d; in-memory dates updated",
-                        slot,
-                    )
-
-        return result
-
-    async def _apply_overwrite_manual_change(
-        self,
-        coordinator: Any,
-        slot: int,
-        res: Reservation,
-        action: "SlotAction",
-    ) -> OperationResult:
-        """Apply an OVERWRITE_MANUAL_CHANGE action for one slot.
-
-        Logs a warning with all drift details — slot number, changed field
-        names, desired reservation identity, observed name and
-        classification from the actual-state cache — and then restores the
-        desired state via :func:`~.util.async_fire_set_code`.  Raw PIN
-        values are never written to logs; only code *presence* (boolean) is
-        reported.
-
-        Unmanaged slots never trigger this path because
-        :func:`~.reconciliation.compute_desired_plan` iterates only over
-        managed slots.
-
-        Args:
-            coordinator: The active coordinator instance.
-            slot: Keymaster slot number to overwrite.
-            res: Desired :class:`~.reconciliation.Reservation` for this slot.
-            action: The :class:`~.reconciliation.SlotAction` carrying the
-                ``OVERWRITE_MANUAL_CHANGE`` kind and drift reason string.
-
-        Returns:
-            An :class:`~.util.OperationResult` from the underlying
-            :func:`~.util.async_fire_set_code` call.
-        """
-        import hashlib as _hashlib
-
-        drift_fields: list[str] = []
-        if action.reason and action.reason.startswith("drifted fields: "):
-            drift_fields = [
-                f.strip()
-                for f in action.reason[len("drifted fields: ") :].split(",")
-                if f.strip()
-            ]
-
-        # Gather observed state for the log message.  The actual-state cache
-        # is populated by the coordinator before async_apply_plan is called.
-        # Raw PIN values are never stored in the cache; only has_code (bool).
-        actual = self._actual_state_cache.get(slot) or {}
-        observed_name: str = actual.get("name_state") or "(unknown)"
-        observed_classification: str = actual.get("classification") or "(unknown)"
-        observed_has_code: bool | None = actual.get("has_code")
-
-        _LOGGER.warning(
-            "Manual/external drift detected on managed slot %d "
-            "(reservation %s, desired name %r): "
-            "changed fields=%s, "
-            "observed name=%r, observed classification=%s, "
-            "observed has_code=%s; "
-            "restoring desired state.",
-            slot,
-            res.identity_key,
-            res.display_slot_name,
-            drift_fields,
-            observed_name,
-            observed_classification,
-            observed_has_code,
-        )
-
-        operation_id = (
-            f"overwrite-{slot}-"
-            f"{_hashlib.sha256(res.identity_key.encode()).hexdigest()[:8]}"
-        )
-
-        async with self._lock:
-            self._pending_fences[slot] = operation_id
-            self._overrides[slot] = {
-                "slot_name": res.slot_name,
-                "slot_code": res.slot_code,
-                "start_time": res.buffered_start,
-                "end_time": res.buffered_end,
-            }
-            self._slot_miss_counts.pop(slot, None)
-            self.suppress_state_changes(
-                slot,
-                {
-                    f"switch.{coordinator.lockname}_code_slot_"
-                    f"{slot}_use_date_range_limits": "on",
-                    f"text.{coordinator.lockname}_code_slot_{slot}_name": (
-                        res.display_slot_name
-                    ),
-                    f"text.{coordinator.lockname}_code_slot_{slot}_pin": res.slot_code,
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_start": res.buffered_start.isoformat(),
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_end": res.buffered_end.isoformat(),
-                },
-            )
-
-        event = _SlotEvent(
-            slot_name=res.slot_name,
-            slot_code=res.slot_code,
-            start=res.start,
-            end=res.end,
-        )
-        result = await async_fire_set_code(coordinator, event, slot)
-
-        async with self._lock:
-            current_token = self._pending_fences.get(slot)
-            if current_token != operation_id:
-                _LOGGER.warning(
-                    "Stale overwrite token for slot %d; discarding result", slot
-                )
-                return OperationResult(kind="set", slot=slot, unconfirmed=True)
-
-            if result.confirmed:
-                _LOGGER.debug(
-                    "Overwrite confirmed for slot %d; desired state restored "
-                    "for reservation %s.",
-                    slot,
-                    res.identity_key,
-                )
-                self._pending_fences.pop(slot, None)
-                self._clear_slot_error(slot)
-                # NOTE: __assign_next_slot() is intentionally NOT called here.
-                # Slot selection in the reconciliation path is determined by
-                # compute_desired_plan(), not by the deprecated _next_slot field.
-            elif result.failed:
-                _LOGGER.warning(
-                    "Overwrite failed for slot %d (error: %s); "
-                    "slot may remain drifted.",
-                    slot,
-                    result.error,
-                )
-                self._pending_fences.pop(slot, None)
-                self._record_slot_error(slot, result.error or "overwrite failed")
-            else:
-                _LOGGER.debug(
-                    "Overwrite unconfirmed for slot %d; keeping tentative assignment.",
-                    slot,
-                )
-                self._pending_fences.pop(slot, None)
-
-        return result
 
     def _slot_has_matching_event(
         self,
@@ -1493,20 +763,11 @@ class EventOverrides:
         coordinator,
         calendar: list[CalendarEvent] | None = None,
     ) -> None:
-        """Check overrides and fire clear-code events for stale slots (greedy path).
+        """Check if overrides need to have a clear_code event fired.
 
         When called from within _async_update_data, pass the fresh
         calendar list directly because coordinator.data has not been
         updated yet by the DUC framework.
-
-        .. deprecated::
-            This method implements the retired greedy cleanup policy.  Stale
-            slot detection and clearing is now handled entirely by the
-            reconciliation coordinator via ``compute_desired_plan`` /
-            ``async_apply_plan`` (``ActionKind.CLEAR`` / ``RETRY_CLEAR``).
-            The coordinator no longer calls this method.  The method is
-            retained as a backward-compatible shim; production code must
-            not invoke it.
         """
         _LOGGER.debug("In EventOverrides.async_check_overrides")
 
@@ -1596,44 +857,17 @@ class EventOverrides:
                 if clear_code:
                     _LOGGER.debug("Firing clear code for slot %s", slot)
                     try:
-                        result = await async_fire_clear_code(
+                        await async_fire_clear_code(
                             coordinator, slot, expected_name=self.get_slot_name(slot)
                         )
-                    except asyncio.CancelledError:
-                        raise
                     except Exception:
                         _LOGGER.exception(
-                            "Unexpected error firing clear code for slot %d; "
-                            "slot remains occupied to prevent "
-                            "double-assignment.",
+                            "Failed to fire clear code for slot %d; "
+                            "freeing slot so new events can be assigned. "
+                            "The stale code may be overwritten when a "
+                            "future event is programmed into this slot.",
                             slot,
                         )
-                        continue
-
-                    if not isinstance(result, OperationResult):
-                        result = OperationResult(
-                            kind="clear",
-                            slot=slot,
-                            unconfirmed=True,
-                        )
-                    if (
-                        not result.confirmed
-                        or result.failed
-                        or result.lingering_name
-                        or result.lingering_pin
-                    ):
-                        _LOGGER.warning(
-                            "Clear not confirmed for slot %d "
-                            "(failed=%s, unconfirmed=%s, "
-                            "lingering_name=%s, lingering_pin=%s); "
-                            "slot remains occupied.",
-                            slot,
-                            result.failed,
-                            result.unconfirmed,
-                            result.lingering_name,
-                            result.lingering_pin,
-                        )
-                        continue
 
                     self._overrides[slot] = None
                     self._slot_uids.pop(slot, None)
