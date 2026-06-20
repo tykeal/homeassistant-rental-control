@@ -423,3 +423,120 @@ async def test_concurrent_calendar_updates(
     assert coord_b.data is not None
     assert coord_a.event.summary == "Reserved: Guest A"
     assert coord_b.event.summary == "Reserved: Guest B"
+
+
+class TestClearFailureSlotNotReused:
+    """Verify failed clear prevents slot reuse."""
+
+    async def test_clear_failure_slot_not_reused(self) -> None:
+        """A slot that fails to clear is not assigned to a new reservation."""
+        from datetime import datetime
+        from datetime import timezone
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.event_overrides import EventOverrides
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import SlotAction
+        from custom_components.rental_control.util import OperationResult
+
+        eo = EventOverrides(start_slot=1, max_slots=2)
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        eo.update(1, "c1", "OldGuest", now, now)
+        eo.update(2, "c2", "Slot2", now, now)
+
+        plan = DesiredPlan(plan_id="test-t063", generated_at=now)
+        plan.actions = [SlotAction(kind=ActionKind.CLEAR, slot=1, identity_key=None)]
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        failed_result = OperationResult(
+            kind="clear",
+            slot=1,
+            failed=True,
+            error="lock offline",
+        )
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=failed_result,
+        ):
+            await eo.async_apply_plan(coordinator, plan, {})
+
+        assert eo.overrides[1] is not None
+        assert eo.overrides[1]["slot_name"] == "OldGuest"
+        assert 1 in eo.pending_fences
+
+    async def test_no_double_assignment_after_failed_clear(self) -> None:
+        """A slot with failed clear is not available for new assignment."""
+        from datetime import datetime
+        from datetime import timezone
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.event_overrides import EventOverrides
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotAction
+        from custom_components.rental_control.util import OperationResult
+
+        eo = EventOverrides(start_slot=1, max_slots=2)
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        eo.update(1, "c1", "OldGuest", now, now)
+        eo.update(2, "", "", now, now)
+
+        start = datetime(2026, 8, 1, 14, tzinfo=timezone.utc)
+        end = datetime(2026, 8, 8, 11, tzinfo=timezone.utc)
+        new_res = Reservation(
+            identity_key="new-res",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="New Guest",
+            slot_name="New Guest",
+            display_slot_name="RC New Guest",
+            slot_code="1234",
+        )
+
+        plan = DesiredPlan(plan_id="t063-no-double", generated_at=now)
+        plan.actions = [
+            SlotAction(kind=ActionKind.CLEAR, slot=1, identity_key=None),
+            SlotAction(kind=ActionKind.SET, slot=2, identity_key="new-res"),
+        ]
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides = eo
+        name_state = MagicMock()
+        name_state.state = "New Guest"
+        coordinator.hass.states.get.return_value = name_state
+
+        failed_result = OperationResult(
+            kind="clear",
+            slot=1,
+            failed=True,
+            error="lock offline",
+        )
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=failed_result,
+        ):
+            await eo.async_apply_plan(coordinator, plan, {"new-res": new_res})
+
+        assert eo.overrides[1] is not None
+        assert eo.overrides[1]["slot_name"] == "OldGuest"
+        assert eo.overrides[2] is not None
+        assert eo.overrides[2]["slot_name"] == "New Guest"

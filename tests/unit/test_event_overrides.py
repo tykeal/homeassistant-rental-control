@@ -16,10 +16,18 @@ from unittest.mock import patch
 from homeassistant.util import dt as dt_util
 import pytest
 
+from custom_components.rental_control.const import COORDINATOR
+from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.event_overrides import EventOverride
 from custom_components.rental_control.event_overrides import EventOverrides
 from custom_components.rental_control.event_overrides import ReserveResult
+from custom_components.rental_control.reconciliation import ActionKind
+from custom_components.rental_control.reconciliation import DesiredPlan
+from custom_components.rental_control.reconciliation import Reservation
+from custom_components.rental_control.reconciliation import SlotAction
 from custom_components.rental_control.util import EventIdentity
+from custom_components.rental_control.util import OperationResult
+from custom_components.rental_control.util import handle_state_change
 
 # ---------------------------------------------------------------------------
 # Helpers / Fixtures
@@ -1235,14 +1243,7 @@ class TestEdgeCases:
             mock_fire.assert_not_called()
 
     async def test_clear_failure_still_frees_slot(self) -> None:
-        """Verify slot is freed even when async_fire_clear_code raises.
-
-        Before #535 fix the slot remained occupied on failure, which
-        permanently blocked new events from being assigned.  The new
-        behavior frees the override so ``next_slot`` becomes
-        available; the stale Keymaster code will be overwritten when
-        the replacement event is programmed.
-        """
+        """Verify failed clear leaves the slot occupied for retry."""
         eo = EventOverrides(start_slot=1, max_slots=1)
         start = _make_dt(2025, 6, 1)
         end = _make_dt(2025, 6, 5)
@@ -1257,7 +1258,7 @@ class TestEdgeCases:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
-                side_effect=Exception("lock command failed"),
+                return_value=OperationResult(kind="clear", slot=1, failed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -1265,9 +1266,8 @@ class TestEdgeCases:
             mock_fire.assert_called_once_with(
                 coordinator, 1, expected_name="Past Guest"
             )
-            # Slot is freed despite clear failure (#535 fix)
-            assert eo.overrides[1] is None
-            assert eo.next_slot == 1
+            assert eo.overrides[1] is not None
+            assert eo.next_slot is None
 
     async def test_clears_slot_beyond_max_events_boundary(self) -> None:
         """Verify slot is cleared when its event is beyond max_events.
@@ -2881,12 +2881,7 @@ class TestSlotEvictionOnNewEarlierEvent:
             assert eo.overrides[result.slot]["slot_name"] == "Delta"
 
     async def test_slot_freed_even_when_clear_code_fails(self) -> None:
-        """Verify slot is freed even if async_fire_clear_code raises.
-
-        Before the fix for #535, a failed clear_code would keep the
-        slot occupied, permanently blocking new events from being
-        assigned a slot.
-        """
+        """Verify failed clear does not free the evicted slot."""
         eo = EventOverrides(start_slot=1, max_slots=2)
 
         # Fill both slots
@@ -2916,8 +2911,9 @@ class TestSlotEvictionOnNewEarlierEvent:
 
         frozen = _make_dt(2025, 7, 1)
 
-        # Simulate Keymaster being unavailable
-        failing_clear = AsyncMock(side_effect=RuntimeError("service unavailable"))
+        failing_clear = AsyncMock(
+            return_value=OperationResult(kind="clear", slot=2, failed=True)
+        )
         with (
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
@@ -2927,17 +2923,9 @@ class TestSlotEvictionOnNewEarlierEvent:
         ):
             await eo.async_check_overrides(coordinator)
 
-            # Despite clear_code failure, slot should still be freed
-            assert eo.overrides[2] is None
-            assert eo.next_slot is not None
-
-            # New event can now reserve the freed slot
-            result = await eo.async_reserve_or_get_slot(
-                "Delta", "newcode", new_s, new_e
-            )
-            assert result.slot is not None
-            assert result.is_new is True
-            assert eo.overrides[result.slot]["slot_name"] == "Delta"
+            assert eo.overrides[2] is not None
+            assert eo.overrides[2]["slot_name"] == "Beta"
+            assert eo.next_slot is None
 
 
 class TestSlotEvictionTolerance:
@@ -3332,6 +3320,456 @@ class TestStoreSchemaV1:
         eo.load_persisted_mappings({"phantom-key": m})
 
         assert 10 in eo.pending_clear_slots
+
+
+# ---------------------------------------------------------------------------
+# T061 / T032 / T064: apply-plan fencing and callback re-entrancy
+# ---------------------------------------------------------------------------
+
+
+class TestPendingClearFenceTokenLifecycle:
+    """Tests for _apply_clear fence-token lifecycle."""
+
+    def _make_eo(self) -> EventOverrides:
+        """Return an EventOverrides with one occupied slot."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = _make_dt(2026, 1, 1)
+        eo.update(1, "1234", "Guest", now, now)
+        return eo
+
+    def _make_coordinator(self, eo: EventOverrides) -> MagicMock:
+        """Return a minimal coordinator for apply-clear tests."""
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.event_overrides = eo
+        return coordinator
+
+    async def test_fence_token_set_before_service_call(self) -> None:
+        """Fence token is present before the clear service call starts."""
+        eo = self._make_eo()
+        coordinator = self._make_coordinator(eo)
+        observed: dict[str, str | None] = {}
+
+        async def mock_clear_code(*args, **kwargs) -> OperationResult:
+            """Capture fence state during the clear service call."""
+            observed["fence"] = eo.pending_fences.get(1)
+            observed["pending_clear"] = eo.pending_clear_slots.get(1)
+            return OperationResult(kind="clear", slot=1, failed=True)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            side_effect=mock_clear_code,
+        ):
+            await eo._apply_clear(coordinator, 1)
+
+        assert observed["fence"] is not None
+        assert observed["fence"] == observed["pending_clear"]
+
+    async def test_fence_cleared_on_confirmed_free(self) -> None:
+        """Confirmed clear frees the slot and removes both fences."""
+        eo = self._make_eo()
+        coordinator = self._make_coordinator(eo)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=OperationResult(kind="clear", slot=1, confirmed=True),
+        ):
+            result = await eo._apply_clear(coordinator, 1)
+
+        assert result.confirmed is True
+        assert eo.overrides[1] is None
+        assert 1 not in eo.pending_fences
+        assert 1 not in eo.pending_clear_slots
+
+    async def test_stale_token_rejected(self) -> None:
+        """A replaced token causes the original clear result to be discarded."""
+        eo = self._make_eo()
+        coordinator = self._make_coordinator(eo)
+
+        async def mock_clear_code(*args, **kwargs) -> OperationResult:
+            """Replace the token to simulate a newer in-flight operation."""
+            eo._pending_fences[1] = "newer-token"
+            return OperationResult(kind="clear", slot=1, confirmed=True)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            side_effect=mock_clear_code,
+        ):
+            result = await eo._apply_clear(coordinator, 1)
+
+        assert result.unconfirmed is True
+        assert eo.overrides[1] is not None
+        assert eo.pending_fences[1] == "newer-token"
+
+    async def test_retry_clear_persists_new_token(self) -> None:
+        """A retry-clear call replaces the prior fence token."""
+        eo = self._make_eo()
+        coordinator = self._make_coordinator(eo)
+
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.uuid.uuid4",
+                side_effect=["token-1", "token-2"],
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                return_value=OperationResult(kind="clear", slot=1, failed=True),
+            ),
+        ):
+            await eo._apply_clear(coordinator, 1)
+            first_token = eo.pending_fences[1]
+            await eo._apply_clear(coordinator, 1)
+
+        assert first_token == "token-1"
+        assert eo.pending_fences[1] == "token-2"
+
+    async def test_slot_remains_pending_on_lingering_name(self) -> None:
+        """Lingering name keeps the slot fenced and unavailable."""
+        eo = self._make_eo()
+        coordinator = self._make_coordinator(eo)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=OperationResult(
+                kind="clear",
+                slot=1,
+                unconfirmed=True,
+                lingering_name=True,
+            ),
+        ):
+            result = await eo._apply_clear(coordinator, 1)
+
+        assert result.lingering_name is True
+        assert eo.overrides[1] is not None
+        assert 1 in eo.pending_fences
+
+    async def test_slot_remains_pending_on_failure(self) -> None:
+        """Failed clear keeps the slot fenced and unavailable."""
+        eo = self._make_eo()
+        coordinator = self._make_coordinator(eo)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=OperationResult(kind="clear", slot=1, failed=True),
+        ):
+            result = await eo._apply_clear(coordinator, 1)
+
+        assert result.failed is True
+        assert eo.overrides[1] is not None
+        assert 1 in eo.pending_fences
+
+    async def test_later_confirmed_free_clears_fence(self) -> None:
+        """A later confirmed retry finally clears the slot and fence."""
+        eo = self._make_eo()
+        coordinator = self._make_coordinator(eo)
+
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.uuid.uuid4",
+                side_effect=["token-1", "token-2"],
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                side_effect=[
+                    OperationResult(kind="clear", slot=1, failed=True),
+                    OperationResult(kind="clear", slot=1, confirmed=True),
+                ],
+            ),
+        ):
+            await eo._apply_clear(coordinator, 1)
+            assert 1 in eo.pending_fences
+            result = await eo._apply_clear(coordinator, 1)
+
+        assert result.confirmed is True
+        assert eo.overrides[1] is None
+        assert 1 not in eo.pending_fences
+        assert 1 not in eo.pending_clear_slots
+
+
+class TestApplyPlanActions:
+    """Tests for EventOverrides.async_apply_plan."""
+
+    def _make_reservation(
+        self,
+        identity_key: str = "res-1",
+        *,
+        slot_name: str = "Guest",
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> Reservation:
+        """Return a Reservation suitable for apply-plan tests."""
+        start_dt = start or _make_dt(2026, 8, 1, 14)
+        end_dt = end or _make_dt(2026, 8, 8, 11)
+        return Reservation(
+            identity_key=identity_key,
+            start=start_dt,
+            end=end_dt,
+            buffered_start=start_dt,
+            buffered_end=end_dt,
+            summary=slot_name,
+            slot_name=slot_name,
+            display_slot_name=f"RC {slot_name}",
+            slot_code="1234",
+        )
+
+    def _make_plan(self, *actions: SlotAction) -> DesiredPlan:
+        """Return a DesiredPlan with the provided actions."""
+        plan = DesiredPlan(plan_id="plan-1", generated_at=_make_dt(2026, 8, 1))
+        plan.actions = list(actions)
+        return plan
+
+    def _make_coordinator(self, eo: EventOverrides) -> MagicMock:
+        """Return a coordinator mock for async_apply_plan."""
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.event_overrides = eo
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.states.get.return_value = None
+        return coordinator
+
+    async def test_set_action_pre_assigns_and_confirms(self) -> None:
+        """SET pre-assigns the override before the service call and confirms."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = _make_dt(2026, 8, 1)
+        eo.update(1, "", "", now, now)
+        coordinator = self._make_coordinator(eo)
+        res = self._make_reservation()
+        observed: list[bool] = []
+
+        async def mock_set_code(*args, **kwargs) -> OperationResult:
+            """Verify pre-assignment state during the set service call."""
+            observed.append(eo.overrides[1] is not None)
+            observed.append(1 in eo.pending_fences)
+            return OperationResult(kind="set", slot=1, confirmed=True)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_set_code",
+            side_effect=mock_set_code,
+        ):
+            results = await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(
+                    SlotAction(
+                        kind=ActionKind.SET, slot=1, identity_key=res.identity_key
+                    )
+                ),
+                {res.identity_key: res},
+            )
+
+        assert results[0].confirmed is True
+        assert observed == [True, True]
+        assert eo.overrides[1] is not None
+        assert eo.overrides[1]["slot_name"] == "Guest"
+        assert 1 not in eo.pending_fences
+
+    async def test_set_action_reverted_on_failure(self) -> None:
+        """Failed SET reverts the tentative in-memory assignment."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = _make_dt(2026, 8, 1)
+        eo.update(1, "", "", now, now)
+        coordinator = self._make_coordinator(eo)
+        res = self._make_reservation()
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_set_code",
+            return_value=OperationResult(kind="set", slot=1, failed=True),
+        ):
+            results = await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(
+                    SlotAction(
+                        kind=ActionKind.SET, slot=1, identity_key=res.identity_key
+                    )
+                ),
+                {res.identity_key: res},
+            )
+
+        assert results[0].failed is True
+        assert eo.overrides[1] is None
+        assert 1 not in eo.pending_fences
+
+    async def test_update_times_action_updates_dates(self) -> None:
+        """Confirmed UPDATE_TIMES updates in-memory dates."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        old_start = _make_dt(2026, 8, 1, 14)
+        old_end = _make_dt(2026, 8, 8, 11)
+        eo.update(1, "1234", "Guest", old_start, old_end)
+        coordinator = self._make_coordinator(eo)
+        res = self._make_reservation(
+            start=_make_dt(2026, 8, 2, 14),
+            end=_make_dt(2026, 8, 9, 11),
+        )
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_update_times",
+            return_value=OperationResult(kind="update_times", slot=1, confirmed=True),
+        ):
+            results = await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(
+                    SlotAction(
+                        kind=ActionKind.UPDATE_TIMES,
+                        slot=1,
+                        identity_key=res.identity_key,
+                    )
+                ),
+                {res.identity_key: res},
+            )
+
+        assert results[0].confirmed is True
+        override = eo.overrides[1]
+        assert override is not None
+        assert override["start_time"] == res.buffered_start
+        assert override["end_time"] == res.buffered_end
+
+    async def test_noop_action_not_executed(self) -> None:
+        """NOOP actions do not execute any physical service helpers."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        coordinator = self._make_coordinator(eo)
+
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new_callable=AsyncMock,
+            ) as mock_clear,
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                new_callable=AsyncMock,
+            ) as mock_set,
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_update_times",
+                new_callable=AsyncMock,
+            ) as mock_update,
+        ):
+            results = await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(SlotAction(kind=ActionKind.NOOP, slot=1)),
+                {},
+            )
+
+        assert results == []
+        mock_clear.assert_not_called()
+        mock_set.assert_not_called()
+        mock_update.assert_not_called()
+
+    async def test_clear_action_removes_slot_on_confirm(self) -> None:
+        """Confirmed CLEAR frees the slot."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = _make_dt(2026, 8, 1)
+        eo.update(1, "1234", "Guest", now, now)
+        coordinator = self._make_coordinator(eo)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=OperationResult(kind="clear", slot=1, confirmed=True),
+        ):
+            results = await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(SlotAction(kind=ActionKind.CLEAR, slot=1)),
+                {},
+            )
+
+        assert results[0].confirmed is True
+        assert eo.overrides[1] is None
+        assert 1 not in eo.pending_fences
+
+    async def test_overflow_action_not_executed(self) -> None:
+        """Overflow reservations do not become physical slot actions."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        coordinator = self._make_coordinator(eo)
+        plan = DesiredPlan(plan_id="plan-overflow", generated_at=_make_dt(2026, 8, 1))
+        plan.overflow["res-overflow"] = "capacity"
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_set_code",
+            new_callable=AsyncMock,
+        ) as mock_set:
+            results = await eo.async_apply_plan(coordinator, plan, {})
+
+        assert not hasattr(ActionKind, "OVERFLOW")
+        assert results == []
+        mock_set.assert_not_called()
+
+    async def test_reconciliation_active_flag_set_during_plan(self) -> None:
+        """reconciliation_active is True during execution and False after."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = _make_dt(2026, 8, 1)
+        eo.update(1, "1234", "Guest", now, now)
+        coordinator = self._make_coordinator(eo)
+        observed: list[bool] = []
+
+        async def mock_clear_code(*args, **kwargs) -> OperationResult:
+            """Capture reconciliation_active during the clear service call."""
+            observed.append(eo.reconciliation_active)
+            return OperationResult(kind="clear", slot=1, confirmed=True)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            side_effect=mock_clear_code,
+        ):
+            await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(SlotAction(kind=ActionKind.CLEAR, slot=1)),
+                {},
+            )
+
+        assert observed == [True]
+        assert eo.reconciliation_active is False
+
+
+class TestCallbackReentrancyFencing:
+    """Tests callback re-entrancy fencing at the unit level."""
+
+    async def test_handle_state_change_does_not_call_check_overrides(self) -> None:
+        """handle_state_change updates state without starting reconciliation."""
+        lockname = "test_lock"
+        slot_num = 1
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
+        mock_coordinator.event_overrides = MagicMock()
+        mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
+        mock_coordinator.update_event_overrides = AsyncMock()
+
+        name_state = MagicMock()
+        name_state.state = "Guest"
+        pin_state = MagicMock()
+        pin_state.state = "1234"
+        enabled_state = MagicMock()
+        enabled_state.state = "on"
+
+        def states_get(entity_id: str) -> MagicMock | None:
+            """Return the mocked Keymaster state for the requested entity."""
+            if "enabled" in entity_id:
+                return enabled_state
+            if "pin" in entity_id:
+                return pin_state
+            if "name" in entity_id:
+                return name_state
+            return None
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+        hass.states.get = states_get
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock()
+        event.data = {"entity_id": f"switch.{lockname}_code_slot_{slot_num}_enabled"}
+
+        with patch(
+            "custom_components.rental_control.util.asyncio.sleep",
+            new_callable=AsyncMock,
+        ):
+            await handle_state_change(hass, config_entry, event)
+
+        mock_coordinator.event_overrides.async_check_overrides.assert_not_called()
+        mock_coordinator.update_event_overrides.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

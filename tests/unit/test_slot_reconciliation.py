@@ -2754,6 +2754,23 @@ class TestComputeDesiredPlanChurnAndDiagnostics:
         assert plan.selected.get("r1") == 6
         assert plan.slots[5].action is ActionKind.BLOCKED
 
+    def test_unknown_slot_not_used_for_assignment(self) -> None:
+        """An UNKNOWN slot is unavailable; reservation goes to a free slot."""
+        r1 = _res("r1", 1)
+        ms5 = _make_managed_slot(slot=5, status=SlotStatus.UNKNOWN)
+        ms6 = _free_slot(6)
+
+        plan = compute_desired_plan(
+            [r1],
+            [ms5, ms6],
+            max_events=3,
+            plan_id="p-unknown",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.selected.get("r1") == 6
+        assert plan.slots[5].action is ActionKind.BLOCKED
+
     def test_occupied_slot_with_no_desired_gets_clear_action(self) -> None:
         """An OCCUPIED slot with no desired reservation produces a CLEAR action."""
         # One slot occupied with an old reservation, no eligible reservations

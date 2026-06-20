@@ -24,14 +24,21 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import NamedTuple
 from typing import TypedDict
+import uuid
 
 from homeassistant.util import dt
 
 from .const import DEFAULT_MAX_RETRY_CYCLES
 from .const import SLOT_STATUS_OCCUPIED
 from .const import SLOT_STATUS_PENDING_CLEAR
+from .reconciliation import ActionKind
+from .reconciliation import DesiredPlan
+from .reconciliation import Reservation
 from .util import EventIdentity
+from .util import OperationResult
 from .util import async_fire_clear_code
+from .util import async_fire_set_code
+from .util import async_fire_update_times
 from .util import get_event_identities
 from .util import normalize_uid
 from .util import trim_name
@@ -107,6 +114,25 @@ class EventOverride(TypedDict):
     end_time: datetime
 
 
+class _SlotEvent:
+    """Minimal event adapter for util slot-operation helpers."""
+
+    def __init__(
+        self,
+        slot_name: str,
+        slot_code: str,
+        start: datetime,
+        end: datetime,
+    ) -> None:
+        """Populate the attributes expected by util service helpers."""
+        self.extra_state_attributes: dict[str, Any] = {
+            "slot_name": slot_name,
+            "slot_code": slot_code,
+            "start": start,
+            "end": end,
+        }
+
+
 class EventOverrides:
     """Event Overrides object and methods."""
 
@@ -130,7 +156,9 @@ class EventOverrides:
         # Store-backed fields (T018)
         self._persisted_mappings: dict[str, dict[str, Any]] = {}
         self._pending_clear_slots: dict[int, str] = {}
+        self._pending_fences: dict[int, str] = {}
         self._actual_state_cache: dict[int, dict[str, Any]] = {}
+        self._reconciliation_active: bool = False
 
     @property
     def max_slots(self) -> int:
@@ -196,6 +224,16 @@ class EventOverrides:
     def pending_clear_slots(self) -> dict[int, str]:
         """Return a read-only copy of the pending-clear slot map."""
         return dict(self._pending_clear_slots)
+
+    @property
+    def pending_fences(self) -> dict[int, str]:
+        """Return a read-only copy of pending operation fences."""
+        return dict(self._pending_fences)
+
+    @property
+    def reconciliation_active(self) -> bool:
+        """True while async_apply_plan is executing."""
+        return self._reconciliation_active
 
     def load_persisted_mappings(self, mappings: dict[str, dict[str, Any]]) -> None:
         """Load persisted slot mappings from the HA Store.
@@ -615,6 +653,210 @@ class EventOverrides:
         self._retry_counts[slot] = 0
         self._escalated[slot] = False
 
+    async def async_apply_plan(
+        self,
+        coordinator: Any,
+        plan: DesiredPlan,
+        res_by_key: dict[str, Reservation],
+    ) -> list[OperationResult]:
+        """Apply a desired plan by executing slot actions."""
+        async with self._lock:
+            self._reconciliation_active = True
+
+        results: list[OperationResult] = []
+        try:
+            for action in plan.actions:
+                if action.kind in {ActionKind.NOOP, ActionKind.BLOCKED}:
+                    continue
+
+                slot = action.slot
+                identity_key = action.identity_key
+
+                if action.kind in {ActionKind.CLEAR, ActionKind.RETRY_CLEAR}:
+                    result = await self._apply_clear(coordinator, slot)
+                elif action.kind is ActionKind.SET:
+                    res = res_by_key.get(identity_key) if identity_key else None
+                    if res is None:
+                        _LOGGER.warning(
+                            "SET action for slot %d has no reservation; skipping", slot
+                        )
+                        continue
+                    result = await self._apply_set(coordinator, slot, res, plan.plan_id)
+                elif action.kind is ActionKind.UPDATE_TIMES:
+                    res = res_by_key.get(identity_key) if identity_key else None
+                    if res is None:
+                        _LOGGER.warning(
+                            "UPDATE_TIMES action for slot %d has no reservation; "
+                            "skipping",
+                            slot,
+                        )
+                        continue
+                    result = await self._apply_update_times(coordinator, slot, res)
+                else:
+                    continue
+
+                results.append(result)
+        finally:
+            async with self._lock:
+                self._reconciliation_active = False
+
+        return results
+
+    async def _apply_clear(
+        self,
+        coordinator: Any,
+        slot: int,
+    ) -> OperationResult:
+        """Apply a CLEAR or RETRY_CLEAR action for one slot."""
+        operation_id = str(uuid.uuid4())
+        expected_name: str | None = None
+
+        async with self._lock:
+            self._pending_fences[slot] = operation_id
+            self._pending_clear_slots[slot] = operation_id
+            override = self._overrides.get(slot)
+            if override is not None:
+                expected_name = override.get("slot_name")
+
+        result = await async_fire_clear_code(
+            coordinator, slot, expected_name=expected_name
+        )
+
+        async with self._lock:
+            current_token = self._pending_fences.get(slot)
+            if current_token != operation_id:
+                _LOGGER.warning(
+                    "Stale clear token for slot %d "
+                    "(expected %s, got %s); discarding result",
+                    slot,
+                    operation_id,
+                    current_token,
+                )
+                return OperationResult(kind="clear", slot=slot, unconfirmed=True)
+
+            if result.confirmed:
+                _LOGGER.debug("Clear confirmed for slot %d; marking free", slot)
+                self._pending_fences.pop(slot, None)
+                self._pending_clear_slots.pop(slot, None)
+                self._overrides[slot] = None
+                self._slot_uids.pop(slot, None)
+                self._slot_miss_counts.pop(slot, None)
+                self.__assign_next_slot()
+            elif result.failed:
+                _LOGGER.warning(
+                    "Clear failed for slot %d (error: %s); slot remains pending-clear",
+                    slot,
+                    result.error,
+                )
+            elif result.lingering_name or result.lingering_pin:
+                _LOGGER.warning(
+                    "Clear not fully confirmed for slot %d "
+                    "(lingering_name=%s, lingering_pin=%s); "
+                    "slot remains pending-clear",
+                    slot,
+                    result.lingering_name,
+                    result.lingering_pin,
+                )
+            else:
+                _LOGGER.debug(
+                    "Clear unconfirmed for slot %d; slot remains pending-clear", slot
+                )
+
+        return result
+
+    async def _apply_set(
+        self,
+        coordinator: Any,
+        slot: int,
+        res: Reservation,
+        plan_id: str,
+    ) -> OperationResult:
+        """Apply a SET action for one slot."""
+        import hashlib as _hashlib
+
+        operation_id = (
+            f"{plan_id}-set-{slot}-"
+            f"{_hashlib.sha256(res.identity_key.encode()).hexdigest()[:8]}"
+        )
+
+        async with self._lock:
+            self._pending_fences[slot] = operation_id
+            self._overrides[slot] = {
+                "slot_name": res.slot_name,
+                "slot_code": res.slot_code,
+                "start_time": res.buffered_start,
+                "end_time": res.buffered_end,
+            }
+            self._slot_miss_counts.pop(slot, None)
+
+        event = _SlotEvent(
+            slot_name=res.slot_name,
+            slot_code=res.slot_code,
+            start=res.buffered_start,
+            end=res.buffered_end,
+        )
+        result = await async_fire_set_code(coordinator, event, slot)
+
+        async with self._lock:
+            current_token = self._pending_fences.get(slot)
+            if current_token != operation_id:
+                _LOGGER.warning("Stale set token for slot %d; discarding result", slot)
+                return OperationResult(kind="set", slot=slot, unconfirmed=True)
+
+            if result.confirmed:
+                _LOGGER.debug(
+                    "Set confirmed for slot %d for reservation %s",
+                    slot,
+                    res.identity_key,
+                )
+                self._pending_fences.pop(slot, None)
+                self.__assign_next_slot()
+            elif result.failed:
+                _LOGGER.warning(
+                    "Set failed for slot %d (error: %s); reverting pre-assignment",
+                    slot,
+                    result.error,
+                )
+                self._pending_fences.pop(slot, None)
+                self._overrides[slot] = None
+                self._slot_uids.pop(slot, None)
+                self.__assign_next_slot()
+            else:
+                _LOGGER.debug(
+                    "Set unconfirmed for slot %d; keeping tentative assignment", slot
+                )
+                self._pending_fences.pop(slot, None)
+
+        return result
+
+    async def _apply_update_times(
+        self,
+        coordinator: Any,
+        slot: int,
+        res: Reservation,
+    ) -> OperationResult:
+        """Apply an UPDATE_TIMES action for one slot."""
+        event = _SlotEvent(
+            slot_name=res.slot_name,
+            slot_code=res.slot_code,
+            start=res.buffered_start,
+            end=res.buffered_end,
+        )
+        result = await async_fire_update_times(coordinator, event, slot)
+
+        if result.confirmed:
+            async with self._lock:
+                override = self._overrides.get(slot)
+                if override is not None:
+                    override["start_time"] = res.buffered_start
+                    override["end_time"] = res.buffered_end
+                    _LOGGER.debug(
+                        "update_times confirmed for slot %d; in-memory dates updated",
+                        slot,
+                    )
+
+        return result
+
     def _slot_has_matching_event(
         self,
         slot: int,
@@ -932,18 +1174,37 @@ class EventOverrides:
                 if clear_code:
                     _LOGGER.debug("Firing clear code for slot %s", slot)
                     try:
-                        await async_fire_clear_code(
+                        result = await async_fire_clear_code(
                             coordinator, slot, expected_name=self.get_slot_name(slot)
                         )
                     except Exception:
                         _LOGGER.exception(
-                            "Failed to fire clear code for slot %d; "
-                            "freeing slot so new events can be assigned. "
-                            "The stale code may be overwritten when a "
-                            "future event is programmed into this slot.",
+                            "Unexpected error firing clear code for slot %d; "
+                            "slot remains occupied to prevent "
+                            "double-assignment.",
                             slot,
                         )
+                        continue
 
+                    if not isinstance(result, OperationResult):
+                        result = OperationResult(
+                            kind="clear",
+                            slot=slot,
+                            unconfirmed=True,
+                        )
+                    if result.failed or result.lingering_name or result.lingering_pin:
+                        _LOGGER.warning(
+                            "Clear not confirmed for slot %d "
+                            "(failed=%s, lingering_name=%s, lingering_pin=%s); "
+                            "slot remains occupied.",
+                            slot,
+                            result.failed,
+                            result.lingering_name,
+                            result.lingering_pin,
+                        )
+                        continue
+
+                    # Clear confirmed (or unconfirmed - legacy: free optimistically)
                     self._overrides[slot] = None
                     self._slot_uids.pop(slot, None)
                     self._slot_miss_counts.pop(slot, None)
