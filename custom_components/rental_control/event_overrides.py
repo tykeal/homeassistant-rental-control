@@ -21,12 +21,15 @@ from datetime import datetime
 from datetime import time
 import logging
 from typing import TYPE_CHECKING
+from typing import Any
 from typing import NamedTuple
 from typing import TypedDict
 
 from homeassistant.util import dt
 
 from .const import DEFAULT_MAX_RETRY_CYCLES
+from .const import SLOT_STATUS_OCCUPIED
+from .const import SLOT_STATUS_PENDING_CLEAR
 from .util import EventIdentity
 from .util import async_fire_clear_code
 from .util import get_event_identities
@@ -124,6 +127,11 @@ class EventOverrides:
         self._max_name_length: int = 0
         self._prefix_length: int = 0
 
+        # Store-backed fields (T018)
+        self._persisted_mappings: dict[str, dict[str, Any]] = {}
+        self._pending_clear_slots: dict[int, str] = {}
+        self._actual_state_cache: dict[int, dict[str, Any]] = {}
+
     @property
     def max_slots(self) -> int:
         """Return the max_slots known."""
@@ -178,6 +186,73 @@ class EventOverrides:
     def prefix_length(self, value: int) -> None:
         """Set the event prefix length including separator."""
         self._prefix_length = value
+
+    @property
+    def persisted_mappings(self) -> dict[str, dict[str, Any]]:
+        """Return a read-only copy of the persisted slot mappings."""
+        return dict(self._persisted_mappings)
+
+    @property
+    def pending_clear_slots(self) -> dict[int, str]:
+        """Return a read-only copy of the pending-clear slot map."""
+        return dict(self._pending_clear_slots)
+
+    def load_persisted_mappings(self, mappings: dict[str, dict[str, Any]]) -> None:
+        """Load persisted slot mappings from the HA Store.
+
+        Validates that no two mappings both claim the same slot with
+        status ``occupied``; raises ``ValueError`` on conflict.
+
+        Args:
+            mappings: Identity-key → mapping dict from the HA Store.
+
+        Raises:
+            ValueError: If two mappings claim the same slot and both
+                have ``occupied`` status.
+        """
+        slot_owners: dict[int, str] = {}
+        for identity_key, mapping in mappings.items():
+            slot = mapping.get("slot")
+            status = mapping.get("status")
+            if slot is not None and status == SLOT_STATUS_OCCUPIED:
+                if slot in slot_owners:
+                    raise ValueError(
+                        f"Duplicate occupied slot {slot}: claimed by both "
+                        f"{slot_owners[slot]!r} and {identity_key!r}"
+                    )
+                slot_owners[slot] = identity_key
+
+        self._persisted_mappings = {k: dict(v) for k, v in mappings.items()}
+
+        self._pending_clear_slots = {}
+        for identity_key, mapping in mappings.items():
+            if mapping.get("status") == SLOT_STATUS_PENDING_CLEAR:
+                slot = mapping.get("slot")
+                if slot is not None:
+                    operation_id = mapping.get("operation_id")
+                    self._pending_clear_slots[slot] = (
+                        operation_id if operation_id is not None else identity_key
+                    )
+
+    def update_actual_state(self, slot: int, state: dict[str, Any]) -> None:
+        """Store the observed Keymaster state snapshot for a slot.
+
+        Args:
+            slot: Keymaster slot number.
+            state: Dict capturing the observed entity states for the slot.
+        """
+        self._actual_state_cache[slot] = state
+
+    def get_actual_state(self, slot: int) -> dict[str, Any] | None:
+        """Return the cached actual state for a slot, or None.
+
+        Args:
+            slot: Keymaster slot number.
+
+        Returns:
+            The cached state dict, or ``None`` if not yet observed.
+        """
+        return self._actual_state_cache.get(slot)
 
     def __assign_next_slot(self) -> None:
         """Assign the next slot."""

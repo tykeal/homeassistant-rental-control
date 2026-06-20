@@ -134,3 +134,35 @@ CHECKIN_STATE_CHECKED_OUT = "checked_out"
 
 # Early checkout grace period in minutes
 EARLY_CHECKOUT_GRACE_MINUTES = 15
+
+# Store constants
+STORE_SLOT_MAPPINGS_KEY = "rental_control.slot_mappings"
+STORE_SCHEMA_VERSION = 1
+
+# Slot status string constants (mirror SlotStatus enum values)
+SLOT_STATUS_OCCUPIED = "occupied"
+SLOT_STATUS_PENDING_SET = "pending_set"
+SLOT_STATUS_PENDING_CLEAR = "pending_clear"
+SLOT_STATUS_BLOCKED = "blocked"
+SLOT_STATUS_OVERFLOW = "overflow"
+SLOT_STATUS_FREE = "free"
+
+# Operation kind constants
+OPERATION_KIND_SET = "set"
+OPERATION_KIND_CLEAR = "clear"
+
+# Diagnostics key constants
+DIAG_PLAN_ID = "plan_id"
+DIAG_TIMESTAMP = "timestamp"
+DIAG_ENTRY_ID = "entry_id"
+DIAG_LOCKNAME = "lockname"
+DIAG_START_SLOT = "start_slot"
+DIAG_MAX_SLOTS = "max_slots"
+
+# Overflow reason constants
+OVERFLOW_REASON_CAPACITY = "capacity"
+OVERFLOW_REASON_BLOCKED_CLEAR = "blocked_clear"
+OVERFLOW_REASON_PROTECTED_CAPACITY = "protected_capacity"
+
+# Max retry constant for store operations
+DEFAULT_MAX_STORE_RETRY = 3

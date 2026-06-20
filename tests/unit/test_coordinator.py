@@ -3957,3 +3957,297 @@ END:VCALENDAR
         )
         assert event.start == expected_start
         assert event.end == expected_end
+
+
+# ---------------------------------------------------------------------------
+# TestStoreFirstUpgradeMigration (T010 / T011)
+# ---------------------------------------------------------------------------
+
+
+class TestStoreFirstUpgradeMigration:
+    """Tests for first-upgrade keymaster slot adoption (T010/T011)."""
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _make_lock_entry(
+        self,
+        entry_id: str = "lock_test_entry",
+        lockname: str = "test_lock",
+        start_slot: int = 10,
+        max_events: int = 3,
+        event_prefix: str = "",
+    ) -> MockConfigEntry:
+        """Create a config entry with a keymaster lockname."""
+        data: dict = {
+            "name": "Lock Rental",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "America/New_York",
+            "checkin": "16:00",
+            "checkout": "11:00",
+            "start_slot": start_slot,
+            "max_events": max_events,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+            "honor_event_times": False,
+            "keymaster_entry_id": lockname,
+        }
+        if event_prefix:
+            data["event_prefix"] = event_prefix
+        return MockConfigEntry(
+            domain="rental_control",
+            title="Lock Rental",
+            version=10,
+            unique_id=f"lock-{entry_id}",
+            data=data,
+            entry_id=entry_id,
+        )
+
+    # ------------------------------------------------------------------
+    # T010-1: populated slot is adopted with has_code=True
+    # ------------------------------------------------------------------
+
+    async def test_first_upgrade_adopts_populated_keymaster_slot(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T010-1: Slot with name AND code is adopted; has_code=True, no PIN."""
+        from custom_components.rental_control.const import SLOT_STATUS_OCCUPIED
+
+        entry = self._make_lock_entry()
+        entry.add_to_hass(hass)
+
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Jane Doe")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "1234")
+        hass.states.async_set("text.test_lock_code_slot_11_name", "")
+        hass.states.async_set("text.test_lock_code_slot_11_pin", "")
+        hass.states.async_set("text.test_lock_code_slot_12_name", "")
+        hass.states.async_set("text.test_lock_code_slot_12_pin", "")
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        await coordinator.async_adopt_keymaster_slots()
+
+        mappings = coordinator._slot_mappings.get("mappings", {})
+        assert len(mappings) == 1
+
+        mapping = next(iter(mappings.values()))
+        assert mapping["slot"] == 10
+        assert mapping["status"] == SLOT_STATUS_OCCUPIED
+
+        last_obs = mapping["last_observed_actual"]
+        assert last_obs["has_code"] is True
+        assert "pin" not in last_obs
+        assert "code" not in last_obs
+        assert "slot_code" not in last_obs
+
+    # ------------------------------------------------------------------
+    # T010-2: working code is NOT wiped during adoption
+    # ------------------------------------------------------------------
+
+    async def test_first_upgrade_does_not_wipe_working_codes(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T010-2: async_adopt_keymaster_slots does not wipe Keymaster state."""
+        entry = self._make_lock_entry(entry_id="lock_nowipe_entry")
+        entry.add_to_hass(hass)
+
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Bob Smith")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "5678")
+        hass.states.async_set("text.test_lock_code_slot_11_name", "")
+        hass.states.async_set("text.test_lock_code_slot_11_pin", "")
+        hass.states.async_set("text.test_lock_code_slot_12_name", "")
+        hass.states.async_set("text.test_lock_code_slot_12_pin", "")
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        await coordinator.async_adopt_keymaster_slots()
+
+        # Verify the PIN entity was NOT wiped — adoption is read-only
+        pin_state = hass.states.get("text.test_lock_code_slot_10_pin")
+        assert pin_state is not None
+        assert pin_state.state == "5678", "PIN should not be wiped during adoption"
+        name_state = hass.states.get("text.test_lock_code_slot_10_name")
+        assert name_state is not None
+        assert name_state.state == "Bob Smith", "Name should not be wiped"
+
+    # ------------------------------------------------------------------
+    # T010-3: empty slot produces no mapping
+    # ------------------------------------------------------------------
+
+    async def test_first_upgrade_empty_slot_not_adopted(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T010-3: Slot with empty name and code produces no mapping."""
+        entry = self._make_lock_entry(entry_id="lock_empty_entry")
+        entry.add_to_hass(hass)
+
+        hass.states.async_set("text.test_lock_code_slot_10_name", "")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "")
+        hass.states.async_set("text.test_lock_code_slot_11_name", "")
+        hass.states.async_set("text.test_lock_code_slot_11_pin", "")
+        hass.states.async_set("text.test_lock_code_slot_12_name", "")
+        hass.states.async_set("text.test_lock_code_slot_12_pin", "")
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        await coordinator.async_adopt_keymaster_slots()
+
+        mappings = coordinator._slot_mappings.get("mappings", {})
+        assert len(mappings) == 0
+
+    # ------------------------------------------------------------------
+    # T011-4: prefixed name is stripped in adoption identity
+    # ------------------------------------------------------------------
+
+    async def test_first_upgrade_prefixed_name_adopted(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T011-4: Slot name 'VR Jane Doe' stores slot_name 'Jane Doe'."""
+        entry = self._make_lock_entry(
+            entry_id="lock_prefix_entry",
+            lockname="vr_lock",
+            event_prefix="VR",
+        )
+        entry.add_to_hass(hass)
+
+        hass.states.async_set("text.vr_lock_code_slot_10_name", "VR Jane Doe")
+        hass.states.async_set("text.vr_lock_code_slot_10_pin", "9999")
+        hass.states.async_set("text.vr_lock_code_slot_11_name", "")
+        hass.states.async_set("text.vr_lock_code_slot_11_pin", "")
+        hass.states.async_set("text.vr_lock_code_slot_12_name", "")
+        hass.states.async_set("text.vr_lock_code_slot_12_pin", "")
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        await coordinator.async_adopt_keymaster_slots()
+
+        mappings = coordinator._slot_mappings.get("mappings", {})
+        assert len(mappings) == 1
+
+        mapping = next(iter(mappings.values()))
+        identity = mapping["identity"]
+        assert identity["slot_name"] == "Jane Doe"
+        assert identity["summary"] == "Jane Doe"
+        # Raw name_state retains the full prefixed value
+        assert mapping["last_observed_actual"]["name_state"] == "VR Jane Doe"
+
+    # ------------------------------------------------------------------
+    # T011-5: phantom slot (name without code) → pending_clear
+    # ------------------------------------------------------------------
+
+    async def test_first_upgrade_phantom_slot_pending_clear(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T011-5: Name present but empty code produces pending_clear mapping."""
+        from custom_components.rental_control.const import SLOT_STATUS_PENDING_CLEAR
+
+        entry = self._make_lock_entry(entry_id="lock_phantom_entry")
+        entry.add_to_hass(hass)
+
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Ghost Guest")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "")
+        hass.states.async_set("text.test_lock_code_slot_11_name", "")
+        hass.states.async_set("text.test_lock_code_slot_11_pin", "")
+        hass.states.async_set("text.test_lock_code_slot_12_name", "")
+        hass.states.async_set("text.test_lock_code_slot_12_pin", "")
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        await coordinator.async_adopt_keymaster_slots()
+
+        mappings = coordinator._slot_mappings.get("mappings", {})
+        assert len(mappings) == 1
+
+        mapping = next(iter(mappings.values()))
+        assert mapping["slot"] == 10
+        assert mapping["status"] == SLOT_STATUS_PENDING_CLEAR
+        assert mapping["last_observed_actual"]["has_code"] is False
+        assert mapping["pending_clear_since"] is not None
+
+    # ------------------------------------------------------------------
+    # T011-6: two occupied slots → both adopted, neither wiped
+    # ------------------------------------------------------------------
+
+    async def test_first_upgrade_ambiguous_slots_blocked(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T011-6: Two populated slots are both adopted without being wiped."""
+        from custom_components.rental_control.const import SLOT_STATUS_OCCUPIED
+
+        entry = self._make_lock_entry(entry_id="lock_ambig_entry")
+        entry.add_to_hass(hass)
+
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Alice")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "1111")
+        hass.states.async_set("text.test_lock_code_slot_11_name", "Bob")
+        hass.states.async_set("text.test_lock_code_slot_11_pin", "2222")
+        hass.states.async_set("text.test_lock_code_slot_12_name", "")
+        hass.states.async_set("text.test_lock_code_slot_12_pin", "")
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        await coordinator.async_adopt_keymaster_slots()
+
+        mappings = coordinator._slot_mappings.get("mappings", {})
+        assert len(mappings) == 2, "Both slots should be adopted"
+
+        for mapping in mappings.values():
+            assert mapping["status"] == SLOT_STATUS_OCCUPIED
+
+        # Verify neither slot was wiped — entity state is unchanged
+        for entity_id, expected in [
+            ("text.test_lock_code_slot_10_pin", "1111"),
+            ("text.test_lock_code_slot_10_name", "Alice"),
+            ("text.test_lock_code_slot_11_pin", "2222"),
+            ("text.test_lock_code_slot_11_name", "Bob"),
+        ]:
+            state = hass.states.get(entity_id)
+            assert state is not None
+            assert state.state == expected, (
+                f"{entity_id} should not be modified during adoption"
+            )
+
+    # ------------------------------------------------------------------
+    # T011-7: pending_clear fence survives restart (reload)
+    # ------------------------------------------------------------------
+
+    def test_pending_clear_restart_fence(self) -> None:
+        """T011-7: pending_clear fence survives simulated restart."""
+        from custom_components.rental_control.const import SLOT_STATUS_PENDING_CLEAR
+        from custom_components.rental_control.event_overrides import EventOverrides
+
+        phantom_mapping = {
+            "slot": 10,
+            "status": SLOT_STATUS_PENDING_CLEAR,
+            "operation_id": "op-fence-1",
+            "operation_kind": None,
+            "identity": {
+                "identity_key": "phantom-1",
+                "summary": "Ghost",
+                "slot_name": "Ghost",
+                "uid_aliases": [],
+                "booking_aliases": [],
+            },
+            "missing_count": 0,
+            "pending_set_since": None,
+            "pending_clear_since": "2025-06-01T00:00:00+00:00",
+            "fingerprint_history": [],
+            "updated_at": "2025-06-01T00:00:00+00:00",
+            "last_observed_actual": {
+                "slot": 10,
+                "classification": "adopted",
+                "name_state": "Ghost",
+                "has_code": False,
+                "start_state": None,
+                "end_state": None,
+                "use_date_range": None,
+                "enabled": None,
+            },
+        }
+        stored_mappings = {"phantom-1": phantom_mapping}
+
+        # Initial load
+        eo = EventOverrides(start_slot=10, max_slots=3)
+        eo.load_persisted_mappings(stored_mappings)
+        assert 10 in eo.pending_clear_slots
+
+        # Simulate restart: create fresh EventOverrides, reload same data
+        eo2 = EventOverrides(start_slot=10, max_slots=3)
+        eo2.load_persisted_mappings(stored_mappings)
+        assert 10 in eo2.pending_clear_slots, "Fence should be restored after restart"

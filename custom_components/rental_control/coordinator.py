@@ -42,6 +42,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt
@@ -80,6 +81,10 @@ from .const import DOMAIN
 from .const import EVENT_AGE_THRESHOLD_DAYS
 from .const import LOCK_MANAGER
 from .const import REQUEST_TIMEOUT
+from .const import SLOT_STATUS_OCCUPIED
+from .const import SLOT_STATUS_PENDING_CLEAR
+from .const import STORE_SCHEMA_VERSION
+from .const import STORE_SLOT_MAPPINGS_KEY
 from .const import VERSION
 from .description_parser import extract_checkin_time
 from .description_parser import extract_checkout_time
@@ -162,6 +167,10 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
         # by the listener, populated only when the diagnostics option is
         # enabled. See spec for the entry shape and disposition values.
         self.keymaster_event_diagnostics: deque[dict[str, Any]] = deque(maxlen=10)
+
+        # HA Store for persisted slot mappings (T017)
+        self._store: Store | None = None
+        self._slot_mappings: dict[str, Any] = {}
 
         super().__init__(
             hass=hass,
@@ -403,6 +412,191 @@ Please update Keymaster to at least v0.1.0-b0
                 request_refresh=False,
             )
 
+    async def async_load_slot_store(self) -> None:
+        """Load persisted slot mappings from the HA Store.
+
+        Creates the Store on first call using the entry-scoped key
+        ``STORE_SLOT_MAPPINGS_KEY.{entry_id}``.  Applies schema v1
+        migration when the stored schema version is absent or below 1.
+        Raw PINs are stripped after loading as a safety measure.
+        """
+        self._store = Store(
+            self.hass,
+            STORE_SCHEMA_VERSION,
+            f"{STORE_SLOT_MAPPINGS_KEY}.{self._entry_id}",
+        )
+        raw: dict[str, Any] | None = await self._store.async_load()
+        if raw is None:
+            self._slot_mappings = {}
+            return
+        schema_version = raw.get("schema_version", 0)
+        if schema_version < 1:
+            raw = await self._migrate_slot_store_v1(raw)
+        for mapping in raw.get("mappings", {}).values():
+            last_obs = mapping.get("last_observed_actual")
+            if last_obs is not None:
+                last_obs.pop("pin", None)
+                last_obs.pop("code", None)
+                last_obs.pop("slot_code", None)
+        self._slot_mappings = raw
+
+    async def async_save_slot_store(self) -> None:
+        """Save current slot mappings to the HA Store.
+
+        A no-op when ``_store`` is ``None`` (store not yet
+        initialised).  Raw PINs are stripped from
+        ``last_observed_actual`` before persisting as a safety measure.
+        """
+        if self._store is None:
+            return
+        mappings: dict[str, Any] = {}
+        for k, v in self._slot_mappings.get("mappings", {}).items():
+            mapping = dict(v)
+            last_obs = mapping.get("last_observed_actual")
+            if last_obs is not None:
+                last_obs = dict(last_obs)
+                last_obs.pop("pin", None)
+                last_obs.pop("code", None)
+                last_obs.pop("slot_code", None)
+                mapping["last_observed_actual"] = last_obs
+            mappings[k] = mapping
+        data: dict[str, Any] = {
+            "schema_version": STORE_SCHEMA_VERSION,
+            "entry_id": self._entry_id,
+            "lockname": self.lockname,
+            "start_slot": self.start_slot,
+            "max_slots": self.max_events,
+            "updated_at": dt.now().isoformat(),
+            "mappings": mappings,
+            "blocked_slots": self._slot_mappings.get("blocked_slots", {}),
+        }
+        await self._store.async_save(data)
+
+    async def _migrate_slot_store_v1(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Migrate store data to schema version 1.
+
+        Handles upgrading from schema_version 0 or a store that was
+        written without a schema_version field.  Preserves any
+        ``mappings`` and ``blocked_slots`` already present.
+
+        Args:
+            raw: The raw store dict to migrate.
+
+        Returns:
+            A dict conforming to schema version 1.
+        """
+        return {
+            "schema_version": 1,
+            "entry_id": raw.get("entry_id", self._entry_id),
+            "lockname": raw.get("lockname", self.lockname),
+            "start_slot": raw.get("start_slot", self.start_slot),
+            "max_slots": raw.get("max_slots", self.max_events),
+            "updated_at": raw.get("updated_at", dt.now().isoformat()),
+            "mappings": raw.get("mappings", {}),
+            "blocked_slots": raw.get("blocked_slots", {}),
+        }
+
+    async def async_adopt_keymaster_slots(self) -> None:
+        """Adopt populated Keymaster slots on first upgrade.
+
+        Called when the Store is empty (first upgrade from a version
+        that did not persist slot mappings).  Iterates the managed slot
+        range and records each populated slot without modifying any
+        Keymaster state.
+
+        Slots with both a name and a non-empty code are recorded as
+        ``occupied``.  Slots with a name but no code (phantom slots)
+        are recorded as ``pending_clear`` so they are fenced without
+        being wiped immediately.  Empty slots (no name) are skipped.
+        Raw PINs are never stored; only ``has_code: True/False`` is
+        persisted.
+        """
+        if not self.lockname:
+            return
+
+        now_str = dt.now().isoformat()
+        prefix = f"{self.event_prefix} " if self.event_prefix else ""
+        mappings: dict[str, Any] = {}
+
+        for i in range(self.start_slot, self.start_slot + self.max_events):
+            name_state = self.hass.states.get(
+                f"{TEXT}.{self.lockname}_code_slot_{i}_name"
+            )
+            if name_state is None:
+                continue
+            name_value = (
+                ""
+                if name_state.state in ("unknown", "unavailable")
+                else name_state.state
+            )
+            if not name_value:
+                continue
+
+            code_state = self.hass.states.get(
+                f"{TEXT}.{self.lockname}_code_slot_{i}_pin"
+            )
+            has_code = False
+            if code_state is not None:
+                code_value = (
+                    ""
+                    if code_state.state in ("unknown", "unavailable")
+                    else code_state.state
+                )
+                has_code = bool(code_value)
+
+            slot_name = name_value
+            if prefix and slot_name.startswith(prefix):
+                slot_name = slot_name[len(prefix) :]
+
+            status = SLOT_STATUS_OCCUPIED if has_code else SLOT_STATUS_PENDING_CLEAR
+            pending_clear_since: str | None = now_str if not has_code else None
+            identity_key = f"adopted.{self._entry_id}.slot{i}"
+
+            mappings[identity_key] = {
+                "slot": i,
+                "status": status,
+                "operation_id": None,
+                "operation_kind": None,
+                "identity": {
+                    "identity_key": identity_key,
+                    "summary": slot_name,
+                    "slot_name": slot_name,
+                    "uid_aliases": [],
+                    "booking_aliases": [],
+                },
+                "missing_count": 0,
+                "pending_set_since": None,
+                "pending_clear_since": pending_clear_since,
+                "fingerprint_history": [],
+                "updated_at": now_str,
+                "last_observed_actual": {
+                    "slot": i,
+                    "classification": "adopted",
+                    "name_state": name_value,
+                    "has_code": has_code,
+                    "start_state": None,
+                    "end_state": None,
+                    "use_date_range": None,
+                    "enabled": None,
+                },
+            }
+
+        if mappings:
+            self._slot_mappings.setdefault("mappings", {}).update(mappings)
+            if "schema_version" not in self._slot_mappings:
+                self._slot_mappings.update(
+                    {
+                        "schema_version": STORE_SCHEMA_VERSION,
+                        "entry_id": self._entry_id,
+                        "lockname": self.lockname,
+                        "start_slot": self.start_slot,
+                        "max_slots": self.max_events,
+                        "updated_at": now_str,
+                        "blocked_slots": {},
+                    }
+                )
+            await self.async_save_slot_store()
+
     async def _async_fetch_calendar(self) -> list[CalendarEvent]:
         """Fetch iCalendar data from URL and parse into events."""
         try:
@@ -523,6 +717,9 @@ Please update Keymaster to at least v0.1.0-b0
             await self.event_overrides.async_check_overrides(
                 self, calendar=new_calendar
             )
+
+        # Save store after each reconciliation cycle
+        await self.async_save_slot_store()
 
         # Refresh child lock discovery each cycle
         if self.lockname:

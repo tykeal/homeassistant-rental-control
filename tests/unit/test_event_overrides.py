@@ -3162,3 +3162,173 @@ class TestSlotEvictionTolerance:
         mock_fire.assert_called_once_with(coordinator, 1, expected_name="Broken")
         assert eo.overrides[1] is None
         assert 1 not in eo._slot_miss_counts
+
+
+# ---------------------------------------------------------------------------
+# TestStoreSchemaV1 (T009)
+# ---------------------------------------------------------------------------
+
+
+class TestStoreSchemaV1:
+    """Tests for store schema v1 serialisation, deserialisation, and fencing."""
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _make_v1_mapping(
+        self,
+        identity_key: str = "test-key-1",
+        slot: int = 10,
+        status: str = "occupied",
+        has_code: bool = True,
+    ) -> dict:
+        """Build a minimal v1 slot mapping dict."""
+        return {
+            "slot": slot,
+            "status": status,
+            "operation_id": None,
+            "operation_kind": None,
+            "identity": {
+                "identity_key": identity_key,
+                "summary": "Jane Doe",
+                "slot_name": "Jane Doe",
+                "uid_aliases": [],
+                "booking_aliases": [],
+            },
+            "missing_count": 0,
+            "pending_set_since": None,
+            "pending_clear_since": None,
+            "fingerprint_history": [],
+            "updated_at": "2025-01-01T00:00:00+00:00",
+            "last_observed_actual": {
+                "slot": slot,
+                "classification": "adopted",
+                "name_state": "Jane Doe",
+                "has_code": has_code,
+                "start_state": None,
+                "end_state": None,
+                "use_date_range": None,
+                "enabled": None,
+            },
+        }
+
+    def _make_v1_store(
+        self,
+        mappings: dict | None = None,
+    ) -> dict:
+        """Build a minimal schema v1 store dict."""
+        return {
+            "schema_version": 1,
+            "entry_id": "test_entry_id",
+            "lockname": "test_lock",
+            "start_slot": 10,
+            "max_slots": 3,
+            "updated_at": "2025-01-01T00:00:00+00:00",
+            "mappings": mappings or {},
+            "blocked_slots": {},
+        }
+
+    # ------------------------------------------------------------------
+    # T009-1: v1 serialisation
+    # ------------------------------------------------------------------
+
+    def test_store_schema_v1_serialization(self) -> None:
+        """T009-1: v1 store dict has required keys and no raw PIN."""
+        mapping = self._make_v1_mapping()
+        store = self._make_v1_store({"test-key-1": mapping})
+
+        assert store["schema_version"] == 1
+        assert "entry_id" in store
+        assert "lockname" in store
+        assert "start_slot" in store
+        assert "max_slots" in store
+        assert "updated_at" in store
+        assert "mappings" in store
+        assert "blocked_slots" in store
+
+        m = store["mappings"]["test-key-1"]
+        assert m["slot"] == 10
+        assert m["status"] == "occupied"
+        last_obs = m["last_observed_actual"]
+        assert last_obs["has_code"] is True
+        assert "pin" not in last_obs
+        assert "code" not in last_obs
+        assert "slot_code" not in last_obs
+
+    # ------------------------------------------------------------------
+    # T009-2: v1 deserialisation via load_persisted_mappings
+    # ------------------------------------------------------------------
+
+    def test_store_schema_v1_deserialization(self) -> None:
+        """T009-2: load_persisted_mappings loads v1 mappings correctly."""
+        eo = EventOverrides(start_slot=10, max_slots=3)
+        mapping = self._make_v1_mapping()
+        eo.load_persisted_mappings({"test-key-1": mapping})
+
+        pm = eo.persisted_mappings
+        assert "test-key-1" in pm
+        assert pm["test-key-1"]["slot"] == 10
+        assert pm["test-key-1"]["status"] == "occupied"
+
+    # ------------------------------------------------------------------
+    # T009-3: no raw PIN in last_observed_actual
+    # ------------------------------------------------------------------
+
+    def test_no_raw_pin_in_store(self) -> None:
+        """T009-3: has_code bool is acceptable; raw pin/code keys are not."""
+        mapping_true = self._make_v1_mapping(has_code=True)
+        mapping_false = self._make_v1_mapping(
+            identity_key="test-key-2", slot=11, status="free", has_code=False
+        )
+        last_true = mapping_true["last_observed_actual"]
+        last_false = mapping_false["last_observed_actual"]
+
+        # has_code as bool is allowed
+        assert last_true["has_code"] is True
+        assert last_false["has_code"] is False
+
+        # Raw PIN keys must not be present
+        for last_obs in (last_true, last_false):
+            assert "pin" not in last_obs
+            assert "code" not in last_obs
+            assert "slot_code" not in last_obs
+
+    # ------------------------------------------------------------------
+    # T009-4: duplicate occupied slot rejection
+    # ------------------------------------------------------------------
+
+    def test_duplicate_slot_rejection(self) -> None:
+        """T009-4: two occupied mappings claiming the same slot raise ValueError."""
+        from custom_components.rental_control.const import SLOT_STATUS_OCCUPIED
+
+        eo = EventOverrides(start_slot=10, max_slots=3)
+        m1 = self._make_v1_mapping(
+            identity_key="key-a", slot=10, status=SLOT_STATUS_OCCUPIED
+        )
+        m2 = self._make_v1_mapping(
+            identity_key="key-b", slot=10, status=SLOT_STATUS_OCCUPIED
+        )
+
+        with pytest.raises(ValueError, match="Duplicate occupied slot 10"):
+            eo.load_persisted_mappings({"key-a": m1, "key-b": m2})
+
+    # ------------------------------------------------------------------
+    # T009-5: pending_clear fence rebuilt on load
+    # ------------------------------------------------------------------
+
+    def test_pending_fence_on_load(self) -> None:
+        """T009-5: pending_clear mapping populates pending_clear_slots."""
+        from custom_components.rental_control.const import SLOT_STATUS_PENDING_CLEAR
+
+        eo = EventOverrides(start_slot=10, max_slots=3)
+        m = self._make_v1_mapping(
+            identity_key="phantom-key",
+            slot=10,
+            status=SLOT_STATUS_PENDING_CLEAR,
+            has_code=False,
+        )
+        m["pending_clear_since"] = "2025-01-01T00:00:00+00:00"
+        eo.load_persisted_mappings({"phantom-key": m})
+
+        assert 10 in eo.pending_clear_slots
