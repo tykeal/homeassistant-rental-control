@@ -781,6 +781,11 @@ async def handle_state_change(
     await asyncio.sleep(0.1)
 
     entity_id = event.data["entity_id"]
+    event_new_state = event.data.get("new_state")
+    event_new_value = (
+        getattr(event_new_state, "state", None) if event_new_state is not None else None
+    )
+    event_has_new_value = event_new_value is not None
 
     _LOGGER.debug(
         "Handling state change for %s in %s with event: %s",
@@ -794,6 +799,9 @@ async def handle_state_change(
         _LOGGER.warning("Could not extract slot number from entity_id: %s", entity_id)
         return
     slot_num = int(slot_match.group(1))
+    existing_override: dict[str, Any] | None = None
+    if event_has_new_value and coordinator.event_overrides:
+        existing_override = coordinator.event_overrides.overrides.get(slot_num)
 
     if "_reset" in entity_id:
         _LOGGER.debug("Resetting overrides %s for %s.", slot_num, lockname)
@@ -802,12 +810,29 @@ async def handle_state_change(
         )
         return
 
+    if event_has_new_value and coordinator.event_overrides.should_suppress_state_change(
+        slot_num, entity_id, event_new_value
+    ):
+        _LOGGER.debug(
+            "Ignoring coordinator feedback for %s slot %s.",
+            lockname,
+            slot_num,
+        )
+        return
+
     slot_state = hass.states.get(f"switch.{lockname}_code_slot_{slot_num}_enabled")
     _LOGGER.debug("Slot %s state: %s", slot_num, slot_state)
     if slot_state is None:
         return
 
-    if slot_state.state != "on":
+    slot_enabled_entity_id = f"switch.{lockname}_code_slot_{slot_num}_enabled"
+    slot_enabled_state = (
+        event_new_value
+        if event_has_new_value and entity_id == slot_enabled_entity_id
+        else slot_state.state
+    )
+
+    if slot_enabled_state != "on":
         _LOGGER.debug(
             "Slot %s is not enabled, skipping update for %s.",
             slot_num,
@@ -815,47 +840,86 @@ async def handle_state_change(
         )
         return
 
-    slot_code = hass.states.get(f"text.{lockname}_code_slot_{slot_num}_pin")
-    slot_name = hass.states.get(f"text.{lockname}_code_slot_{slot_num}_name")
+    slot_code_entity_id = f"text.{lockname}_code_slot_{slot_num}_pin"
+    slot_name_entity_id = f"text.{lockname}_code_slot_{slot_num}_name"
+    slot_code = hass.states.get(slot_code_entity_id)
+    slot_name = hass.states.get(slot_name_entity_id)
 
-    use_date_range = hass.states.get(
+    use_date_range_entity_id = (
         f"switch.{lockname}_code_slot_{slot_num}_use_date_range_limits"
     )
+    use_date_range = hass.states.get(use_date_range_entity_id)
     _LOGGER.debug("Use Date Range: %s", use_date_range)
-    if use_date_range and use_date_range.state == "on":
-        g_start_time = hass.states.get(
+    use_date_range_state = (
+        event_new_value
+        if event_has_new_value and entity_id == use_date_range_entity_id
+        else use_date_range.state
+        if use_date_range
+        else None
+    )
+    if use_date_range_state == "on":
+        start_time_entity_id = (
             f"datetime.{lockname}_code_slot_{slot_num}_date_range_start"
         )
-        g_end_time = hass.states.get(
-            f"datetime.{lockname}_code_slot_{slot_num}_date_range_end"
-        )
+        end_time_entity_id = f"datetime.{lockname}_code_slot_{slot_num}_date_range_end"
+        g_start_time = hass.states.get(start_time_entity_id)
+        g_end_time = hass.states.get(end_time_entity_id)
     else:
+        start_time_entity_id = ""
+        end_time_entity_id = ""
         g_start_time = None
         g_end_time = None
 
     if slot_code is None:
         return
-    slot_code_value = (
-        "" if slot_code.state in ("unknown", "unavailable") else slot_code.state
-    )
+    if event_has_new_value and entity_id == slot_code_entity_id:
+        slot_code_value = (
+            "" if event_new_value in ("unknown", "unavailable") else event_new_value
+        )
+    elif event_has_new_value and existing_override is not None:
+        slot_code_value = str(existing_override["slot_code"])
+    else:
+        slot_code_value = (
+            "" if slot_code.state in ("unknown", "unavailable") else slot_code.state
+        )
     if slot_name is None:
         return
-    slot_name_value = (
-        "" if slot_name.state in ("unknown", "unavailable") else slot_name.state
-    )
+    if event_has_new_value and entity_id == slot_name_entity_id:
+        slot_name_value = (
+            "" if event_new_value in ("unknown", "unavailable") else event_new_value
+        )
+    elif event_has_new_value and existing_override is not None:
+        slot_name_value = str(existing_override["slot_name"])
+    else:
+        slot_name_value = (
+            "" if slot_name.state in ("unknown", "unavailable") else slot_name.state
+        )
 
     start_time = dt.start_of_local_day()
     end_time = dt.start_of_local_day()
+    if event_has_new_value and existing_override is not None:
+        start_time = existing_override["start_time"]
+        end_time = existing_override["end_time"]
 
     if g_start_time is not None:
-        p_start_time = dt.parse_datetime(g_start_time.state)
-        if p_start_time:
-            start_time = p_start_time
+        if event_has_new_value and entity_id == start_time_entity_id:
+            p_start_time = dt.parse_datetime(event_new_value)
+            if p_start_time:
+                start_time = p_start_time
+        elif not (event_has_new_value and existing_override is not None):
+            p_start_time = dt.parse_datetime(g_start_time.state)
+            if p_start_time:
+                start_time = p_start_time
 
     if g_end_time is not None:
-        p_end_time = dt.parse_datetime(g_end_time.state)
-        if p_end_time:
-            end_time = p_end_time
+        if event_has_new_value and entity_id == end_time_entity_id:
+            p_end_time = dt.parse_datetime(event_new_value)
+            if p_end_time:
+                end_time = p_end_time
+        elif not (event_has_new_value and existing_override is not None):
+            p_end_time = dt.parse_datetime(g_end_time.state)
+            if p_end_time:
+                end_time = p_end_time
 
     _LOGGER.debug(
         "updating overrides for %s slot %s. "
