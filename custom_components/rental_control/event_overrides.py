@@ -173,7 +173,16 @@ class EventOverrides:
 
     @property
     def next_slot(self) -> int | None:
-        """Return the next_slot available."""
+        """Return the next available slot index for the greedy path.
+
+        .. deprecated::
+            This property is part of the retired greedy slot-assignment path.
+            The reconciliation coordinator (``compute_desired_plan`` /
+            ``async_apply_plan``) owns slot selection and does not consult
+            ``_next_slot``.  The property is retained as a backward-compatible
+            shim for tests that exercise :meth:`async_reserve_or_get_slot`
+            directly; production code must not read it.
+        """
         return self._next_slot
 
     @property
@@ -403,7 +412,22 @@ class EventOverrides:
         return self._actual_state_cache.get(slot)
 
     def __assign_next_slot(self) -> None:
-        """Assign the next slot."""
+        """Recompute ``_next_slot`` for the deprecated greedy path.
+
+        Called only from the greedy-path methods (:meth:`update`,
+        :meth:`async_update`, :meth:`async_reserve_or_get_slot`,
+        :meth:`async_check_overrides`) so that :attr:`next_slot` stays
+        accurate for callers that still use the legacy API.
+
+        Reconciliation methods (:meth:`_apply_clear`, :meth:`_apply_set`,
+        :meth:`_apply_overwrite_manual_change`) do *not* call this helper;
+        slot selection in the reconciliation path is determined by
+        ``compute_desired_plan``, not by ``_next_slot``.
+
+        .. deprecated::
+            Do not call from new code.  Will be removed when the greedy
+            path shims are retired.
+        """
 
         _LOGGER.debug("In EventOverrides.assign_next_slot")
 
@@ -633,10 +657,19 @@ class EventOverrides:
         uid: str | None = None,
         prefix: str | None = None,
     ) -> ReserveResult:
-        """Atomically find existing slot or reserve next available.
+        """Atomically find existing slot or reserve next available (greedy path).
 
         All work is performed under ``_lock`` so concurrent callers
         are serialised.
+
+        .. deprecated::
+            This method is the retired greedy slot-assignment path.  The
+            reconciliation coordinator (``compute_desired_plan`` /
+            ``async_apply_plan``) is now the sole authority for slot
+            assignments and does not call this method.  The method is
+            retained as a backward-compatible shim for tests that exercise
+            the greedy path directly; it must not be called from production
+            coordinator or sensor code.
         """
         async with self._lock:
             if prefix is None:
@@ -890,7 +923,9 @@ class EventOverrides:
                 self._slot_uids.pop(slot, None)
                 self._slot_miss_counts.pop(slot, None)
                 self._clear_slot_error(slot)
-                self.__assign_next_slot()
+                # NOTE: __assign_next_slot() is intentionally NOT called here.
+                # Slot selection in the reconciliation path is determined by
+                # compute_desired_plan(), not by the deprecated _next_slot field.
             elif result.failed:
                 _LOGGER.warning(
                     "Clear failed for slot %d (error: %s); slot remains pending-clear",
@@ -966,7 +1001,9 @@ class EventOverrides:
                 )
                 self._pending_fences.pop(slot, None)
                 self._clear_slot_error(slot)
-                self.__assign_next_slot()
+                # NOTE: __assign_next_slot() is intentionally NOT called here.
+                # Slot selection in the reconciliation path is determined by
+                # compute_desired_plan(), not by the deprecated _next_slot field.
             elif result.failed:
                 _LOGGER.warning(
                     "Set failed for slot %d (error: %s); reverting pre-assignment",
@@ -977,7 +1014,9 @@ class EventOverrides:
                 self._overrides[slot] = None
                 self._slot_uids.pop(slot, None)
                 self._record_slot_error(slot, result.error or "set failed")
-                self.__assign_next_slot()
+                # NOTE: __assign_next_slot() is intentionally NOT called here.
+                # Slot selection in the reconciliation path is determined by
+                # compute_desired_plan(), not by the deprecated _next_slot field.
             else:
                 _LOGGER.debug(
                     "Set unconfirmed for slot %d; keeping tentative assignment", slot
@@ -1119,7 +1158,9 @@ class EventOverrides:
                 )
                 self._pending_fences.pop(slot, None)
                 self._clear_slot_error(slot)
-                self.__assign_next_slot()
+                # NOTE: __assign_next_slot() is intentionally NOT called here.
+                # Slot selection in the reconciliation path is determined by
+                # compute_desired_plan(), not by the deprecated _next_slot field.
             elif result.failed:
                 _LOGGER.warning(
                     "Overwrite failed for slot %d (error: %s); "
@@ -1361,11 +1402,20 @@ class EventOverrides:
         coordinator,
         calendar: list[CalendarEvent] | None = None,
     ) -> None:
-        """Check if overrides need to have a clear_code event fired.
+        """Check overrides and fire clear-code events for stale slots (greedy path).
 
         When called from within _async_update_data, pass the fresh
         calendar list directly because coordinator.data has not been
         updated yet by the DUC framework.
+
+        .. deprecated::
+            This method implements the retired greedy cleanup policy.  Stale
+            slot detection and clearing is now handled entirely by the
+            reconciliation coordinator via ``compute_desired_plan`` /
+            ``async_apply_plan`` (``ActionKind.CLEAR`` / ``RETRY_CLEAR``).
+            The coordinator no longer calls this method.  The method is
+            retained as a backward-compatible shim; production code must
+            not invoke it.
         """
         _LOGGER.debug("In EventOverrides.async_check_overrides")
 

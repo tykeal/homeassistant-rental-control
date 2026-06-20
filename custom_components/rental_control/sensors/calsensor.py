@@ -513,17 +513,24 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         prefix: str,
         eta_days: int | None,
     ) -> None:
-        """No-op: slot assignment is now owned by the coordinator.
+        """No-op backward-compatible shim; slot assignment is owned by the coordinator.
 
-        Slot reconciliation — reserving or locating a Keymaster slot,
-        firing set-code / clear-code / update-times events — is handled
-        entirely by :class:`~..coordinator.RentalControlCoordinator`
-        during its refresh cycle.  This method is retained so that any
-        lingering call sites produce a harmless no-op rather than an
-        ``AttributeError``, but it must never be scheduled by
+        The per-event slot-assignment scheduling path — where
+        ``_handle_coordinator_update`` would call this method to invoke
+        :meth:`~..event_overrides.EventOverrides.async_reserve_or_get_slot`
+        or fire set-code / clear-code / update-times events — has been
+        removed.  All slot mutation is now performed exclusively by
+        :class:`~..coordinator.RentalControlCoordinator` through the
+        reconciliation cycle (``compute_desired_plan`` / ``async_apply_plan``).
+
+        This shim is retained so that any external call sites produce a
+        harmless no-op rather than an ``AttributeError``.  It is verified
+        by ``test_async_handle_slot_assignment_is_noop`` as a regression
+        guard.  The method must never be called or scheduled from
         :meth:`_handle_coordinator_update`.
 
         .. deprecated::
-            Do not call or schedule this method.  It will be removed in
-            a future release.
+            The per-event scheduling and mutation fallback path has been
+            retired.  This shim will be removed in a future release once
+            all external references are eliminated.
         """
