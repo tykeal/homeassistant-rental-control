@@ -51,12 +51,12 @@ internal module is `custom_components/rental_control/reconciliation.py`.
 **Purpose**: Establish the merged artifact and existing-test baseline before
 changing reconciliation tests or code.
 
-- [ ] T001 Inspect the 18 functional requirements, 8 user stories, and 11 success criteria in specs/012-slot-reconciliation/spec.md
-- [ ] T002 Inspect architecture decisions R-001 through R-008 in specs/012-slot-reconciliation/research.md
-- [ ] T003 Inspect Reservation, ManagedSlot, DesiredPlan, Store mapping, and lifecycle state rules in specs/012-slot-reconciliation/data-model.md
-- [ ] T004 Inspect validation scenarios and expected targeted commands in specs/012-slot-reconciliation/quickstart.md
-- [ ] T005 Inventory current greedy slot mutation paths in custom_components/rental_control/event_overrides.py and custom_components/rental_control/sensors/calsensor.py
-- [ ] T006 Run the baseline targeted pytest command for tests/unit/test_event_overrides.py, tests/unit/test_sensors.py, tests/unit/test_util.py, tests/unit/test_coordinator.py, tests/unit/test_checkin_sensor.py, tests/integration/test_refresh_cycle.py, and tests/integration/test_slot_concurrency.py
+- [x] T001 Inspect the 18 functional requirements, 8 user stories, and 11 success criteria in specs/012-slot-reconciliation/spec.md
+- [x] T002 Inspect architecture decisions R-001 through R-008 in specs/012-slot-reconciliation/research.md
+- [x] T003 Inspect Reservation, ManagedSlot, DesiredPlan, Store mapping, and lifecycle state rules in specs/012-slot-reconciliation/data-model.md
+- [x] T004 Inspect validation scenarios and expected targeted commands in specs/012-slot-reconciliation/quickstart.md
+- [x] T005 Inventory current greedy slot mutation paths in custom_components/rental_control/event_overrides.py and custom_components/rental_control/sensors/calsensor.py
+- [x] T006 Run the baseline targeted pytest command for tests/unit/test_event_overrides.py, tests/unit/test_sensors.py, tests/unit/test_util.py, tests/unit/test_coordinator.py, tests/unit/test_checkin_sensor.py, tests/integration/test_refresh_cycle.py, and tests/integration/test_slot_concurrency.py
 
 ---
 
@@ -69,26 +69,26 @@ actual-state helpers, and coordinator wiring scaffolding that every story needs.
 
 ### Foundational Tests
 
-- [ ] T007 [P] Add Reservation, ManagedSlot, DesiredPlan, PlannedSlot, SlotAction, SlotStatus, and validation tests in tests/unit/test_slot_reconciliation.py
-- [ ] T008 Add stable reservation identity fingerprint, UID alias, booking alias, fingerprint-history, and ambiguous-rematch tests in tests/unit/test_slot_reconciliation.py
-- [ ] T009 Add persisted Store schema v1 serialization, deserialization, no-raw-PIN, duplicate-slot rejection, and pending-fence validation tests in tests/unit/test_event_overrides.py
-- [ ] T010 Add first-upgrade migration tests for adopting populated Keymaster slots without wiping working slots in tests/unit/test_coordinator.py
-- [ ] T011 Add first-upgrade migration tests for prefixed or trimmed names, buffered dates, phantom name-only slots, ambiguous populated slots, and pending-clear restart fences in tests/unit/test_coordinator.py
-- [ ] T012 [P] Add operation-result model tests for confirmed, unconfirmed, and failed Keymaster clear or set verification in tests/unit/test_util.py
-- [ ] T013 [P] Add shared fixture builders for reservations, managed slots, persisted mappings, and actual Keymaster snapshots in tests/fixtures/event_data.py
+- [x] T007 [P] Add Reservation, ManagedSlot, DesiredPlan, PlannedSlot, SlotAction, SlotStatus, and validation tests in tests/unit/test_slot_reconciliation.py
+- [x] T008 Add stable reservation identity fingerprint, UID alias, booking alias, fingerprint-history, and ambiguous-rematch tests in tests/unit/test_slot_reconciliation.py
+- [x] T009 Add persisted Store schema v1 serialization, deserialization, no-raw-PIN, duplicate-slot rejection, and pending-fence validation tests in tests/unit/test_event_overrides.py
+- [x] T010 Add first-upgrade migration tests for adopting populated Keymaster slots without wiping working slots in tests/unit/test_coordinator.py
+- [x] T011 Add first-upgrade migration tests for prefixed or trimmed names, buffered dates, phantom name-only slots, ambiguous populated slots, and pending-clear restart fences in tests/unit/test_coordinator.py
+- [x] T012 [P] Add operation-result model tests for confirmed, unconfirmed, and failed Keymaster clear or set verification in tests/unit/test_util.py
+- [x] T013 [P] Add shared fixture builders for reservations, managed slots, persisted mappings, and actual Keymaster snapshots in tests/fixtures/event_data.py
 
 ### Foundational Implementation
 
-- [ ] T014 Create typed dataclasses and enums for Reservation, ManagedSlot, DesiredPlan, PlannedSlot, SlotAction, SlotStatus, and Store mapping records in custom_components/rental_control/reconciliation.py
-- [ ] T015 Implement stable reservation identity fingerprinting, UID alias normalization, booking alias extraction hooks, fingerprint history, and conservative rematch helpers in custom_components/rental_control/reconciliation.py
-- [ ] T016 Add Store key, schema version, slot status, diagnostics, operation-token, and overflow constants in custom_components/rental_control/const.py
-- [ ] T017 Implement HA Store load, save, schema v1 migration, first-upgrade adoption, and no-raw-PIN persistence helpers in custom_components/rental_control/coordinator.py
-- [ ] T018 Add persisted mapping ownership, pending-clear fence, duplicate-mapping rejection, and actual-state cache fields to EventOverrides in custom_components/rental_control/event_overrides.py
-- [ ] T019 Add observed Keymaster state collection and classification for free, occupied, phantom, partial_reset, unknown, and unmanaged slots in custom_components/rental_control/event_overrides.py
-- [ ] T020 Change async_fire_clear_code(), async_fire_set_code(), and async_fire_update_times() to return explicit verified operation results in custom_components/rental_control/util.py
-- [ ] T021 Add setup hooks to load Store before Keymaster bootstrap, pass normalized reservations into reconciliation, and persist changed mappings after each refresh in custom_components/rental_control/__init__.py and custom_components/rental_control/coordinator.py
-- [ ] T022 Add read-only reconciliation state accessors used by event sensors and check-in protection consumers in custom_components/rental_control/coordinator.py
-- [ ] T023 Run foundational pytest validation for tests/unit/test_slot_reconciliation.py, tests/unit/test_event_overrides.py, tests/unit/test_util.py, and tests/unit/test_coordinator.py
+- [x] T014 Create typed dataclasses and enums for Reservation, ManagedSlot, DesiredPlan, PlannedSlot, SlotAction, SlotStatus, and Store mapping records in custom_components/rental_control/reconciliation.py
+- [x] T015 Implement stable reservation identity fingerprinting, UID alias normalization, booking alias extraction hooks, fingerprint history, and conservative rematch helpers in custom_components/rental_control/reconciliation.py
+- [x] T016 Add Store key, schema version, slot status, diagnostics, operation-token, and overflow constants in custom_components/rental_control/const.py
+- [x] T017 Implement HA Store load, save, schema v1 migration, first-upgrade adoption, and no-raw-PIN persistence helpers in custom_components/rental_control/coordinator.py
+- [x] T018 Add persisted mapping ownership, pending-clear fence, duplicate-mapping rejection, and actual-state cache fields to EventOverrides in custom_components/rental_control/event_overrides.py
+- [x] T019 Add observed Keymaster state collection and classification for free, occupied, phantom, partial_reset, unknown, and unmanaged slots in custom_components/rental_control/event_overrides.py
+- [x] T020 Change async_fire_clear_code(), async_fire_set_code(), and async_fire_update_times() to return explicit verified operation results in custom_components/rental_control/util.py
+- [x] T021 Add setup hooks to load Store before Keymaster bootstrap, pass normalized reservations into reconciliation, and persist changed mappings after each refresh in custom_components/rental_control/__init__.py and custom_components/rental_control/coordinator.py
+- [x] T022 Add read-only reconciliation state accessors used by event sensors and check-in protection consumers in custom_components/rental_control/coordinator.py
+- [x] T023 Run foundational pytest validation for tests/unit/test_slot_reconciliation.py, tests/unit/test_event_overrides.py, tests/unit/test_util.py, and tests/unit/test_coordinator.py
 
 **Checkpoint**: Foundation ready — typed models, Store schema, identity matching,
 actual-state classification, operation results, and coordinator scaffolding are
@@ -110,21 +110,21 @@ except for protected checked-in guests handled in US2.
 > **NOTE: Write these tests FIRST and ensure they fail until the soonest-N
 > planner and coordinator reconciliation are implemented.**
 
-- [ ] T024 [P] [US1] Add pure soonest-N overflow tests with max_events=3 and five eligible reservations in tests/unit/test_slot_reconciliation.py
-- [ ] T025 [US1] Add no-farther-before-nearer, equal-start identity tie-breaker, churn-minimization, and overflow-rank diagnostic tests in tests/unit/test_slot_reconciliation.py
-- [ ] T026 [US1] Add #535 nearer-not-programmed-when-full regression scenario with successful clear/set confirmations in tests/integration/test_refresh_cycle.py
-- [ ] T027 [US1] Add #546 farther-evicts-nearer regression scenario proving the farther unprotected reservation becomes overflow in tests/integration/test_refresh_cycle.py
-- [ ] T028 [P] [US1] Add coordinator refresh tests proving every refresh computes one DesiredPlan before publishing data in tests/unit/test_coordinator.py
-- [ ] T029 [P] [US1] Add EventOverrides desired-plan application tests for set, update_times, noop, and overflow actions in tests/unit/test_event_overrides.py
+- [x] T024 [P] [US1] Add pure soonest-N overflow tests with max_events=3 and five eligible reservations in tests/unit/test_slot_reconciliation.py
+- [x] T025 [US1] Add no-farther-before-nearer, equal-start identity tie-breaker, churn-minimization, and overflow-rank diagnostic tests in tests/unit/test_slot_reconciliation.py
+- [x] T026 [US1] Add #535 nearer-not-programmed-when-full regression scenario with successful clear/set confirmations in tests/integration/test_refresh_cycle.py
+- [x] T027 [US1] Add #546 farther-evicts-nearer regression scenario proving the farther unprotected reservation becomes overflow in tests/integration/test_refresh_cycle.py
+- [x] T028 [P] [US1] Add coordinator refresh tests proving every refresh computes one DesiredPlan before publishing data in tests/unit/test_coordinator.py
+- [x] T029 [P] [US1] Add EventOverrides desired-plan application tests for set, update_times, noop, and overflow actions in tests/unit/test_event_overrides.py
 
 ### Implementation for User Story 1
 
-- [ ] T030 [US1] Implement deterministic desired-plan selection by start time, identity tie-breaker, persisted-slot retention, and overflow reasons in custom_components/rental_control/reconciliation.py
-- [ ] T031 [US1] Replace coordinator update_event_overrides() greedy per-event assignment with one refresh-level desired-plan computation in custom_components/rental_control/coordinator.py
-- [ ] T032 [US1] Add EventOverrides apply-plan support for set, update_times, noop, overflow, and confirmed post-operation persistence in custom_components/rental_control/event_overrides.py
-- [ ] T033 [US1] Ensure the coordinator publishes reconciled slot assignments and overflow status for sensors after apply-plan completes in custom_components/rental_control/coordinator.py
-- [ ] T034 [US1] Preserve existing calendar event parsing and max_events filtering while passing normalized reservations to reconciliation in custom_components/rental_control/coordinator.py
-- [ ] T035 [US1] Run US1 validation for tests/unit/test_slot_reconciliation.py, tests/unit/test_coordinator.py, tests/unit/test_event_overrides.py, and tests/integration/test_refresh_cycle.py
+- [x] T030 [US1] Implement deterministic desired-plan selection by start time, identity tie-breaker, persisted-slot retention, and overflow reasons in custom_components/rental_control/reconciliation.py
+- [x] T031 [US1] Replace coordinator update_event_overrides() greedy per-event assignment with one refresh-level desired-plan computation in custom_components/rental_control/coordinator.py
+- [x] T032 [US1] Add EventOverrides apply-plan support for set, update_times, noop, overflow, and confirmed post-operation persistence in custom_components/rental_control/event_overrides.py
+- [x] T033 [US1] Ensure the coordinator publishes reconciled slot assignments and overflow status for sensors after apply-plan completes in custom_components/rental_control/coordinator.py
+- [x] T034 [US1] Preserve existing calendar event parsing and max_events filtering while passing normalized reservations to reconciliation in custom_components/rental_control/coordinator.py
+- [x] T035 [US1] Run US1 validation for tests/unit/test_slot_reconciliation.py, tests/unit/test_coordinator.py, tests/unit/test_event_overrides.py, and tests/integration/test_refresh_cycle.py
 
 **Checkpoint**: US1 independently proves SC-001 and SC-004 for confirmed physical
 operations and covers the #535 and #546 regression families.
@@ -142,18 +142,18 @@ assigned while remaining capacity is filled by soonest non-active reservations.
 
 ### Tests for User Story 2
 
-- [ ] T036 [P] [US2] Add active checked-in guest selected-before-overflow and retained-current-slot tests in tests/unit/test_slot_reconciliation.py
-- [ ] T037 [US2] Add protected guests count against managed-slot capacity and protection-expiry tests in tests/unit/test_slot_reconciliation.py
-- [ ] T038 [US2] Add check-in tracking active-reservation surface tests for awaiting, checked_in, checked_out, linger, and no_reservation states in tests/unit/test_checkin_sensor.py
-- [ ] T039 [US2] Add active guest never evicted mid-stay overflow integration scenario in tests/integration/test_refresh_cycle.py
-- [ ] T040 [US2] Add check-in tracking preservation scenario for slot reconciliation changes in tests/integration/test_checkin_tracking.py
+- [x] T036 [P] [US2] Add active checked-in guest selected-before-overflow and retained-current-slot tests in tests/unit/test_slot_reconciliation.py
+- [x] T037 [US2] Add protected guests count against managed-slot capacity and protection-expiry tests in tests/unit/test_slot_reconciliation.py
+- [x] T038 [US2] Add check-in tracking active-reservation surface tests for awaiting, checked_in, checked_out, linger, and no_reservation states in tests/unit/test_checkin_sensor.py
+- [x] T039 [US2] Add active guest never evicted mid-stay overflow integration scenario in tests/integration/test_refresh_cycle.py
+- [x] T040 [US2] Add check-in tracking preservation scenario for slot reconciliation changes in tests/integration/test_checkin_tracking.py
 
 ### Implementation for User Story 2
 
-- [ ] T041 [US2] Expose active checked-in reservation identity, protected stay window, and checkout state to the coordinator in custom_components/rental_control/sensors/checkinsensor.py
-- [ ] T042 [US2] Include protected active reservations and protection expiry in desired-plan computation in custom_components/rental_control/reconciliation.py
-- [ ] T043 [US2] Wire check-in protection data into the coordinator reconciliation inputs in custom_components/rental_control/coordinator.py
-- [ ] T044 [US2] Run US2 validation for tests/unit/test_slot_reconciliation.py, tests/unit/test_checkin_sensor.py, tests/integration/test_refresh_cycle.py, and tests/integration/test_checkin_tracking.py
+- [x] T041 [US2] Expose active checked-in reservation identity, protected stay window, and checkout state to the coordinator in custom_components/rental_control/sensors/checkinsensor.py
+- [x] T042 [US2] Include protected active reservations and protection expiry in desired-plan computation in custom_components/rental_control/reconciliation.py
+- [x] T043 [US2] Wire check-in protection data into the coordinator reconciliation inputs in custom_components/rental_control/coordinator.py
+- [x] T044 [US2] Run US2 validation for tests/unit/test_slot_reconciliation.py, tests/unit/test_checkin_sensor.py, tests/integration/test_refresh_cycle.py, and tests/integration/test_checkin_tracking.py
 
 **Checkpoint**: US2 independently proves SC-005 and keeps active guest protection
 compatible with the existing check-in sensor lifecycle.
@@ -172,24 +172,24 @@ blocked by unconfirmed physical operations.
 
 ### Tests for User Story 3
 
-- [ ] T045 [P] [US3] Add duplicate actual assignment canonical-slot and non-canonical pending-clear tests in tests/unit/test_event_overrides.py
-- [ ] T046 [P] [US3] Add no reservation in two desired slots and no slot with two reservations invariant tests in tests/unit/test_slot_reconciliation.py
-- [ ] T047 [US3] Add #589 triple-assignment duplicate-collapse regression scenario converging in one or two refreshes in tests/integration/test_refresh_cycle.py
-- [ ] T048 [US3] Add #521 phantom name-only slot regression scenario with pending-clear then reuse after confirmed clear in tests/integration/test_refresh_cycle.py
-- [ ] T049 [US3] Add stale expired assignment self-heal scenario converging without restart or reload in tests/integration/test_refresh_cycle.py
-- [ ] T050 [US3] Add stale mis-assigned slot self-heal scenario replacing the wrong reservation with the desired one in tests/integration/test_refresh_cycle.py
-- [ ] T051 [US3] Add nearer-not-programmed-when-full corrupt starting state regression for #535 in tests/integration/test_refresh_cycle.py
-- [ ] T052 [US3] Add farther-evicts-nearer corrupt starting state regression for #546 in tests/integration/test_refresh_cycle.py
-- [ ] T053 [US3] Add caplog coverage for duplicate collapse, overflow decision, phantom recovery, stale correction, and mis-assignment correction in tests/unit/test_event_overrides.py
-- [ ] T054 [US3] Add unmanaged-slot ignored tests proving slots outside the RC-managed range are never changed in tests/unit/test_event_overrides.py
+- [x] T045 [P] [US3] Add duplicate actual assignment canonical-slot and non-canonical pending-clear tests in tests/unit/test_event_overrides.py
+- [x] T046 [P] [US3] Add no reservation in two desired slots and no slot with two reservations invariant tests in tests/unit/test_slot_reconciliation.py
+- [x] T047 [US3] Add #589 triple-assignment duplicate-collapse regression scenario converging in one or two refreshes in tests/integration/test_refresh_cycle.py
+- [x] T048 [US3] Add #521 phantom name-only slot regression scenario with pending-clear then reuse after confirmed clear in tests/integration/test_refresh_cycle.py
+- [x] T049 [US3] Add stale expired assignment self-heal scenario converging without restart or reload in tests/integration/test_refresh_cycle.py
+- [x] T050 [US3] Add stale mis-assigned slot self-heal scenario replacing the wrong reservation with the desired one in tests/integration/test_refresh_cycle.py
+- [x] T051 [US3] Add nearer-not-programmed-when-full corrupt starting state regression for #535 in tests/integration/test_refresh_cycle.py
+- [x] T052 [US3] Add farther-evicts-nearer corrupt starting state regression for #546 in tests/integration/test_refresh_cycle.py
+- [x] T053 [US3] Add caplog coverage for duplicate collapse, overflow decision, phantom recovery, stale correction, and mis-assignment correction in tests/unit/test_event_overrides.py
+- [x] T054 [US3] Add unmanaged-slot ignored tests proving slots outside the RC-managed range are never changed in tests/unit/test_event_overrides.py
 
 ### Implementation for User Story 3
 
-- [ ] T055 [US3] Implement duplicate actual assignment detection, canonical slot selection, and non-canonical pending-clear actions in custom_components/rental_control/reconciliation.py
-- [ ] T056 [US3] Implement phantom, stale, partial-reset, and mis-assigned actual-state diff generation in custom_components/rental_control/reconciliation.py
-- [ ] T057 [US3] Apply duplicate, phantom, stale, and mis-assigned corrections under the EventOverrides single lock in custom_components/rental_control/event_overrides.py
-- [ ] T058 [US3] Log duplicate collapse, overflow decisions, phantom recovery, stale correction, and mis-assignment correction with redacted code data in custom_components/rental_control/event_overrides.py
-- [ ] T059 [US3] Run US3 validation for tests/unit/test_slot_reconciliation.py, tests/unit/test_event_overrides.py, and tests/integration/test_refresh_cycle.py
+- [x] T055 [US3] Implement duplicate actual assignment detection, canonical slot selection, and non-canonical pending-clear actions in custom_components/rental_control/reconciliation.py
+- [x] T056 [US3] Implement phantom, stale, partial-reset, and mis-assigned actual-state diff generation in custom_components/rental_control/reconciliation.py
+- [x] T057 [US3] Apply duplicate, phantom, stale, and mis-assigned corrections under the EventOverrides single lock in custom_components/rental_control/event_overrides.py
+- [x] T058 [US3] Log duplicate collapse, overflow decisions, phantom recovery, stale correction, and mis-assignment correction with redacted code data in custom_components/rental_control/event_overrides.py
+- [x] T059 [US3] Run US3 validation for tests/unit/test_slot_reconciliation.py, tests/unit/test_event_overrides.py, and tests/integration/test_refresh_cycle.py
 
 **Checkpoint**: US3 independently proves SC-002 and SC-003, including the #589,
 #521, #535, and #546 corrupt-state regression families.
@@ -207,19 +207,19 @@ later confirmed clear succeeds.
 
 ### Tests for User Story 4
 
-- [ ] T060 [P] [US4] Add async_fire_clear_code() confirmed, unconfirmed, lingering-name, lingering-PIN, and service-failure tests in tests/unit/test_util.py
-- [ ] T061 [P] [US4] Add pending-clear fenced-token lifecycle, stale-token rejection, retry_clear, and later-confirmed-free tests in tests/unit/test_event_overrides.py
-- [ ] T062 [P] [US4] Add desired-plan tests excluding pending-clear, blocked, and unknown slots from assignment capacity in tests/unit/test_slot_reconciliation.py
-- [ ] T063 [US4] Add clear failure slot-not-reused and no double-assignment integration scenario in tests/integration/test_refresh_cycle.py
-- [ ] T064 [US4] Add callback re-entrancy fencing scenario where callbacks cannot launch reconciliation during a pending operation in tests/integration/test_slot_concurrency.py
+- [x] T060 [P] [US4] Add async_fire_clear_code() confirmed, unconfirmed, lingering-name, lingering-PIN, and service-failure tests in tests/unit/test_util.py
+- [x] T061 [P] [US4] Add pending-clear fenced-token lifecycle, stale-token rejection, retry_clear, and later-confirmed-free tests in tests/unit/test_event_overrides.py
+- [x] T062 [P] [US4] Add desired-plan tests excluding pending-clear, blocked, and unknown slots from assignment capacity in tests/unit/test_slot_reconciliation.py
+- [x] T063 [US4] Add clear failure slot-not-reused and no double-assignment integration scenario in tests/integration/test_refresh_cycle.py
+- [x] T064 [US4] Add callback re-entrancy fencing scenario where callbacks cannot launch reconciliation during a pending operation in tests/integration/test_slot_concurrency.py
 
 ### Implementation for User Story 4
 
-- [ ] T065 [US4] Implement verified clear, set, update_times, and redacted result objects for Keymaster service helpers in custom_components/rental_control/util.py
-- [ ] T066 [US4] Persist fenced operation tokens before service calls and verify matching tokens before clearing fences in custom_components/rental_control/event_overrides.py
-- [ ] T067 [US4] Keep pending-clear, blocked, and unknown slots unavailable to desired-plan assignment until confirmed free in custom_components/rental_control/reconciliation.py
-- [ ] T068 [US4] Serialize reconciliation and state-change callbacks through the existing single EventOverrides lock and remove handle_state_change() re-entrant reconciliation calls in custom_components/rental_control/event_overrides.py and custom_components/rental_control/util.py
-- [ ] T069 [US4] Run US4 validation for tests/unit/test_util.py, tests/unit/test_event_overrides.py, tests/unit/test_slot_reconciliation.py, tests/integration/test_refresh_cycle.py, and tests/integration/test_slot_concurrency.py
+- [x] T065 [US4] Implement verified clear, set, update_times, and redacted result objects for Keymaster service helpers in custom_components/rental_control/util.py
+- [x] T066 [US4] Persist fenced operation tokens before service calls and verify matching tokens before clearing fences in custom_components/rental_control/event_overrides.py
+- [x] T067 [US4] Keep pending-clear, blocked, and unknown slots unavailable to desired-plan assignment until confirmed free in custom_components/rental_control/reconciliation.py
+- [x] T068 [US4] Serialize reconciliation and state-change callbacks through the existing single EventOverrides lock and remove handle_state_change() re-entrant reconciliation calls in custom_components/rental_control/event_overrides.py and custom_components/rental_control/util.py
+- [x] T069 [US4] Run US4 validation for tests/unit/test_util.py, tests/unit/test_event_overrides.py, tests/unit/test_slot_reconciliation.py, tests/integration/test_refresh_cycle.py, and tests/integration/test_slot_concurrency.py
 
 **Checkpoint**: US4 independently proves SC-006 and the confirmed-clear safety
 model.
@@ -236,17 +236,17 @@ run one refresh, and verify the desired state is restored with a log entry.
 
 ### Tests for User Story 5
 
-- [ ] T070 [P] [US5] Add manual managed-slot name, code, start date, end date, and date-range switch drift tests in tests/unit/test_event_overrides.py
-- [ ] T071 [P] [US5] Add manual drift overwrite action tests preserving desired reservation identity and redacting PIN data in tests/unit/test_slot_reconciliation.py
-- [ ] T072 [US5] Add manual edit corrected plus caplog assertion integration scenario in tests/integration/test_refresh_cycle.py
-- [ ] T073 [US5] Add unmanaged manual edit ignored integration scenario in tests/integration/test_refresh_cycle.py
+- [x] T070 [P] [US5] Add manual managed-slot name, code, start date, end date, and date-range switch drift tests in tests/unit/test_event_overrides.py
+- [x] T071 [P] [US5] Add manual drift overwrite action tests preserving desired reservation identity and redacting PIN data in tests/unit/test_slot_reconciliation.py
+- [x] T072 [US5] Add manual edit corrected plus caplog assertion integration scenario in tests/integration/test_refresh_cycle.py
+- [x] T073 [US5] Add unmanaged manual edit ignored integration scenario in tests/integration/test_refresh_cycle.py
 
 ### Implementation for User Story 5
 
-- [ ] T074 [US5] Detect manual or external drift by comparing desired mappings with observed actual managed-slot state in custom_components/rental_control/event_overrides.py
-- [ ] T075 [US5] Generate overwrite_manual_change actions for managed-slot drift and ignore unmanaged slots in custom_components/rental_control/reconciliation.py
-- [ ] T076 [US5] Log manual or external overwrite details with slot number, field names, identity, and redacted code fields in custom_components/rental_control/event_overrides.py
-- [ ] T077 [US5] Run US5 validation for tests/unit/test_event_overrides.py, tests/unit/test_slot_reconciliation.py, and tests/integration/test_refresh_cycle.py
+- [x] T074 [US5] Detect manual or external drift by comparing desired mappings with observed actual managed-slot state in custom_components/rental_control/event_overrides.py
+- [x] T075 [US5] Generate overwrite_manual_change actions for managed-slot drift and ignore unmanaged slots in custom_components/rental_control/reconciliation.py
+- [x] T076 [US5] Log manual or external overwrite details with slot number, field names, identity, and redacted code fields in custom_components/rental_control/event_overrides.py
+- [x] T077 [US5] Run US5 validation for tests/unit/test_event_overrides.py, tests/unit/test_slot_reconciliation.py, and tests/integration/test_refresh_cycle.py
 
 **Checkpoint**: US5 independently proves SC-007 and the manual-edit parts of
 FR-009, FR-016, and FR-017.
@@ -264,22 +264,22 @@ checking continuity and clear eligibility.
 
 ### Tests for User Story 6
 
-- [ ] T078 [P] [US6] Add exact stable-fingerprint restart mapping preservation tests in tests/unit/test_event_overrides.py
-- [ ] T079 [P] [US6] Add UID-changed but stable name/start/end mapping retention tests in tests/unit/test_slot_reconciliation.py
-- [ ] T080 [US6] Add UID-match date-shift mapping update and should-update-code interaction tests in tests/unit/test_slot_reconciliation.py
-- [ ] T081 [US6] Add conservative continuity rematch tests for fingerprint history, booking aliases, normalized name, non-overlap ordering, and actual-slot continuity in tests/unit/test_slot_reconciliation.py
-- [ ] T082 [US6] Add ambiguous continuity rematch diagnostics tests where two candidates remain compatible in tests/unit/test_slot_reconciliation.py
-- [ ] T083 [US6] Add restart with persisted Store mapping and UID churn integration scenario in tests/integration/test_refresh_cycle.py
-- [ ] T084 [US6] Add first-upgrade migration does-not-wipe-working-slots integration scenario in tests/integration/test_refresh_cycle.py
-- [ ] T085 [US6] Add two-cycle transient miss tolerance and third-miss clearable integration scenario in tests/integration/test_refresh_cycle.py
-- [ ] T086 [US6] Add reappearing-before-third-miss resets missing_count and retains mapping integration scenario in tests/integration/test_refresh_cycle.py
+- [x] T078 [P] [US6] Add exact stable-fingerprint restart mapping preservation tests in tests/unit/test_event_overrides.py
+- [x] T079 [P] [US6] Add UID-changed but stable name/start/end mapping retention tests in tests/unit/test_slot_reconciliation.py
+- [x] T080 [US6] Add UID-match date-shift mapping update and should-update-code interaction tests in tests/unit/test_slot_reconciliation.py
+- [x] T081 [US6] Add conservative continuity rematch tests for fingerprint history, booking aliases, normalized name, non-overlap ordering, and actual-slot continuity in tests/unit/test_slot_reconciliation.py
+- [x] T082 [US6] Add ambiguous continuity rematch diagnostics tests where two candidates remain compatible in tests/unit/test_slot_reconciliation.py
+- [x] T083 [US6] Add restart with persisted Store mapping and UID churn integration scenario in tests/integration/test_refresh_cycle.py
+- [x] T084 [US6] Add first-upgrade migration does-not-wipe-working-slots integration scenario in tests/integration/test_refresh_cycle.py
+- [x] T085 [US6] Add two-cycle transient miss tolerance and third-miss clearable integration scenario in tests/integration/test_refresh_cycle.py
+- [x] T086 [US6] Add reappearing-before-third-miss resets missing_count and retains mapping integration scenario in tests/integration/test_refresh_cycle.py
 
 ### Implementation for User Story 6
 
-- [ ] T087 [US6] Rehydrate persisted mappings, identity aliases, missing_count, pending fences, and last observed actual state during coordinator setup in custom_components/rental_control/coordinator.py
-- [ ] T088 [US6] Update persisted mappings after identity alias changes, date shifts, continuity rematches, set confirmations, clear confirmations, and overflow decisions in custom_components/rental_control/coordinator.py
-- [ ] T089 [US6] Implement feed-miss lifecycle retaining assigned reservations through missing_count 1 and 2 then making them clearable on missing_count 3 in custom_components/rental_control/reconciliation.py
-- [ ] T090 [US6] Run US6 validation for tests/unit/test_slot_reconciliation.py, tests/unit/test_event_overrides.py, tests/unit/test_coordinator.py, and tests/integration/test_refresh_cycle.py
+- [x] T087 [US6] Rehydrate persisted mappings, identity aliases, missing_count, pending fences, and last observed actual state during coordinator setup in custom_components/rental_control/coordinator.py
+- [x] T088 [US6] Update persisted mappings after identity alias changes, date shifts, continuity rematches, set confirmations, clear confirmations, and overflow decisions in custom_components/rental_control/coordinator.py
+- [x] T089 [US6] Implement feed-miss lifecycle retaining assigned reservations through missing_count 1 and 2 then making them clearable on missing_count 3 in custom_components/rental_control/reconciliation.py
+- [x] T090 [US6] Run US6 validation for tests/unit/test_slot_reconciliation.py, tests/unit/test_event_overrides.py, tests/unit/test_coordinator.py, and tests/integration/test_refresh_cycle.py
 
 **Checkpoint**: US6 independently proves SC-008 and SC-009, including first-upgrade
 migration safety and booking-platform identity churn.
@@ -297,17 +297,17 @@ diagnose without log correlation.
 
 ### Tests for User Story 7
 
-- [ ] T091 [P] [US7] Add diagnostics snapshot tests for matched slots, pending corrections, blocked clear reasons, retry count, and last error in tests/unit/test_event_overrides.py
-- [ ] T092 [P] [US7] Add per-reservation diagnostics tests for selected, protected, overflow, missing_count, assigned slot, and identity aliases in tests/unit/test_slot_reconciliation.py
-- [ ] T093 [US7] Add diagnostics desired-vs-actual completeness integration scenario with matched slot, overflow reservation, manual drift, and pending clear in tests/integration/test_refresh_cycle.py
-- [ ] T094 [P] [US7] Add existing diagnostics redaction compatibility tests for slot codes and reservation metadata in tests/unit/test_keymaster_event_diagnostics.py
+- [x] T091 [P] [US7] Add diagnostics snapshot tests for matched slots, pending corrections, blocked clear reasons, retry count, and last error in tests/unit/test_event_overrides.py
+- [x] T092 [P] [US7] Add per-reservation diagnostics tests for selected, protected, overflow, missing_count, assigned slot, and identity aliases in tests/unit/test_slot_reconciliation.py
+- [x] T093 [US7] Add diagnostics desired-vs-actual completeness integration scenario with matched slot, overflow reservation, manual drift, and pending clear in tests/integration/test_refresh_cycle.py
+- [x] T094 [P] [US7] Add existing diagnostics redaction compatibility tests for slot codes and reservation metadata in tests/unit/test_keymaster_event_diagnostics.py
 
 ### Implementation for User Story 7
 
-- [ ] T095 [US7] Build per-refresh DesiredPlan diagnostics snapshots with plan_id, timestamps, desired state, actual classification, pending action, blocked reason, and overflow details in custom_components/rental_control/reconciliation.py
-- [ ] T096 [US7] Store and expose the latest diagnostics snapshot from EventOverrides for Home Assistant diagnostics collection in custom_components/rental_control/event_overrides.py
-- [ ] T097 [US7] Wire coordinator diagnostics access to the latest reconciliation snapshot without exposing raw PIN values in custom_components/rental_control/coordinator.py
-- [ ] T098 [US7] Run US7 validation for tests/unit/test_event_overrides.py, tests/unit/test_slot_reconciliation.py, tests/unit/test_keymaster_event_diagnostics.py, and tests/integration/test_refresh_cycle.py
+- [x] T095 [US7] Build per-refresh DesiredPlan diagnostics snapshots with plan_id, timestamps, desired state, actual classification, pending action, blocked reason, and overflow details in custom_components/rental_control/reconciliation.py
+- [x] T096 [US7] Store and expose the latest diagnostics snapshot from EventOverrides for Home Assistant diagnostics collection in custom_components/rental_control/event_overrides.py
+- [x] T097 [US7] Wire coordinator diagnostics access to the latest reconciliation snapshot without exposing raw PIN values in custom_components/rental_control/coordinator.py
+- [x] T098 [US7] Run US7 validation for tests/unit/test_event_overrides.py, tests/unit/test_slot_reconciliation.py, tests/unit/test_keymaster_event_diagnostics.py, and tests/integration/test_refresh_cycle.py
 
 **Checkpoint**: US7 independently proves SC-010 and diagnostics support for
 SC-006 and FR-017.
@@ -325,24 +325,24 @@ read-only views of coordinator reconciliation state.
 
 ### Tests for User Story 8
 
-- [ ] T099 [P] [US8] Add sensor read-only tests proving RentalControlCalSensor no longer calls async_reserve_or_get_slot(), async_fire_set_code(), async_fire_clear_code(), or async_fire_update_times() in tests/unit/test_sensors.py
-- [ ] T100 [US8] Add event_N attribute regression tests for slot_number, slot_code, summary, start, end, ETA, UID, slot name, and no-reservation state in tests/unit/test_sensors.py
-- [ ] T101 [P] [US8] Add slot-name trimming and prefix preservation regression tests for Keymaster display names in tests/unit/test_event_overrides.py
-- [ ] T102 [P] [US8] Add lock-code before-buffer and after-buffer regression tests in tests/unit/test_util.py
-- [ ] T103 [P] [US8] Add honor-PMS-times regression tests for timed events, description times, override fallback, and configured defaults in tests/unit/test_coordinator.py
-- [ ] T104 [US8] Add date-based code regeneration and should_update_code regression tests for date shifts, stable codes, regenerated codes, and update_times-only paths in tests/unit/test_sensors.py
-- [ ] T105 [P] [US8] Add check-in tracking state machine regression tests for assigned reservation changes and preserved checkout behavior in tests/unit/test_checkin_sensor.py
-- [ ] T106 [US8] Add end-to-end preserved semantics scenario covering slot names, buffers, honor-PMS-times, code regeneration, and check-in tracking in tests/integration/test_refresh_cycle.py
+- [x] T099 [P] [US8] Add sensor read-only tests proving RentalControlCalSensor no longer calls async_reserve_or_get_slot(), async_fire_set_code(), async_fire_clear_code(), or async_fire_update_times() in tests/unit/test_sensors.py
+- [x] T100 [US8] Add event_N attribute regression tests for slot_number, slot_code, summary, start, end, ETA, UID, slot name, and no-reservation state in tests/unit/test_sensors.py
+- [x] T101 [P] [US8] Add slot-name trimming and prefix preservation regression tests for Keymaster display names in tests/unit/test_event_overrides.py
+- [x] T102 [P] [US8] Add lock-code before-buffer and after-buffer regression tests in tests/unit/test_util.py
+- [x] T103 [P] [US8] Add honor-PMS-times regression tests for timed events, description times, override fallback, and configured defaults in tests/unit/test_coordinator.py
+- [x] T104 [US8] Add date-based code regeneration and should_update_code regression tests for date shifts, stable codes, regenerated codes, and update_times-only paths in tests/unit/test_sensors.py
+- [x] T105 [P] [US8] Add check-in tracking state machine regression tests for assigned reservation changes and preserved checkout behavior in tests/unit/test_checkin_sensor.py
+- [x] T106 [US8] Add end-to-end preserved semantics scenario covering slot names, buffers, honor-PMS-times, code regeneration, and check-in tracking in tests/integration/test_refresh_cycle.py
 
 ### Implementation for User Story 8
 
-- [ ] T107 [US8] Convert RentalControlCalSensor._handle_coordinator_update() to read slot_number and slot_code from coordinator reconciliation state only in custom_components/rental_control/sensors/calsensor.py
-- [ ] T108 [US8] Remove slot mutation side effects from RentalControlCalSensor._async_handle_slot_assignment() while preserving existing public attributes in custom_components/rental_control/sensors/calsensor.py
-- [ ] T109 [US8] Keep sensor platform setup and entity naming unchanged while routing event_N sensors to reconciliation state in custom_components/rental_control/sensor.py
-- [ ] T110 [US8] Preserve slot-name trimming, prefix handling, and legacy EventOverrides read APIs for backward-compatible sensor reads in custom_components/rental_control/event_overrides.py
-- [ ] T111 [US8] Preserve lock-code buffer, date range, PMS time, and code regeneration semantics in custom_components/rental_control/util.py
-- [ ] T112 [US8] Preserve check-in tracking transitions and checkout behavior while using reconciliation assignments for active protection in custom_components/rental_control/sensors/checkinsensor.py
-- [ ] T113 [US8] Run US8 validation for tests/unit/test_sensors.py, tests/unit/test_event_overrides.py, tests/unit/test_util.py, tests/unit/test_coordinator.py, tests/unit/test_checkin_sensor.py, and tests/integration/test_refresh_cycle.py
+- [x] T107 [US8] Convert RentalControlCalSensor._handle_coordinator_update() to read slot_number and slot_code from coordinator reconciliation state only in custom_components/rental_control/sensors/calsensor.py
+- [x] T108 [US8] Remove slot mutation side effects from RentalControlCalSensor._async_handle_slot_assignment() while preserving existing public attributes in custom_components/rental_control/sensors/calsensor.py
+- [x] T109 [US8] Keep sensor platform setup and entity naming unchanged while routing event_N sensors to reconciliation state in custom_components/rental_control/sensor.py
+- [x] T110 [US8] Preserve slot-name trimming, prefix handling, and legacy EventOverrides read APIs for backward-compatible sensor reads in custom_components/rental_control/event_overrides.py
+- [x] T111 [US8] Preserve lock-code buffer, date range, PMS time, and code regeneration semantics in custom_components/rental_control/util.py
+- [x] T112 [US8] Preserve check-in tracking transitions and checkout behavior while using reconciliation assignments for active protection in custom_components/rental_control/sensors/checkinsensor.py
+- [x] T113 [US8] Run US8 validation for tests/unit/test_sensors.py, tests/unit/test_event_overrides.py, tests/unit/test_util.py, tests/unit/test_coordinator.py, tests/unit/test_checkin_sensor.py, and tests/integration/test_refresh_cycle.py
 
 **Checkpoint**: US8 independently proves SC-011 and completes the event sensor
 read-only transition required by the redesign.
@@ -354,16 +354,16 @@ read-only transition required by the redesign.
 **Purpose**: Retire superseded paths, validate full behavior, and prepare the
 implementation PR without mixing code and task-list completion commits.
 
-- [ ] T114 Remove or retire EventOverrides._next_slot, async_reserve_or_get_slot() authoritative behavior, and async_check_overrides() cleanup policy after replacements are covered in custom_components/rental_control/event_overrides.py
-- [ ] T115 Remove obsolete per-event slot assignment scheduling and mutation fallback code from RentalControlCalSensor in custom_components/rental_control/sensors/calsensor.py
-- [ ] T116 Confirm backward-compatible helper APIs used by sensors, diagnostics, and tests still exist or have migration shims in custom_components/rental_control/event_overrides.py
-- [ ] T117 Run targeted feature tests from specs/012-slot-reconciliation/quickstart.md for tests/unit/test_slot_reconciliation.py, tests/unit/test_event_overrides.py, tests/unit/test_util.py, tests/integration/test_refresh_cycle.py, and tests/integration/test_slot_concurrency.py
-- [ ] T118 Run full test suite with coverage using `uv run pytest tests/ -x -q` for tests/
-- [ ] T119 Run ruff validation with `uv run ruff check custom_components/ tests/` for custom_components/rental_control/ and tests/
-- [ ] T120 Run mypy and interrogate through `uv run pre-commit run mypy interrogate --all-files` for custom_components/rental_control/ and tests/
-- [ ] T121 Run full pre-commit validation including reuse, yamllint, actionlint, aislop, gitlint, ruff, ruff-format, mypy, and interrogate for custom_components/rental_control/, tests/, and specs/012-slot-reconciliation/tasks.md
-- [ ] T122 Validate manual quickstart scenarios for overflow, active protection, manual drift, clear failure, restart, and UID churn against specs/012-slot-reconciliation/quickstart.md
-- [ ] T123 Commit only implementation code and tests in the atomic sequence below, then commit tasks.md status updates separately in specs/012-slot-reconciliation/tasks.md
+- [x] T114 Remove or retire EventOverrides._next_slot, async_reserve_or_get_slot() authoritative behavior, and async_check_overrides() cleanup policy after replacements are covered in custom_components/rental_control/event_overrides.py
+- [x] T115 Remove obsolete per-event slot assignment scheduling and mutation fallback code from RentalControlCalSensor in custom_components/rental_control/sensors/calsensor.py
+- [x] T116 Confirm backward-compatible helper APIs used by sensors, diagnostics, and tests still exist or have migration shims in custom_components/rental_control/event_overrides.py
+- [x] T117 Run targeted feature tests from specs/012-slot-reconciliation/quickstart.md for tests/unit/test_slot_reconciliation.py, tests/unit/test_event_overrides.py, tests/unit/test_util.py, tests/integration/test_refresh_cycle.py, and tests/integration/test_slot_concurrency.py
+- [x] T118 Run full test suite with coverage using `uv run pytest tests/ -x -q` for tests/
+- [x] T119 Run ruff validation with `uv run ruff check custom_components/ tests/` for custom_components/rental_control/ and tests/
+- [x] T120 Run mypy and interrogate through `uv run pre-commit run mypy interrogate --all-files` for custom_components/rental_control/ and tests/
+- [x] T121 Run full pre-commit validation including reuse, yamllint, actionlint, aislop, gitlint, ruff, ruff-format, mypy, and interrogate for custom_components/rental_control/, tests/, and specs/012-slot-reconciliation/tasks.md
+- [x] T122 Validate manual quickstart scenarios for overflow, active protection, manual drift, clear failure, restart, and UID churn against specs/012-slot-reconciliation/quickstart.md
+- [x] T123 Commit only implementation code and tests in the atomic sequence below, then commit tasks.md status updates separately in specs/012-slot-reconciliation/tasks.md
 
 ---
 

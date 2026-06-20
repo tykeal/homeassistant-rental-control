@@ -18,12 +18,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
 from datetime import tzinfo
 import hashlib
+import inspect
 import logging
 from pathlib import Path
 import re
@@ -57,6 +59,27 @@ from .const import EARLY_CHECKOUT_GRACE_MINUTES
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class OperationResult:
+    """Result of a physical Keymaster slot service operation.
+
+    Returned by ``async_fire_clear_code()``, ``async_fire_set_code()``,
+    and ``async_fire_update_times()``. Successful helper paths set one
+    of ``confirmed``, ``unconfirmed``, or ``failed`` to ``True``.
+    ``lingering_name`` and ``lingering_pin`` are supplementary flags for
+    clear operations. Raw PIN values are never stored.
+    """
+
+    kind: str
+    slot: int
+    confirmed: bool = False
+    unconfirmed: bool = False
+    failed: bool = False
+    lingering_name: bool = False
+    lingering_pin: bool = False
+    error: str | None = None
 
 
 def get_entry_data(hass: HomeAssistant, entry_id: str) -> dict[str, Any] | None:
@@ -172,7 +195,7 @@ def delete_folder(absolute_path: str | Path, *relative_paths: str) -> None:
 
 async def async_fire_clear_code(
     coordinator, slot: int, expected_name: str | None = None
-) -> None:
+) -> OperationResult:
     """Fire a clear_code signal."""
     _LOGGER.debug(
         "In async_fire_clear_code - slot: %s, name: %s", slot, coordinator.name
@@ -181,7 +204,7 @@ async def async_fire_clear_code(
     reset_entity = f"{BUTTON}.{coordinator.lockname}_code_slot_{slot}_reset"
 
     if not coordinator.lockname:
-        return
+        return OperationResult(kind="clear", slot=slot, unconfirmed=True)
 
     if (
         expected_name is not None
@@ -192,7 +215,7 @@ async def async_fire_clear_code(
             slot,
             expected_name,
         )
-        return
+        return OperationResult(kind="clear", slot=slot, unconfirmed=True)
 
     try:
         # Reset the slot
@@ -202,7 +225,9 @@ async def async_fire_clear_code(
             target={"entity_id": reset_entity},
             blocking=True,
         )
-    except Exception:
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
         escalated = coordinator.event_overrides.record_retry_failure(slot)
         if escalated:
             pn_create(
@@ -212,19 +237,26 @@ async def async_fire_clear_code(
                 title="Rental Control: Lock Command Failure",
                 notification_id=f"rental_control_slot_{slot}_clear_failure",
             )
-        raise
+        return OperationResult(
+            kind="clear",
+            slot=slot,
+            failed=True,
+            error=str(exc),
+        )
 
     # Give Keymaster time to propagate the state change
     await asyncio.sleep(0.5)
 
-    # Verify the slot name was actually cleared
+    unconfirmed = False
+    lingering_name = False
+    lingering_pin = False
     name_entity = f"{TEXT}.{coordinator.lockname}_code_slot_{slot}_name"
+    pin_entity = f"{TEXT}.{coordinator.lockname}_code_slot_{slot}_pin"
+
     name_state = hass.states.get(name_entity)
-    if name_state is not None and name_state.state not in (
-        "",
-        "unknown",
-        "unavailable",
-    ):
+    if name_state is None:
+        unconfirmed = True
+    elif name_state.state not in ("", "unknown", "unavailable"):
         _LOGGER.warning(
             "Slot %d name '%s' persisted after reset; "
             "forcing name clear via text.set_value",
@@ -239,11 +271,35 @@ async def async_fire_clear_code(
                 service_data={"value": ""},
                 blocking=True,
             )
+        except asyncio.CancelledError:
+            raise
         except Exception:
             _LOGGER.exception(
                 "Failed to force-clear name for slot %d",
                 slot,
             )
+        name_state = hass.states.get(name_entity)
+        if name_state is None:
+            unconfirmed = True
+        elif name_state.state not in ("", "unknown", "unavailable"):
+            lingering_name = True
+
+    pin_state = hass.states.get(pin_entity)
+    if pin_state is None:
+        unconfirmed = True
+    elif pin_state.state not in ("", "unknown", "unavailable"):
+        lingering_pin = True
+
+    if lingering_name or lingering_pin:
+        return OperationResult(
+            kind="clear",
+            slot=slot,
+            unconfirmed=True,
+            lingering_name=lingering_name,
+            lingering_pin=lingering_pin,
+        )
+    if unconfirmed:
+        return OperationResult(kind="clear", slot=slot, unconfirmed=True)
 
     was_escalated = coordinator.event_overrides._escalated.get(slot, False)
     coordinator.event_overrides.record_retry_success(slot)
@@ -252,6 +308,7 @@ async def async_fire_clear_code(
             hass,
             notification_id=f"rental_control_slot_{slot}_clear_failure",
         )
+    return OperationResult(kind="clear", slot=slot, confirmed=True)
 
 
 def trim_name(name: str, max_length: int) -> str:
@@ -321,7 +378,7 @@ def apply_buffer(
     return dt_start, dt_end
 
 
-async def async_fire_set_code(coordinator, event, slot: int) -> None:
+async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
     """Set codes into a slot."""
     _LOGGER.debug("In async_fire_set_code - slot: %s", slot)
     _LOGGER.debug("Event: %s", event)
@@ -331,7 +388,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
     coro: list[Coroutine] = []
 
     if not lockname:
-        return
+        return OperationResult(kind="set", slot=slot, unconfirmed=True)
 
     if coordinator.event_prefix:
         prefix = f"{coordinator.event_prefix} "
@@ -352,7 +409,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
             slot,
             expected_name,
         )
-        return
+        return OperationResult(kind="set", slot=slot, unconfirmed=True)
 
     try:
         # Disable the slot, this should help avoid notices from Keymaster
@@ -447,7 +504,9 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
         results = await asyncio.gather(*coro, return_exceptions=True)
         check_gather_results(results, "Lock slot operation")
         _raise_first_gather_exception(results)
-    except Exception:
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
         escalated = coordinator.event_overrides.record_retry_failure(slot)
         if escalated:
             pn_create(
@@ -457,18 +516,35 @@ async def async_fire_set_code(coordinator, event, slot: int) -> None:
                 title="Rental Control: Lock Command Failure",
                 notification_id=f"rental_control_slot_{slot}_failure",
             )
-        raise
-
-    was_escalated = coordinator.event_overrides._escalated.get(slot, False)
-    coordinator.event_overrides.record_retry_success(slot)
-    if was_escalated:
-        pn_dismiss(
-            coordinator.hass,
-            notification_id=f"rental_control_slot_{slot}_failure",
+        return OperationResult(
+            kind="set",
+            slot=slot,
+            failed=True,
+            error=str(exc),
         )
 
+    name_entity = f"{TEXT}.{lockname}_code_slot_{slot}_name"
+    block_till_done = getattr(coordinator.hass, "async_block_till_done", None)
+    if block_till_done is not None:
+        done_result = block_till_done()
+        if inspect.isawaitable(done_result):
+            await done_result
+    name_state = coordinator.hass.states.get(name_entity)
+    if name_state is None:
+        return OperationResult(kind="set", slot=slot, unconfirmed=True)
+    if name_state.state == slot_name:
+        was_escalated = coordinator.event_overrides._escalated.get(slot, False)
+        coordinator.event_overrides.record_retry_success(slot)
+        if was_escalated:
+            pn_dismiss(
+                coordinator.hass,
+                notification_id=f"rental_control_slot_{slot}_failure",
+            )
+        return OperationResult(kind="set", slot=slot, confirmed=True)
+    return OperationResult(kind="set", slot=slot, unconfirmed=True)
 
-async def async_fire_update_times(coordinator, event, slot: int) -> None:
+
+async def async_fire_update_times(coordinator, event, slot: int) -> OperationResult:
     """Update times on slot."""
 
     lockname: str = coordinator.lockname
@@ -476,7 +552,7 @@ async def async_fire_update_times(coordinator, event, slot: int) -> None:
     slot_name: str = event.extra_state_attributes["slot_name"]
 
     if not slot or not lockname:
-        return
+        return OperationResult(kind="update_times", slot=slot, unconfirmed=True)
 
     if not coordinator.event_overrides.verify_slot_ownership(slot, slot_name):
         _LOGGER.warning(
@@ -484,7 +560,7 @@ async def async_fire_update_times(coordinator, event, slot: int) -> None:
             slot,
             slot_name,
         )
-        return
+        return OperationResult(kind="update_times", slot=slot, unconfirmed=True)
 
     # Compute buffered validity window for Keymaster
     buffered_start, buffered_end = apply_buffer(
@@ -514,6 +590,18 @@ async def async_fire_update_times(coordinator, event, slot: int) -> None:
     )
     results = await asyncio.gather(*coro, return_exceptions=True)
     check_gather_results(results, "Lock slot operation")
+    try:
+        _raise_first_gather_exception(results)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        return OperationResult(
+            kind="update_times",
+            slot=slot,
+            failed=True,
+            error=str(exc),
+        )
+    return OperationResult(kind="update_times", slot=slot, confirmed=True)
 
 
 def _ensure_datetime(value: date | datetime, rc) -> datetime:
@@ -813,8 +901,8 @@ async def handle_state_change(
         start_time,
         end_time,
     )
-
-    await coordinator.event_overrides.async_check_overrides(coordinator)
+    # Reconciliation runs exclusively from coordinator apply_plan (R-007);
+    # callbacks must not launch reconciliation.
 
 
 async def async_reload_package_platforms(hass: HomeAssistant) -> bool:

@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timezone
 import random
-from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import call
 from unittest.mock import patch
@@ -20,7 +19,6 @@ from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import ICON
 from custom_components.rental_control.const import NAME
-from custom_components.rental_control.event_overrides import ReserveResult
 from custom_components.rental_control.sensor import async_setup_entry
 from custom_components.rental_control.sensor import async_setup_platform
 from custom_components.rental_control.sensors.calsensor import RentalControlCalSensor
@@ -57,6 +55,7 @@ def _make_coordinator(
     *,
     name: str = "Test Rental",
     unique_id: str = "test_unique_id",
+    entry_id: str = "test_entry_id",
     last_update_success: bool = True,
     data: list | None = None,
     event_prefix: str = "",
@@ -64,11 +63,14 @@ def _make_coordinator(
     code_length: int = 4,
     event_overrides: MagicMock | None = None,
     should_update_code: bool = True,
+    slot_assignment: int | None = None,
+    slot_code: str | None = None,
 ) -> MagicMock:
     """Create a mock coordinator for sensor testing."""
     coordinator = MagicMock()
     coordinator.name = name
     coordinator.unique_id = unique_id
+    coordinator.entry_id = entry_id
     coordinator.last_update_success = last_update_success
     coordinator.data = data
     coordinator.event_prefix = event_prefix
@@ -76,6 +78,8 @@ def _make_coordinator(
     coordinator.code_length = code_length
     coordinator.event_overrides = event_overrides
     coordinator.should_update_code = should_update_code
+    coordinator.get_slot_assignment.return_value = slot_assignment
+    coordinator.get_slot_code.return_value = slot_code
     coordinator.device_info = {
         "identifiers": {(DOMAIN, unique_id)},
         "name": f"{NAME} {name}",
@@ -1350,70 +1354,33 @@ class TestHandleCoordinatorUpdateNoEvents:
 
 
 # ---------------------------------------------------------------------------
-# Override interaction tests
+# Override interaction tests — reconciliation read-only path
 # ---------------------------------------------------------------------------
 
 
 class TestHandleCoordinatorUpdateOverrides:
-    """Tests for _handle_coordinator_update interactions with event_overrides."""
+    """Tests for _handle_coordinator_update reading from reconciliation state."""
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_fires_set_code_when_new_reservation(self, hass) -> None:
-        """Verify async_fire_set_code is called when slot is newly reserved."""
+    def test_slot_code_from_reconciliation(self, hass) -> None:
+        """Verify slot_code is read from coordinator reconciliation state."""
         event = _make_event()
-        overrides = MagicMock()
-        overrides.ready = True
-        overrides.get_slot_with_name.return_value = None
-        overrides.async_reserve_or_get_slot = AsyncMock(
-            return_value=ReserveResult(10, True, False)
+        coordinator = _make_coordinator(
+            data=[event],
+            event_overrides=MagicMock(),
+            slot_code="5555",
         )
-        coordinator = _make_coordinator(data=[event], event_overrides=overrides)
-        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
-        sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
-
-        with patch(
-            "custom_components.rental_control.sensors.calsensor.async_fire_set_code",
-            new_callable=AsyncMock,
-        ) as mock_set_code:
-            sensor._handle_coordinator_update()
-            coro = sensor.hass.async_create_task.call_args[0][0]
-            await coro
-            mock_set_code.assert_called_once_with(coordinator, sensor, 10)
-
-    @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_uses_override_slot_code(self, hass) -> None:
-        """Verify slot_code from override is displayed immediately in sync path."""
-        event = _make_event()
-        override = {
-            "slot_code": "5555",
-            "start_time": event.start,
-            "end_time": event.end,
-        }
-        overrides = MagicMock()
-        overrides.ready = True
-        overrides.get_slot_with_name.return_value = override
-        overrides.async_reserve_or_get_slot = AsyncMock(
-            return_value=ReserveResult(10, False, False)
-        )
-        overrides.overrides = {10: override}
-        coordinator = _make_coordinator(data=[event], event_overrides=overrides)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
         sensor.async_write_ha_state = MagicMock()
 
         sensor._handle_coordinator_update()
 
-        # Code is available immediately from the sync read-only lookup
         assert sensor.extra_state_attributes["slot_code"] == "5555"
-
-        # Await the scheduled task to avoid unawaited coroutine warning
-        coro = sensor.hass.async_create_task.call_args[0][0]
-        await coro
 
     @freeze_time("2025-03-10T12:00:00+00:00")
     def test_generates_code_when_no_override(self, hass) -> None:
-        """Verify code is always generated synchronously in coordinator update."""
+        """Verify code is generated when event_overrides is None."""
         event = _make_event()
         coordinator = _make_coordinator(
             data=[event], event_overrides=None, code_generator="date_based"
@@ -1429,23 +1396,14 @@ class TestHandleCoordinatorUpdateOverrides:
         assert attrs["slot_code"].isdigit()
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_generates_code_when_override_has_no_code(self, hass) -> None:
-        """Verify code is generated when override exists but has no slot_code."""
+    def test_falls_back_to_generated_when_no_reconciliation_code(self, hass) -> None:
+        """Verify code is generated when reconciliation has no code for the event."""
         event = _make_event()
-        override = {
-            "slot_code": None,
-            "start_time": event.start,
-            "end_time": event.end,
-        }
-        overrides = MagicMock()
-        overrides.ready = True
-        overrides.get_slot_with_name.return_value = override
-        overrides.async_reserve_or_get_slot = AsyncMock(
-            return_value=ReserveResult(10, False, False)
-        )
-        overrides.overrides = {10: override}
         coordinator = _make_coordinator(
-            data=[event], event_overrides=overrides, code_generator="date_based"
+            data=[event],
+            event_overrides=MagicMock(),
+            code_generator="date_based",
+            slot_code=None,
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
@@ -1453,93 +1411,13 @@ class TestHandleCoordinatorUpdateOverrides:
 
         sensor._handle_coordinator_update()
 
-        # Code is generated since override has no slot_code
         attrs = sensor.extra_state_attributes
         assert attrs["slot_code"] is not None
         assert attrs["slot_code"].isdigit()
 
-        # Await the scheduled task to avoid unawaited coroutine warning
-        coro = sensor.hass.async_create_task.call_args[0][0]
-        await coro
-
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_fires_update_times_when_dates_change(self, hass) -> None:
-        """Verify async_fire_update_times is called when times_updated is True."""
-        event = _make_event(
-            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
-            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
-        )
-        override = {
-            "slot_code": "1234",
-            "start_time": event.start,
-            "end_time": event.end,
-        }
-        overrides = MagicMock()
-        overrides.ready = True
-        overrides.get_slot_with_name.return_value = override
-        overrides.async_reserve_or_get_slot = AsyncMock(
-            return_value=ReserveResult(10, False, True)
-        )
-        overrides.overrides = {10: override}
-        coordinator = _make_coordinator(
-            data=[event],
-            event_overrides=overrides,
-            code_generator="static_random",
-        )
-        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
-        sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
-
-        with patch(
-            "custom_components.rental_control.sensors.calsensor.async_fire_update_times",
-            new_callable=AsyncMock,
-        ) as mock_update_times:
-            sensor._handle_coordinator_update()
-            coro = sensor.hass.async_create_task.call_args[0][0]
-            await coro
-            mock_update_times.assert_called_once_with(coordinator, sensor, 10)
-
-    @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_fires_clear_code_on_date_shift_date_based(self, hass) -> None:
-        """Verify async_fire_clear_code is called on date shift with date_based generator."""
-        event = _make_event(
-            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
-            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
-        )
-        override = {
-            "slot_code": "1234",
-            "start_time": event.start,
-            "end_time": event.end,
-        }
-        overrides = MagicMock()
-        overrides.ready = True
-        overrides.get_slot_with_name.return_value = override
-        overrides.async_reserve_or_get_slot = AsyncMock(
-            return_value=ReserveResult(10, False, True)
-        )
-        overrides.overrides = {10: override}
-        coordinator = _make_coordinator(
-            data=[event],
-            event_overrides=overrides,
-            code_generator="date_based",
-            should_update_code=True,
-        )
-        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
-        sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
-
-        with patch(
-            "custom_components.rental_control.sensors.calsensor.async_fire_clear_code",
-            new_callable=AsyncMock,
-        ) as mock_clear_code:
-            sensor._handle_coordinator_update()
-            coro = sensor.hass.async_create_task.call_args[0][0]
-            await coro
-            mock_clear_code.assert_called_once_with(coordinator, 10)
-
-    @freeze_time("2025-03-10T12:00:00+00:00")
-    def test_no_override_interactions_when_overrides_none(self, hass) -> None:
-        """Verify no set_code/update_times calls when event_overrides is None."""
+    def test_no_reconciliation_lookup_when_overrides_none(self, hass) -> None:
+        """Verify fingerprint/reconciliation lookup is skipped when no lock configured."""
         event = _make_event()
         coordinator = _make_coordinator(data=[event], event_overrides=None)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
@@ -1547,154 +1425,44 @@ class TestHandleCoordinatorUpdateOverrides:
         sensor.async_write_ha_state = MagicMock()
 
         with patch(
-            "custom_components.rental_control.sensors.calsensor.async_fire_set_code",
-            new_callable=AsyncMock,
-        ) as mock_set_code:
+            "custom_components.rental_control.sensors.calsensor.make_reservation_fingerprint",
+        ) as mock_fingerprint:
             sensor._handle_coordinator_update()
-            mock_set_code.assert_not_called()
+            mock_fingerprint.assert_not_called()
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_no_set_code_when_existing_reservation(self, hass) -> None:
-        """Verify set_code is not called when reservation already has a slot."""
+    def test_slot_number_from_reconciliation(self, hass) -> None:
+        """Verify slot_number is read from coordinator reconciliation state."""
         event = _make_event()
-        override = {
-            "slot_code": "1234",
-            "start_time": event.start,
-            "end_time": event.end,
-        }
-        overrides = MagicMock()
-        overrides.ready = True
-        overrides.get_slot_with_name.return_value = override
-        overrides.async_reserve_or_get_slot = AsyncMock(
-            return_value=ReserveResult(10, False, False)
-        )
-        overrides.overrides = {10: override}
-        coordinator = _make_coordinator(data=[event], event_overrides=overrides)
-        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
-        sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
-
-        with patch(
-            "custom_components.rental_control.sensors.calsensor.async_fire_set_code",
-            new_callable=AsyncMock,
-        ) as mock_set_code:
-            sensor._handle_coordinator_update()
-            coro = sensor.hass.async_create_task.call_args[0][0]
-            await coro
-            mock_set_code.assert_not_called()
-
-    @freeze_time("2025-03-15T12:00:00+00:00")
-    async def test_updates_times_not_clear_when_eta_days_zero(self, hass) -> None:
-        """Verify update_times (not clear_code) is called when eta_days is 0.
-
-        When event starts today (eta_days=0), the clear_code branch requires
-        eta_days > 0. With eta_days=0 the condition is false, so update_times
-        is called instead.
-        """
-        event = _make_event(
-            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
-            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
-        )
-        override = {
-            "slot_code": "1234",
-            "start_time": event.start,
-            "end_time": event.end,
-        }
-        overrides = MagicMock()
-        overrides.ready = True
-        overrides.get_slot_with_name.return_value = override
-        overrides.async_reserve_or_get_slot = AsyncMock(
-            return_value=ReserveResult(10, False, True)
-        )
-        overrides.overrides = {10: override}
         coordinator = _make_coordinator(
             data=[event],
-            event_overrides=overrides,
-            code_generator="date_based",
-            should_update_code=True,
+            event_overrides=MagicMock(),
+            slot_assignment=12,
         )
-        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
-        sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
-
-        with (
-            patch(
-                "custom_components.rental_control.sensors.calsensor.async_fire_clear_code",
-                new_callable=AsyncMock,
-            ) as mock_clear_code,
-            patch(
-                "custom_components.rental_control.sensors.calsensor.async_fire_update_times",
-                new_callable=AsyncMock,
-            ) as mock_update_times,
-        ):
-            sensor._handle_coordinator_update()
-            coro = sensor.hass.async_create_task.call_args[0][0]
-            await coro
-            mock_clear_code.assert_not_called()
-            mock_update_times.assert_called_once_with(coordinator, sensor, 10)
-
-    @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_slot_number_set_on_assignment(self, hass) -> None:
-        """Verify slot_number is exposed after slot assignment."""
-        event = _make_event()
-        override = {
-            "slot_code": "4321",
-            "start_time": event.start,
-            "end_time": event.end,
-        }
-        overrides = MagicMock()
-        overrides.ready = True
-        overrides.get_slot_with_name.return_value = override
-        overrides.get_slot_key_by_name.return_value = 12
-        overrides.async_reserve_or_get_slot = AsyncMock(
-            return_value=ReserveResult(12, False, False)
-        )
-        overrides.overrides = {12: override}
-        coordinator = _make_coordinator(data=[event], event_overrides=overrides)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
         sensor.async_write_ha_state = MagicMock()
 
         sensor._handle_coordinator_update()
 
-        # Sync path sets slot_number from read-only lookup
-        assert sensor.extra_state_attributes["slot_number"] == 12
-
-        # Async path also sets slot_number from result.slot
-        coro = sensor.hass.async_create_task.call_args[0][0]
-        await coro
         assert sensor.extra_state_attributes["slot_number"] == 12
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    async def test_slot_number_set_after_new_assignment(self, hass) -> None:
-        """Verify slot_number is populated after a new slot assignment."""
+    def test_slot_number_none_when_not_assigned(self, hass) -> None:
+        """Verify slot_number is None when reconciliation has no assignment."""
         event = _make_event()
-        overrides = MagicMock()
-        overrides.ready = True
-        overrides.get_slot_with_name.return_value = None
-        overrides.get_slot_key_by_name.return_value = 0
-        overrides.async_reserve_or_get_slot = AsyncMock(
-            return_value=ReserveResult(10, True, False)
+        coordinator = _make_coordinator(
+            data=[event],
+            event_overrides=MagicMock(),
+            slot_assignment=None,
         )
-        coordinator = _make_coordinator(data=[event], event_overrides=overrides)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
         sensor.async_write_ha_state = MagicMock()
 
-        with patch(
-            "custom_components.rental_control.sensors.calsensor.async_fire_set_code",
-            new_callable=AsyncMock,
-        ):
-            sensor._handle_coordinator_update()
+        sensor._handle_coordinator_update()
 
-            # Sync path: get_slot_key_by_name returned 0, so None
-            assert sensor.extra_state_attributes["slot_number"] is None
-
-            coro = sensor.hass.async_create_task.call_args[0][0]
-            await coro
-
-            # Async path sets slot_number from result.slot
-            assert sensor.extra_state_attributes["slot_number"] == 10
+        assert sensor.extra_state_attributes["slot_number"] is None
 
     def test_slot_number_cleared_when_no_events(self, hass) -> None:
         """Verify slot_number is reset to None when no events."""
@@ -1707,3 +1475,512 @@ class TestHandleCoordinatorUpdateOverrides:
         sensor._handle_coordinator_update()
 
         assert sensor.extra_state_attributes["slot_number"] is None
+
+
+# ---------------------------------------------------------------------------
+# T099: Sensor read-only — prove slot-mutation functions are never called
+# ---------------------------------------------------------------------------
+
+
+class TestSensorReadOnly:
+    """T099: Prove _handle_coordinator_update never calls slot-mutation helpers.
+
+    After the reconciliation transition the sensor is purely read-only.
+    These tests act as regression guards: if any side-effect helper is
+    accidentally re-introduced in _handle_coordinator_update they will fail.
+    """
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_does_not_call_async_reserve_or_get_slot(self, hass) -> None:
+        """Verify async_reserve_or_get_slot is never called during update."""
+        event = _make_event()
+        overrides = MagicMock()
+        overrides.ready = True
+        coordinator = _make_coordinator(data=[event], event_overrides=overrides)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        overrides.async_reserve_or_get_slot.assert_not_called()
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_does_not_call_async_fire_set_code(self, hass) -> None:
+        """Verify async_fire_set_code is never called during coordinator update."""
+        event = _make_event()
+        coordinator = _make_coordinator(
+            data=[event],
+            event_overrides=MagicMock(),
+            slot_assignment=None,
+        )
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        with patch(
+            "custom_components.rental_control.sensors.calsensor.async_fire_set_code",
+            create=True,
+        ) as mock_set_code:
+            sensor._handle_coordinator_update()
+            mock_set_code.assert_not_called()
+        # No async task should be scheduled either
+        sensor.hass.async_create_task.assert_not_called()
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_does_not_call_async_fire_clear_code(self, hass) -> None:
+        """Verify async_fire_clear_code is never called during coordinator update."""
+        event = _make_event()
+        coordinator = _make_coordinator(
+            data=[event],
+            event_overrides=MagicMock(),
+            slot_assignment=5,
+        )
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        with patch(
+            "custom_components.rental_control.sensors.calsensor.async_fire_clear_code",
+            create=True,
+        ) as mock_clear_code:
+            sensor._handle_coordinator_update()
+            mock_clear_code.assert_not_called()
+        sensor.hass.async_create_task.assert_not_called()
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_does_not_call_async_fire_update_times(self, hass) -> None:
+        """Verify async_fire_update_times is never called during coordinator update."""
+        event = _make_event()
+        coordinator = _make_coordinator(
+            data=[event],
+            event_overrides=MagicMock(),
+            slot_assignment=5,
+        )
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        with patch(
+            "custom_components.rental_control.sensors.calsensor.async_fire_update_times",
+            create=True,
+        ) as mock_update_times:
+            sensor._handle_coordinator_update()
+            mock_update_times.assert_not_called()
+        sensor.hass.async_create_task.assert_not_called()
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_no_async_task_scheduled(self, hass) -> None:
+        """Verify _handle_coordinator_update never schedules an async task."""
+        event = _make_event()
+        overrides = MagicMock()
+        overrides.ready = True
+        coordinator = _make_coordinator(
+            data=[event],
+            event_overrides=overrides,
+            slot_assignment=7,
+            slot_code="1234",
+        )
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        sensor.hass.async_create_task.assert_not_called()
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_no_async_task_when_overrides_none(self, hass) -> None:
+        """Verify no async task is scheduled even when event_overrides is None."""
+        event = _make_event()
+        coordinator = _make_coordinator(data=[event], event_overrides=None)
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        sensor.hass.async_create_task.assert_not_called()
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    async def test_async_handle_slot_assignment_is_noop(self, hass) -> None:
+        """Verify _async_handle_slot_assignment is a harmless no-op."""
+        coordinator = _make_coordinator(data=[], event_overrides=MagicMock())
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+
+        await sensor._async_handle_slot_assignment(
+            slot_name="test",
+            slot_code="1234",
+            start_time=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+            uid=None,
+            prefix="",
+            eta_days=5,
+        )
+        coordinator.event_overrides.async_reserve_or_get_slot.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# T100: event_N attribute regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestEventNAttributeRegression:
+    """T100: Regression tests for all public event_N sensor attributes.
+
+    Ensures slot_number, slot_code, summary, start, end, ETA, UID,
+    slot_name, and no-reservation state are correctly populated after the
+    read-only reconciliation transition.
+    """
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_summary_attribute(self, hass) -> None:
+        """Verify summary attribute is populated from the event."""
+        event = _make_event(summary="Reserved - Jane Smith")
+        coordinator = _make_coordinator(data=[event])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        assert sensor.extra_state_attributes["summary"] == "Reserved - Jane Smith"
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_start_and_end_attributes(self, hass) -> None:
+        """Verify start and end attributes are populated from the event."""
+        start = datetime(2025, 4, 1, 15, 0, tzinfo=timezone.utc)
+        end = datetime(2025, 4, 7, 11, 0, tzinfo=timezone.utc)
+        event = _make_event(start=start, end=end)
+        coordinator = _make_coordinator(data=[event])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["start"] == start
+        assert attrs["end"] == end
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_eta_attributes_populated(self, hass) -> None:
+        """Verify eta_days, eta_hours, and eta_minutes are populated for future events."""
+        start = datetime(2025, 3, 15, 12, 0, tzinfo=timezone.utc)  # 5 days ahead
+        end = datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc)
+        event = _make_event(start=start, end=end)
+        coordinator = _make_coordinator(data=[event])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["eta_days"] == 5
+        assert attrs["eta_hours"] is not None
+        assert attrs["eta_minutes"] is not None
+
+    @freeze_time("2025-03-20T12:00:00+00:00")
+    def test_eta_attributes_none_for_past_events(self, hass) -> None:
+        """Verify ETA attributes are None for past events."""
+        start = datetime(2025, 3, 15, 12, 0, tzinfo=timezone.utc)
+        end = datetime(2025, 3, 18, 11, 0, tzinfo=timezone.utc)
+        event = _make_event(start=start, end=end)
+        coordinator = _make_coordinator(data=[event])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["eta_days"] is None
+        assert attrs["eta_hours"] is None
+        assert attrs["eta_minutes"] is None
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_uid_attribute(self, hass) -> None:
+        """Verify uid attribute is populated from the event."""
+        event = _make_event(uid="test-reservation-uid-42")
+        coordinator = _make_coordinator(data=[event])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        assert sensor.extra_state_attributes["uid"] == "test-reservation-uid-42"
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_uid_none_when_event_has_no_uid(self, hass) -> None:
+        """Verify uid attribute is None when the event has no UID."""
+        event = _make_event(uid=None)
+        coordinator = _make_coordinator(data=[event])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        assert sensor.extra_state_attributes["uid"] is None
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_slot_name_attribute(self, hass) -> None:
+        """Verify slot_name attribute is populated via get_slot_name."""
+        event = _make_event(summary="Reserved - Alice Wonder")
+        coordinator = _make_coordinator(data=[event])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        with patch(
+            "custom_components.rental_control.sensors.calsensor.get_slot_name",
+            return_value="Alice Wonder",
+        ):
+            sensor._handle_coordinator_update()
+
+        assert sensor.extra_state_attributes["slot_name"] == "Alice Wonder"
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_slot_number_from_reconciliation_state(self, hass) -> None:
+        """Verify slot_number is read synchronously from reconciliation state."""
+        event = _make_event()
+        coordinator = _make_coordinator(
+            data=[event],
+            event_overrides=MagicMock(),
+            slot_assignment=9,
+        )
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        # slot_number is set synchronously — no async task needed
+        assert sensor.extra_state_attributes["slot_number"] == 9
+        sensor.hass.async_create_task.assert_not_called()
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_slot_code_from_reconciliation_state(self, hass) -> None:
+        """Verify slot_code is read synchronously from reconciliation state."""
+        event = _make_event()
+        coordinator = _make_coordinator(
+            data=[event],
+            event_overrides=MagicMock(),
+            slot_code="9876",
+        )
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        assert sensor.extra_state_attributes["slot_code"] == "9876"
+        sensor.hass.async_create_task.assert_not_called()
+
+    def test_no_reservation_state(self, hass) -> None:
+        """Verify no-reservation state resets all event_N attributes correctly."""
+        coordinator = _make_coordinator(data=[], event_prefix="")
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["summary"] == "No reservation"
+        assert attrs["start"] is None
+        assert attrs["end"] is None
+        assert attrs["uid"] is None
+        assert attrs["eta_days"] is None
+        assert attrs["eta_hours"] is None
+        assert attrs["eta_minutes"] is None
+        assert attrs["slot_name"] is None
+        assert attrs["slot_code"] is None
+        assert attrs["slot_number"] is None
+        assert sensor.state == "No reservation"
+
+    def test_no_reservation_state_with_prefix(self, hass) -> None:
+        """Verify no-reservation state includes event prefix when configured."""
+        coordinator = _make_coordinator(data=[], event_prefix="MyPlace")
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["summary"] == "MyPlace No reservation"
+        assert sensor.state == "MyPlace No reservation"
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_slot_number_cleared_when_no_events(self, hass) -> None:
+        """Verify slot_number is reset to None when event list is empty."""
+        coordinator = _make_coordinator(data=[])
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor._event_attributes["slot_number"] = 7
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        sensor._handle_coordinator_update()
+
+        assert sensor.extra_state_attributes["slot_number"] is None
+
+    @freeze_time("2025-03-10T12:00:00+00:00")
+    def test_identity_key_uses_coordinator_entry_id(self, hass) -> None:
+        """Verify reconciliation lookup uses coordinator.entry_id for fingerprinting."""
+        event = _make_event()
+        overrides = MagicMock()
+        coordinator = _make_coordinator(
+            data=[event],
+            event_overrides=overrides,
+            entry_id="specific-entry-id",
+        )
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = MagicMock()
+
+        with patch(
+            "custom_components.rental_control.sensors.calsensor.make_reservation_fingerprint",
+            return_value="fake-key",
+        ) as mock_fp:
+            sensor._handle_coordinator_update()
+
+        # entry_id is always the first arg to make_reservation_fingerprint
+        args = mock_fp.call_args[0]
+        assert args[0] == "specific-entry-id"
+
+
+class TestCodeRegenerationRegression:
+    """T104 regression: Code generation semantics preserved.
+
+    Pins date-based code shift, static-random stability, and
+    date-based fallback when no description is available.
+    """
+
+    def setup_method(self) -> None:
+        """Save RNG state before each test."""
+        self._rng_state = random.getstate()
+
+    def teardown_method(self) -> None:
+        """Restore RNG state after each test."""
+        random.setstate(self._rng_state)
+
+    @staticmethod
+    def _make_sensor(
+        hass,
+        *,
+        code_generator: str,
+        start: datetime,
+        end: datetime,
+        uid: str | None,
+        description: str | None,
+        event_number: int = 0,
+    ) -> RentalControlCalSensor:
+        """Build a sensor with event attributes primed for code generation."""
+        coordinator = _make_coordinator(
+            code_generator=code_generator,
+            code_length=4,
+        )
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", event_number)
+        sensor._event_attributes["start"] = start
+        sensor._event_attributes["end"] = end
+        sensor._event_attributes["uid"] = uid
+        sensor._event_attributes["description"] = description
+        return sensor
+
+    def test_date_based_code_shifts_when_dates_change(self, hass) -> None:
+        """Date-based codes change when reservation dates shift."""
+        sensor_a = self._make_sensor(
+            hass,
+            code_generator="date_based",
+            start=datetime(2025, 1, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 1, 17, 11, 0, tzinfo=timezone.utc),
+            uid="date-a",
+            description="Reservation A",
+        )
+        sensor_b = self._make_sensor(
+            hass,
+            code_generator="date_based",
+            start=datetime(2025, 1, 16, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 1, 18, 11, 0, tzinfo=timezone.utc),
+            uid="date-b",
+            description="Reservation B",
+            event_number=1,
+        )
+
+        assert sensor_a._generate_door_code() != sensor_b._generate_door_code()
+
+    def test_date_based_code_stable_when_dates_unchanged(self, hass) -> None:
+        """Date-based codes stay stable when dates do not change."""
+        sensor_a = self._make_sensor(
+            hass,
+            code_generator="date_based",
+            start=datetime(2025, 1, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 1, 17, 11, 0, tzinfo=timezone.utc),
+            uid="same-a",
+            description="Reservation A",
+        )
+        sensor_b = self._make_sensor(
+            hass,
+            code_generator="date_based",
+            start=datetime(2025, 1, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 1, 17, 11, 0, tzinfo=timezone.utc),
+            uid="same-b",
+            description="Reservation B",
+            event_number=1,
+        )
+
+        assert sensor_a._generate_door_code() == sensor_b._generate_door_code()
+
+    def test_static_random_code_stable_across_refreshes(self, hass) -> None:
+        """Static-random codes are deterministic for the same UID."""
+        sensor = self._make_sensor(
+            hass,
+            code_generator="static_random",
+            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+            uid="stable-uid",
+            description="Original description",
+        )
+
+        first = sensor._generate_door_code()
+        second = sensor._generate_door_code()
+
+        assert first == second
+
+    def test_static_random_uid_beats_description_for_stability(self, hass) -> None:
+        """UID stability wins even when descriptions change across refreshes."""
+        sensor_a = self._make_sensor(
+            hass,
+            code_generator="static_random",
+            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+            uid="shared-uid",
+            description="Guest: Alice",
+        )
+        sensor_b = self._make_sensor(
+            hass,
+            code_generator="static_random",
+            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+            uid="shared-uid",
+            description="Guest: Alice - updated note",
+            event_number=1,
+        )
+
+        assert sensor_a._generate_door_code() == sensor_b._generate_door_code()
+
+    def test_date_based_fallback_when_description_none(self, hass) -> None:
+        """Missing description and UID force date-based generation."""
+        sensor = self._make_sensor(
+            hass,
+            code_generator="static_random",
+            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+            uid=None,
+            description=None,
+        )
+
+        assert sensor._generate_door_code() == "1520"
