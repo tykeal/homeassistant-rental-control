@@ -291,6 +291,11 @@ Please update Keymaster to at least v0.1.0-b0
         }
 
     @property
+    def entry_id(self) -> str:
+        """Return the config entry ID."""
+        return self._entry_id
+
+    @property
     def unique_id(self) -> str:
         """Return the unique id."""
         return self._unique_id
@@ -324,6 +329,17 @@ Please update Keymaster to at least v0.1.0-b0
         if self._latest_plan is None:
             return None
         return self._latest_plan.selected.get(identity_key)
+
+    def get_slot_code(self, identity_key: str) -> str | None:
+        """Return slot_code for identity_key from latest reconciliation, or None.
+
+        Looks up the reservation by *identity_key* in the most recent
+        reconciliation result.  Returns ``None`` when reconciliation has
+        not run yet, the reservation is not in the plan, or no code was
+        generated for it.
+        """
+        res = self._latest_res_by_key.get(identity_key)
+        return res.slot_code if res is not None else None
 
     def get_overflow_reason(self, identity_key: str) -> str | None:
         """Return overflow reason for identity_key in latest plan, or None."""
