@@ -2791,3 +2791,222 @@ END:VCALENDAR
         assert event.start is not None
         assert event.end is not None
         assert coordinator.should_update_code is True
+
+
+class TestManualOverrideSurvival:
+    """Regression tests for manual Keymaster override survival."""
+
+    async def test_manual_time_and_code_override_survive_reconciliation(
+        self,
+        hass: "HomeAssistant",
+    ) -> None:
+        """Issue #589: manual time-of-day and PIN edits survive reconcile."""
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.util import OperationResult
+        from custom_components.rental_control.util import handle_state_change
+
+        lockname = "front_door"
+        slot = 10
+
+        def _set_keymaster_slot(
+            name: str,
+            pin: str,
+            start: datetime,
+            end: datetime,
+            *,
+            enabled: bool,
+            use_date_range_limits: bool = True,
+        ) -> None:
+            """Populate the Keymaster entities observed by reconciliation."""
+            hass.states.async_set(
+                f"switch.{lockname}_code_slot_{slot}_enabled",
+                "on" if enabled else "off",
+            )
+            hass.states.async_set(
+                f"switch.{lockname}_code_slot_{slot}_use_date_range_limits",
+                "on" if use_date_range_limits else "off",
+            )
+            hass.states.async_set(
+                f"text.{lockname}_code_slot_{slot}_name",
+                name,
+            )
+            hass.states.async_set(
+                f"text.{lockname}_code_slot_{slot}_pin",
+                pin,
+            )
+            hass.states.async_set(
+                f"datetime.{lockname}_code_slot_{slot}_date_range_start",
+                start.isoformat(),
+            )
+            hass.states.async_set(
+                f"datetime.{lockname}_code_slot_{slot}_date_range_end",
+                end.isoformat(),
+            )
+
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            title="Manual Override Rental",
+            version=10,
+            unique_id="manual-override-regression",
+            data={
+                "name": "Manual Override Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": slot,
+                "max_events": 1,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+                "code_generation": "date_based",
+                "should_update_code": True,
+                "keymaster_entry_id": lockname,
+                "refresh_frequency": 5,
+            },
+            entry_id="manual_override_regression",
+        )
+        entry.add_to_hass(hass)
+        MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": lockname},
+            entry_id="km_manual_override_regression",
+        ).add_to_hass(hass)
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator.async_request_refresh = AsyncMock()
+        assert coordinator.event_overrides is not None
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {COORDINATOR: coordinator}
+
+        _set_keymaster_slot(
+            "",
+            "",
+            FROZEN_START_OF_DAY,
+            FROZEN_START_OF_DAY,
+            enabled=False,
+        )
+
+        ics_body = future_ics(summary="Reserved - Manual Guest")
+        set_result = OperationResult(kind="set", slot=slot, confirmed=True)
+        update_result = OperationResult(kind="update_times", slot=slot, confirmed=True)
+        clear_result = OperationResult(kind="clear", slot=slot, confirmed=True)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=FROZEN_TIME),
+            patch.object(
+                dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                new=AsyncMock(return_value=set_result),
+            ) as mock_set_code,
+            patch(
+                "custom_components.rental_control.event_overrides."
+                "async_fire_update_times",
+                new=AsyncMock(return_value=update_result),
+            ) as mock_update_times,
+            patch(
+                "custom_components.rental_control.event_overrides."
+                "async_fire_clear_code",
+                new=AsyncMock(return_value=clear_result),
+            ) as mock_clear_code,
+        ):
+            mock_session.get(entry.data["url"], status=200, body=ics_body, repeat=True)
+
+            coordinator.data = await coordinator._async_update_data()
+            await hass.async_block_till_done()
+
+            assert mock_set_code.call_count == 1
+            override = coordinator.event_overrides.overrides[slot]
+            assert override is not None
+            initial_pin = str(override["slot_code"])
+            initial_start = override["start_time"]
+            initial_end = override["end_time"]
+
+            _set_keymaster_slot(
+                "Manual Guest",
+                initial_pin,
+                initial_start,
+                initial_end,
+                enabled=True,
+            )
+
+            manual_pin = "8642"
+            assert manual_pin != initial_pin
+            manual_start = initial_start.replace(
+                hour=9,
+                minute=15,
+                second=0,
+                microsecond=0,
+            )
+            manual_end = initial_end.replace(
+                hour=20,
+                minute=45,
+                second=0,
+                microsecond=0,
+            )
+            assert manual_start != initial_start
+            assert manual_end != initial_end
+
+            _set_keymaster_slot(
+                "Manual Guest",
+                manual_pin,
+                manual_start,
+                manual_end,
+                enabled=True,
+            )
+
+            event = MagicMock()
+            event.data = {"entity_id": f"text.{lockname}_code_slot_{slot}_pin"}
+            with patch(
+                "custom_components.rental_control.util.asyncio.sleep",
+                new_callable=AsyncMock,
+            ):
+                await handle_state_change(hass, entry, event)
+            await hass.async_block_till_done()
+
+            override = coordinator.event_overrides.overrides[slot]
+            assert override is not None
+            assert override["slot_code"] == manual_pin
+            assert override["start_time"] == manual_start
+            assert override["end_time"] == manual_end
+
+            mock_set_code.reset_mock()
+            mock_update_times.reset_mock()
+            mock_clear_code.reset_mock()
+
+            observed_plan_ids = set()
+            previous_plan_id = (
+                coordinator.latest_plan.plan_id if coordinator.latest_plan else None
+            )
+            for _ in range(2):
+                coordinator.data = await coordinator._async_update_data()
+                await hass.async_block_till_done()
+
+                plan = coordinator.latest_plan
+                assert plan is not None
+                assert plan.plan_id != previous_plan_id
+                assert plan.slots[slot].action is ActionKind.NOOP
+                assert all(action.slot != slot for action in plan.actions)
+                observed_plan_ids.add(plan.plan_id)
+                previous_plan_id = plan.plan_id
+
+            override = coordinator.event_overrides.overrides[slot]
+            assert override is not None
+            assert override["slot_code"] == manual_pin
+            assert override["start_time"] == manual_start
+            assert override["end_time"] == manual_end
+            assert mock_update_times.call_count == 0
+            assert mock_set_code.call_count == 0
+            assert mock_clear_code.call_count == 0
+
+            plan = coordinator.latest_plan
+            assert plan is not None
+            assert len(observed_plan_ids) == 2
+            assert plan.slots[slot].action is ActionKind.NOOP
+            assert all(action.slot != slot for action in plan.actions)
