@@ -24,6 +24,7 @@ from datetime import time
 from datetime import timedelta
 import logging
 from typing import Any
+import uuid
 from zoneinfo import ZoneInfo  # noreorder
 
 import aiohttp
@@ -50,6 +51,9 @@ from homeassistant.util import slugify
 from icalendar import Calendar
 import x_wr_timezone
 
+from .const import CHECKIN_SENSOR
+from .const import CHECKIN_STATE_CHECKED_IN
+from .const import CHECKIN_STATE_CHECKED_OUT
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_BUFFER_AFTER
@@ -81,6 +85,7 @@ from .const import DOMAIN
 from .const import EVENT_AGE_THRESHOLD_DAYS
 from .const import LOCK_MANAGER
 from .const import REQUEST_TIMEOUT
+from .const import SLOT_STATUS_BLOCKED
 from .const import SLOT_STATUS_OCCUPIED
 from .const import SLOT_STATUS_PENDING_CLEAR
 from .const import STORE_SCHEMA_VERSION
@@ -89,12 +94,21 @@ from .const import VERSION
 from .description_parser import extract_checkin_time
 from .description_parser import extract_checkout_time
 from .event_overrides import EventOverrides
+from .reconciliation import DesiredPlan as _DesiredPlan
+from .reconciliation import ManagedSlot as _ManagedSlot
+from .reconciliation import Reservation as _Reservation
+from .reconciliation import SlotStatus as _SlotStatus
+from .reconciliation import compute_desired_plan
+from .reconciliation import extract_booking_aliases
+from .reconciliation import find_reservation_rematch
+from .reconciliation import make_reservation_fingerprint
 from .util import add_call
 from .util import apply_buffer
 from .util import async_fire_clear_code
 from .util import check_gather_results
 from .util import get_slot_name
 from .util import normalize_uid
+from .util import trim_name
 
 # aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
 
@@ -171,6 +185,10 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
         # HA Store for persisted slot mappings (T017)
         self._store: Store | None = None
         self._slot_mappings: dict[str, Any] = {}
+
+        # Reconciliation state (T022/T031/T033)
+        self._latest_plan: _DesiredPlan | None = None
+        self._latest_res_by_key: dict[str, _Reservation] = {}
 
         super().__init__(
             hass=hass,
@@ -281,6 +299,37 @@ Please update Keymaster to at least v0.1.0-b0
     def version(self) -> str:
         """Return the version."""
         return self._version
+
+    @property
+    def latest_plan(self) -> _DesiredPlan | None:
+        """Return the most recently computed desired plan, or None."""
+        return self._latest_plan
+
+    @property
+    def latest_overflow(self) -> dict[str, str]:
+        """Return overflow dict from latest plan (identity_key → reason)."""
+        if self._latest_plan is None:
+            return {}
+        return dict(self._latest_plan.overflow)
+
+    @property
+    def latest_reconciliation_diagnostics(self) -> dict[str, Any]:
+        """Return diagnostics dict from latest plan."""
+        if self._latest_plan is None:
+            return {}
+        return dict(self._latest_plan.diagnostics)
+
+    def get_slot_assignment(self, identity_key: str) -> int | None:
+        """Return slot number assigned to identity_key in latest plan, or None."""
+        if self._latest_plan is None:
+            return None
+        return self._latest_plan.selected.get(identity_key)
+
+    def get_overflow_reason(self, identity_key: str) -> str | None:
+        """Return overflow reason for identity_key in latest plan, or None."""
+        if self._latest_plan is None:
+            return None
+        return self._latest_plan.overflow.get(identity_key)
 
     async def async_get_events(
         self, hass: HomeAssistant, start_date: datetime, end_date: datetime
@@ -597,6 +646,373 @@ Please update Keymaster to at least v0.1.0-b0
                 )
             await self.async_save_slot_store()
 
+    def _generate_date_based_code(self, start: datetime, end: datetime) -> str:
+        """Generate a date-based door code from reservation start/end times.
+
+        Mirrors the ``date_based`` code generation in
+        :class:`~.sensors.calsensor.RentalControlCalSensor` so that codes
+        produced by the coordinator match what the sensor would generate.
+
+        Args:
+            start: Reservation start datetime.
+            end: Reservation end datetime.
+
+        Returns:
+            A zero-padded date-derived code string of length
+            :attr:`code_length`.
+        """
+        code_length = self.code_length
+        start_day = start.strftime("%d")
+        start_month = start.strftime("%m")
+        start_year = start.strftime("%Y")
+        end_day = end.strftime("%d")
+        end_month = end.strftime("%m")
+        end_year = end.strftime("%Y")
+        code = f"{start_day}{end_day}{start_month}{end_month}{start_year}{end_year}"
+        return (
+            code[:code_length] if len(code) > code_length else code.zfill(code_length)
+        )
+
+    def _build_reservations(self, calendar: list[CalendarEvent]) -> list[_Reservation]:
+        """Convert parsed CalendarEvent objects to Reservation objects.
+
+        Produces one :class:`~.reconciliation.Reservation` per calendar
+        event that has a usable slot name.  The coordinator's current
+        persisted mappings are consulted to populate
+        :attr:`~.reconciliation.Reservation.fingerprint_history` and
+        :attr:`~.reconciliation.Reservation.missing_count`.
+
+        Args:
+            calendar: Parsed and sorted calendar events from the current
+                refresh cycle.
+
+        Returns:
+            List of :class:`~.reconciliation.Reservation` objects ready
+            for the planner.
+        """
+        if not calendar:
+            return []
+
+        persisted: dict[str, Any] = {}
+        if self.event_overrides is not None:
+            persisted = self.event_overrides.persisted_mappings
+
+        prefix = f"{self.event_prefix} " if self.event_prefix else ""
+        reservations: list[_Reservation] = []
+
+        for event in calendar:
+            slot_name = get_slot_name(
+                event.summary,
+                event.description or "",
+                self.event_prefix or "",
+            )
+            if not slot_name:
+                continue
+
+            start: datetime = event.start
+            end: datetime = event.end
+
+            buffered_start_raw, buffered_end_raw = apply_buffer(
+                start, end, self.code_buffer_before, self.code_buffer_after, self
+            )
+            buffered_start: datetime = (
+                buffered_start_raw
+                if isinstance(buffered_start_raw, datetime)
+                else start
+            )
+            buffered_end: datetime = (
+                buffered_end_raw if isinstance(buffered_end_raw, datetime) else end
+            )
+
+            identity_key = make_reservation_fingerprint(
+                self._entry_id, slot_name, start, end
+            )
+
+            uid_raw = getattr(event, "uid", None)
+            uid = normalize_uid(uid_raw)
+            uid_aliases: set[str] = {uid} if uid else set()
+
+            booking_aliases = extract_booking_aliases(
+                event.summary, event.description or ""
+            )
+
+            actual_slot_names: dict[int, str] = {}
+            for persisted_mapping in persisted.values():
+                slot_num = persisted_mapping.get("slot")
+                actual_name = (
+                    persisted_mapping.get("last_observed_actual", {}) or {}
+                ).get("name_state")
+                if isinstance(slot_num, int) and isinstance(actual_name, str):
+                    actual_slot_names[slot_num] = actual_name
+
+            provisional = _Reservation(
+                identity_key=identity_key,
+                start=start,
+                end=end,
+                buffered_start=buffered_start,
+                buffered_end=buffered_end,
+                summary=event.summary,
+                slot_name=slot_name,
+                display_slot_name="",
+                slot_code="",
+                uid_aliases=uid_aliases,
+                booking_aliases=booking_aliases,
+            )
+            rematch = find_reservation_rematch(
+                provisional,
+                persisted,
+                current_reservations=reservations,
+                actual_slot_names=actual_slot_names,
+            )
+            matched_key = rematch.matched_identity_key
+            if matched_key is not None and matched_key != identity_key:
+                mapping = persisted.pop(matched_key)
+                history = set(mapping.get("fingerprint_history", []))
+                history.add(matched_key)
+                mapping["fingerprint_history"] = sorted(history)
+                identity = mapping.setdefault("identity", {})
+                if isinstance(identity, dict):
+                    identity["identity_key"] = identity_key
+                persisted[identity_key] = mapping
+            else:
+                mapping = persisted.get(identity_key, {})
+                if rematch.kind.value == "ambiguous":
+                    _LOGGER.warning(
+                        "Reservation %s has ambiguous persisted rematch candidates: %s",
+                        identity_key,
+                        rematch.ambiguous_keys,
+                    )
+
+            fingerprint_history: set[str] = set(mapping.get("fingerprint_history", []))
+            missing_count: int = mapping.get("missing_count", 0)
+
+            slot_code = ""
+            if self.event_overrides is not None:
+                existing = self.event_overrides.get_slot_with_name(slot_name)
+                if existing and existing.get("slot_code"):
+                    slot_code = str(existing["slot_code"])
+            if not slot_code:
+                slot_code = self._generate_date_based_code(start, end)
+
+            if self.trim_names and self.max_name_length > 0:
+                guest_max = self.max_name_length - len(prefix)
+                display_slot_name = f"{prefix}{trim_name(slot_name, guest_max)}"
+            else:
+                display_slot_name = f"{prefix}{slot_name}"
+
+            try:
+                res = _Reservation(
+                    identity_key=identity_key,
+                    start=start,
+                    end=end,
+                    buffered_start=buffered_start,
+                    buffered_end=buffered_end,
+                    summary=event.summary,
+                    slot_name=slot_name,
+                    display_slot_name=display_slot_name,
+                    slot_code=slot_code,
+                    uid_aliases=uid_aliases,
+                    booking_aliases=booking_aliases,
+                    fingerprint_history=fingerprint_history,
+                    missing_count=missing_count,
+                )
+                reservations.append(res)
+            except ValueError:
+                _LOGGER.warning(
+                    "Skipping invalid reservation for %s: start=%s >= end=%s",
+                    event.summary,
+                    start,
+                    end,
+                )
+
+        return reservations
+
+    def _observe_managed_slots(self) -> list[_ManagedSlot]:
+        """Read Keymaster entity states and build ManagedSlot observations.
+
+        Reads Keymaster text, switch, and datetime entities for every slot
+        in the managed range to determine the current physical state.
+        Persisted fence tokens from :attr:`event_overrides` override the
+        entity-derived classification for ``PENDING_CLEAR`` slots.  The
+        observed state is also written back to the
+        :meth:`~.event_overrides.EventOverrides.update_actual_state`
+        cache for diagnostics.
+
+        Returns:
+            List of :class:`~.reconciliation.ManagedSlot` instances, one
+            per slot in ``start_slot .. start_slot + max_events - 1``.
+        """
+        if not self.lockname or not self.event_overrides:
+            return []
+
+        persisted = self.event_overrides.persisted_mappings
+        pending_clear = self.event_overrides.pending_clear_slots
+
+        slot_to_persisted_key: dict[int, str] = {}
+        for key, mapping in persisted.items():
+            slot_num = mapping.get("slot")
+            if slot_num is None:
+                continue
+            current = slot_to_persisted_key.get(slot_num)
+            if current is None:
+                slot_to_persisted_key[slot_num] = key
+            elif mapping.get("status") == SLOT_STATUS_OCCUPIED:
+                slot_to_persisted_key[slot_num] = key
+
+        slots: list[_ManagedSlot] = []
+
+        for i in range(self.start_slot, self.start_slot + self.max_events):
+            name_state = self.hass.states.get(
+                f"{TEXT}.{self.lockname}_code_slot_{i}_name"
+            )
+            code_state = self.hass.states.get(
+                f"{TEXT}.{self.lockname}_code_slot_{i}_pin"
+            )
+
+            if name_state is None or code_state is None:
+                ms = _ManagedSlot(slot=i, managed=True, status=_SlotStatus.UNKNOWN)
+                slots.append(ms)
+                self.event_overrides.update_actual_state(
+                    i,
+                    {
+                        "slot": i,
+                        "classification": _SlotStatus.UNKNOWN.value,
+                        "name_state": None,
+                        "has_code": None,
+                        "start_state": None,
+                        "end_state": None,
+                        "use_date_range": None,
+                        "enabled": None,
+                    },
+                )
+                continue
+
+            name_value = (
+                ""
+                if name_state.state in ("unknown", "unavailable")
+                else name_state.state
+            )
+            code_value = (
+                ""
+                if code_state.state in ("unknown", "unavailable")
+                else code_state.state
+            )
+            has_code = bool(code_value)
+
+            use_date_range_state = self.hass.states.get(
+                f"{SWITCH}.{self.lockname}_code_slot_{i}_use_date_range_limits"
+            )
+            enabled_state = self.hass.states.get(
+                f"{SWITCH}.{self.lockname}_code_slot_{i}_enabled"
+            )
+            start_dt_state = self.hass.states.get(
+                f"{DATETIME}.{self.lockname}_code_slot_{i}_date_range_start"
+            )
+            end_dt_state = self.hass.states.get(
+                f"{DATETIME}.{self.lockname}_code_slot_{i}_date_range_end"
+            )
+
+            date_range_on = (
+                use_date_range_state is not None and use_date_range_state.state == "on"
+            )
+            enabled: bool | None = None
+            if enabled_state is not None:
+                enabled = enabled_state.state == "on"
+
+            actual_start: datetime | None = None
+            actual_end: datetime | None = None
+            if date_range_on:
+                if start_dt_state is not None:
+                    actual_start = dt.parse_datetime(start_dt_state.state)
+                if end_dt_state is not None:
+                    actual_end = dt.parse_datetime(end_dt_state.state)
+
+            persisted_key = slot_to_persisted_key.get(i)
+            if i in pending_clear:
+                status = _SlotStatus.PENDING_CLEAR
+            elif (
+                persisted_key is not None
+                and persisted.get(persisted_key, {}).get("status")
+                == SLOT_STATUS_BLOCKED
+            ):
+                status = _SlotStatus.BLOCKED
+            elif name_value and has_code:
+                status = _SlotStatus.OCCUPIED
+            elif name_value:
+                status = _SlotStatus.PHANTOM
+            else:
+                status = _SlotStatus.FREE
+
+            ms = _ManagedSlot(
+                slot=i,
+                managed=True,
+                status=status,
+                actual_name=name_value or None,
+                actual_code_present=has_code,
+                actual_start=actual_start,
+                actual_end=actual_end,
+                date_range_enabled=date_range_on,
+                enabled=enabled,
+                persisted_identity_key=persisted_key,
+            )
+            slots.append(ms)
+
+            self.event_overrides.update_actual_state(
+                i,
+                {
+                    "slot": i,
+                    "classification": status.value,
+                    "name_state": name_value or None,
+                    "has_code": has_code,
+                    "start_state": actual_start,
+                    "end_state": actual_end,
+                    "use_date_range": date_range_on,
+                    "enabled": enabled,
+                },
+            )
+
+        return slots
+
+    def _apply_checkin_protection(self, reservations: list[_Reservation]) -> None:
+        """Mark active checked-in reservation as protected, if present.
+
+        Reads :class:`~.sensors.checkinsensor.CheckinTrackingSensor` state
+        from ``hass.data`` and sets :attr:`~.reconciliation.Reservation.protected_active`
+        on the matching reservation so that reconciliation never evicts
+        the active guest mid-stay (T043).
+
+        When the sensor state is ``checked_out``, the matching reservation
+        is flagged with :attr:`~.reconciliation.Reservation.checked_out`
+        so the planner can handle graceful post-checkout slot release.
+
+        Args:
+            reservations: Mutable list of reservations for the current
+                refresh cycle.  Modified in-place.
+        """
+        entry_data: dict[str, Any] = self.hass.data.get(DOMAIN, {}).get(
+            self._entry_id, {}
+        )
+        checkin_sensor = entry_data.get(CHECKIN_SENSOR)
+        if checkin_sensor is None:
+            return
+
+        sensor_state: str = checkin_sensor.state
+        if sensor_state not in (CHECKIN_STATE_CHECKED_IN, CHECKIN_STATE_CHECKED_OUT):
+            return
+
+        attrs: dict[str, Any] = checkin_sensor.extra_state_attributes
+        guest_name: str | None = attrs.get("guest_name")
+        if not guest_name:
+            return
+
+        for res in reservations:
+            if res.slot_name == guest_name:
+                if sensor_state == CHECKIN_STATE_CHECKED_IN:
+                    res.protected_active = True
+                elif sensor_state == CHECKIN_STATE_CHECKED_OUT:
+                    res.checked_out = True
+                break
+
     async def _async_fetch_calendar(self) -> list[CalendarEvent]:
         """Fetch iCalendar data from URL and parse into events."""
         try:
@@ -714,9 +1130,44 @@ Please update Keymaster to at least v0.1.0-b0
                     break
 
         if self.event_overrides:
-            await self.event_overrides.async_check_overrides(
-                self, calendar=new_calendar
-            )
+            try:
+                reservations = self._build_reservations(new_calendar)
+                managed_slots = self._observe_managed_slots()
+                self._apply_checkin_protection(reservations)
+
+                plan_id = str(uuid.uuid4())
+                plan = compute_desired_plan(
+                    reservations=reservations,
+                    managed_slots=managed_slots,
+                    max_events=self.max_events,
+                    plan_id=plan_id,
+                    generated_at=dt.now(),
+                )
+
+                violations = plan.validate()
+                for v in violations:
+                    _LOGGER.warning("Plan %s invariant violation: %s", plan_id, v)
+
+                res_by_key: dict[str, _Reservation] = {
+                    r.identity_key: r for r in reservations
+                }
+                await self.event_overrides.async_apply_plan(self, plan, res_by_key)
+
+                self._latest_plan = plan
+                self._latest_res_by_key = res_by_key
+
+                _LOGGER.debug(
+                    "Reconciliation for %s: plan=%s selected=%d overflow=%d actions=%d",
+                    self._name,
+                    plan_id,
+                    len(plan.selected),
+                    len(plan.overflow),
+                    len(plan.actions),
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Reconciliation failed for %s; skipping cycle", self._name
+                )
 
         # Save store after each reconciliation cycle
         await self.async_save_slot_store()

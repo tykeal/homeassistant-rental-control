@@ -4251,3 +4251,436 @@ class TestStoreFirstUpgradeMigration:
         eo2 = EventOverrides(start_slot=10, max_slots=3)
         eo2.load_persisted_mappings(stored_mappings)
         assert 10 in eo2.pending_clear_slots, "Fence should be restored after restart"
+
+
+class TestCoordinatorReconciliation:
+    """Tests for coordinator-owned reconciliation (T028/T043)."""
+
+    def _make_reconcile_entry(
+        self,
+        entry_id: str = "reconcile_test_entry",
+        lockname: str = "test_lock",
+        start_slot: int = 10,
+        max_events: int = 3,
+    ) -> MockConfigEntry:
+        """Create a config entry with Keymaster lockname for reconciliation tests."""
+        return MockConfigEntry(
+            domain="rental_control",
+            title="Reconcile Rental",
+            version=10,
+            unique_id=f"reconcile-{entry_id}",
+            data={
+                "name": "Reconcile Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": start_slot,
+                "max_events": max_events,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+                "keymaster_entry_id": lockname,
+                "code_buffer_before": 0,
+                "code_buffer_after": 0,
+            },
+            entry_id=entry_id,
+        )
+
+    @staticmethod
+    def _make_mock_plan(plan_id: str = "test-plan-id") -> "MagicMock":
+        """Build a minimal DesiredPlan stand-in for coordinator tests."""
+        mock_plan = MagicMock()
+        mock_plan.plan_id = plan_id
+        mock_plan.selected = {}
+        mock_plan.overflow = {}
+        mock_plan.actions = []
+        mock_plan.diagnostics = {}
+        mock_plan.validate.return_value = []
+        return mock_plan
+
+    # ------------------------------------------------------------------
+    # T028-1: one DesiredPlan computed per refresh
+    # ------------------------------------------------------------------
+
+    async def test_refresh_computes_one_desired_plan(self, hass: HomeAssistant) -> None:
+        """T028-1: _async_update_data computes exactly one DesiredPlan per call."""
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_reconcile_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        frozen_time = datetime(2025, 6, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        empty_ics = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nEND:VCALENDAR\r\n"
+        )
+        mock_plan = self._make_mock_plan("test-plan-id")
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ) as mock_compute,
+            patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=empty_ics)
+            await coordinator._async_update_data()
+
+        mock_compute.assert_called_once()
+        assert coordinator.latest_plan is mock_plan
+
+    # ------------------------------------------------------------------
+    # T028-2: apply_plan called once per refresh
+    # ------------------------------------------------------------------
+
+    async def test_refresh_calls_apply_plan_once(self, hass: HomeAssistant) -> None:
+        """T028-2: async_apply_plan is called exactly once per _async_update_data."""
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_reconcile_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        frozen_time = datetime(2025, 6, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        empty_ics = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nEND:VCALENDAR\r\n"
+        )
+        mock_plan = self._make_mock_plan("apply-plan-test")
+        mock_apply = AsyncMock(return_value=[])
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ),
+            patch.object(eo, "async_apply_plan", new=mock_apply),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=empty_ics)
+            await coordinator._async_update_data()
+
+        mock_apply.assert_called_once()
+        call_args = mock_apply.call_args
+        assert call_args.args[0] is coordinator
+        assert call_args.args[1] is mock_plan
+
+    # ------------------------------------------------------------------
+    # T028-3: latest_plan published before return
+    # ------------------------------------------------------------------
+
+    async def test_latest_plan_published_after_apply(self, hass: HomeAssistant) -> None:
+        """T028-3: latest_plan is set after apply_plan completes."""
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_reconcile_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.latest_plan is None
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        frozen_time = datetime(2025, 6, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        empty_ics = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nEND:VCALENDAR\r\n"
+        )
+        mock_plan = self._make_mock_plan("publish-test")
+        mock_plan.selected = {"key-a": 10}
+        mock_plan.overflow = {"key-b": "capacity"}
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ),
+            patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=empty_ics)
+            await coordinator._async_update_data()
+
+        assert coordinator.latest_plan is mock_plan
+        assert coordinator.get_slot_assignment("key-a") == 10
+        assert coordinator.get_overflow_reason("key-b") == "capacity"
+        assert coordinator.latest_overflow == {"key-b": "capacity"}
+
+    # ------------------------------------------------------------------
+    # T028-4: no reconciliation when event_overrides is None
+    # ------------------------------------------------------------------
+
+    async def test_no_reconciliation_without_lockname(
+        self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
+    ) -> None:
+        """T028-4: No plan computed when coordinator has no lockname."""
+        from unittest.mock import patch
+
+        mock_config_entry.add_to_hass(hass)
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+        assert coordinator.event_overrides is None
+
+        frozen_time = datetime(2025, 6, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        empty_ics = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nEND:VCALENDAR\r\n"
+        )
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan"
+            ) as mock_compute,
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=empty_ics)
+            await coordinator._async_update_data()
+
+        mock_compute.assert_not_called()
+        assert coordinator.latest_plan is None
+
+    # ------------------------------------------------------------------
+    # T028-5: parser filtering / max_events preserved
+    # ------------------------------------------------------------------
+
+    async def test_max_events_passed_to_planner(self, hass: HomeAssistant) -> None:
+        """T028-5: compute_desired_plan receives coordinator.max_events."""
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_reconcile_entry(max_events=2)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        frozen_time = datetime(2025, 6, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        empty_ics = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nEND:VCALENDAR\r\n"
+        )
+        mock_plan = self._make_mock_plan("max-events-test")
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ) as mock_compute,
+            patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=empty_ics)
+            await coordinator._async_update_data()
+
+        call_kwargs = mock_compute.call_args.kwargs
+        assert call_kwargs["max_events"] == 2
+
+    # ------------------------------------------------------------------
+    # T043-1: active checked-in guest marked protected
+    # ------------------------------------------------------------------
+
+    async def test_checkin_protection_marks_active_guest(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T043-1: checked_in sensor state marks matching reservation protected_active."""
+        from unittest.mock import patch
+
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_reconcile_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        mock_checkin = MagicMock()
+        mock_checkin.state = CHECKIN_STATE_CHECKED_IN
+        mock_checkin.extra_state_attributes = {"guest_name": "Alice Smith"}
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+            CHECKIN_SENSOR: mock_checkin,
+        }
+
+        frozen_time = datetime(2025, 6, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = frozen_time + timedelta(days=5)
+        future_end = frozen_time + timedelta(days=10)
+        ics_body = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n"
+            "BEGIN:VEVENT\r\n"
+            f"DTSTART;VALUE=DATE:{future_start.strftime('%Y%m%d')}\r\n"
+            f"DTEND;VALUE=DATE:{future_end.strftime('%Y%m%d')}\r\n"
+            "SUMMARY:Alice Smith\r\nUID:alice-test-uid\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+        mock_plan = self._make_mock_plan("protect-test")
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ) as mock_compute,
+            patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=ics_body)
+            await coordinator._async_update_data()
+
+        reservations = mock_compute.call_args.kwargs["reservations"]
+        assert len(reservations) == 1
+        assert reservations[0].slot_name == "Alice Smith"
+        assert reservations[0].protected_active is True
+
+    # ------------------------------------------------------------------
+    # T043-2: no protection when no checkin sensor
+    # ------------------------------------------------------------------
+
+    async def test_no_protection_without_checkin_sensor(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T043-2: No reservations protected when no CheckinTrackingSensor present."""
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_reconcile_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        frozen_time = datetime(2025, 6, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = frozen_time + timedelta(days=5)
+        future_end = frozen_time + timedelta(days=10)
+        ics_body = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n"
+            "BEGIN:VEVENT\r\n"
+            f"DTSTART;VALUE=DATE:{future_start.strftime('%Y%m%d')}\r\n"
+            f"DTEND;VALUE=DATE:{future_end.strftime('%Y%m%d')}\r\n"
+            "SUMMARY:Bob Jones\r\nUID:bob-test-uid\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+        mock_plan = self._make_mock_plan("no-protect-test")
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ) as mock_compute,
+            patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=ics_body)
+            await coordinator._async_update_data()
+
+        reservations = mock_compute.call_args.kwargs["reservations"]
+        assert all(not r.protected_active for r in reservations)
+
+    # ------------------------------------------------------------------
+    # T043-3: checked_out guest marked checked_out not protected
+    # ------------------------------------------------------------------
+
+    async def test_checkin_protection_marks_checked_out_guest(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T043-3: checked_out sensor state sets checked_out flag, not protected."""
+        from unittest.mock import patch
+
+        from custom_components.rental_control.const import CHECKIN_SENSOR
+        from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_OUT
+        from custom_components.rental_control.const import DOMAIN
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_reconcile_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        mock_checkin = MagicMock()
+        mock_checkin.state = CHECKIN_STATE_CHECKED_OUT
+        mock_checkin.extra_state_attributes = {"guest_name": "Carol White"}
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+            CHECKIN_SENSOR: mock_checkin,
+        }
+
+        frozen_time = datetime(2025, 6, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        future_start = frozen_time + timedelta(days=3)
+        future_end = frozen_time + timedelta(days=8)
+        ics_body = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n"
+            "BEGIN:VEVENT\r\n"
+            f"DTSTART;VALUE=DATE:{future_start.strftime('%Y%m%d')}\r\n"
+            f"DTEND;VALUE=DATE:{future_end.strftime('%Y%m%d')}\r\n"
+            "SUMMARY:Carol White\r\nUID:carol-test-uid\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+        mock_plan = self._make_mock_plan("checkout-test")
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ) as mock_compute,
+            patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=ics_body)
+            await coordinator._async_update_data()
+
+        reservations = mock_compute.call_args.kwargs["reservations"]
+        assert len(reservations) == 1
+        assert reservations[0].slot_name == "Carol White"
+        assert reservations[0].checked_out is True
+        assert reservations[0].protected_active is False

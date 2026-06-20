@@ -6,12 +6,21 @@
 from __future__ import annotations
 
 from datetime import time
+import inspect
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Any
 from unittest.mock import MagicMock
 
+from aiohttp import hdrs
+from aiohttp.client_reqrep import ClientResponse
+from aiohttp.client_reqrep import RequestInfo
+from aiohttp.helpers import TimerNoop
 from aioresponses import aioresponses
+import aioresponses.core as aioresponses_core
+from multidict import CIMultiDict
+from multidict import CIMultiDictProxy
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -28,6 +37,83 @@ if TYPE_CHECKING:
 
 # Enable custom components for testing
 pytest_plugins = ("pytest_homeassistant_custom_component",)
+
+
+def _aioresponses_build_response_aiohttp313(  # noqa: PLR0913
+    self,
+    url,
+    method=hdrs.METH_GET,
+    request_headers=None,
+    status=200,
+    body="",
+    content_type="application/json",
+    payload=None,
+    headers=None,
+    response_class=None,
+    reason=None,
+):
+    """Build a mock ClientResponse compatible with aiohttp >= 3.13.
+
+    aiohttp 3.13 added a required ``stream_writer`` keyword-only
+    argument to ``ClientResponse.__init__``.  This replacement for
+    ``aioresponses.core.RequestMatch._build_response`` injects the
+    extra argument so that ``aioresponses``-based coordinator tests
+    pass without modification.
+    """
+    if response_class is None:
+        response_class = ClientResponse
+    if payload is not None:
+        body = json.dumps(payload)
+    if not isinstance(body, bytes):
+        body = str.encode(body)
+    if request_headers is None:
+        request_headers = {}
+    loop = MagicMock()
+    loop.get_debug.return_value = True
+    kwargs: dict[str, Any] = {}
+    kwargs["request_info"] = RequestInfo(
+        url=url,
+        method=method,
+        headers=CIMultiDictProxy(CIMultiDict(**request_headers)),
+        real_url=url,
+    )
+    kwargs["writer"] = None
+    kwargs["continue100"] = None
+    kwargs["timer"] = TimerNoop()
+    kwargs["traces"] = []
+    kwargs["loop"] = loop
+    kwargs["session"] = None
+    kwargs["stream_writer"] = MagicMock(output_size=0)
+
+    _headers = CIMultiDict({hdrs.CONTENT_TYPE: content_type})
+    if headers:
+        _headers.update(headers)
+    raw_headers = self._build_raw_headers(_headers)
+    resp = response_class(method, url, **kwargs)
+
+    for header in _headers.getall(hdrs.SET_COOKIE, ()):
+        resp.cookies.load(header)
+
+    resp._headers = _headers
+    resp._raw_headers = raw_headers
+    resp.status = status
+    resp.reason = reason
+    resp.content = aioresponses_core.stream_reader_factory(loop)
+    resp.content.feed_data(body)
+    resp.content.feed_eof()
+    return resp
+
+
+def _patch_aioresponses_for_aiohttp_313() -> None:
+    """Apply aioresponses patch when running with aiohttp >= 3.13."""
+    if "stream_writer" not in inspect.signature(ClientResponse).parameters:
+        return  # pragma: no cover
+    aioresponses_core.RequestMatch._build_response = (  # type: ignore[method-assign]
+        _aioresponses_build_response_aiohttp313
+    )
+
+
+_patch_aioresponses_for_aiohttp_313()
 
 _TESTS_ROOT = Path(__file__).parent
 
