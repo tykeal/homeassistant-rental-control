@@ -9,6 +9,7 @@ import asyncio
 from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
+from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -1454,6 +1455,97 @@ class TestLocknameSlugification:
             await coordinator.update_config(config)
 
         assert coordinator.event_overrides is not original_overrides
+
+    async def test_update_config_reloads_persisted_mappings_after_recreation(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify recreated overrides retain persisted slot ownership."""
+        data = dict(mock_config_entry.data)
+        data[CONF_LOCK_ENTRY] = "Front Door"
+        mock_config_entry.add_to_hass(hass)
+        hass.config_entries.async_update_entry(mock_config_entry, data=data)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+        identity_key = "persisted-active"
+        coordinator._slot_mappings = {
+            "mappings": {
+                identity_key: {
+                    "slot": 10,
+                    "status": "occupied",
+                    "identity": {
+                        "identity_key": identity_key,
+                        "summary": "Active Guest",
+                        "slot_name": "Active Guest",
+                        "uid_aliases": [],
+                        "booking_aliases": [],
+                    },
+                    "fingerprint_history": [],
+                }
+            }
+        }
+
+        config = dict(mock_config_entry.data)
+        config.update(mock_config_entry.options)
+        config[CONF_MAX_EVENTS] = coordinator.max_events + 1
+
+        with (
+            patch.object(
+                coordinator,
+                "async_request_refresh",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                coordinator,
+                "async_setup_keymaster_overrides",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await coordinator.update_config(config)
+
+        assert coordinator.event_overrides is not None
+        assert identity_key in coordinator.event_overrides.persisted_mappings
+
+    async def test_update_config_handles_invalid_persisted_mappings(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify config updates do not fail on duplicate persisted slots."""
+        data = dict(mock_config_entry.data)
+        data[CONF_LOCK_ENTRY] = "Front Door"
+        mock_config_entry.add_to_hass(hass)
+        hass.config_entries.async_update_entry(mock_config_entry, data=data)
+
+        coordinator = RentalControlCoordinator(hass, mock_config_entry)
+        coordinator._slot_mappings = {
+            "mappings": {
+                "dup-a": {"slot": 10, "status": "occupied"},
+                "dup-b": {"slot": 10, "status": "occupied"},
+            }
+        }
+
+        config = dict(mock_config_entry.data)
+        config.update(mock_config_entry.options)
+        config[CONF_MAX_EVENTS] = coordinator.max_events + 1
+
+        with (
+            patch.object(
+                coordinator,
+                "async_request_refresh",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                coordinator,
+                "async_setup_keymaster_overrides",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await coordinator.update_config(config)
+
+        assert coordinator.event_overrides is not None
+        assert coordinator.event_overrides.persisted_mappings == {}
 
     async def test_update_config_bootstraps_overrides_after_recreation(
         self,
@@ -4041,6 +4133,28 @@ class TestStoreFirstUpgradeMigration:
         assert "code" not in last_obs
         assert "slot_code" not in last_obs
 
+    async def test_adoption_loads_event_override_persistence(
+        self, hass: HomeAssistant
+    ) -> None:
+        """T010-1a: Adopted mappings are visible to first reconciliation."""
+        entry = self._make_lock_entry(entry_id="lock_adopt_load_entry")
+        entry.add_to_hass(hass)
+
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Adopt Me")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "2468")
+        hass.states.async_set("text.test_lock_code_slot_11_name", "")
+        hass.states.async_set("text.test_lock_code_slot_11_pin", "")
+        hass.states.async_set("text.test_lock_code_slot_12_name", "")
+        hass.states.async_set("text.test_lock_code_slot_12_pin", "")
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        await coordinator.async_adopt_keymaster_slots()
+
+        assert coordinator.event_overrides is not None
+        persisted = coordinator.event_overrides.persisted_mappings
+        assert len(persisted) == 1
+        assert next(iter(persisted.values()))["slot"] == 10
+
     # ------------------------------------------------------------------
     # T010-2: working code is NOT wiped during adoption
     # ------------------------------------------------------------------
@@ -4684,3 +4798,914 @@ class TestCoordinatorReconciliation:
         assert reservations[0].slot_name == "Carol White"
         assert reservations[0].checked_out is True
         assert reservations[0].protected_active is False
+
+
+# ---------------------------------------------------------------------------
+# T087: Coordinator rehydrates persisted state on startup
+# ---------------------------------------------------------------------------
+
+
+class TestCoordinatorRehydration:
+    """T087: Coordinator rehydrates mappings, aliases, missing_count, pending
+    fences, and last observed actual state from the HA Store during setup.
+    """
+
+    def _make_rehydrate_entry(
+        self,
+        entry_id: str = "rehydrate_entry",
+        lockname: str = "test_lock",
+        start_slot: int = 10,
+        max_events: int = 2,
+    ) -> "MockConfigEntry":
+        """Config entry with a Keymaster lockname for rehydration tests."""
+        return MockConfigEntry(
+            domain="rental_control",
+            title="Rehydrate Rental",
+            version=10,
+            unique_id=f"rehydrate-{entry_id}",
+            data={
+                "name": "Rehydrate Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "UTC",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": start_slot,
+                "max_events": max_events,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+                "keymaster_entry_id": lockname,
+                "code_buffer_before": 0,
+                "code_buffer_after": 0,
+            },
+            entry_id=entry_id,
+        )
+
+    def _make_occupied_mapping(
+        self,
+        identity_key: str,
+        slot_name: str,
+        slot: int,
+        *,
+        missing_count: int = 0,
+        uid_aliases: list[str] | None = None,
+        booking_aliases: list[str] | None = None,
+        start_state: str | None = "2026-07-01T14:00:00+00:00",
+        end_state: str | None = "2026-07-08T11:00:00+00:00",
+    ) -> dict:
+        """Build a v1 occupied slot mapping dict for rehydration tests."""
+        return {
+            "slot": slot,
+            "status": "occupied",
+            "operation_id": None,
+            "operation_kind": None,
+            "identity": {
+                "identity_key": identity_key,
+                "summary": slot_name,
+                "slot_name": slot_name,
+                "uid_aliases": uid_aliases or [],
+                "booking_aliases": booking_aliases or [],
+            },
+            "missing_count": missing_count,
+            "pending_set_since": None,
+            "pending_clear_since": None,
+            "fingerprint_history": [],
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "last_observed_actual": {
+                "slot": slot,
+                "classification": "occupied",
+                "name_state": slot_name,
+                "has_code": True,
+                "start_state": start_state,
+                "end_state": end_state,
+                "use_date_range": True,
+                "enabled": True,
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # T087-1: persisted mappings loaded into event_overrides on startup
+    # ------------------------------------------------------------------
+
+    async def test_rehydration_loads_mappings_into_event_overrides(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T087-1: async_load_slot_store + load_persisted_mappings rehydrates mappings.
+
+        Simulates the init sequence:
+          1. Store data is pre-populated (mocking async_load).
+          2. async_load_slot_store() reads and populates _slot_mappings.
+          3. load_persisted_mappings() injects into event_overrides.
+          4. persisted_mappings on event_overrides contains the rehydrated key.
+        """
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_rehydrate_entry()
+        entry.add_to_hass(hass)
+
+        fp = "cafebabe" + "0" * 56  # stand-in fingerprint (64 hex chars)
+        mapping = self._make_occupied_mapping(fp, "Alice Guest", 10)
+        store_data: dict[str, Any] = {
+            "schema_version": 1,
+            "entry_id": "rehydrate_entry",
+            "lockname": "test_lock",
+            "start_slot": 10,
+            "max_slots": 2,
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "mappings": {fp: mapping},
+            "blocked_slots": {},
+        }
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+
+        # Directly populate _slot_mappings to simulate a loaded Store.
+        coordinator._slot_mappings = store_data
+        coordinator.event_overrides.load_persisted_mappings(store_data["mappings"])
+
+        pm = coordinator.event_overrides.persisted_mappings
+        assert fp in pm
+        assert pm[fp]["slot"] == 10
+        assert pm[fp]["status"] == "occupied"
+
+    # ------------------------------------------------------------------
+    # T087-2: missing_count rehydrated from Store mapping
+    # ------------------------------------------------------------------
+
+    async def test_rehydration_preserves_missing_count(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T087-2: Rehydrated mapping preserves non-zero missing_count.
+
+        When the Store recorded missing_count=2 for an absent reservation,
+        that value must survive the load so the planner increments to 3 (not 1)
+        on the next feed miss.
+        """
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_rehydrate_entry()
+        entry.add_to_hass(hass)
+
+        fp = "deadbeef" + "0" * 56
+        mapping = self._make_occupied_mapping(fp, "Bob Guest", 10, missing_count=2)
+        store_data: dict[str, Any] = {
+            "schema_version": 1,
+            "entry_id": "rehydrate_entry",
+            "mappings": {fp: mapping},
+            "blocked_slots": {},
+        }
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+
+        coordinator._slot_mappings = store_data
+        coordinator.event_overrides.load_persisted_mappings(store_data["mappings"])
+
+        pm = coordinator.event_overrides.persisted_mappings
+        assert pm[fp]["missing_count"] == 2
+
+    # ------------------------------------------------------------------
+    # T087-3: pending_clear_slots rehydrated as pending fences
+    # ------------------------------------------------------------------
+
+    async def test_rehydration_restores_pending_clear_slots(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T087-3: Pending-clear mappings rehydrate as pending_clear_slots fences.
+
+        A mapping with status=pending_clear must be restored as a pending
+        fence so the coordinator re-attempts the clear rather than
+        treating the slot as free.
+        """
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_rehydrate_entry()
+        entry.add_to_hass(hass)
+
+        fp = "fedcba98" + "0" * 56
+        pending_mapping: dict = {
+            **self._make_occupied_mapping(fp, "Carol Guest", 10),
+            "status": "pending_clear",
+            "operation_id": "op-abc123",
+            "pending_clear_since": "2026-01-01T00:00:00+00:00",
+        }
+        store_data: dict[str, Any] = {
+            "schema_version": 1,
+            "entry_id": "rehydrate_entry",
+            "mappings": {fp: pending_mapping},
+            "blocked_slots": {},
+        }
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+
+        coordinator._slot_mappings = store_data
+        coordinator.event_overrides.load_persisted_mappings(store_data["mappings"])
+
+        # pending_clear_slots maps slot→operation_id
+        pcs = coordinator.event_overrides.pending_clear_slots
+        assert 10 in pcs
+        assert pcs[10] == "op-abc123"
+
+    # ------------------------------------------------------------------
+    # T087-4: uid_aliases and booking_aliases rehydrated from identity dict
+    # ------------------------------------------------------------------
+
+    async def test_rehydration_preserves_identity_aliases(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T087-4: Identity aliases (uid_aliases, booking_aliases) survive load.
+
+        These aliases are used by find_reservation_rematch for UID-churn
+        and booking-platform alias matching after a restart.
+        """
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_rehydrate_entry()
+        entry.add_to_hass(hass)
+
+        fp = "aabbccdd" + "0" * 56
+        mapping = self._make_occupied_mapping(
+            fp,
+            "Dave Guest",
+            10,
+            uid_aliases=["uid-dave-001", "uid-dave-002"],
+            booking_aliases=["HMABCDE1234"],
+        )
+        store_data: dict[str, Any] = {
+            "schema_version": 1,
+            "entry_id": "rehydrate_entry",
+            "mappings": {fp: mapping},
+            "blocked_slots": {},
+        }
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+
+        coordinator._slot_mappings = store_data
+        coordinator.event_overrides.load_persisted_mappings(store_data["mappings"])
+
+        pm = coordinator.event_overrides.persisted_mappings
+        assert pm[fp]["identity"]["uid_aliases"] == ["uid-dave-001", "uid-dave-002"]
+        assert pm[fp]["identity"]["booking_aliases"] == ["HMABCDE1234"]
+
+    # ------------------------------------------------------------------
+    # T087-5: no-raw-PIN invariant maintained after rehydration
+    # ------------------------------------------------------------------
+
+    async def test_rehydration_maintains_no_raw_pin_invariant(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T087-5: Rehydrated last_observed_actual never contains raw PINs.
+
+        The Store load path strips pin/code/slot_code keys from
+        last_observed_actual.  After async_load_slot_store(), none of
+        those keys should appear in the loaded mapping.
+        """
+        from unittest.mock import AsyncMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_rehydrate_entry()
+        entry.add_to_hass(hass)
+
+        fp = "11223344" + "0" * 56
+        mapping = self._make_occupied_mapping(fp, "Eve Guest", 10)
+        # Simulate a poorly-written store that leaked PIN fields.
+        mapping["last_observed_actual"]["pin"] = "9876"
+        mapping["last_observed_actual"]["slot_code"] = "1234"
+
+        store_data: dict[str, Any] = {
+            "schema_version": 1,
+            "entry_id": "rehydrate_entry",
+            "mappings": {fp: mapping},
+            "blocked_slots": {},
+        }
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        assert coordinator.event_overrides is not None
+
+        # async_load_slot_store strips PIN fields during load.
+        with patch("custom_components.rental_control.coordinator.Store") as MockStore:
+            mock_store_instance = AsyncMock()
+            mock_store_instance.async_load = AsyncMock(return_value=store_data)
+            mock_store_instance.async_save = AsyncMock()
+            MockStore.return_value = mock_store_instance
+            coordinator._store = mock_store_instance
+            await coordinator.async_load_slot_store()
+
+        loaded = coordinator._slot_mappings
+        for v in loaded.get("mappings", {}).values():
+            last_obs = v.get("last_observed_actual", {})
+            assert "pin" not in last_obs
+            assert "code" not in last_obs
+            assert "slot_code" not in last_obs
+
+
+# ---------------------------------------------------------------------------
+# T088: Coordinator updates _slot_mappings across refresh cycles
+# ---------------------------------------------------------------------------
+
+
+class TestCoordinatorPersistenceUpdate:
+    """T088: _slot_mappings is updated after each refresh cycle so that
+    missing_count increments (and resets) survive across restarts via the
+    HA Store.
+    """
+
+    def _make_persist_entry(
+        self,
+        entry_id: str = "persist_entry",
+        lockname: str = "test_lock",
+        start_slot: int = 10,
+        max_events: int = 2,
+    ) -> "MockConfigEntry":
+        """Build a minimal config entry for persistence update tests."""
+        return MockConfigEntry(
+            domain="rental_control",
+            title="Persist Rental",
+            version=10,
+            unique_id=f"persist-{entry_id}",
+            data={
+                "name": "Persist Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "UTC",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": start_slot,
+                "max_events": max_events,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+                "keymaster_entry_id": lockname,
+                "code_buffer_before": 0,
+                "code_buffer_after": 0,
+            },
+            entry_id=entry_id,
+        )
+
+    def _make_occupied_mapping(
+        self,
+        identity_key: str,
+        slot_name: str,
+        slot: int,
+        *,
+        missing_count: int = 0,
+        start_state: str = "2026-07-01T14:00:00+00:00",
+        end_state: str = "2026-07-08T11:00:00+00:00",
+    ) -> dict:
+        """Build a v1 occupied slot mapping dict for persistence update tests."""
+        return {
+            "slot": slot,
+            "status": "occupied",
+            "operation_id": None,
+            "operation_kind": None,
+            "identity": {
+                "identity_key": identity_key,
+                "summary": slot_name,
+                "slot_name": slot_name,
+                "uid_aliases": [],
+                "booking_aliases": [],
+            },
+            "missing_count": missing_count,
+            "pending_set_since": None,
+            "pending_clear_since": None,
+            "fingerprint_history": [],
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "last_observed_actual": {
+                "slot": slot,
+                "classification": "occupied",
+                "name_state": slot_name,
+                "has_code": True,
+                "start_state": start_state,
+                "end_state": end_state,
+                "use_date_range": True,
+                "enabled": True,
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # T088-1: missing_count incremented for absent occupied slot after cycle
+    # ------------------------------------------------------------------
+
+    async def test_missing_count_incremented_for_absent_occupied_slot(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-1: _slot_mappings missing_count incremented when reservation absent.
+
+        When an occupied persisted mapping is not present in the current
+        calendar feed, the coordinator's _build_ghost_reservations()
+        increments missing_count in _slot_mappings so that the new value
+        is persisted by async_save_slot_store at cycle end.
+        """
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+
+        fp = "aabbccddeeff0011" + "0" * 48
+        mapping = self._make_occupied_mapping(fp, "Alice Ghost", 10, missing_count=0)
+        store_data: dict[str, Any] = {
+            "schema_version": 1,
+            "entry_id": "persist_entry",
+            "mappings": {fp: mapping},
+            "blocked_slots": {},
+        }
+
+        frozen_time = datetime(2026, 7, 15, 12, 0, 0, tzinfo=dt_util.UTC)
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = store_data
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        # Empty calendar: Alice Ghost absent from feed
+        empty_ics = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nEND:VCALENDAR\r\n"
+        )
+
+        mock_plan = MagicMock()
+        mock_plan.plan_id = "t088-test"
+        mock_plan.selected = {}
+        mock_plan.overflow = {}
+        mock_plan.actions = []
+        mock_plan.diagnostics = {}
+        mock_plan.validate.return_value = []
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ),
+            patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=empty_ics)
+            await coordinator._async_update_data()
+
+        # missing_count in _slot_mappings must have been incremented to 1
+        updated_mc = coordinator._slot_mappings["mappings"][fp]["missing_count"]
+        assert updated_mc == 1, (
+            f"Expected missing_count=1 after one missed cycle, got {updated_mc}"
+        )
+
+    # ------------------------------------------------------------------
+    # T088-2: missing_count reset to 0 when reservation reappears
+    # ------------------------------------------------------------------
+
+    async def test_missing_count_reset_when_reservation_reappears(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-2: _slot_mappings missing_count reset when reservation returns.
+
+        After one miss (missing_count=1), if the reservation reappears
+        in the feed, _build_reservations() resets missing_count to 0 in
+        _slot_mappings so it is correctly saved.
+        """
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+
+        frozen_time = datetime(2026, 7, 15, 12, 0, 0, tzinfo=dt_util.UTC)
+        # Dates that produce a fingerprint matching the ICS event below.
+        start_dt = datetime(2026, 7, 20, 16, 0, 0, tzinfo=dt_util.UTC)
+        end_dt = datetime(2026, 7, 25, 11, 0, 0, tzinfo=dt_util.UTC)
+        fp = make_reservation_fingerprint(
+            "persist_entry", "Alice Ghost", start_dt, end_dt
+        )
+
+        mapping = self._make_occupied_mapping(
+            fp,
+            "Alice Ghost",
+            10,
+            missing_count=1,  # previously missed once
+            start_state=start_dt.isoformat(),
+            end_state=end_dt.isoformat(),
+        )
+        store_data: dict[str, Any] = {
+            "schema_version": 1,
+            "entry_id": "persist_entry",
+            "mappings": {fp: mapping},
+            "blocked_slots": {},
+        }
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = store_data
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        # ICS with Alice Ghost — same name and dates as the persisted mapping
+        ics_body = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n"
+            "BEGIN:VEVENT\r\n"
+            "DTSTART;VALUE=DATE:20260720\r\n"
+            "DTEND;VALUE=DATE:20260725\r\n"
+            "SUMMARY:Alice Ghost\r\nUID:alice-ghost-uid\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+
+        mock_plan = MagicMock()
+        mock_plan.plan_id = "t088-2"
+        mock_plan.selected = {}
+        mock_plan.overflow = {}
+        mock_plan.actions = []
+        mock_plan.diagnostics = {}
+        mock_plan.validate.return_value = []
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ),
+            patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=ics_body)
+            await coordinator._async_update_data()
+
+        updated_mc = coordinator._slot_mappings["mappings"][fp]["missing_count"]
+        assert updated_mc == 0, (
+            f"Expected missing_count=0 after reappearance, got {updated_mc}"
+        )
+
+    def test_sync_store_records_confirmed_selected_mapping(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-3: Confirmed selected slots are written to live Store mappings."""
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.util import OperationResult
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+
+        start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        identity_key = "selected." + "a" * 56
+        reservation = Reservation(
+            identity_key=identity_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Alice Selected",
+            slot_name="Alice Selected",
+            display_slot_name="Alice Selected",
+            slot_code="1234",
+            uid_aliases={"uid-a"},
+            booking_aliases={"book-a"},
+        )
+        plan = DesiredPlan(plan_id="persist-set", generated_at=start)
+        plan.selected = {identity_key: 10}
+
+        coordinator._sync_slot_store_from_plan(
+            plan,
+            {identity_key: reservation},
+            [OperationResult(kind="set", slot=10, confirmed=True)],
+        )
+
+        mapping = coordinator._slot_mappings["mappings"][identity_key]
+        assert mapping["slot"] == 10
+        assert mapping["status"] == "occupied"
+        assert mapping["identity"]["slot_name"] == "Alice Selected"
+        assert mapping["identity"]["uid_aliases"] == ["uid-a"]
+        assert "slot_code" not in mapping
+        assert "pin" not in mapping["last_observed_actual"]
+        assert coordinator.event_overrides is not None
+        assert identity_key in coordinator.event_overrides.persisted_mappings
+
+    def test_sync_store_removes_confirmed_clear_mapping(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-4: Confirmed clear results remove the cleared slot mapping."""
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.util import OperationResult
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        identity_key = "cleared." + "b" * 56
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                identity_key: self._make_occupied_mapping(
+                    identity_key, "Cleared Guest", 10
+                )
+            },
+            "blocked_slots": {},
+        }
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        plan = DesiredPlan(plan_id="persist-clear", generated_at=dt_util.now())
+
+        coordinator._sync_slot_store_from_plan(
+            plan,
+            {},
+            [OperationResult(kind="clear", slot=10, confirmed=True)],
+        )
+
+        assert coordinator._slot_mappings["mappings"] == {}
+        assert coordinator.event_overrides.persisted_mappings == {}
+
+    def test_sync_store_preserves_unconfirmed_set_as_unmapped(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-5: Unconfirmed SET results are not persisted as occupied."""
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.util import OperationResult
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        identity_key = "unconfirmed." + "c" * 52
+        reservation = Reservation(
+            identity_key=identity_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Unconfirmed Guest",
+            slot_name="Unconfirmed Guest",
+            display_slot_name="Unconfirmed Guest",
+            slot_code="1234",
+        )
+        plan = DesiredPlan(plan_id="persist-unconfirmed", generated_at=start)
+        plan.selected = {identity_key: 10}
+
+        coordinator._sync_slot_store_from_plan(
+            plan,
+            {identity_key: reservation},
+            [OperationResult(kind="set", slot=10, unconfirmed=True)],
+        )
+
+        assert identity_key not in coordinator._slot_mappings["mappings"]
+
+    def test_sync_store_does_not_readd_confirmed_clear_selection(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-6: Confirmed CLEAR wins over stale selected mappings."""
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.util import OperationResult
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        identity_key = "clear-selected." + "d" * 49
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                identity_key: self._make_occupied_mapping(
+                    identity_key, "Clear Selected", 10
+                )
+            },
+            "blocked_slots": {},
+        }
+        reservation = Reservation(
+            identity_key=identity_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Clear Selected",
+            slot_name="Clear Selected",
+            display_slot_name="Clear Selected",
+            slot_code="",
+        )
+        plan = DesiredPlan(plan_id="persist-clear-selected", generated_at=start)
+        plan.selected = {identity_key: 10}
+
+        coordinator._sync_slot_store_from_plan(
+            plan,
+            {identity_key: reservation},
+            [OperationResult(kind="clear", slot=10, confirmed=True)],
+        )
+
+        assert identity_key not in coordinator._slot_mappings["mappings"]
+
+    def test_build_reservations_rematches_uid_date_shift(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-7: UID rematch migrates a shifted fingerprint in place."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        old_start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        old_end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        new_start = datetime(2026, 8, 2, 16, 0, tzinfo=dt_util.UTC)
+        new_end = datetime(2026, 8, 6, 11, 0, tzinfo=dt_util.UTC)
+        old_key = make_reservation_fingerprint(
+            entry.entry_id, "Shift Guest", old_start, old_end
+        )
+        new_key = make_reservation_fingerprint(
+            entry.entry_id, "Shift Guest", new_start, new_end
+        )
+        mapping = self._make_occupied_mapping(
+            old_key,
+            "Shift Guest",
+            10,
+            start_state=old_start.isoformat(),
+            end_state=old_end.isoformat(),
+        )
+        mapping["identity"]["uid_aliases"] = ["stable-uid"]
+        mapping["identity"]["start"] = old_start.isoformat()
+        mapping["identity"]["end"] = old_end.isoformat()
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {old_key: mapping},
+            "blocked_slots": {},
+        }
+
+        event = MagicMock()
+        event.summary = "Shift Guest"
+        event.description = ""
+        event.start = new_start
+        event.end = new_end
+        event.uid = "stable-uid"
+
+        reservations = coordinator._build_reservations([event])
+
+        assert [res.identity_key for res in reservations] == [new_key]
+        assert old_key not in coordinator._slot_mappings["mappings"]
+        migrated = coordinator._slot_mappings["mappings"][new_key]
+        assert migrated["slot"] == 10
+        assert old_key in migrated["fingerprint_history"]
+        assert migrated["identity"]["identity_key"] == new_key
+
+    def test_observe_slots_uses_rematched_store_identity(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T084-3: First refresh observes rematched adopted ownership."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        adopted_key = f"adopted.{entry.entry_id}.slot10"
+        fingerprint = make_reservation_fingerprint(
+            entry.entry_id, "Adopt Guest", start, end
+        )
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                adopted_key: self._make_occupied_mapping(
+                    adopted_key,
+                    "Adopt Guest",
+                    10,
+                )
+            },
+            "blocked_slots": {},
+        }
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Adopt Guest")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "1234")
+
+        event = MagicMock()
+        event.summary = "Adopt Guest"
+        event.description = ""
+        event.start = start
+        event.end = end
+        event.uid = None
+
+        coordinator._build_reservations([event])
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        observed = coordinator._observe_managed_slots()
+
+        slot10 = next(slot for slot in observed if slot.slot == 10)
+        assert slot10.persisted_identity_key == fingerprint
+
+    def test_sync_store_writes_identity_start_and_end(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-8: Store identities include unbuffered start/end for rematch."""
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import Reservation
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        identity_key = "start-end." + "e" * 54
+        reservation = Reservation(
+            identity_key=identity_key,
+            start=start,
+            end=end,
+            buffered_start=start - timedelta(hours=1),
+            buffered_end=end + timedelta(hours=1),
+            summary="Start End Guest",
+            slot_name="Start End Guest",
+            display_slot_name="Start End Guest",
+            slot_code="1234",
+        )
+        plan = DesiredPlan(plan_id="persist-start-end", generated_at=start)
+        plan.selected = {identity_key: 10}
+
+        coordinator._sync_slot_store_from_plan(plan, {identity_key: reservation}, [])
+
+        identity = coordinator._slot_mappings["mappings"][identity_key]["identity"]
+        assert identity["start"] == start.isoformat()
+        assert identity["end"] == end.isoformat()
+
+    def test_sync_store_evicts_stale_mapping_for_reused_slot(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T089-4: Reusing a free slot drops its stale occupied mapping."""
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import Reservation
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        old_key = "old-stale." + "f" * 54
+        new_key = "new-active." + "a" * 53
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                old_key: self._make_occupied_mapping(old_key, "Old Guest", 10)
+            },
+            "blocked_slots": {},
+        }
+
+        start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        reservation = Reservation(
+            identity_key=new_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="New Guest",
+            slot_name="New Guest",
+            display_slot_name="New Guest",
+            slot_code="1234",
+        )
+        plan = DesiredPlan(plan_id="persist-reuse", generated_at=start)
+        plan.selected = {new_key: 10}
+
+        coordinator._sync_slot_store_from_plan(plan, {new_key: reservation}, [])
+
+        mappings = coordinator._slot_mappings["mappings"]
+        assert old_key not in mappings
+        assert mappings[new_key]["slot"] == 10
+

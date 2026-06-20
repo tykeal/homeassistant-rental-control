@@ -436,6 +436,8 @@ class StoredIdentity:
         identity_key: Primary stable fingerprint.
         summary: Calendar summary for sensor display.
         slot_name: Unprefixed, untrimmed guest-facing slot name.
+        start: Optional ISO-8601 reservation start used for NAME_TIME rematch.
+        end: Optional ISO-8601 reservation end used for NAME_TIME rematch.
         uid_aliases: Volatile iCal UIDs seen for this reservation.
         booking_aliases: Optional extracted booking/confirmation IDs.
     """
@@ -443,6 +445,8 @@ class StoredIdentity:
     identity_key: str
     summary: str
     slot_name: str
+    start: str | None = None
+    end: str | None = None
     uid_aliases: list[str] = field(default_factory=list)
     booking_aliases: list[str] = field(default_factory=list)
 

@@ -10,8 +10,10 @@ door-code generation, and independent multi-entry updates.
 
 from __future__ import annotations
 
+from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
+from typing import Any
 from unittest.mock import patch
 
 from aioresponses import aioresponses
@@ -1735,3 +1737,941 @@ class TestFartherEvictsNearer:
         assert plan2.selected["r-near-546"] == 3
         set_actions = [a for a in plan2.actions if a.kind is ActionKind.SET]
         assert any(a.slot == 3 for a in set_actions)
+
+
+# ---------------------------------------------------------------------------
+# T083 – restart with persisted Store mapping and UID churn
+# ---------------------------------------------------------------------------
+
+
+class TestRestartWithPersistedMappingAndUidChurn:
+    """T083: Coordinator rehydrates persisted slot mappings after a restart
+    even when the calendar platform reissues a new volatile UID for the
+    same reservation.
+
+    The fingerprint is computed from entry_id + slot_name + dates (not UID)
+    so UID churn does not change the identity key.  After restart the
+    coordinator's _build_reservations() must:
+      1. Find the persisted mapping by fingerprint.
+      2. Load missing_count=0 (no misses) for the recognised reservation.
+      3. Not treat the reservation as absent (no ghost with incremented count).
+    """
+
+    def _make_entry(self, entry_id: str = "rc-restart-t083") -> "MockConfigEntry":
+        """Build a minimal config entry scoped to the restart/UID-churn scenario."""
+        from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+        return MockConfigEntry(
+            domain="rental_control",
+            title="Restart Rental",
+            version=10,
+            unique_id=f"restart-{entry_id}",
+            data={
+                "name": "Restart Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "UTC",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 2,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+                "keymaster_entry_id": "test_lock",
+                "code_buffer_before": 0,
+                "code_buffer_after": 0,
+            },
+            entry_id=entry_id,
+        )
+
+    async def test_uid_churn_does_not_change_identity_key(self) -> None:
+        """T083-1: Same name/dates with new UID produce the same fingerprint.
+
+        This is the fundamental guarantee: UID churn cannot create a new
+        identity so the slot mapping survives platform UID reissuance.
+        """
+        from datetime import timezone
+
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        _TZ = timezone.utc
+        entry_id = "rc-restart-t083"
+        name = "Alice Guest"
+        start = datetime(2026, 7, 1, 16, 0, 0, tzinfo=_TZ)
+        end = datetime(2026, 7, 8, 11, 0, 0, tzinfo=_TZ)
+
+        fp_first_run = make_reservation_fingerprint(entry_id, name, start, end)
+        fp_second_run = make_reservation_fingerprint(entry_id, name, start, end)
+
+        assert fp_first_run == fp_second_run, (
+            "Fingerprint changed between runs — UID churn broke identity stability"
+        )
+
+    async def test_restart_with_persisted_mapping_recognises_reservation(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T083-2: After restart, _build_reservations recognises persisted mapping.
+
+        Simulates:
+          - Store has a mapping for Alice Guest in slot 10 (missing_count=0).
+          - Calendar returns Alice Guest with a NEW volatile UID (churn).
+          - _build_reservations() must find the mapping by fingerprint.
+          - The Reservation built has missing_count=0 (not treated as absent).
+        """
+        from datetime import timezone
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        _TZ = timezone.utc
+        entry = self._make_entry()
+        entry.add_to_hass(hass)
+
+        frozen_time = datetime(2026, 7, 10, 12, 0, 0, tzinfo=_TZ)
+        start_dt = datetime(2026, 7, 15, 16, 0, 0, tzinfo=_TZ)
+        end_dt = datetime(2026, 7, 22, 11, 0, 0, tzinfo=_TZ)
+        fp = make_reservation_fingerprint(
+            "rc-restart-t083", "Alice Guest", start_dt, end_dt
+        )
+
+        store_data: dict[str, Any] = {
+            "schema_version": 1,
+            "entry_id": "rc-restart-t083",
+            "mappings": {
+                fp: {
+                    "slot": 10,
+                    "status": "occupied",
+                    "operation_id": None,
+                    "operation_kind": None,
+                    "identity": {
+                        "identity_key": fp,
+                        "summary": "Alice Guest",
+                        "slot_name": "Alice Guest",
+                        "uid_aliases": ["uid-alice-old"],
+                        "booking_aliases": [],
+                    },
+                    "missing_count": 0,
+                    "pending_set_since": None,
+                    "pending_clear_since": None,
+                    "fingerprint_history": [],
+                    "updated_at": "2026-07-01T00:00:00+00:00",
+                    "last_observed_actual": {
+                        "slot": 10,
+                        "classification": "occupied",
+                        "name_state": "Alice Guest",
+                        "has_code": True,
+                        "start_state": start_dt.isoformat(),
+                        "end_state": end_dt.isoformat(),
+                        "use_date_range": True,
+                        "enabled": True,
+                    },
+                }
+            },
+            "blocked_slots": {},
+        }
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        # Inject persisted state (simulating post-restart Store load).
+        coordinator._slot_mappings = store_data
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        # Calendar returns Alice Guest with a NEW UID (churn).
+        ics_body = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n"
+            "BEGIN:VEVENT\r\n"
+            "DTSTART;VALUE=DATE:20260715\r\n"
+            "DTEND;VALUE=DATE:20260722\r\n"
+            "SUMMARY:Alice Guest\r\nUID:uid-alice-NEW-after-churn\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+
+        mock_plan = MagicMock()
+        mock_plan.plan_id = "t083-restart"
+        mock_plan.selected = {}
+        mock_plan.overflow = {}
+        mock_plan.actions = []
+        mock_plan.diagnostics = {}
+        mock_plan.validate.return_value = []
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ) as mock_compute,
+            patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=ics_body)
+            await coordinator._async_update_data()
+
+        reservations = mock_compute.call_args.kwargs["reservations"]
+        # Exactly one live reservation built from the calendar event.
+        live = [r for r in reservations if r.identity_key == fp]
+        assert len(live) == 1, "Persisted reservation not recognised after UID churn"
+        # Not treated as absent → missing_count stays 0.
+        assert live[0].missing_count == 0
+
+    async def test_restart_uid_churn_no_ghost_created(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T083-3: Recognised reservation does not also generate a ghost entry.
+
+        When the live reservation is found by fingerprint, _build_ghost_reservations
+        must not also create a ghost with incremented missing_count.
+        """
+        from datetime import timezone
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        _TZ = timezone.utc
+        entry = self._make_entry("rc-restart-t083-ghost")
+        entry.add_to_hass(hass)
+
+        frozen_time = datetime(2026, 7, 10, 12, 0, 0, tzinfo=_TZ)
+        start_dt = datetime(2026, 7, 15, 16, 0, 0, tzinfo=_TZ)
+        end_dt = datetime(2026, 7, 22, 11, 0, 0, tzinfo=_TZ)
+        fp = make_reservation_fingerprint(
+            "rc-restart-t083-ghost", "Alice Guest", start_dt, end_dt
+        )
+
+        store_data: dict[str, Any] = {
+            "schema_version": 1,
+            "entry_id": "rc-restart-t083-ghost",
+            "mappings": {
+                fp: {
+                    "slot": 10,
+                    "status": "occupied",
+                    "operation_id": None,
+                    "operation_kind": None,
+                    "identity": {
+                        "identity_key": fp,
+                        "summary": "Alice Guest",
+                        "slot_name": "Alice Guest",
+                        "uid_aliases": [],
+                        "booking_aliases": [],
+                    },
+                    "missing_count": 0,
+                    "pending_set_since": None,
+                    "pending_clear_since": None,
+                    "fingerprint_history": [],
+                    "updated_at": "2026-07-01T00:00:00+00:00",
+                    "last_observed_actual": {
+                        "slot": 10,
+                        "classification": "occupied",
+                        "name_state": "Alice Guest",
+                        "has_code": True,
+                        "start_state": start_dt.isoformat(),
+                        "end_state": end_dt.isoformat(),
+                        "use_date_range": True,
+                        "enabled": True,
+                    },
+                }
+            },
+            "blocked_slots": {},
+        }
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = store_data
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        # Same reservation with new UID.
+        ics_body = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n"
+            "BEGIN:VEVENT\r\n"
+            "DTSTART;VALUE=DATE:20260715\r\n"
+            "DTEND;VALUE=DATE:20260722\r\n"
+            "SUMMARY:Alice Guest\r\nUID:uid-alice-brand-new\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+
+        mock_plan = MagicMock()
+        mock_plan.plan_id = "t083-no-ghost"
+        mock_plan.selected = {}
+        mock_plan.overflow = {}
+        mock_plan.actions = []
+        mock_plan.diagnostics = {}
+        mock_plan.validate.return_value = []
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ) as mock_compute,
+            patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=ics_body)
+            await coordinator._async_update_data()
+
+        reservations = mock_compute.call_args.kwargs["reservations"]
+        # Exactly one entry for this fingerprint — no duplicate ghost
+        matching = [r for r in reservations if r.identity_key == fp]
+        assert len(matching) == 1, (
+            f"Expected exactly 1 reservation for fp, got {len(matching)}"
+        )
+        # missing_count must remain 0 — not incremented by ghost logic
+        assert matching[0].missing_count == 0
+
+
+# ---------------------------------------------------------------------------
+# T084 – first-upgrade migration does-not-wipe-working-slots
+# ---------------------------------------------------------------------------
+
+
+class TestFirstUpgradeMigrationNoWipe:
+    """T084: First-upgrade slot adoption leaves working Keymaster slots intact.
+
+    When the HA Store is empty (first upgrade from a version without slot
+    persistence), async_adopt_keymaster_slots() records existing populated
+    slots as 'occupied' without issuing any clear_code service calls.
+
+    This is the integration-level version of T010-2 (unit test).
+    """
+
+    def _make_entry(
+        self,
+        entry_id: str = "rc-upgrade-t084",
+        lockname: str = "upgrade_lock",
+        start_slot: int = 10,
+        max_events: int = 3,
+    ) -> MockConfigEntry:
+        """Build a minimal config entry for the first-upgrade scenario."""
+        return MockConfigEntry(
+            domain="rental_control",
+            title="Upgrade Rental",
+            version=10,
+            unique_id=f"upgrade-{entry_id}",
+            data={
+                "name": "Upgrade Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "UTC",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": start_slot,
+                "max_events": max_events,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+                "keymaster_entry_id": lockname,
+                "code_buffer_before": 0,
+                "code_buffer_after": 0,
+            },
+            entry_id=entry_id,
+        )
+
+    async def test_adoption_does_not_wipe_codes_scenario(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T084-1: async_adopt_keymaster_slots reads slot state but issues no writes.
+
+        Scenario: first-time setup with two occupied Keymaster slots.
+          - Slot 10: Guest A with PIN 1234
+          - Slot 11: Guest B with PIN 5678
+          - Slot 12: empty
+
+        After adoption, PINs must still be 1234 and 5678 (no wipes).
+        Mappings for slots 10 and 11 must be recorded as occupied.
+        """
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_entry()
+        entry.add_to_hass(hass)
+
+        hass.states.async_set("text.upgrade_lock_code_slot_10_name", "Guest A")
+        hass.states.async_set("text.upgrade_lock_code_slot_10_pin", "1234")
+        hass.states.async_set("text.upgrade_lock_code_slot_11_name", "Guest B")
+        hass.states.async_set("text.upgrade_lock_code_slot_11_pin", "5678")
+        hass.states.async_set("text.upgrade_lock_code_slot_12_name", "")
+        hass.states.async_set("text.upgrade_lock_code_slot_12_pin", "")
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        # Store is empty → first-upgrade path
+        coordinator._slot_mappings = {}
+        await coordinator.async_adopt_keymaster_slots()
+
+        # PINs must not be wiped
+        pin10 = hass.states.get("text.upgrade_lock_code_slot_10_pin")
+        assert pin10 is not None and pin10.state == "1234"
+        pin11 = hass.states.get("text.upgrade_lock_code_slot_11_pin")
+        assert pin11 is not None and pin11.state == "5678"
+
+        # Occupied mappings recorded
+        mappings = coordinator._slot_mappings.get("mappings", {})
+        occupied_slots = {
+            v["slot"] for v in mappings.values() if v["status"] == "occupied"
+        }
+        assert 10 in occupied_slots
+        assert 11 in occupied_slots
+        assert 12 not in occupied_slots
+
+    async def test_adoption_no_raw_pin_in_mappings(self, hass: "HomeAssistant") -> None:
+        """T084-2: Adopted slot mappings contain no raw PIN values.
+
+        The no-raw-PIN invariant must hold for adopted mappings so
+        that the Store never persists sensitive access codes.
+        """
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = self._make_entry("rc-upgrade-t084-pin")
+        entry.add_to_hass(hass)
+
+        hass.states.async_set("text.upgrade_lock_code_slot_10_name", "Guest C")
+        hass.states.async_set("text.upgrade_lock_code_slot_10_pin", "9999")
+        hass.states.async_set("text.upgrade_lock_code_slot_11_name", "")
+        hass.states.async_set("text.upgrade_lock_code_slot_11_pin", "")
+        hass.states.async_set("text.upgrade_lock_code_slot_12_name", "")
+        hass.states.async_set("text.upgrade_lock_code_slot_12_pin", "")
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {}
+        await coordinator.async_adopt_keymaster_slots()
+
+        for _key, v in coordinator._slot_mappings.get("mappings", {}).items():
+            last_obs = v.get("last_observed_actual", {})
+            assert "pin" not in last_obs
+            assert "code" not in last_obs
+            assert "slot_code" not in last_obs
+            assert "has_code" in last_obs
+
+
+# ---------------------------------------------------------------------------
+# T085 – two-cycle transient miss tolerance and third-miss clearable
+# ---------------------------------------------------------------------------
+
+
+class TestTwoCycleTransientMissTolerance:
+    """T085: Reservations absent from the feed for 1 or 2 cycles keep their
+    slot; on the third consecutive miss the slot becomes clearable.
+
+    Uses compute_desired_plan directly with Reservations that have the
+    appropriate missing_count pre-set (mirrors what _build_ghost_reservations
+    produces after N missed cycles).
+    """
+
+    def _mk(self, key: str, day: int = 1, *, missing_count: int = 0):  # type: ignore[return]
+        """Build a minimal August 2026 ghost Reservation for miss-tolerance tests."""
+        from datetime import timezone as _tz
+
+        from custom_components.rental_control.reconciliation import Reservation
+
+        _TZ = _tz.utc
+        s = datetime(2026, 8, day, 14, 0, 0, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+        return Reservation(
+            identity_key=key,
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary=f"Ghost {key}",
+            slot_name=f"Ghost {key}",
+            display_slot_name=f"RC Ghost {key}",
+            slot_code="",
+            missing_count=missing_count,
+        )
+
+    def _occupied(self, slot: int, key: str, day: int = 1):  # type: ignore[return]
+        """Build an OCCUPIED ManagedSlot for the given slot and identity key."""
+        from datetime import timezone as _tz
+
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+
+        _TZ = _tz.utc
+        s = datetime(2026, 8, day, 14, 0, 0, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+        return ManagedSlot(
+            slot=slot,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name=f"RC Ghost {key}",
+            actual_code_present=True,
+            persisted_identity_key=key,
+            actual_start=s,
+            actual_end=e,
+        )
+
+    async def test_miss_cycle_1_slot_retained(self) -> None:
+        """T085-1: After one miss (missing_count=1) the slot is retained.
+
+        The planner still sees the reservation as eligible (count < 3)
+        and keeps NOOP on its slot.
+        """
+        from datetime import timezone as _tz
+
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        _TZ = _tz.utc
+        res = self._mk("r-t085-miss1", missing_count=1)
+        slot = self._occupied(3, "r-t085-miss1")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot],
+            max_events=1,
+            plan_id="t085-c1",
+            generated_at=datetime(2026, 8, 1, tzinfo=_TZ),
+        )
+
+        assert "r-t085-miss1" in plan.selected
+        clear_actions = [
+            a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 3
+        ]
+        assert len(clear_actions) == 0, (
+            "Slot cleared after only 1 miss — expected retention"
+        )
+
+    async def test_miss_cycle_2_slot_still_retained(self) -> None:
+        """T085-2: After two consecutive misses (missing_count=2) slot still retained."""
+        from datetime import timezone as _tz
+
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        _TZ = _tz.utc
+        res = self._mk("r-t085-miss2", missing_count=2)
+        slot = self._occupied(3, "r-t085-miss2")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot],
+            max_events=1,
+            plan_id="t085-c2",
+            generated_at=datetime(2026, 8, 1, tzinfo=_TZ),
+        )
+
+        assert "r-t085-miss2" in plan.selected
+        clear_actions = [
+            a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 3
+        ]
+        assert len(clear_actions) == 0, (
+            "Slot cleared after only 2 misses — expected retention"
+        )
+
+    async def test_miss_cycle_3_slot_clearable(self) -> None:
+        """T085-3: After three consecutive misses (missing_count=3) slot becomes clearable.
+
+        The planner excludes the ghost from eligible candidates.  The slot
+        has no desired occupant → CLEAR action generated.
+        """
+        from datetime import timezone as _tz
+
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        _TZ = _tz.utc
+        res = self._mk("r-t085-miss3", missing_count=3)
+        slot = self._occupied(3, "r-t085-miss3")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot],
+            max_events=1,
+            plan_id="t085-c3",
+            generated_at=datetime(2026, 8, 1, tzinfo=_TZ),
+        )
+
+        assert "r-t085-miss3" not in plan.selected
+        clear_actions = [
+            a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 3
+        ]
+        assert len(clear_actions) == 1, "Expected CLEAR action on third miss"
+
+    async def test_missing_count_incremented_across_cycles_via_coordinator(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T085-4: Coordinator increments missing_count in _slot_mappings each cycle.
+
+        Runs _async_update_data() three times with an empty calendar while
+        a persisted occupied mapping exists.  After three cycles the
+        mapping's missing_count must be 3.
+        """
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = MockConfigEntry(
+            domain="rental_control",
+            title="Ghost Rental",
+            version=10,
+            unique_id="ghost-t085-cycles",
+            data={
+                "name": "Ghost Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "UTC",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 1,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+                "keymaster_entry_id": "ghost_lock",
+                "code_buffer_before": 0,
+                "code_buffer_after": 0,
+            },
+            entry_id="ghost-t085-cycles",
+        )
+        entry.add_to_hass(hass)
+
+        from datetime import timezone as _tz
+
+        _TZ = _tz.utc
+        fp = "t085cycles" + "0" * 54
+        start_state = "2026-08-01T14:00:00+00:00"
+        end_state = "2026-08-08T11:00:00+00:00"
+        store_data: dict[str, Any] = {
+            "schema_version": 1,
+            "entry_id": "ghost-t085-cycles",
+            "mappings": {
+                fp: {
+                    "slot": 10,
+                    "status": "occupied",
+                    "operation_id": None,
+                    "operation_kind": None,
+                    "identity": {
+                        "identity_key": fp,
+                        "summary": "Ghost A",
+                        "slot_name": "Ghost A",
+                        "uid_aliases": [],
+                        "booking_aliases": [],
+                    },
+                    "missing_count": 0,
+                    "pending_set_since": None,
+                    "pending_clear_since": None,
+                    "fingerprint_history": [],
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                    "last_observed_actual": {
+                        "slot": 10,
+                        "classification": "occupied",
+                        "name_state": "Ghost A",
+                        "has_code": True,
+                        "start_state": start_state,
+                        "end_state": end_state,
+                        "use_date_range": True,
+                        "enabled": True,
+                    },
+                }
+            },
+            "blocked_slots": {},
+        }
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = store_data
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        empty_ics = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nEND:VCALENDAR\r\n"
+        )
+        frozen_time = datetime(2026, 8, 10, 12, 0, 0, tzinfo=_TZ)
+
+        def _mock_plan(cycle: int) -> MagicMock:
+            """Build a minimal DesiredPlan mock for one refresh cycle of T085."""
+            mp = MagicMock()
+            mp.plan_id = f"t085-cycle{cycle}"
+            mp.selected = {}
+            mp.overflow = {}
+            mp.actions = []
+            mp.diagnostics = {}
+            mp.validate.return_value = []
+            return mp
+
+        for cycle in range(1, 4):
+            mock_plan = _mock_plan(cycle)
+            with (
+                aioresponses() as mock_session,
+                patch.object(dt_util, "now", return_value=frozen_time),
+                patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+                patch(
+                    "custom_components.rental_control.coordinator.compute_desired_plan",
+                    return_value=mock_plan,
+                ),
+                patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+                patch.object(
+                    coordinator, "async_save_slot_store", new_callable=AsyncMock
+                ),
+            ):
+                mock_session.get("https://example.com/calendar.ics", body=empty_ics)
+                await coordinator._async_update_data()
+
+            mc = coordinator._slot_mappings["mappings"][fp]["missing_count"]
+            assert mc == cycle, (
+                f"After cycle {cycle}: expected missing_count={cycle}, got {mc}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# T086 – reappearing-before-third-miss resets missing_count
+# ---------------------------------------------------------------------------
+
+
+class TestReappearingBeforeThirdMiss:
+    """T086: When a reservation reappears in the feed before the third miss,
+    its missing_count is reset to 0 and its slot is retained without
+    interruption.
+    """
+
+    def _make_entry(self, entry_id: str = "rc-reappear-t086") -> MockConfigEntry:
+        """Build a minimal config entry for the reappear-before-third-miss scenario."""
+        return MockConfigEntry(
+            domain="rental_control",
+            title="Reappear Rental",
+            version=10,
+            unique_id=f"reappear-{entry_id}",
+            data={
+                "name": "Reappear Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "UTC",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 1,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": False,
+                "keymaster_entry_id": "reappear_lock",
+                "code_buffer_before": 0,
+                "code_buffer_after": 0,
+            },
+            entry_id=entry_id,
+        )
+
+    async def test_reappear_at_miss2_resets_count_to_zero(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T086-1: Reservation reappearing on cycle 3 (after 2 misses) resets count.
+
+        Sequence:
+          Cycle 1: absent → missing_count 0→1
+          Cycle 2: absent → missing_count 1→2
+          Cycle 3: PRESENT → missing_count 2→0 (reset)
+        After cycle 3, _slot_mappings missing_count must be 0.
+        """
+        from datetime import timezone as _tz
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        _TZ = _tz.utc
+        entry = self._make_entry()
+        entry.add_to_hass(hass)
+
+        frozen_time = datetime(2026, 8, 10, 12, 0, 0, tzinfo=_TZ)
+        # The coordinator parses VALUE=DATE DTSTART with checkin=16:00 UTC and
+        # DTEND with checkout=11:00 UTC (from the config entry defaults).
+        start_dt = datetime(2026, 8, 15, 16, 0, 0, tzinfo=_TZ)
+        end_dt = datetime(2026, 8, 22, 11, 0, 0, tzinfo=_TZ)
+        fp = make_reservation_fingerprint(
+            "rc-reappear-t086", "Reappear Guest", start_dt, end_dt
+        )
+
+        store_data: dict[str, Any] = {
+            "schema_version": 1,
+            "entry_id": "rc-reappear-t086",
+            "mappings": {
+                fp: {
+                    "slot": 10,
+                    "status": "occupied",
+                    "operation_id": None,
+                    "operation_kind": None,
+                    "identity": {
+                        "identity_key": fp,
+                        "summary": "Reappear Guest",
+                        "slot_name": "Reappear Guest",
+                        "uid_aliases": [],
+                        "booking_aliases": [],
+                    },
+                    "missing_count": 0,
+                    "pending_set_since": None,
+                    "pending_clear_since": None,
+                    "fingerprint_history": [],
+                    "updated_at": "2026-08-01T00:00:00+00:00",
+                    "last_observed_actual": {
+                        "slot": 10,
+                        "classification": "occupied",
+                        "name_state": "Reappear Guest",
+                        "has_code": True,
+                        "start_state": start_dt.isoformat(),
+                        "end_state": end_dt.isoformat(),
+                        "use_date_range": True,
+                        "enabled": True,
+                    },
+                }
+            },
+            "blocked_slots": {},
+        }
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = store_data
+        assert coordinator.event_overrides is not None
+        eo = coordinator.event_overrides
+
+        empty_ics = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nEND:VCALENDAR\r\n"
+        )
+        present_ics = (
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n"
+            "BEGIN:VEVENT\r\n"
+            "DTSTART;VALUE=DATE:20260815\r\n"
+            "DTEND;VALUE=DATE:20260822\r\n"
+            "SUMMARY:Reappear Guest\r\nUID:uid-reappear-001\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+
+        def _mock_plan(cycle: int) -> MagicMock:
+            """Build a minimal DesiredPlan mock for one refresh cycle of T086."""
+            mp = MagicMock()
+            mp.plan_id = f"t086-c{cycle}"
+            mp.selected = {}
+            mp.overflow = {}
+            mp.actions = []
+            mp.diagnostics = {}
+            mp.validate.return_value = []
+            return mp
+
+        # Cycles 1 & 2: reservation absent
+        for cycle in range(1, 3):
+            mock_plan = _mock_plan(cycle)
+            with (
+                aioresponses() as mock_session,
+                patch.object(dt_util, "now", return_value=frozen_time),
+                patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+                patch(
+                    "custom_components.rental_control.coordinator.compute_desired_plan",
+                    return_value=mock_plan,
+                ),
+                patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+                patch.object(
+                    coordinator, "async_save_slot_store", new_callable=AsyncMock
+                ),
+            ):
+                mock_session.get("https://example.com/calendar.ics", body=empty_ics)
+                await coordinator._async_update_data()
+
+        mc_after_2 = coordinator._slot_mappings["mappings"][fp]["missing_count"]
+        assert mc_after_2 == 2, f"Expected 2 after two misses, got {mc_after_2}"
+
+        # Cycle 3: reservation REAPPEARS
+        mock_plan3 = _mock_plan(3)
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan3,
+            ),
+            patch.object(eo, "async_apply_plan", new=AsyncMock(return_value=[])),
+            patch.object(coordinator, "async_save_slot_store", new_callable=AsyncMock),
+        ):
+            mock_session.get("https://example.com/calendar.ics", body=present_ics)
+            await coordinator._async_update_data()
+
+        mc_after_return = coordinator._slot_mappings["mappings"][fp]["missing_count"]
+        assert mc_after_return == 0, (
+            f"Expected missing_count=0 after reappearance, got {mc_after_return}"
+        )
+
+    async def test_reappear_at_miss1_does_not_clear(self) -> None:
+        """T086-2: Reservation with missing_count=1 that reappears stays assigned.
+
+        When the reservation comes back at count=1 (before the tolerance
+        limit), the planner must see it as eligible and assign it to its
+        slot — no CLEAR action generated.
+        """
+        from datetime import timezone as _tz
+
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        _TZ = _tz.utc
+        # Represents a "reappeared" reservation (missing_count reset to 0)
+        s = datetime(2026, 8, 1, 14, 0, 0, tzinfo=_TZ)
+        e = s + timedelta(days=7)
+        res = Reservation(
+            identity_key="r-reappear-t086",
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary="Reappear Guest",
+            slot_name="Reappear Guest",
+            display_slot_name="RC Reappear Guest",
+            slot_code="",
+            missing_count=0,  # reset on reappearance
+        )
+        slot3 = ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="RC Reappear Guest",
+            actual_code_present=True,
+            persisted_identity_key="r-reappear-t086",
+            actual_start=s,
+            actual_end=e,
+        )
+
+        plan = compute_desired_plan(
+            [res],
+            [slot3],
+            max_events=1,
+            plan_id="t086-reappear",
+            generated_at=datetime(2026, 8, 1, tzinfo=_TZ),
+        )
+
+        assert "r-reappear-t086" in plan.selected
+        clear_actions = [
+            a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 3
+        ]
+        assert len(clear_actions) == 0, (
+            "Slot was cleared after reappearance — expected NOOP"
+        )

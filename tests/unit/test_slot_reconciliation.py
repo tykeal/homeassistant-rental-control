@@ -31,6 +31,7 @@ And the identity fingerprinting / rematch helpers:
 from __future__ import annotations
 
 from datetime import datetime
+from datetime import timedelta
 from datetime import timezone
 
 import pytest
@@ -1530,6 +1531,8 @@ class TestConservativeContinuityRematch:
         fingerprint_history: list[str] | None = None,
         booking_aliases: list[str] | None = None,
         uid_aliases: list[str] | None = None,
+        start_iso: str | None = None,
+        end_iso: str | None = None,
     ) -> dict:
         """Build a minimal persisted mapping for continuity tests."""
         return {
@@ -1540,6 +1543,8 @@ class TestConservativeContinuityRematch:
                 "identity_key": identity_key,
                 "summary": slot_name,
                 "slot_name": slot_name,
+                "start": start_iso,
+                "end": end_iso,
                 "uid_aliases": uid_aliases or [],
                 "booking_aliases": booking_aliases or [],
             },
@@ -1810,6 +1815,8 @@ class TestAmbiguousRematchDiagnostics:
         slot: int,
         fingerprint_history: list[str] | None = None,
         booking_aliases: list[str] | None = None,
+        start_iso: str | None = None,
+        end_iso: str | None = None,
     ) -> dict:
         """Build a minimal persisted mapping for ambiguous tests."""
         return {
@@ -1820,6 +1827,8 @@ class TestAmbiguousRematchDiagnostics:
                 "identity_key": identity_key,
                 "summary": slot_name,
                 "slot_name": slot_name,
+                "start": start_iso,
+                "end": end_iso,
                 "uid_aliases": [],
                 "booking_aliases": booking_aliases or [],
             },
@@ -3943,3 +3952,247 @@ class TestDesiredPlanInvariants:
         # Each identity key appears exactly once
         key_values = list(plan.selected.keys())
         assert len(key_values) == len(set(key_values))
+
+
+# ---------------------------------------------------------------------------
+# T089: Feed-miss lifecycle — missing_count tolerance and clearability
+# ---------------------------------------------------------------------------
+
+
+class TestFeedMissLifecycle:
+    """T089: Reservations with missing_count 0–2 remain eligible; missing_count 3
+    makes them clearable (excluded from eligible candidates so the planner
+    generates a CLEAR action for their slot).
+
+    These tests exercise :func:`~.reconciliation._filter_eligible` and the
+    resulting plan actions for the three miss-tolerance states.
+    """
+
+    def _mk(
+        self,
+        key: str,
+        day: int = 1,
+        *,
+        missing_count: int = 0,
+        protected_active: bool = False,
+    ) -> Reservation:
+        """Build a minimal August 2026 Reservation with the given missing_count."""
+        s = _dt(2026, 8, day)
+        e = s + timedelta(days=7)
+        return Reservation(
+            identity_key=key,
+            start=s,
+            end=e,
+            buffered_start=s,
+            buffered_end=e,
+            summary=f"Guest {key}",
+            slot_name=f"Guest {key}",
+            display_slot_name=f"RC Guest {key}",
+            slot_code=f"PIN{key}",
+            missing_count=missing_count,
+            protected_active=protected_active,
+        )
+
+    def _occupied(self, slot: int, key: str, day: int = 1) -> ManagedSlot:
+        """Build an OCCUPIED ManagedSlot keyed to *key*."""
+        s = _dt(2026, 8, day)
+        e = s + timedelta(days=7)
+        return ManagedSlot(
+            slot=slot,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name=f"RC Guest {key}",
+            actual_code_present=True,
+            persisted_identity_key=key,
+            actual_start=s,
+            actual_end=e,
+        )
+
+    # ------------------------------------------------------------------
+    # T089-1: missing_count=0 → still eligible, slot NOOP
+    # ------------------------------------------------------------------
+
+    def test_missing_count_zero_eligible_noop(self) -> None:
+        """T089-1: Reservation with missing_count=0 is eligible; slot stays NOOP."""
+        res = self._mk("r-zero", missing_count=0)
+        slot3 = self._occupied(3, "r-zero")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot3],
+            max_events=1,
+            plan_id="t089-zero",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        assert "r-zero" in plan.selected
+        assert plan.selected["r-zero"] == 3
+        noop_actions = [a for a in plan.actions if a.slot == 3]
+        assert all(a.kind is ActionKind.NOOP for a in noop_actions)
+
+    # ------------------------------------------------------------------
+    # T089-2: missing_count=1 → still eligible, slot retained (NOOP)
+    # ------------------------------------------------------------------
+
+    def test_missing_count_one_still_eligible(self) -> None:
+        """T089-2: Reservation with missing_count=1 is eligible; slot retained."""
+        res = self._mk("r-miss1", missing_count=1)
+        slot3 = self._occupied(3, "r-miss1")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot3],
+            max_events=1,
+            plan_id="t089-miss1",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        assert "r-miss1" in plan.selected
+        # No CLEAR action for slot 3
+        clear_slot3 = [
+            a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 3
+        ]
+        assert len(clear_slot3) == 0
+
+    # ------------------------------------------------------------------
+    # T089-3: missing_count=2 → still eligible, slot retained (NOOP)
+    # ------------------------------------------------------------------
+
+    def test_missing_count_two_still_eligible(self) -> None:
+        """T089-3: Reservation with missing_count=2 is eligible; slot retained."""
+        res = self._mk("r-miss2", missing_count=2)
+        slot3 = self._occupied(3, "r-miss2")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot3],
+            max_events=1,
+            plan_id="t089-miss2",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        assert "r-miss2" in plan.selected
+        clear_slot3 = [
+            a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 3
+        ]
+        assert len(clear_slot3) == 0
+
+    # ------------------------------------------------------------------
+    # T089-4: missing_count=3 → clearable (excluded from eligible)
+    # ------------------------------------------------------------------
+
+    def test_missing_count_three_clearable(self) -> None:
+        """T089-4: Reservation with missing_count=3 is excluded → slot CLEAR.
+
+        When the planner does not see the reservation in the eligible set,
+        the slot it occupies has desired_key=None → CLEAR action generated.
+        """
+        res = self._mk("r-miss3", missing_count=3)
+        slot3 = self._occupied(3, "r-miss3")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot3],
+            max_events=1,
+            plan_id="t089-miss3",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        # Reservation is NOT selected (excluded by _filter_eligible)
+        assert "r-miss3" not in plan.selected
+        # Slot 3 must have a CLEAR action
+        clear_slot3 = [
+            a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 3
+        ]
+        assert len(clear_slot3) == 1
+
+    # ------------------------------------------------------------------
+    # T089-5: missing_count=3 with protected_active bypasses exclusion
+    # ------------------------------------------------------------------
+
+    def test_missing_count_three_protected_active_not_cleared(self) -> None:
+        """T089-5: Protected active reservation with missing_count=3 stays assigned.
+
+        An active checked-in guest must never be evicted even if the feed
+        drops the reservation for three cycles.
+        """
+        res = self._mk("r-protected", missing_count=3, protected_active=True)
+        slot3 = self._occupied(3, "r-protected")
+
+        plan = compute_desired_plan(
+            [res],
+            [slot3],
+            max_events=1,
+            plan_id="t089-protected",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        # Protected reservation is still selected despite missing_count=3
+        assert "r-protected" in plan.selected
+        clear_slot3 = [
+            a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 3
+        ]
+        assert len(clear_slot3) == 0
+
+    # ------------------------------------------------------------------
+    # T089-6: transition from count=2 to count=3 clears while a second
+    #         reservation with count=0 survives unaffected
+    # ------------------------------------------------------------------
+
+    def test_third_miss_clears_while_other_reservation_unaffected(self) -> None:
+        """T089-6: Third-miss clearable does not affect coexisting reservations.
+
+        With two slots: one occupied by a reservation on its third miss,
+        one by a reservation with count=0.  The third-miss slot gets CLEAR;
+        the other stays NOOP.
+        """
+        r_clearing = self._mk("r-clearing", day=1, missing_count=3)
+        r_stable = self._mk("r-stable", day=15, missing_count=0)
+
+        slot3_clearing = self._occupied(3, "r-clearing", day=1)
+        slot4_stable = self._occupied(4, "r-stable", day=15)
+
+        plan = compute_desired_plan(
+            [r_clearing, r_stable],
+            [slot3_clearing, slot4_stable],
+            max_events=2,
+            plan_id="t089-two-slots",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        # r-clearing must be cleared
+        assert "r-clearing" not in plan.selected
+        clear_slot3 = [
+            a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 3
+        ]
+        assert len(clear_slot3) == 1
+
+        # r-stable must stay
+        assert "r-stable" in plan.selected
+        assert plan.selected["r-stable"] == 4
+        clear_slot4 = [
+            a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 4
+        ]
+        assert len(clear_slot4) == 0
+
+    # ------------------------------------------------------------------
+    # T089-7: Reservation constructor rejects negative missing_count
+    # ------------------------------------------------------------------
+
+    def test_reservation_rejects_negative_missing_count(self) -> None:
+        """T089-7: Reservation raises ValueError for negative missing_count."""
+        import pytest as _pytest
+
+        with _pytest.raises(ValueError, match="missing_count"):
+            Reservation(
+                identity_key="bad-key",
+                start=_dt(2026, 8, 1),
+                end=_dt(2026, 8, 8),
+                buffered_start=_dt(2026, 8, 1),
+                buffered_end=_dt(2026, 8, 8),
+                summary="Bad",
+                slot_name="Bad",
+                display_slot_name="RC Bad",
+                slot_code="",
+                missing_count=-1,
+            )

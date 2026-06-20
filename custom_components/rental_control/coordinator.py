@@ -102,6 +102,7 @@ from .reconciliation import compute_desired_plan
 from .reconciliation import extract_booking_aliases
 from .reconciliation import find_reservation_rematch
 from .reconciliation import make_reservation_fingerprint
+from .util import OperationResult
 from .util import add_call
 from .util import apply_buffer
 from .util import async_fire_clear_code
@@ -681,6 +682,10 @@ Please update Keymaster to at least v0.1.0-b0
                     }
                 )
             await self.async_save_slot_store()
+            if self.event_overrides is not None:
+                self.event_overrides.load_persisted_mappings(
+                    self._slot_mappings.get("mappings", {})
+                )
 
     def _generate_date_based_code(self, start: datetime, end: datetime) -> str:
         """Generate a date-based door code from reservation start/end times.
@@ -714,9 +719,15 @@ Please update Keymaster to at least v0.1.0-b0
 
         Produces one :class:`~.reconciliation.Reservation` per calendar
         event that has a usable slot name.  The coordinator's current
-        persisted mappings are consulted to populate
-        :attr:`~.reconciliation.Reservation.fingerprint_history` and
-        :attr:`~.reconciliation.Reservation.missing_count`.
+        persisted mappings (``_slot_mappings["mappings"]``) are consulted
+        to populate :attr:`~.reconciliation.Reservation.fingerprint_history`
+        and :attr:`~.reconciliation.Reservation.missing_count`.
+
+        After building reservations from calendar events, ghost Reservation
+        objects are synthesised for occupied persisted mappings that are
+        absent from the current feed (T089).  Their ``missing_count`` is
+        incremented in ``_slot_mappings`` so the planner can apply the
+        two-cycle miss tolerance before generating a CLEAR action.
 
         Args:
             calendar: Parsed and sorted calendar events from the current
@@ -724,14 +735,13 @@ Please update Keymaster to at least v0.1.0-b0
 
         Returns:
             List of :class:`~.reconciliation.Reservation` objects ready
-            for the planner.
+            for the planner; includes ghost reservations for absent slots.
         """
-        if not calendar:
-            return []
-
-        persisted: dict[str, Any] = {}
-        if self.event_overrides is not None:
-            persisted = self.event_overrides.persisted_mappings
+        # Use _slot_mappings["mappings"] as the live source of truth so that
+        # missing_count updates made by ghost logic in previous cycles are
+        # visible here.  At startup this is identical to what was loaded from
+        # the HA Store; ghost cycles then keep it up to date.
+        persisted: dict[str, Any] = self._slot_mappings.get("mappings", {})
 
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
         reservations: list[_Reservation] = []
@@ -745,8 +755,8 @@ Please update Keymaster to at least v0.1.0-b0
             if not slot_name:
                 continue
 
-            start: datetime = event.start
-            end: datetime = event.end
+            start: datetime = event.start  # type: ignore[assignment]
+            end: datetime = event.end  # type: ignore[assignment]
 
             buffered_start_raw, buffered_end_raw = apply_buffer(
                 start, end, self.code_buffer_before, self.code_buffer_after, self
@@ -822,6 +832,14 @@ Please update Keymaster to at least v0.1.0-b0
             fingerprint_history: set[str] = set(mapping.get("fingerprint_history", []))
             missing_count: int = mapping.get("missing_count", 0)
 
+            # Reservation is present in feed – reset any accumulated miss count.
+            if mapping and missing_count != 0:
+                mapping["missing_count"] = 0
+                missing_count = 0
+                _LOGGER.debug(
+                    "Reservation %s reappeared; missing_count reset to 0", identity_key
+                )
+
             slot_code = ""
             if self.event_overrides is not None:
                 existing = self.event_overrides.get_slot_with_name(slot_name)
@@ -861,7 +879,249 @@ Please update Keymaster to at least v0.1.0-b0
                     end,
                 )
 
+        # Build ghost reservations for occupied slots absent from this feed cycle.
+        if self.event_overrides is not None:
+            current_keys: set[str] = {r.identity_key for r in reservations}
+            ghost_list = self._build_ghost_reservations(current_keys, persisted, prefix)
+            reservations.extend(ghost_list)
+
         return reservations
+
+    def _build_ghost_reservations(
+        self,
+        current_keys: set[str],
+        persisted: dict[str, Any],
+        prefix: str,
+    ) -> list[_Reservation]:
+        """Build synthetic Reservations for occupied slots absent from the feed.
+
+        When a previously-assigned reservation disappears from the calendar
+        feed, this method reconstructs a ghost :class:`~.reconciliation.Reservation`
+        with an incremented ``missing_count``.  The planner includes it so
+        that the slot is retained for up to two consecutive misses (T089);
+        on the third miss the ghost is filtered out by
+        :func:`~.reconciliation._filter_eligible` and the slot becomes
+        clearable.
+
+        Raw PIN values are never stored in the persisted mapping, so the
+        ghost ``slot_code`` is always an empty string.
+
+        Args:
+            current_keys: Identity keys already built from the current
+                calendar feed.  Absent keys are those in *persisted* but
+                not in this set.
+            persisted: Snapshot of ``_slot_mappings["mappings"]`` passed
+                by the caller so that updates made to ``missing_count``
+                here are reflected directly in the coordinator's live
+                store dict.
+            prefix: Computed event-prefix string (e.g. ``"RC "``).
+
+        Returns:
+            List of ghost :class:`~.reconciliation.Reservation` objects
+            for occupied slots missing from the current feed.
+        """
+        ghost_reservations: list[_Reservation] = []
+
+        for key, mapping in persisted.items():
+            if key in current_keys:
+                continue
+            if mapping.get("status") != SLOT_STATUS_OCCUPIED:
+                continue
+
+            # Increment the persistent miss counter.
+            new_mc = mapping.get("missing_count", 0) + 1
+            mapping["missing_count"] = new_mc
+
+            identity = mapping.get("identity", {})
+            slot_name: str = identity.get("slot_name", "")
+            summary: str = identity.get("summary", "")
+            uid_aliases: set[str] = set(identity.get("uid_aliases", []))
+            booking_aliases: set[str] = set(identity.get("booking_aliases", []))
+            fingerprint_history: set[str] = set(mapping.get("fingerprint_history", []))
+
+            # Recover dates from the last observed Keymaster state.
+            last_actual = mapping.get("last_observed_actual", {})
+            start_raw = last_actual.get("start_state")
+            end_raw = last_actual.get("end_state")
+
+            if not slot_name or start_raw is None or end_raw is None:
+                _LOGGER.debug(
+                    "Ghost reservation %s: missing slot_name or dates; skipping", key
+                )
+                continue
+
+            start_dt: datetime | None = (
+                dt.parse_datetime(start_raw)
+                if isinstance(start_raw, str)
+                else start_raw
+            )
+            end_dt: datetime | None = (
+                dt.parse_datetime(end_raw) if isinstance(end_raw, str) else end_raw
+            )
+
+            if start_dt is None or end_dt is None or start_dt >= end_dt:
+                _LOGGER.debug(
+                    "Ghost reservation %s: invalid dates (start=%s end=%s); skipping",
+                    key,
+                    start_raw,
+                    end_raw,
+                )
+                continue
+
+            if self.trim_names and self.max_name_length > 0:
+                guest_max = self.max_name_length - len(prefix)
+                display_slot_name = f"{prefix}{trim_name(slot_name, guest_max)}"
+            else:
+                display_slot_name = f"{prefix}{slot_name}"
+
+            try:
+                ghost = _Reservation(
+                    identity_key=key,
+                    start=start_dt,
+                    end=end_dt,
+                    buffered_start=start_dt,
+                    buffered_end=end_dt,
+                    summary=summary,
+                    slot_name=slot_name,
+                    display_slot_name=display_slot_name,
+                    slot_code="",  # raw PIN is never stored; no code available
+                    uid_aliases=uid_aliases,
+                    booking_aliases=booking_aliases,
+                    fingerprint_history=fingerprint_history,
+                    missing_count=new_mc,
+                )
+                ghost_reservations.append(ghost)
+                _LOGGER.debug(
+                    "Ghost reservation %s created with missing_count=%d", key, new_mc
+                )
+            except ValueError:
+                _LOGGER.debug(
+                    "Ghost reservation %s: invalid Reservation fields; skipping", key
+                )
+
+        return ghost_reservations
+
+    def _sync_slot_store_from_plan(
+        self,
+        plan: _DesiredPlan,
+        res_by_key: dict[str, _Reservation],
+        operation_results: list[OperationResult],
+    ) -> None:
+        """Synchronize persisted mappings with confirmed reconciliation state.
+
+        The HA Store must be updated after each apply-plan pass so the next
+        refresh and future restarts retain the authoritative reservation-to-slot
+        mapping.  Raw PIN values are never written; only ``has_code`` and
+        reservation identity metadata are persisted.
+        """
+        mappings: dict[str, Any] = self._slot_mappings.setdefault("mappings", {})
+        now_str = dt.now().isoformat()
+
+        failed_set_slots = {
+            result.slot
+            for result in operation_results
+            if result.kind == "set" and not result.confirmed
+        }
+        confirmed_clear_slots = {
+            result.slot
+            for result in operation_results
+            if result.kind == "clear" and result.confirmed
+        }
+        unconfirmed_clear_slots = {
+            result.slot
+            for result in operation_results
+            if result.kind == "clear" and not result.confirmed
+        }
+
+        for identity_key, mapping in list(mappings.items()):
+            slot = mapping.get("slot")
+            if slot in confirmed_clear_slots:
+                mappings.pop(identity_key, None)
+            elif slot in unconfirmed_clear_slots:
+                mapping["status"] = SLOT_STATUS_PENDING_CLEAR
+                mapping["pending_clear_since"] = mapping.get(
+                    "pending_clear_since", now_str
+                )
+                if self.event_overrides is not None:
+                    operation_id = self.event_overrides.pending_clear_slots.get(slot)
+                    mapping["operation_id"] = operation_id
+                    mapping["operation_kind"] = "clear"
+
+        for identity_key, slot in plan.selected.items():
+            if slot in failed_set_slots:
+                continue
+            if slot in confirmed_clear_slots:
+                continue
+            res = res_by_key.get(identity_key)
+            if res is None:
+                continue
+            if (
+                self.event_overrides is not None
+                and slot in self.event_overrides.pending_clear_slots
+            ):
+                continue
+
+            actual = (
+                self.event_overrides.get_actual_state(slot)
+                if self.event_overrides is not None
+                else None
+            ) or {}
+            for stale_key in [
+                key
+                for key, mapping in mappings.items()
+                if key != identity_key
+                and mapping.get("slot") == slot
+                and mapping.get("status") == SLOT_STATUS_OCCUPIED
+            ]:
+                mappings.pop(stale_key, None)
+            mappings[identity_key] = {
+                "slot": slot,
+                "status": SLOT_STATUS_OCCUPIED,
+                "operation_id": None,
+                "operation_kind": None,
+                "identity": {
+                    "identity_key": identity_key,
+                    "summary": res.summary,
+                    "slot_name": res.slot_name,
+                    "start": res.start.isoformat(),
+                    "end": res.end.isoformat(),
+                    "uid_aliases": sorted(res.uid_aliases),
+                    "booking_aliases": sorted(res.booking_aliases),
+                },
+                "missing_count": res.missing_count,
+                "pending_set_since": None,
+                "pending_clear_since": None,
+                "fingerprint_history": sorted(res.fingerprint_history),
+                "updated_at": now_str,
+                "last_observed_actual": {
+                    "slot": slot,
+                    "classification": actual.get("classification", "occupied"),
+                    "name_state": actual.get("name_state") or res.display_slot_name,
+                    "has_code": actual.get("has_code", bool(res.slot_code)),
+                    "start_state": (
+                        actual.get("start_state") or res.buffered_start.isoformat()
+                    ),
+                    "end_state": actual.get("end_state")
+                    or res.buffered_end.isoformat(),
+                    "use_date_range": actual.get("use_date_range"),
+                    "enabled": actual.get("enabled"),
+                },
+            }
+
+        self._slot_mappings.update(
+            {
+                "schema_version": STORE_SCHEMA_VERSION,
+                "entry_id": self._entry_id,
+                "lockname": self.lockname,
+                "start_slot": self.start_slot,
+                "max_slots": self.max_events,
+                "updated_at": now_str,
+                "blocked_slots": self._slot_mappings.get("blocked_slots", {}),
+            }
+        )
+
+        if self.event_overrides is not None:
+            self.event_overrides.load_persisted_mappings(mappings)
 
     def _observe_managed_slots(self) -> list[_ManagedSlot]:
         """Read Keymaster entity states and build ManagedSlot observations.
@@ -881,7 +1141,7 @@ Please update Keymaster to at least v0.1.0-b0
         if not self.lockname or not self.event_overrides:
             return []
 
-        persisted = self.event_overrides.persisted_mappings
+        persisted = self._slot_mappings.get("mappings", {})
         pending_clear = self.event_overrides.pending_clear_slots
 
         slot_to_persisted_key: dict[int, str] = {}
@@ -1174,6 +1434,9 @@ Please update Keymaster to at least v0.1.0-b0
         if self.event_overrides:
             try:
                 reservations = self._build_reservations(new_calendar)
+                self.event_overrides.load_persisted_mappings(
+                    self._slot_mappings.get("mappings", {})
+                )
                 managed_slots = self._observe_managed_slots()
                 self._apply_checkin_protection(reservations)
 
@@ -1196,7 +1459,10 @@ Please update Keymaster to at least v0.1.0-b0
                 res_by_key: dict[str, _Reservation] = {
                     r.identity_key: r for r in reservations
                 }
-                await self.event_overrides.async_apply_plan(self, plan, res_by_key)
+                operation_results = await self.event_overrides.async_apply_plan(
+                    self, plan, res_by_key
+                )
+                self._sync_slot_store_from_plan(plan, res_by_key, operation_results)
 
                 self._latest_plan = plan
                 self._latest_res_by_key = res_by_key
@@ -1269,6 +1535,15 @@ Please update Keymaster to at least v0.1.0-b0
             if overrides_stale:
                 self.event_overrides = EventOverrides(self.start_slot, self.max_events)
                 await self.async_setup_keymaster_overrides()
+                persisted = self._slot_mappings.get("mappings", {})
+                if persisted:
+                    try:
+                        self.event_overrides.load_persisted_mappings(persisted)
+                    except ValueError:
+                        _LOGGER.exception(
+                            "Failed to load persisted slot mappings for %s",
+                            self._entry_id,
+                        )
             # Re-discover parent entry and children on lockname change
             if lockname_changed:
                 self._parent_entry_id = self._find_parent_entry_id()
