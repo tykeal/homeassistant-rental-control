@@ -20,6 +20,7 @@ from datetime import date
 from datetime import datetime
 from datetime import time
 import logging
+from time import monotonic
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import NamedTuple
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 SLOT_MISS_THRESHOLD = 2
+SUPPRESSED_STATE_CHANGE_TTL = 5.0
 
 
 def _to_utc(value: datetime) -> datetime:
@@ -71,6 +73,18 @@ def _to_utc(value: datetime) -> datetime:
         return result
     utc: datetime = dt.as_utc(value)
     return utc
+
+
+def _states_match(expected: str, actual: str) -> bool:
+    """Compare raw HA state strings, normalizing datetimes when possible."""
+    if expected == actual:
+        return True
+
+    expected_dt = dt.parse_datetime(expected)
+    actual_dt = dt.parse_datetime(actual)
+    if expected_dt is not None and actual_dt is not None:
+        return _to_utc(expected_dt) == _to_utc(actual_dt)
+    return False
 
 
 def _strip_prefix(slot_name: str, prefix: str) -> str:
@@ -163,6 +177,8 @@ class EventOverrides:
 
         # Per-slot error tracking for diagnostics (T096)
         self._last_slot_errors: dict[int, str] = {}
+        # Coordinator-originated state feedback awaiting callback suppression
+        self._suppressed_state_changes: dict[int, dict[str, tuple[str, float]]] = {}
         # Latest diagnostics snapshot for HA diagnostics collection (T096)
         self._diagnostics_snapshot: dict[str, Any] = {}
 
@@ -249,6 +265,40 @@ class EventOverrides:
     def reconciliation_active(self) -> bool:
         """True while async_apply_plan is executing."""
         return self._reconciliation_active
+
+    def suppress_state_changes(self, slot: int, changes: dict[str, Any]) -> None:
+        """Mark coordinator-originated state changes to ignore in callbacks."""
+        now = monotonic()
+        pending = self._suppressed_state_changes.setdefault(slot, {})
+        for entity_id, value in changes.items():
+            pending[entity_id] = (str(value), now)
+
+    def should_suppress_state_change(
+        self, slot: int, entity_id: str, state: str
+    ) -> bool:
+        """Return True when a callback is feedback from our own service call."""
+        pending = self._suppressed_state_changes.get(slot)
+        if not pending:
+            return False
+
+        now = monotonic()
+        for pending_entity_id, (_, created) in list(pending.items()):
+            if now - created > SUPPRESSED_STATE_CHANGE_TTL:
+                pending.pop(pending_entity_id, None)
+
+        expected = pending.get(entity_id)
+        if expected is None:
+            if not pending:
+                self._suppressed_state_changes.pop(slot, None)
+            return False
+
+        expected_state, _ = expected
+        if _states_match(expected_state, state):
+            pending.pop(entity_id, None)
+            if not pending:
+                self._suppressed_state_changes.pop(slot, None)
+            return True
+        return False
 
     @property
     def diagnostics_snapshot(self) -> dict[str, Any]:
@@ -978,6 +1028,21 @@ class EventOverrides:
                 "end_time": res.buffered_end,
             }
             self._slot_miss_counts.pop(slot, None)
+            self.suppress_state_changes(
+                slot,
+                {
+                    f"switch.{coordinator.lockname}_code_slot_"
+                    f"{slot}_use_date_range_limits": "on",
+                    f"text.{coordinator.lockname}_code_slot_{slot}_name": (
+                        res.display_slot_name
+                    ),
+                    f"text.{coordinator.lockname}_code_slot_{slot}_pin": res.slot_code,
+                    f"datetime.{coordinator.lockname}_code_slot_"
+                    f"{slot}_date_range_start": res.buffered_start.isoformat(),
+                    f"datetime.{coordinator.lockname}_code_slot_"
+                    f"{slot}_date_range_end": res.buffered_end.isoformat(),
+                },
+            )
 
         event = _SlotEvent(
             slot_name=res.slot_name,
@@ -1032,6 +1097,17 @@ class EventOverrides:
         res: Reservation,
     ) -> OperationResult:
         """Apply an UPDATE_TIMES action for one slot."""
+        async with self._lock:
+            self.suppress_state_changes(
+                slot,
+                {
+                    f"datetime.{coordinator.lockname}_code_slot_"
+                    f"{slot}_date_range_start": res.buffered_start.isoformat(),
+                    f"datetime.{coordinator.lockname}_code_slot_"
+                    f"{slot}_date_range_end": res.buffered_end.isoformat(),
+                },
+            )
+
         event = _SlotEvent(
             slot_name=res.slot_name,
             slot_code=res.slot_code,
@@ -1132,6 +1208,21 @@ class EventOverrides:
                 "end_time": res.buffered_end,
             }
             self._slot_miss_counts.pop(slot, None)
+            self.suppress_state_changes(
+                slot,
+                {
+                    f"switch.{coordinator.lockname}_code_slot_"
+                    f"{slot}_use_date_range_limits": "on",
+                    f"text.{coordinator.lockname}_code_slot_{slot}_name": (
+                        res.display_slot_name
+                    ),
+                    f"text.{coordinator.lockname}_code_slot_{slot}_pin": res.slot_code,
+                    f"datetime.{coordinator.lockname}_code_slot_"
+                    f"{slot}_date_range_start": res.buffered_start.isoformat(),
+                    f"datetime.{coordinator.lockname}_code_slot_"
+                    f"{slot}_date_range_end": res.buffered_end.isoformat(),
+                },
+            )
 
         event = _SlotEvent(
             slot_name=res.slot_name,
