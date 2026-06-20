@@ -982,8 +982,8 @@ class EventOverrides:
         event = _SlotEvent(
             slot_name=res.slot_name,
             slot_code=res.slot_code,
-            start=res.buffered_start,
-            end=res.buffered_end,
+            start=res.start,
+            end=res.end,
         )
         result = await async_fire_set_code(coordinator, event, slot)
 
@@ -1035,8 +1035,8 @@ class EventOverrides:
         event = _SlotEvent(
             slot_name=res.slot_name,
             slot_code=res.slot_code,
-            start=res.buffered_start,
-            end=res.buffered_end,
+            start=res.start,
+            end=res.end,
         )
         result = await async_fire_update_times(coordinator, event, slot)
 
@@ -1136,8 +1136,8 @@ class EventOverrides:
         event = _SlotEvent(
             slot_name=res.slot_name,
             slot_code=res.slot_code,
-            start=res.buffered_start,
-            end=res.buffered_end,
+            start=res.start,
+            end=res.end,
         )
         result = await async_fire_set_code(coordinator, event, slot)
 

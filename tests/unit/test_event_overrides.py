@@ -3617,6 +3617,43 @@ class TestApplyPlanActions:
         assert eo.overrides[1]["slot_name"] == "Guest"
         assert 1 not in eo.pending_fences
 
+    async def test_set_action_passes_unbuffered_dates(self) -> None:
+        """SET helpers receive unbuffered dates so util applies buffer once."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = _make_dt(2026, 8, 1)
+        eo.update(1, "", "", now, now)
+        coordinator = self._make_coordinator(eo)
+        res = self._make_reservation()
+        res.buffered_start = res.start.replace(hour=res.start.hour - 1)
+        res.buffered_end = res.end.replace(hour=res.end.hour + 1)
+        observed: list[tuple[datetime, datetime]] = []
+
+        async def mock_set_code(_coordinator, event, _slot) -> OperationResult:
+            """Capture the event dates passed to the physical helper."""
+            observed.append(
+                (
+                    event.extra_state_attributes["start"],
+                    event.extra_state_attributes["end"],
+                )
+            )
+            return OperationResult(kind="set", slot=1, confirmed=True)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_set_code",
+            side_effect=mock_set_code,
+        ):
+            await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(
+                    SlotAction(
+                        kind=ActionKind.SET, slot=1, identity_key=res.identity_key
+                    )
+                ),
+                {res.identity_key: res},
+            )
+
+        assert observed == [(res.start, res.end)]
+
     async def test_set_action_reverted_on_failure(self) -> None:
         """Failed SET reverts the tentative in-memory assignment."""
         eo = EventOverrides(start_slot=1, max_slots=1)
@@ -3676,6 +3713,49 @@ class TestApplyPlanActions:
         assert override is not None
         assert override["start_time"] == res.buffered_start
         assert override["end_time"] == res.buffered_end
+
+    async def test_update_times_passes_unbuffered_dates(self) -> None:
+        """UPDATE_TIMES helpers receive unbuffered dates."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        old_start = _make_dt(2026, 8, 1, 14)
+        old_end = _make_dt(2026, 8, 8, 11)
+        eo.update(1, "1234", "Guest", old_start, old_end)
+        coordinator = self._make_coordinator(eo)
+        res = self._make_reservation(
+            start=_make_dt(2026, 8, 2, 14),
+            end=_make_dt(2026, 8, 9, 11),
+        )
+        res.buffered_start = res.start.replace(hour=res.start.hour - 1)
+        res.buffered_end = res.end.replace(hour=res.end.hour + 1)
+        observed: list[tuple[datetime, datetime]] = []
+
+        async def mock_update_times(_coordinator, event, _slot) -> OperationResult:
+            """Capture the event dates passed to the physical helper."""
+            observed.append(
+                (
+                    event.extra_state_attributes["start"],
+                    event.extra_state_attributes["end"],
+                )
+            )
+            return OperationResult(kind="update_times", slot=1, confirmed=True)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_update_times",
+            side_effect=mock_update_times,
+        ):
+            await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(
+                    SlotAction(
+                        kind=ActionKind.UPDATE_TIMES,
+                        slot=1,
+                        identity_key=res.identity_key,
+                    )
+                ),
+                {res.identity_key: res},
+            )
+
+        assert observed == [(res.start, res.end)]
 
     async def test_noop_action_not_executed(self) -> None:
         """NOOP actions do not execute any physical service helpers."""
@@ -4747,6 +4827,40 @@ class TestManualDriftLogging:
 
         log_text = " ".join(r.message for r in caplog.records)
         assert "end" in log_text
+
+    async def test_overwrite_passes_unbuffered_dates(self) -> None:
+        """Manual-drift overwrite passes unbuffered dates to set helper."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        now = datetime(2026, 8, 1, tzinfo=self._TZ)
+        eo.update(5, "SECRETPIN", "Alice Smith", now, now + timedelta(days=7))
+
+        res = self._make_res()
+        res.buffered_start = res.start - timedelta(hours=1)
+        res.buffered_end = res.end + timedelta(hours=1)
+        action = self._make_overwrite_action(drift_fields=["name", "start"])
+
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.hass.services.async_call = AsyncMock()
+        observed: list[tuple[datetime, datetime]] = []
+
+        async def mock_set_code(_coordinator, event, _slot) -> OperationResult:
+            """Capture the event dates passed to the physical helper."""
+            observed.append(
+                (
+                    event.extra_state_attributes["start"],
+                    event.extra_state_attributes["end"],
+                )
+            )
+            return OperationResult(kind="set", slot=5, confirmed=True)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_set_code",
+            side_effect=mock_set_code,
+        ):
+            await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
+
+        assert observed == [(res.start, res.end)]
 
     async def test_date_range_switch_drift_logged(
         self, caplog: pytest.LogCaptureFixture
