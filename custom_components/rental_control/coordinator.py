@@ -23,7 +23,10 @@ from datetime import datetime
 from datetime import time
 from datetime import timedelta
 import logging
+import random
+import re
 from typing import Any
+from typing import cast
 import uuid
 from zoneinfo import ZoneInfo  # noreorder
 
@@ -84,10 +87,13 @@ from .const import DEFAULT_TRIM_NAMES
 from .const import DOMAIN
 from .const import EVENT_AGE_THRESHOLD_DAYS
 from .const import LOCK_MANAGER
+from .const import OPERATION_KIND_CLEAR
+from .const import OPERATION_KIND_SET
 from .const import REQUEST_TIMEOUT
 from .const import SLOT_STATUS_BLOCKED
 from .const import SLOT_STATUS_OCCUPIED
 from .const import SLOT_STATUS_PENDING_CLEAR
+from .const import SLOT_STATUS_PENDING_SET
 from .const import STORE_SCHEMA_VERSION
 from .const import STORE_SLOT_MAPPINGS_KEY
 from .const import VERSION
@@ -334,16 +340,25 @@ Please update Keymaster to at least v0.1.0-b0
         Returns:
             Combined diagnostics dict; empty when no plan has been computed.
         """
+
+        def scrub_codes(value: Any) -> Any:
+            """Return diagnostics with raw code-bearing keys removed."""
+            if isinstance(value, dict):
+                return {
+                    key: scrub_codes(item)
+                    for key, item in value.items()
+                    if key not in {"slot_code", "pin", "code"}
+                }
+            if isinstance(value, list):
+                return [scrub_codes(item) for item in value]
+            return value
+
         result: dict[str, Any] = {}
         if self._latest_plan is not None:
             result.update(self._latest_plan.diagnostics)
         if self.event_overrides is not None:
             result["event_overrides"] = self.event_overrides.diagnostics_snapshot
-        # Safety: strip any raw code/PIN values that might have leaked
-        result.pop("slot_code", None)
-        result.pop("pin", None)
-        result.pop("code", None)
-        return result
+        return cast("dict[str, Any]", scrub_codes(result))
 
     def get_slot_assignment(self, identity_key: str) -> int | None:
         """Return slot number assigned to identity_key in latest plan, or None."""
@@ -525,6 +540,10 @@ Please update Keymaster to at least v0.1.0-b0
                 last_obs.pop("code", None)
                 last_obs.pop("slot_code", None)
         self._slot_mappings = raw
+
+    def get_persisted_slot_mappings(self) -> dict[str, Any]:
+        """Return entry-scoped persisted reservation-slot mappings."""
+        return cast("dict[str, Any]", self._slot_mappings.get("mappings", {}))
 
     async def async_save_slot_store(self) -> None:
         """Save current slot mappings to the HA Store.
@@ -714,6 +733,63 @@ Please update Keymaster to at least v0.1.0-b0
             code[:code_length] if len(code) > code_length else code.zfill(code_length)
         )
 
+    @staticmethod
+    def _extract_last_four(description: str | None) -> str | None:
+        """Extract last-four phone digits from reservation text."""
+        if description is None:
+            return None
+
+        explicit = re.findall(r"""\(?Last 4 Digits\)?:\s+(\d{4})(?!\d)""", description)
+        if explicit:
+            return str(explicit[0])
+
+        phone_last_four = re.findall(
+            r"""Phone\s*\(last\s*4\):\s*(\d{4})(?!\d)""",
+            description,
+            re.I,
+        )
+        if phone_last_four:
+            return str(phone_last_four[0])
+
+        if "Phone" in description:
+            phone_matches = re.findall(
+                r"""Phone(?: Number)?:\s+(\+?[\d\. \-\(\)]{9,})""",
+                description,
+            )
+            if phone_matches:
+                digits = str(phone_matches[0]).replace(" ", "")
+                if len(digits) >= 4:
+                    return digits[-4:]
+
+        return None
+
+    def _generate_slot_code(
+        self,
+        start: datetime,
+        end: datetime,
+        description: str | None,
+        uid: str | None,
+    ) -> str:
+        """Generate a slot code using the configured legacy generator."""
+        generator = self.code_generator
+
+        if description is None and (generator != "static_random" or uid is None):
+            generator = "date_based"
+
+        code: str | None = None
+        if generator == "last_four" and self.code_length == 4:
+            code = self._extract_last_four(description)
+        elif generator == "static_random":
+            seed = uid if uid else description
+            if seed:
+                rng = random.Random(seed)
+                max_range = int("9999".rjust(self.code_length, "9"))
+                code = str(rng.randrange(1, max_range, self.code_length)).zfill(
+                    self.code_length
+                )
+
+        return code if code is not None else self._generate_date_based_code(start, end)
+
     def _build_reservations(self, calendar: list[CalendarEvent]) -> list[_Reservation]:
         """Convert parsed CalendarEvent objects to Reservation objects.
 
@@ -745,6 +821,50 @@ Please update Keymaster to at least v0.1.0-b0
 
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
         reservations: list[_Reservation] = []
+        actual_slot_names: dict[int, str] = {}
+        for persisted_mapping in persisted.values():
+            slot_num = persisted_mapping.get("slot")
+            actual_name = (persisted_mapping.get("last_observed_actual", {}) or {}).get(
+                "name_state"
+            )
+            if isinstance(slot_num, int) and isinstance(actual_name, str):
+                if prefix and actual_name.startswith(prefix):
+                    actual_name = actual_name[len(prefix) :]
+                actual_slot_names[slot_num] = actual_name
+        current_reservations_for_rematch: list[_Reservation] = []
+        for event in calendar:
+            slot_name = get_slot_name(
+                event.summary,
+                event.description or "",
+                self.event_prefix or "",
+            )
+            if not slot_name:
+                continue
+            rematch_start: datetime = event.start  # type: ignore[assignment]
+            rematch_end: datetime = event.end  # type: ignore[assignment]
+            uid = normalize_uid(getattr(event, "uid", None))
+            try:
+                current_reservations_for_rematch.append(
+                    _Reservation(
+                        identity_key=make_reservation_fingerprint(
+                            self._entry_id, slot_name, rematch_start, rematch_end
+                        ),
+                        start=rematch_start,
+                        end=rematch_end,
+                        buffered_start=rematch_start,
+                        buffered_end=rematch_end,
+                        summary=event.summary,
+                        slot_name=slot_name,
+                        display_slot_name="",
+                        slot_code="",
+                        uid_aliases={uid} if uid else set(),
+                        booking_aliases=extract_booking_aliases(
+                            event.summary, event.description or ""
+                        ),
+                    )
+                )
+            except ValueError:
+                continue
 
         for event in calendar:
             slot_name = get_slot_name(
@@ -782,15 +902,6 @@ Please update Keymaster to at least v0.1.0-b0
                 event.summary, event.description or ""
             )
 
-            actual_slot_names: dict[int, str] = {}
-            for persisted_mapping in persisted.values():
-                slot_num = persisted_mapping.get("slot")
-                actual_name = (
-                    persisted_mapping.get("last_observed_actual", {}) or {}
-                ).get("name_state")
-                if isinstance(slot_num, int) and isinstance(actual_name, str):
-                    actual_slot_names[slot_num] = actual_name
-
             provisional = _Reservation(
                 identity_key=identity_key,
                 start=start,
@@ -807,7 +918,7 @@ Please update Keymaster to at least v0.1.0-b0
             rematch = find_reservation_rematch(
                 provisional,
                 persisted,
-                current_reservations=reservations,
+                current_reservations=current_reservations_for_rematch,
                 actual_slot_names=actual_slot_names,
             )
             matched_key = rematch.matched_identity_key
@@ -846,7 +957,7 @@ Please update Keymaster to at least v0.1.0-b0
                 if existing and existing.get("slot_code"):
                     slot_code = str(existing["slot_code"])
             if not slot_code:
-                slot_code = self._generate_date_based_code(start, end)
+                slot_code = self._generate_slot_code(start, end, event.description, uid)
 
             if self.trim_names and self.max_name_length > 0:
                 guest_max = self.max_name_length - len(prefix)
@@ -928,7 +1039,6 @@ Please update Keymaster to at least v0.1.0-b0
             if mapping.get("status") != SLOT_STATUS_OCCUPIED:
                 continue
 
-            # Increment the persistent miss counter.
             new_mc = mapping.get("missing_count", 0) + 1
             mapping["missing_count"] = new_mc
 
@@ -1020,7 +1130,7 @@ Please update Keymaster to at least v0.1.0-b0
         failed_set_slots = {
             result.slot
             for result in operation_results
-            if result.kind == "set" and not result.confirmed
+            if result.kind == "set" and result.failed
         }
         confirmed_clear_slots = {
             result.slot
@@ -1045,7 +1155,7 @@ Please update Keymaster to at least v0.1.0-b0
                 if self.event_overrides is not None:
                     operation_id = self.event_overrides.pending_clear_slots.get(slot)
                     mapping["operation_id"] = operation_id
-                    mapping["operation_kind"] = "clear"
+                    mapping["operation_kind"] = OPERATION_KIND_CLEAR
 
         for identity_key, slot in plan.selected.items():
             if slot in failed_set_slots:
@@ -1061,6 +1171,13 @@ Please update Keymaster to at least v0.1.0-b0
             ):
                 continue
 
+            is_unconfirmed_set = any(
+                result.kind == OPERATION_KIND_SET
+                and result.slot == slot
+                and result.unconfirmed
+                for result in operation_results
+            )
+            existing_mapping = mappings.get(identity_key, {})
             actual = (
                 self.event_overrides.get_actual_state(slot)
                 if self.event_overrides is not None
@@ -1071,14 +1188,19 @@ Please update Keymaster to at least v0.1.0-b0
                 for key, mapping in mappings.items()
                 if key != identity_key
                 and mapping.get("slot") == slot
-                and mapping.get("status") == SLOT_STATUS_OCCUPIED
+                and mapping.get("status")
+                in (SLOT_STATUS_OCCUPIED, SLOT_STATUS_PENDING_SET)
             ]:
                 mappings.pop(stale_key, None)
             mappings[identity_key] = {
                 "slot": slot,
-                "status": SLOT_STATUS_OCCUPIED,
-                "operation_id": None,
-                "operation_kind": None,
+                "status": (
+                    SLOT_STATUS_PENDING_SET
+                    if is_unconfirmed_set
+                    else SLOT_STATUS_OCCUPIED
+                ),
+                "operation_id": plan.plan_id if is_unconfirmed_set else None,
+                "operation_kind": OPERATION_KIND_SET if is_unconfirmed_set else None,
                 "identity": {
                     "identity_key": identity_key,
                     "summary": res.summary,
@@ -1089,7 +1211,11 @@ Please update Keymaster to at least v0.1.0-b0
                     "booking_aliases": sorted(res.booking_aliases),
                 },
                 "missing_count": res.missing_count,
-                "pending_set_since": None,
+                "pending_set_since": (
+                    existing_mapping.get("pending_set_since", now_str)
+                    if is_unconfirmed_set
+                    else None
+                ),
                 "pending_clear_since": None,
                 "fingerprint_history": sorted(res.fingerprint_history),
                 "updated_at": now_str,
@@ -1152,7 +1278,10 @@ Please update Keymaster to at least v0.1.0-b0
             current = slot_to_persisted_key.get(slot_num)
             if current is None:
                 slot_to_persisted_key[slot_num] = key
-            elif mapping.get("status") == SLOT_STATUS_OCCUPIED:
+            elif mapping.get("status") in (
+                SLOT_STATUS_OCCUPIED,
+                SLOT_STATUS_PENDING_SET,
+            ):
                 slot_to_persisted_key[slot_num] = key
 
         slots: list[_ManagedSlot] = []
@@ -1183,16 +1312,29 @@ Please update Keymaster to at least v0.1.0-b0
                 )
                 continue
 
-            name_value = (
-                ""
-                if name_state.state in ("unknown", "unavailable")
-                else name_state.state
-            )
-            code_value = (
-                ""
-                if code_state.state in ("unknown", "unavailable")
-                else code_state.state
-            )
+            if name_state.state in ("unknown", "unavailable") or code_state.state in (
+                "unknown",
+                "unavailable",
+            ):
+                ms = _ManagedSlot(slot=i, managed=True, status=_SlotStatus.UNKNOWN)
+                slots.append(ms)
+                self.event_overrides.update_actual_state(
+                    i,
+                    {
+                        "slot": i,
+                        "classification": _SlotStatus.UNKNOWN.value,
+                        "name_state": None,
+                        "has_code": None,
+                        "start_state": None,
+                        "end_state": None,
+                        "use_date_range": None,
+                        "enabled": None,
+                    },
+                )
+                continue
+
+            name_value = name_state.state
+            code_value = code_state.state
             has_code = bool(code_value)
 
             use_date_range_state = self.hass.states.get(
@@ -1475,6 +1617,8 @@ Please update Keymaster to at least v0.1.0-b0
                     len(plan.overflow),
                     len(plan.actions),
                 )
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 _LOGGER.exception(
                     "Reconciliation failed for %s; skipping cycle", self._name
@@ -1863,6 +2007,3 @@ Please update Keymaster to at least v0.1.0-b0
 
         _LOGGER.debug("Event to add: %s", cal_event)
         return cal_event
-
-
-# test

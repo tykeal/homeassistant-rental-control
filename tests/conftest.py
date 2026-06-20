@@ -108,6 +108,11 @@ def _patch_aioresponses_for_aiohttp_313() -> None:
     """Apply aioresponses patch when running with aiohttp >= 3.13."""
     if "stream_writer" not in inspect.signature(ClientResponse).parameters:
         return  # pragma: no cover
+    if (
+        "stream_writer"
+        in inspect.signature(aioresponses_core.RequestMatch._build_response).parameters
+    ):
+        return  # pragma: no cover
     aioresponses_core.RequestMatch._build_response = (  # type: ignore[method-assign]
         _aioresponses_build_response_aiohttp313
     )

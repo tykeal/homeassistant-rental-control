@@ -564,8 +564,8 @@ class SlotMapping:
 def normalize_slot_name_for_fingerprint(slot_name: str) -> str:
     """Return the stable normalized form of a slot name for fingerprinting.
 
-    Strips leading/trailing whitespace and case-folds (Unicode NFKD
-    casefold) so that names that differ only in case or surrounding
+    Strips leading/trailing whitespace and applies Unicode-aware
+    ``casefold()`` so names that differ only in case or surrounding
     whitespace produce identical fingerprints.
 
     Args:

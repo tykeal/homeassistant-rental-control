@@ -16,6 +16,7 @@ from unittest.mock import patch
 from homeassistant.util import dt as dt_util
 import pytest
 
+from custom_components.rental_control import event_overrides as _eo_module
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.event_overrides import EventOverride
@@ -27,7 +28,9 @@ from custom_components.rental_control.reconciliation import Reservation
 from custom_components.rental_control.reconciliation import SlotAction
 from custom_components.rental_control.util import EventIdentity
 from custom_components.rental_control.util import OperationResult
+from custom_components.rental_control.util import async_fire_set_code
 from custom_components.rental_control.util import handle_state_change
+from custom_components.rental_control.util import trim_name
 
 # ---------------------------------------------------------------------------
 # Helpers / Fixtures
@@ -490,6 +493,7 @@ class TestAsyncCheckOverrides:
         with patch(
             "custom_components.rental_control.event_overrides.async_fire_clear_code",
             new_callable=AsyncMock,
+            return_value=OperationResult(kind="clear", slot=1, confirmed=True),
         ) as mock_fire:
             await eo.async_check_overrides(coordinator)
             mock_fire.assert_not_called()
@@ -506,6 +510,7 @@ class TestAsyncCheckOverrides:
         with patch(
             "custom_components.rental_control.event_overrides.async_fire_clear_code",
             new_callable=AsyncMock,
+            return_value=OperationResult(kind="clear", slot=1, confirmed=True),
         ) as mock_fire:
             await eo.async_check_overrides(coordinator)
             mock_fire.assert_not_called()
@@ -527,6 +532,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -556,6 +562,7 @@ class TestAsyncCheckOverrides:
         with patch(
             "custom_components.rental_control.event_overrides.async_fire_clear_code",
             new_callable=AsyncMock,
+            return_value=OperationResult(kind="clear", slot=1, confirmed=True),
         ) as mock_fire:
             await eo.async_check_overrides(coordinator)
             mock_fire.assert_called_once()
@@ -576,11 +583,31 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
             await eo.async_check_overrides(coordinator)
             mock_fire.assert_called_once_with(coordinator, 1, expected_name="Bad Guest")
+
+    async def test_unconfirmed_legacy_clear_keeps_slot_occupied(self) -> None:
+        """Verify legacy clears do not free slots without confirmation."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        start = _make_dt(2025, 7, 10)
+        end = _make_dt(2025, 7, 5)
+        eo.update(1, "c", "Bad Guest", start, end)
+        coordinator = _make_coordinator(
+            calendar_events=[_make_event(_make_dt(2025, 8, 1), "Bad Guest")],
+        )
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            new_callable=AsyncMock,
+            return_value=OperationResult(kind="clear", slot=1, unconfirmed=True),
+        ):
+            await eo.async_check_overrides(coordinator)
+
+        assert eo.overrides[1] is not None
 
     async def test_clears_when_end_before_today(self) -> None:
         """Verify slot is cleared when end_date < current date."""
@@ -625,6 +652,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -656,6 +684,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -682,6 +711,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -722,6 +752,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -769,6 +800,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -805,6 +837,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -839,6 +872,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -878,6 +912,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -918,6 +953,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -958,6 +994,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -997,6 +1034,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -1039,6 +1077,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -1082,6 +1121,7 @@ class TestAsyncCheckOverrides:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -1211,6 +1251,7 @@ class TestEdgeCases:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=today),
         ):
@@ -1236,6 +1277,7 @@ class TestEdgeCases:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=today),
         ):
@@ -1325,6 +1367,7 @@ class TestEdgeCases:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=today),
         ):
@@ -2093,6 +2136,7 @@ class TestDateExtensionUidChange:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -2802,6 +2846,7 @@ class TestSlotEvictionOnNewEarlierEvent:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -2862,6 +2907,7 @@ class TestSlotEvictionOnNewEarlierEvent:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -2999,6 +3045,7 @@ class TestSlotEvictionTolerance:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -3040,6 +3087,7 @@ class TestSlotEvictionTolerance:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -3077,6 +3125,7 @@ class TestSlotEvictionTolerance:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -3108,6 +3157,7 @@ class TestSlotEvictionTolerance:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=2, confirmed=True),
             ),
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -3142,6 +3192,7 @@ class TestSlotEvictionTolerance:
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_clear_code",
                 new_callable=AsyncMock,
+                return_value=OperationResult(kind="clear", slot=1, confirmed=True),
             ) as mock_fire,
             patch.object(dt_util, "start_of_local_day", return_value=frozen),
         ):
@@ -5652,3 +5703,140 @@ class TestUnmanagedSlotIgnoredCorrupt:
         set_actions = [a for a in plan.actions if a.kind is ActionKind.SET]
         assert len(set_actions) == 1
         assert set_actions[0].slot == 5
+
+
+class TestSlotNameTrimmingRegression:
+    """T101 regression: Slot-name trimming and prefix preservation.
+
+    These tests pin the semantics that must survive the reconciliation
+    refactor: the Keymaster display name is constructed by prepending the
+    event prefix and (when trim_names is True) trimming the guest portion
+    to fit.  The legacy EventOverrides read APIs that sensors depend on
+    must also continue to work.
+    """
+
+    @staticmethod
+    def _make_slot_event(slot_name: str) -> MagicMock:
+        """Build a minimal slot event for set-code tests."""
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": slot_name,
+            "slot_code": "2468",
+            "start": _make_dt(2025, 7, 15, 15, 0),
+            "end": _make_dt(2025, 7, 18, 11, 0),
+        }
+        return event
+
+    @staticmethod
+    def _make_set_coordinator(expected_state: str, *, trim_names: bool) -> MagicMock:
+        """Return a coordinator mock for set-code regression tests."""
+        coordinator = MagicMock()
+        coordinator.lockname = "test_lock"
+        coordinator.event_prefix = "RC"
+        coordinator.trim_names = trim_names
+        coordinator.max_name_length = 10
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.hass.services.async_call = AsyncMock()
+        state = MagicMock()
+        state.state = expected_state
+        coordinator.hass.states.get.return_value = state
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides._escalated = {}
+        return coordinator
+
+    def test_trim_name_word_boundary(self) -> None:
+        """Names trim on word boundaries when possible."""
+        assert trim_name("Alice Bob Charlie", 10) == "Alice Bob"
+
+    def test_trim_name_hard_truncate_single_word(self) -> None:
+        """Single words hard-truncate when no boundary fits."""
+        assert trim_name("Verylongname", 5) == "Veryl"
+
+    def test_trim_name_already_fits_unchanged(self) -> None:
+        """Short names are returned unchanged."""
+        assert trim_name("Short", 20) == "Short"
+
+    def test_strip_prefix_removes_prefix_and_space(self) -> None:
+        """Prefix stripping removes the prefix plus separator."""
+        assert _eo_module._strip_prefix("RC Alice", "RC") == "Alice"
+
+    def test_strip_prefix_no_match_unchanged(self) -> None:
+        """Non-matching prefixes leave the name unchanged."""
+        assert _eo_module._strip_prefix("NoPrefix Alice", "RC") == "NoPrefix Alice"
+
+    def test_strip_prefix_empty_prefix_unchanged(self) -> None:
+        """Empty prefixes never strip anything."""
+        assert _eo_module._strip_prefix("Alice", "") == "Alice"
+
+    def test_is_trimmed_match_detects_word_boundary_truncation(self) -> None:
+        """Trim-match detection recognises word-boundary trimming."""
+        assert (
+            _eo_module._is_trimmed_match("Alice Bob Charlie", "Alice Bob", 10) is True
+        )
+
+    def test_is_trimmed_match_false_when_trim_off(self) -> None:
+        """Equal names are not treated as trimmed matches."""
+        assert _eo_module._is_trimmed_match("Alice", "Alice", 10) is False
+
+    def test_legacy_overrides_property_accessible(self) -> None:
+        """Legacy overrides property remains readable."""
+        assert EventOverrides(10, 3).overrides == {}
+
+    def test_legacy_get_slot_with_name_finds_override(self) -> None:
+        """Legacy get_slot_with_name continues returning matching overrides."""
+        eo = EventOverrides(10, 3)
+        start = _make_dt(2025, 7, 15, 15, 0)
+        end = _make_dt(2025, 7, 18, 11, 0)
+        eo.update(10, "1234", "Alice", start, end)
+
+        override = eo.get_slot_with_name("Alice")
+
+        assert override is not None
+        assert override["slot_name"] == "Alice"
+
+    def test_legacy_trim_names_property_settable(self) -> None:
+        """Legacy trim_names property remains writable."""
+        eo = EventOverrides(10, 3)
+        eo.trim_names = True
+
+        assert eo.trim_names is True
+
+    def test_legacy_prefix_length_property_settable(self) -> None:
+        """Legacy prefix_length property remains writable."""
+        eo = EventOverrides(10, 3)
+        eo.prefix_length = 5
+
+        assert eo.prefix_length == 5
+
+    async def test_set_code_writes_prefix_plus_name_to_keymaster(self) -> None:
+        """Set-code preserves the configured prefix in the Keymaster display name."""
+        coordinator = self._make_set_coordinator("RC Alice", trim_names=False)
+        event = self._make_slot_event("Alice")
+
+        result = await async_fire_set_code(coordinator, event, 10)
+
+        name_calls = [
+            awaited.kwargs
+            for awaited in coordinator.hass.services.async_call.await_args_list
+            if awaited.kwargs.get("target", {}).get("entity_id")
+            == "text.test_lock_code_slot_10_name"
+        ]
+        assert result.confirmed is True
+        assert name_calls[-1]["service_data"]["value"] == "RC Alice"
+
+    async def test_set_code_trims_name_when_trim_enabled(self) -> None:
+        """Set-code trims only the guest portion when prefixing is enabled."""
+        coordinator = self._make_set_coordinator("RC Alice", trim_names=True)
+        event = self._make_slot_event("Alice Bob")
+
+        result = await async_fire_set_code(coordinator, event, 10)
+
+        name_calls = [
+            awaited.kwargs
+            for awaited in coordinator.hass.services.async_call.await_args_list
+            if awaited.kwargs.get("target", {}).get("entity_id")
+            == "text.test_lock_code_slot_10_name"
+        ]
+        assert result.confirmed is True
+        assert name_calls[-1]["service_data"]["value"] == "RC Alice"

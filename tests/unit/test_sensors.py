@@ -1603,14 +1603,12 @@ class TestSensorReadOnly:
         sensor.hass.async_create_task.assert_not_called()
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    def test_async_handle_slot_assignment_is_noop(self, hass) -> None:
+    async def test_async_handle_slot_assignment_is_noop(self, hass) -> None:
         """Verify _async_handle_slot_assignment is a harmless no-op."""
-        import asyncio
-
         coordinator = _make_coordinator(data=[], event_overrides=MagicMock())
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
 
-        coro = sensor._async_handle_slot_assignment(
+        await sensor._async_handle_slot_assignment(
             slot_name="test",
             slot_code="1234",
             start_time=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
@@ -1619,9 +1617,6 @@ class TestSensorReadOnly:
             prefix="",
             eta_days=5,
         )
-        # Must be a coroutine and must complete without side effects
-        assert asyncio.iscoroutine(coro)
-        asyncio.get_event_loop().run_until_complete(coro)
         coordinator.event_overrides.async_reserve_or_get_slot.assert_not_called()
 
 
@@ -1855,3 +1850,137 @@ class TestEventNAttributeRegression:
         # entry_id is always the first arg to make_reservation_fingerprint
         args = mock_fp.call_args[0]
         assert args[0] == "specific-entry-id"
+
+
+class TestCodeRegenerationRegression:
+    """T104 regression: Code generation semantics preserved.
+
+    Pins date-based code shift, static-random stability, and
+    date-based fallback when no description is available.
+    """
+
+    def setup_method(self) -> None:
+        """Save RNG state before each test."""
+        self._rng_state = random.getstate()
+
+    def teardown_method(self) -> None:
+        """Restore RNG state after each test."""
+        random.setstate(self._rng_state)
+
+    @staticmethod
+    def _make_sensor(
+        hass,
+        *,
+        code_generator: str,
+        start: datetime,
+        end: datetime,
+        uid: str | None,
+        description: str | None,
+        event_number: int = 0,
+    ) -> RentalControlCalSensor:
+        """Build a sensor with event attributes primed for code generation."""
+        coordinator = _make_coordinator(
+            code_generator=code_generator,
+            code_length=4,
+        )
+        sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", event_number)
+        sensor._event_attributes["start"] = start
+        sensor._event_attributes["end"] = end
+        sensor._event_attributes["uid"] = uid
+        sensor._event_attributes["description"] = description
+        return sensor
+
+    def test_date_based_code_shifts_when_dates_change(self, hass) -> None:
+        """Date-based codes change when reservation dates shift."""
+        sensor_a = self._make_sensor(
+            hass,
+            code_generator="date_based",
+            start=datetime(2025, 1, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 1, 17, 11, 0, tzinfo=timezone.utc),
+            uid="date-a",
+            description="Reservation A",
+        )
+        sensor_b = self._make_sensor(
+            hass,
+            code_generator="date_based",
+            start=datetime(2025, 1, 16, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 1, 18, 11, 0, tzinfo=timezone.utc),
+            uid="date-b",
+            description="Reservation B",
+            event_number=1,
+        )
+
+        assert sensor_a._generate_door_code() != sensor_b._generate_door_code()
+
+    def test_date_based_code_stable_when_dates_unchanged(self, hass) -> None:
+        """Date-based codes stay stable when dates do not change."""
+        sensor_a = self._make_sensor(
+            hass,
+            code_generator="date_based",
+            start=datetime(2025, 1, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 1, 17, 11, 0, tzinfo=timezone.utc),
+            uid="same-a",
+            description="Reservation A",
+        )
+        sensor_b = self._make_sensor(
+            hass,
+            code_generator="date_based",
+            start=datetime(2025, 1, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 1, 17, 11, 0, tzinfo=timezone.utc),
+            uid="same-b",
+            description="Reservation B",
+            event_number=1,
+        )
+
+        assert sensor_a._generate_door_code() == sensor_b._generate_door_code()
+
+    def test_static_random_code_stable_across_refreshes(self, hass) -> None:
+        """Static-random codes are deterministic for the same UID."""
+        sensor = self._make_sensor(
+            hass,
+            code_generator="static_random",
+            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+            uid="stable-uid",
+            description="Original description",
+        )
+
+        first = sensor._generate_door_code()
+        second = sensor._generate_door_code()
+
+        assert first == second
+
+    def test_static_random_uid_beats_description_for_stability(self, hass) -> None:
+        """UID stability wins even when descriptions change across refreshes."""
+        sensor_a = self._make_sensor(
+            hass,
+            code_generator="static_random",
+            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+            uid="shared-uid",
+            description="Guest: Alice",
+        )
+        sensor_b = self._make_sensor(
+            hass,
+            code_generator="static_random",
+            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+            uid="shared-uid",
+            description="Guest: Alice - updated note",
+            event_number=1,
+        )
+
+        assert sensor_a._generate_door_code() == sensor_b._generate_door_code()
+
+    def test_date_based_fallback_when_description_none(self, hass) -> None:
+        """Missing description and UID force date-based generation."""
+        sensor = self._make_sensor(
+            hass,
+            code_generator="static_random",
+            start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+            uid=None,
+            description=None,
+        )
+
+        assert sensor._generate_door_code() == "1520"

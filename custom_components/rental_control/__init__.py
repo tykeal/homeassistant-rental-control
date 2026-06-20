@@ -76,7 +76,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     await coordinator.async_load_slot_store()
 
     # Inject persisted mappings or adopt slots on first upgrade
-    persisted = coordinator._slot_mappings.get("mappings", {})
+    persisted = coordinator.get_persisted_slot_mappings()
     if persisted:
         if coordinator.event_overrides is not None:
             try:

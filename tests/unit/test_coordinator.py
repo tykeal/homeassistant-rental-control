@@ -2051,7 +2051,7 @@ class TestChildLockDiscovery:
 
 # ===========================================================================
 # Spec 006 Phase 5: Dynamic child lock lifecycle
-# ===========================================================================
+# =============================================================
 
 
 class TestChildLockDynamicLifecycle:
@@ -5402,6 +5402,9 @@ class TestCoordinatorPersistenceUpdate:
         mapping = coordinator._slot_mappings["mappings"][identity_key]
         assert mapping["slot"] == 10
         assert mapping["status"] == "occupied"
+        assert mapping["operation_id"] is None
+        assert mapping["operation_kind"] is None
+        assert mapping["pending_set_since"] is None
         assert mapping["identity"]["slot_name"] == "Alice Selected"
         assert mapping["identity"]["uid_aliases"] == ["uid-a"]
         assert "slot_code" not in mapping
@@ -5445,10 +5448,10 @@ class TestCoordinatorPersistenceUpdate:
         assert coordinator._slot_mappings["mappings"] == {}
         assert coordinator.event_overrides.persisted_mappings == {}
 
-    def test_sync_store_preserves_unconfirmed_set_as_unmapped(
+    def test_sync_store_preserves_unconfirmed_set_mapping(
         self, hass: "HomeAssistant"
     ) -> None:
-        """T088-5: Unconfirmed SET results are not persisted as occupied."""
+        """T088-5: Unconfirmed SET results keep reservation-slot mapping."""
         from custom_components.rental_control.reconciliation import DesiredPlan
         from custom_components.rental_control.reconciliation import Reservation
         from custom_components.rental_control.util import OperationResult
@@ -5477,6 +5480,45 @@ class TestCoordinatorPersistenceUpdate:
             plan,
             {identity_key: reservation},
             [OperationResult(kind="set", slot=10, unconfirmed=True)],
+        )
+
+        mapping = coordinator._slot_mappings["mappings"][identity_key]
+        assert mapping["slot"] == 10
+        assert mapping["status"] == "pending_set"
+        assert mapping["operation_id"] == "persist-unconfirmed"
+        assert mapping["operation_kind"] == "set"
+        assert mapping["pending_set_since"] is not None
+
+    def test_sync_store_skips_failed_set_mapping(self, hass: "HomeAssistant") -> None:
+        """T088-5: Failed SET results are not persisted as occupied."""
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.util import OperationResult
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        identity_key = "failed." + "c" * 52
+        reservation = Reservation(
+            identity_key=identity_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Failed Guest",
+            slot_name="Failed Guest",
+            display_slot_name="Failed Guest",
+            slot_code="1234",
+        )
+        plan = DesiredPlan(plan_id="persist-failed", generated_at=start)
+        plan.selected = {identity_key: 10}
+
+        coordinator._sync_slot_store_from_plan(
+            plan,
+            {identity_key: reservation},
+            [OperationResult(kind="set", slot=10, failed=True)],
         )
 
         assert identity_key not in coordinator._slot_mappings["mappings"]
@@ -5592,6 +5634,7 @@ class TestCoordinatorPersistenceUpdate:
         entry = self._make_persist_entry()
         entry.add_to_hass(hass)
         coordinator = RentalControlCoordinator(hass, entry)
+        coordinator.event_prefix = "RC"
         start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
         end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
         adopted_key = f"adopted.{entry.entry_id}.slot10"
@@ -5610,15 +5653,18 @@ class TestCoordinatorPersistenceUpdate:
             },
             "blocked_slots": {},
         }
+        coordinator._slot_mappings["mappings"][adopted_key]["last_observed_actual"][
+            "name_state"
+        ] = "RC Adopt Guest"
         assert coordinator.event_overrides is not None
         coordinator.event_overrides.load_persisted_mappings(
             coordinator._slot_mappings["mappings"]
         )
-        hass.states.async_set("text.test_lock_code_slot_10_name", "Adopt Guest")
+        hass.states.async_set("text.test_lock_code_slot_10_name", "RC Adopt Guest")
         hass.states.async_set("text.test_lock_code_slot_10_pin", "1234")
 
         event = MagicMock()
-        event.summary = "Adopt Guest"
+        event.summary = "RC Adopt Guest"
         event.description = ""
         event.start = start
         event.end = end
@@ -5632,6 +5678,145 @@ class TestCoordinatorPersistenceUpdate:
 
         slot10 = next(slot for slot in observed if slot.slot == 10)
         assert slot10.persisted_identity_key == fingerprint
+
+    def test_build_reservations_uses_full_set_for_ambiguous_rematch(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-10: Rematch ambiguity considers all current reservations."""
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        adopted_key = f"adopted.{entry.entry_id}.slot10"
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                adopted_key: self._make_occupied_mapping(
+                    adopted_key,
+                    "Repeat Guest",
+                    10,
+                )
+            },
+            "blocked_slots": {},
+        }
+
+        first = MagicMock()
+        first.summary = "Repeat Guest"
+        first.description = ""
+        first.start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        first.end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        first.uid = None
+        second = MagicMock()
+        second.summary = "Repeat Guest"
+        second.description = ""
+        second.start = datetime(2026, 8, 10, 16, 0, tzinfo=dt_util.UTC)
+        second.end = datetime(2026, 8, 15, 11, 0, tzinfo=dt_util.UTC)
+        second.uid = None
+
+        reservations = coordinator._build_reservations([first, second])
+
+        current_reservations = [
+            reservation
+            for reservation in reservations
+            if reservation.start in {first.start, second.start}
+        ]
+        assert len(current_reservations) == 2
+        assert all(
+            reservation.identity_key != adopted_key
+            for reservation in current_reservations
+        )
+        assert adopted_key in coordinator._slot_mappings["mappings"]
+
+    def test_diagnostics_deep_scrubs_raw_code_keys(self, hass: "HomeAssistant") -> None:
+        """T098-2: Diagnostics recursively omit raw code-bearing fields."""
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        plan = MagicMock()
+        plan.diagnostics = {
+            "slot_code": "1234",
+            "nested": {"pin": "5678", "safe": "ok"},
+            "items": [{"code": "9999", "slot": 10}],
+        }
+        coordinator._latest_plan = plan
+        coordinator.event_overrides = MagicMock()
+        coordinator.event_overrides.diagnostics_snapshot = {
+            "slot": {"slot_code": "0000", "state": "occupied"}
+        }
+
+        diagnostics = coordinator.latest_reconciliation_diagnostics
+
+        assert "slot_code" not in diagnostics
+        assert "pin" not in diagnostics["nested"]
+        assert "code" not in diagnostics["items"][0]
+        assert "slot_code" not in diagnostics["event_overrides"]["slot"]
+        assert diagnostics["nested"]["safe"] == "ok"
+
+    def test_observe_unknown_keymaster_state_blocks_slot(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-9: Unknown Keymaster entity states are not treated as free."""
+        from custom_components.rental_control.reconciliation import SlotStatus
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        hass.states.async_set("text.test_lock_code_slot_10_name", "unavailable")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "1234")
+
+        observed = coordinator._observe_managed_slots()
+
+        slot10 = next(slot for slot in observed if slot.slot == 10)
+        assert slot10.status is SlotStatus.UNKNOWN
+
+    def test_build_reservations_honors_last_four_code_generation(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T103-5: Coordinator-owned writes preserve last_four PIN generation."""
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator.code_generator = "last_four"
+        coordinator.code_length = 4
+        start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        event = MagicMock()
+        event.summary = "Code Guest"
+        event.description = "Last 4 Digits: 2468"
+        event.start = start
+        event.end = end
+        event.uid = "code-guest"
+
+        reservations = coordinator._build_reservations([event])
+
+        assert reservations[0].slot_code == "2468"
+
+    def test_build_reservations_honors_static_random_generation(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T103-6: Coordinator-owned writes preserve static_random generation."""
+        import random
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator.code_generator = "static_random"
+        coordinator.code_length = 4
+        start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 8, 5, 11, 0, tzinfo=dt_util.UTC)
+        event = MagicMock()
+        event.summary = "Random Guest"
+        event.description = "Phone: 555 123 4567"
+        event.start = start
+        event.end = end
+        event.uid = "stable-random-uid"
+
+        reservations = coordinator._build_reservations([event])
+
+        expected = str(random.Random("stable-random-uid").randrange(1, 9999, 4)).zfill(
+            4
+        )
+        assert reservations[0].slot_code == expected
 
     def test_sync_store_writes_identity_start_and_end(
         self, hass: "HomeAssistant"
@@ -5709,3 +5894,233 @@ class TestCoordinatorPersistenceUpdate:
         assert old_key not in mappings
         assert mappings[new_key]["slot"] == 10
 
+
+class TestHonorPMSTimesRegression:
+    """T103 regression: honor_event_times semantics preserved.
+
+    These tests pin four honour-PMS-times branches that must survive the
+    reconciliation refactor: timed PMS events take calendar times, all-day
+    events use description times, override fallback, and configured defaults.
+    """
+
+    @staticmethod
+    def _expected_utc(day: int, hour: int, minute: int = 0) -> datetime:
+        """Return an America/New_York local time converted to UTC."""
+        from datetime import time as time_cls
+        from zoneinfo import ZoneInfo
+
+        result: datetime = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, day).date(),
+                time_cls(hour, minute),
+                ZoneInfo("America/New_York"),
+            )
+        )
+        return result
+
+    @staticmethod
+    def _make_entry(
+        entry_id: str,
+        *,
+        checkin: str = "16:00",
+        checkout: str = "11:00",
+        lockname: str | None = None,
+    ) -> MockConfigEntry:
+        """Build a minimal config entry for honor-event-time regression tests."""
+        data = {
+            "name": "Honor Regression",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "America/New_York",
+            "checkin": checkin,
+            "checkout": checkout,
+            "start_slot": 10,
+            "max_events": 3,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+            "honor_event_times": True,
+        }
+        if lockname is not None:
+            data[CONF_LOCK_ENTRY] = lockname
+        return MockConfigEntry(
+            domain="rental_control",
+            title="Honor Regression",
+            version=8,
+            unique_id=entry_id,
+            data=data,
+            entry_id=entry_id,
+        )
+
+    async def test_timed_event_uses_pms_times(self, hass: HomeAssistant) -> None:
+        """Timed events keep their explicit PMS calendar times."""
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        timed_ics = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART:20241225T150000
+DTEND:20241230T100000
+UID:t103-reg-1@example.com
+SUMMARY:Reserved - Timed Guest
+DESCRIPTION:Email: timed@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+        entry = self._make_entry("t103_reg_1")
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics", status=200, body=timed_ics
+            )
+            coordinator = RentalControlCoordinator(hass, entry)
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        assert result[0].start == self._expected_utc(25, 15)
+        assert result[0].end == self._expected_utc(30, 10)
+
+    async def test_allday_description_times_used(self, hass: HomeAssistant) -> None:
+        """All-day events prefer description-derived times over overrides."""
+        from custom_components.rental_control.event_overrides import EventOverrides
+
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        allday_ics = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20241225
+DTEND;VALUE=DATE:20241230
+UID:t103-reg-2@example.com
+SUMMARY:Reserved - Desc Guest
+DESCRIPTION:Check-in: 3:00 PM\\nCheck-out: 11:00 AM
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+        entry = self._make_entry("t103_reg_2", lockname="front_door")
+        entry.add_to_hass(hass)
+        MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_t103_reg_2",
+        ).add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics", status=200, body=allday_ics
+            )
+            coordinator = RentalControlCoordinator(hass, entry)
+            coordinator.event_overrides = EventOverrides(10, 3)
+            coordinator.event_overrides._overrides[10] = {
+                "slot_name": "Desc Guest",
+                "slot_code": "1234",
+                "start_time": datetime(2024, 12, 25, 18, 0, 0, tzinfo=dt_util.UTC),
+                "end_time": datetime(2024, 12, 30, 14, 0, 0, tzinfo=dt_util.UTC),
+            }
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        assert result[0].start == self._expected_utc(25, 15)
+        assert result[0].end == self._expected_utc(30, 11)
+
+    async def test_allday_override_fallback_when_no_description_times(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """All-day events fall back to override times when descriptions lack them."""
+        from custom_components.rental_control.event_overrides import EventOverrides
+
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        allday_ics = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20241225
+DTEND;VALUE=DATE:20241230
+UID:t103-reg-3@example.com
+SUMMARY:Reserved - Override Guest
+DESCRIPTION:Email: override@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+        entry = self._make_entry("t103_reg_3", lockname="front_door")
+        entry.add_to_hass(hass)
+        MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_t103_reg_3",
+        ).add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics", status=200, body=allday_ics
+            )
+            coordinator = RentalControlCoordinator(hass, entry)
+            coordinator.event_overrides = EventOverrides(10, 3)
+            coordinator.event_overrides._overrides[10] = {
+                "slot_name": "Override Guest",
+                "slot_code": "1234",
+                "start_time": datetime(2024, 12, 25, 18, 0, 0, tzinfo=dt_util.UTC),
+                "end_time": datetime(2024, 12, 30, 14, 0, 0, tzinfo=dt_util.UTC),
+            }
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        assert result[0].start == self._expected_utc(25, 13)
+        assert result[0].end == self._expected_utc(30, 9)
+
+    async def test_allday_configured_defaults_when_no_description_no_override(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """All-day events fall back to configured defaults without overrides."""
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        allday_ics = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20241225
+DTEND;VALUE=DATE:20241230
+UID:t103-reg-4@example.com
+SUMMARY:Reserved - Default Guest
+DESCRIPTION:Email: default@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+        entry = self._make_entry(
+            "t103_reg_4",
+            checkin="15:00",
+            checkout="10:00",
+        )
+        entry.add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics", status=200, body=allday_ics
+            )
+            coordinator = RentalControlCoordinator(hass, entry)
+            result = await coordinator._async_update_data()
+
+        assert len(result) == 1
+        assert result[0].start == self._expected_utc(25, 15)
+        assert result[0].end == self._expected_utc(30, 10)

@@ -25,6 +25,7 @@ from datetime import time
 from datetime import timedelta
 from datetime import tzinfo
 import hashlib
+import inspect
 import logging
 from pathlib import Path
 import re
@@ -65,10 +66,10 @@ class OperationResult:
     """Result of a physical Keymaster slot service operation.
 
     Returned by ``async_fire_clear_code()``, ``async_fire_set_code()``,
-    and ``async_fire_update_times()``. Exactly one of ``confirmed``,
-    ``unconfirmed``, or ``failed`` is ``True``. ``lingering_name`` and
-    ``lingering_pin`` are supplementary flags for clear operations.
-    Raw PIN values are never stored.
+    and ``async_fire_update_times()``. Successful helper paths set one
+    of ``confirmed``, ``unconfirmed``, or ``failed`` to ``True``.
+    ``lingering_name`` and ``lingering_pin`` are supplementary flags for
+    clear operations. Raw PIN values are never stored.
     """
 
     kind: str
@@ -224,6 +225,8 @@ async def async_fire_clear_code(
             target={"entity_id": reset_entity},
             blocking=True,
         )
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:
         escalated = coordinator.event_overrides.record_retry_failure(slot)
         if escalated:
@@ -268,6 +271,8 @@ async def async_fire_clear_code(
                 service_data={"value": ""},
                 blocking=True,
             )
+        except asyncio.CancelledError:
+            raise
         except Exception:
             _LOGGER.exception(
                 "Failed to force-clear name for slot %d",
@@ -285,14 +290,6 @@ async def async_fire_clear_code(
     elif pin_state.state not in ("", "unknown", "unavailable"):
         lingering_pin = True
 
-    was_escalated = coordinator.event_overrides._escalated.get(slot, False)
-    coordinator.event_overrides.record_retry_success(slot)
-    if was_escalated:
-        pn_dismiss(
-            hass,
-            notification_id=f"rental_control_slot_{slot}_clear_failure",
-        )
-
     if lingering_name or lingering_pin:
         return OperationResult(
             kind="clear",
@@ -303,6 +300,14 @@ async def async_fire_clear_code(
         )
     if unconfirmed:
         return OperationResult(kind="clear", slot=slot, unconfirmed=True)
+
+    was_escalated = coordinator.event_overrides._escalated.get(slot, False)
+    coordinator.event_overrides.record_retry_success(slot)
+    if was_escalated:
+        pn_dismiss(
+            hass,
+            notification_id=f"rental_control_slot_{slot}_clear_failure",
+        )
     return OperationResult(kind="clear", slot=slot, confirmed=True)
 
 
@@ -499,6 +504,8 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
         results = await asyncio.gather(*coro, return_exceptions=True)
         check_gather_results(results, "Lock slot operation")
         _raise_first_gather_exception(results)
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:
         escalated = coordinator.event_overrides.record_retry_failure(slot)
         if escalated:
@@ -516,19 +523,23 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
             error=str(exc),
         )
 
-    was_escalated = coordinator.event_overrides._escalated.get(slot, False)
-    coordinator.event_overrides.record_retry_success(slot)
-    if was_escalated:
-        pn_dismiss(
-            coordinator.hass,
-            notification_id=f"rental_control_slot_{slot}_failure",
-        )
-
     name_entity = f"{TEXT}.{lockname}_code_slot_{slot}_name"
+    block_till_done = getattr(coordinator.hass, "async_block_till_done", None)
+    if block_till_done is not None:
+        done_result = block_till_done()
+        if inspect.isawaitable(done_result):
+            await done_result
     name_state = coordinator.hass.states.get(name_entity)
     if name_state is None:
         return OperationResult(kind="set", slot=slot, unconfirmed=True)
     if name_state.state == slot_name:
+        was_escalated = coordinator.event_overrides._escalated.get(slot, False)
+        coordinator.event_overrides.record_retry_success(slot)
+        if was_escalated:
+            pn_dismiss(
+                coordinator.hass,
+                notification_id=f"rental_control_slot_{slot}_failure",
+            )
         return OperationResult(kind="set", slot=slot, confirmed=True)
     return OperationResult(kind="set", slot=slot, unconfirmed=True)
 
@@ -581,6 +592,8 @@ async def async_fire_update_times(coordinator, event, slot: int) -> OperationRes
     check_gather_results(results, "Lock slot operation")
     try:
         _raise_first_gather_exception(results)
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:
         return OperationResult(
             kind="update_times",

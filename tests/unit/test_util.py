@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from datetime import datetime
 from datetime import timedelta
@@ -30,6 +31,7 @@ from custom_components.rental_control.const import NAME
 from custom_components.rental_control.util import EventIdentity
 from custom_components.rental_control.util import OperationResult
 from custom_components.rental_control.util import add_call
+from custom_components.rental_control.util import apply_buffer
 from custom_components.rental_control.util import async_fire_clear_code
 from custom_components.rental_control.util import async_fire_set_code
 from custom_components.rental_control.util import async_fire_update_times
@@ -1563,7 +1565,7 @@ class TestAsyncFireSetCode:
         ]
         assert len(name_calls) == 1
 
-    async def test_gather_exception_propagates_for_retry(
+    async def test_gather_exception_returns_failed_result_for_retry(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Verify a failing gather call is logged and returned as failed."""
@@ -1571,6 +1573,8 @@ class TestAsyncFireSetCode:
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
         coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides.record_retry_failure.return_value = False
 
@@ -1587,6 +1591,40 @@ class TestAsyncFireSetCode:
         assert result.failed is True
         assert result.error is not None
         coordinator.event_overrides.record_retry_failure.assert_called_once_with(10)
+
+    async def test_set_code_flushes_before_verification(self) -> None:
+        """Verify set_code flushes HA jobs before reading state."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides._escalated = {}
+        coordinator.event_overrides.record_retry_success.return_value = None
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.async_block_till_done = AsyncMock()
+        coordinator.hass.states.get.return_value = MagicMock(state="Guest")
+
+        result = await async_fire_set_code(coordinator, self._make_event(), 10)
+
+        coordinator.hass.async_block_till_done.assert_awaited_once()
+        assert result.confirmed is True
+
+    async def test_set_code_cancelled_error_propagates(self) -> None:
+        """Verify set_code does not swallow task cancellation."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.hass.services.async_call = AsyncMock(
+            side_effect=asyncio.CancelledError()
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await async_fire_set_code(coordinator, self._make_event(), 10)
 
 
 # ---------------------------------------------------------------------------
@@ -1668,6 +1706,19 @@ class TestAsyncFireUpdateTimes:
             await async_fire_update_times(coordinator, self._make_event(), 10)
 
         assert "Lock slot operation" in caplog.text
+
+    async def test_cancelled_error_propagates(self) -> None:
+        """Verify update_times does not swallow task cancellation."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.hass.services.async_call = AsyncMock(
+            side_effect=asyncio.CancelledError()
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await async_fire_update_times(coordinator, self._make_event(), 10)
 
 
 # ---------------------------------------------------------------------------
@@ -1790,6 +1841,7 @@ class TestRetryEscalation:
         coordinator.code_buffer_before = 0
         coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.states.get.return_value = MagicMock(state="Guest")
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides._escalated = {10: True}
 
@@ -1821,6 +1873,7 @@ class TestRetryEscalation:
         coordinator.code_buffer_before = 0
         coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.states.get.return_value = MagicMock(state="Guest")
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides._escalated = {}
 
@@ -1909,7 +1962,7 @@ class TestRetryEscalation:
         coordinator.name = "Test Rental"
         coordinator.lockname = "front_door"
         coordinator.hass.services.async_call = AsyncMock()
-        coordinator.hass.states.get.return_value = None
+        coordinator.hass.states.get.return_value = MagicMock(state="")
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         coordinator.event_overrides._escalated = {10: True}
 
@@ -1923,6 +1976,55 @@ class TestRetryEscalation:
             coordinator.hass,
             notification_id="rental_control_slot_10_clear_failure",
         )
+
+    async def test_set_code_unconfirmed_does_not_reset_retry(self) -> None:
+        """Verify unconfirmed set_code leaves retry tracking intact."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.states.get.return_value = MagicMock(state="Other")
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides._escalated = {10: True}
+
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "slot_code": "1234",
+            "start": "2025-01-15T16:00:00",
+            "end": "2025-01-17T11:00:00",
+        }
+
+        with patch(
+            "custom_components.rental_control.util.pn_dismiss",
+        ) as mock_dismiss:
+            result = await async_fire_set_code(coordinator, event, 10)
+
+        assert result.unconfirmed is True
+        coordinator.event_overrides.record_retry_success.assert_not_called()
+        mock_dismiss.assert_not_called()
+
+    async def test_clear_code_unconfirmed_does_not_reset_retry(self) -> None:
+        """Verify unconfirmed clear_code leaves retry tracking intact."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.states.get.return_value = None
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides._escalated = {10: True}
+
+        with patch(
+            "custom_components.rental_control.util.pn_dismiss",
+        ) as mock_dismiss:
+            result = await async_fire_clear_code(coordinator, 10, expected_name="Guest")
+
+        assert result.unconfirmed is True
+        coordinator.event_overrides.record_retry_success.assert_not_called()
+        mock_dismiss.assert_not_called()
 
     async def test_clear_code_failure_escalates(self) -> None:
         """Verify clear_code failure creates notification on escalation."""
@@ -1950,7 +2052,7 @@ class TestRetryEscalation:
             call_kwargs[1]["notification_id"] == "rental_control_slot_10_clear_failure"
         )
 
-    async def test_clear_code_failure_reraises(self) -> None:
+    async def test_clear_code_failure_returns_failed_result(self) -> None:
         """Verify failure is returned after recording retry state."""
         coordinator = MagicMock()
         coordinator.name = "Test Rental"
@@ -1964,6 +2066,19 @@ class TestRetryEscalation:
         result = await async_fire_clear_code(coordinator, 10, expected_name="Guest")
         assert result.failed is True
         assert result.error == "hardware fault"
+
+    async def test_clear_code_cancelled_error_propagates(self) -> None:
+        """Verify clear_code does not swallow task cancellation."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.hass.services.async_call = AsyncMock(
+            side_effect=asyncio.CancelledError()
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await async_fire_clear_code(coordinator, 10, expected_name="Guest")
 
 
 # ---------------------------------------------------------------------------
@@ -2797,3 +2912,102 @@ class TestAsyncFireUpdateTimesOperationResult:
         result = await async_fire_update_times(coordinator, self._make_event(), 10)
 
         assert result.unconfirmed is True
+
+
+class TestBufferRegressionSemantics:
+    """T102 regression: Lock-code buffer semantics preserved after reconciliation.
+
+    These tests pin the apply_buffer behaviour: the buffered window
+    sent to Keymaster differs from the original event window, and the
+    original event attributes are never mutated.
+    """
+
+    @staticmethod
+    def _make_coordinator() -> MagicMock:
+        """Return a coordinator mock for buffered set-code tests."""
+        from zoneinfo import ZoneInfo
+
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.timezone = ZoneInfo("America/New_York")
+        coordinator.trim_names = False
+        coordinator.max_name_length = 0
+        coordinator.event_prefix = ""
+        coordinator.code_buffer_before = 30
+        coordinator.code_buffer_after = 15
+        coordinator.hass.services.async_call = AsyncMock()
+        state = MagicMock()
+        state.state = "Guest"
+        coordinator.hass.states.get.return_value = state
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides._escalated = {}
+        return coordinator
+
+    def test_apply_buffer_zero_returns_inputs_unchanged(self) -> None:
+        """Zero-minute buffers return the original objects unchanged."""
+        rc = MagicMock()
+        start = datetime(2025, 1, 15, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2025, 1, 17, 11, 0, tzinfo=dt_util.UTC)
+
+        buffered_start, buffered_end = apply_buffer(start, end, 0, 0, rc)
+
+        assert buffered_start is start
+        assert buffered_end is end
+
+    def test_apply_buffer_before_shifts_start_only(self) -> None:
+        """Before-buffer moves only the start backward."""
+        rc = MagicMock()
+        start = datetime(2025, 1, 15, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2025, 1, 17, 11, 0, tzinfo=dt_util.UTC)
+
+        buffered_start, buffered_end = apply_buffer(start, end, 60, 0, rc)
+
+        assert buffered_start == start - timedelta(minutes=60)
+        assert buffered_end == end
+
+    def test_apply_buffer_after_extends_end_only(self) -> None:
+        """After-buffer moves only the end forward."""
+        rc = MagicMock()
+        start = datetime(2025, 1, 15, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2025, 1, 17, 11, 0, tzinfo=dt_util.UTC)
+
+        buffered_start, buffered_end = apply_buffer(start, end, 0, 30, rc)
+
+        assert buffered_start == start
+        assert buffered_end == end + timedelta(minutes=30)
+
+    def test_apply_buffer_converts_date_to_datetime(self) -> None:
+        """Date-only values are normalised before buffer arithmetic."""
+        from zoneinfo import ZoneInfo
+
+        rc = MagicMock()
+        rc.timezone = ZoneInfo("America/New_York")
+
+        buffered_start, buffered_end = apply_buffer(
+            date(2025, 1, 15),
+            date(2025, 1, 17),
+            30,
+            15,
+            rc,
+        )
+
+        assert buffered_start == datetime(2025, 1, 14, 23, 30, tzinfo=rc.timezone)
+        assert buffered_end == datetime(2025, 1, 17, 0, 15, tzinfo=rc.timezone)
+
+    async def test_set_code_event_attributes_unchanged_after_buffer(self) -> None:
+        """Buffered writes do not mutate the original event attributes."""
+        coordinator = self._make_coordinator()
+        original_start = datetime(2025, 1, 15, 16, 0, tzinfo=dt_util.UTC)
+        original_end = datetime(2025, 1, 17, 11, 0, tzinfo=dt_util.UTC)
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "slot_code": "1234",
+            "start": original_start,
+            "end": original_end,
+        }
+
+        await async_fire_set_code(coordinator, event, 10)
+
+        assert event.extra_state_attributes["start"] == original_start
+        assert event.extra_state_attributes["end"] == original_end

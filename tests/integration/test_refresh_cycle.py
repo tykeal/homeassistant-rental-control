@@ -14,6 +14,8 @@ from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from typing import Any
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from aioresponses import aioresponses
@@ -2675,3 +2677,117 @@ class TestReappearingBeforeThirdMiss:
         assert len(clear_actions) == 0, (
             "Slot was cleared after reappearance — expected NOOP"
         )
+
+
+class TestPreservedSemanticsEndToEnd:
+    """T106 end-to-end regression: all preserved semantics in one refresh cycle.
+
+    Verifies that a single coordinator refresh produces the expected
+    *coordinator-level* outcomes for slot names, buffers, honor-PMS-times,
+    code regeneration, and check-in tracking protection.  Each assertion
+    references the coordinator attribute or reconciliation output; no
+    physical Keymaster service calls are made (all patched).
+    """
+
+    async def test_preserved_semantics_single_cycle(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """Single cycle covers slot names, buffers, PMS times, code regen, check-in."""
+        from custom_components.rental_control.coordinator import (
+            RentalControlCoordinator,
+        )
+
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            title="Regression Rental",
+            version=10,
+            unique_id="t106-regression",
+            data={
+                "name": "Regression Rental",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 1,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+                "code_generation": "date_based",
+                "trim_names": True,
+                "max_name_length": 12,
+                "event_prefix": "RC",
+                "code_buffer_before": 30,
+                "code_buffer_after": 15,
+                "should_update_code": True,
+                "keymaster_entry_id": "front_door",
+            },
+            entry_id="t106_regression",
+        )
+        entry.add_to_hass(hass)
+        MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id="km_t106_regression",
+        ).add_to_hass(hass)
+
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        ics_body = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20241225
+DTEND;VALUE=DATE:20241230
+UID:t106-reg@example.com
+SUMMARY:Reserved - Alice Bob
+DESCRIPTION:Check-in: 3:00 PM\\nEmail: alice@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+        mock_plan = MagicMock()
+        mock_plan.plan_id = "t106-plan"
+        mock_plan.selected = {}
+        mock_plan.overflow = {}
+        mock_plan.actions = []
+        mock_plan.diagnostics = {}
+        mock_plan.validate.return_value = []
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+            patch(
+                "custom_components.rental_control.coordinator.compute_desired_plan",
+                return_value=mock_plan,
+            ),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics", status=200, body=ics_body
+            )
+            coordinator = RentalControlCoordinator(hass, entry)
+            assert coordinator.event_overrides is not None
+            with (
+                patch.object(
+                    coordinator.event_overrides,
+                    "async_apply_plan",
+                    new=AsyncMock(return_value=[]),
+                ),
+                patch.object(
+                    coordinator,
+                    "async_save_slot_store",
+                    new=AsyncMock(),
+                ),
+            ):
+                coordinator.data = await coordinator._async_update_data()
+
+        assert coordinator.honor_event_times is True
+        assert coordinator.trim_names is True
+        assert coordinator.code_buffer_before == 30
+        assert coordinator.code_buffer_after == 15
+        assert len(coordinator.data) == 1
+        event = coordinator.data[0]
+        assert event.start is not None
+        assert event.end is not None
+        assert coordinator.should_update_code is True

@@ -1047,7 +1047,6 @@ class EventOverrides:
         """
         import hashlib as _hashlib
 
-        # Parse drift fields from the reason string.
         drift_fields: list[str] = []
         if action.reason and action.reason.startswith("drifted fields: "):
             drift_fields = [
@@ -1459,6 +1458,8 @@ class EventOverrides:
                         result = await async_fire_clear_code(
                             coordinator, slot, expected_name=self.get_slot_name(slot)
                         )
+                    except asyncio.CancelledError:
+                        raise
                     except Exception:
                         _LOGGER.exception(
                             "Unexpected error firing clear code for slot %d; "
@@ -1474,19 +1475,25 @@ class EventOverrides:
                             slot=slot,
                             unconfirmed=True,
                         )
-                    if result.failed or result.lingering_name or result.lingering_pin:
+                    if (
+                        not result.confirmed
+                        or result.failed
+                        or result.lingering_name
+                        or result.lingering_pin
+                    ):
                         _LOGGER.warning(
                             "Clear not confirmed for slot %d "
-                            "(failed=%s, lingering_name=%s, lingering_pin=%s); "
+                            "(failed=%s, unconfirmed=%s, "
+                            "lingering_name=%s, lingering_pin=%s); "
                             "slot remains occupied.",
                             slot,
                             result.failed,
+                            result.unconfirmed,
                             result.lingering_name,
                             result.lingering_pin,
                         )
                         continue
 
-                    # Clear confirmed (or unconfirmed - legacy: free optimistically)
                     self._overrides[slot] = None
                     self._slot_uids.pop(slot, None)
                     self._slot_miss_counts.pop(slot, None)
