@@ -1004,7 +1004,7 @@ Please update Keymaster to at least v0.1.0-b0
         persisted: dict[str, Any],
         prefix: str,
     ) -> list[_Reservation]:
-        """Build synthetic Reservations for occupied slots absent from the feed.
+        """Build synthetic Reservations for assigned slots absent from the feed.
 
         When a previously-assigned reservation disappears from the calendar
         feed, this method reconstructs a ghost :class:`~.reconciliation.Reservation`
@@ -1029,18 +1029,34 @@ Please update Keymaster to at least v0.1.0-b0
 
         Returns:
             List of ghost :class:`~.reconciliation.Reservation` objects
-            for occupied slots missing from the current feed.
+            for assigned slots missing from the current feed.
         """
         ghost_reservations: list[_Reservation] = []
 
         for key, mapping in persisted.items():
             if key in current_keys:
                 continue
-            if mapping.get("status") != SLOT_STATUS_OCCUPIED:
+            status = mapping.get("status")
+            if status not in (SLOT_STATUS_OCCUPIED, SLOT_STATUS_PENDING_SET):
                 continue
 
             new_mc = mapping.get("missing_count", 0) + 1
             mapping["missing_count"] = new_mc
+
+            if status == SLOT_STATUS_PENDING_SET and new_mc >= 3:
+                mapping["status"] = SLOT_STATUS_PENDING_CLEAR
+                mapping["pending_set_since"] = None
+                mapping["pending_clear_since"] = mapping.get(
+                    "pending_clear_since", dt.now().isoformat()
+                )
+                mapping["operation_id"] = None
+                mapping["operation_kind"] = OPERATION_KIND_CLEAR
+                _LOGGER.debug(
+                    "Pending-set ghost %s missed %d cycles; marking pending-clear",
+                    key,
+                    new_mc,
+                )
+                continue
 
             identity = mapping.get("identity", {})
             slot_name: str = identity.get("slot_name", "")
@@ -1056,7 +1072,10 @@ Please update Keymaster to at least v0.1.0-b0
 
             if not slot_name or start_raw is None or end_raw is None:
                 _LOGGER.debug(
-                    "Ghost reservation %s: missing slot_name or dates; skipping", key
+                    "Ghost reservation %s: missing slot_name or dates; slot remains "
+                    "fenced with missing_count=%d",
+                    key,
+                    new_mc,
                 )
                 continue
 
@@ -1071,10 +1090,12 @@ Please update Keymaster to at least v0.1.0-b0
 
             if start_dt is None or end_dt is None or start_dt >= end_dt:
                 _LOGGER.debug(
-                    "Ghost reservation %s: invalid dates (start=%s end=%s); skipping",
+                    "Ghost reservation %s: invalid dates (start=%s end=%s); "
+                    "slot remains fenced with missing_count=%d",
                     key,
                     start_raw,
                     end_raw,
+                    new_mc,
                 )
                 continue
 
@@ -1376,14 +1397,22 @@ Please update Keymaster to at least v0.1.0-b0
             )
             if i in pending_clear:
                 status = _SlotStatus.PENDING_CLEAR
+                blocked_reason = "pending_clear"
             elif persisted_status == SLOT_STATUS_BLOCKED:
                 status = _SlotStatus.BLOCKED
+                blocked_reason = SLOT_STATUS_BLOCKED
             elif name_value and has_code:
                 status = _SlotStatus.OCCUPIED
+                blocked_reason = None
+            elif persisted_status == SLOT_STATUS_PENDING_SET:
+                status = _SlotStatus.BLOCKED
+                blocked_reason = SLOT_STATUS_PENDING_SET
             elif name_value:
                 status = _SlotStatus.PHANTOM
+                blocked_reason = None
             else:
                 status = _SlotStatus.FREE
+                blocked_reason = None
 
             ms = _ManagedSlot(
                 slot=i,
@@ -1396,6 +1425,7 @@ Please update Keymaster to at least v0.1.0-b0
                 date_range_enabled=date_range_on,
                 enabled=enabled,
                 persisted_identity_key=persisted_key,
+                blocked_reason=blocked_reason,
                 last_error=self.event_overrides.get_last_slot_error(i),
             )
             slots.append(ms)

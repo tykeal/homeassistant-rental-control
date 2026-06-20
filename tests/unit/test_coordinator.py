@@ -5164,8 +5164,8 @@ class TestCoordinatorPersistenceUpdate:
         slot: int,
         *,
         missing_count: int = 0,
-        start_state: str = "2026-07-01T14:00:00+00:00",
-        end_state: str = "2026-07-08T11:00:00+00:00",
+        start_state: str | None = "2026-07-01T14:00:00+00:00",
+        end_state: str | None = "2026-07-08T11:00:00+00:00",
     ) -> dict:
         """Build a v1 occupied slot mapping dict for persistence update tests."""
         return {
@@ -5268,6 +5268,220 @@ class TestCoordinatorPersistenceUpdate:
         updated_mc = coordinator._slot_mappings["mappings"][fp]["missing_count"]
         assert updated_mc == 1, (
             f"Expected missing_count=1 after one missed cycle, got {updated_mc}"
+        )
+
+    def test_pending_set_with_dates_uses_missing_lifecycle(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-11: Vanished pending SET with dates fences then clears."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        pending_key = "pending-dates." + "a" * 50
+        mapping = self._make_occupied_mapping(
+            pending_key,
+            "Pending Dates",
+            10,
+            missing_count=0,
+        )
+        mapping["status"] = "pending_set"
+        mapping["operation_id"] = "set-token"
+        mapping["operation_kind"] = "set"
+        mapping["pending_set_since"] = "2026-08-01T00:00:00+00:00"
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {pending_key: mapping},
+            "blocked_slots": {},
+        }
+
+        reservations = coordinator._build_reservations([])
+
+        assert mapping["missing_count"] == 1
+        ghost = next(res for res in reservations if res.identity_key == pending_key)
+        assert ghost.missing_count == 1
+
+        start = datetime(2026, 9, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 9, 5, 11, 0, tzinfo=dt_util.UTC)
+        new_key = "new-reservation." + "b" * 48
+        new_reservation = Reservation(
+            identity_key=new_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="New Guest",
+            slot_name="New Guest",
+            display_slot_name="New Guest",
+            slot_code="1234",
+        )
+        plan = compute_desired_plan(
+            reservations + [new_reservation],
+            [
+                ManagedSlot(
+                    slot=10,
+                    managed=True,
+                    status=SlotStatus.OCCUPIED,
+                    persisted_identity_key=pending_key,
+                ),
+                ManagedSlot(slot=11, managed=True, status=SlotStatus.FREE),
+            ],
+            max_events=2,
+            plan_id="pending-dates",
+            generated_at=start,
+        )
+
+        assert plan.selected[pending_key] == 10
+        assert plan.selected[new_key] == 11
+
+        mapping["missing_count"] = 2
+        mapping["status"] = "pending_set"
+        reservations = coordinator._build_reservations([])
+
+        assert pending_key not in {res.identity_key for res in reservations}
+        assert mapping["missing_count"] == 3
+        assert mapping["status"] == "pending_clear"
+        assert mapping["operation_id"] is None
+        assert mapping["operation_kind"] == "clear"
+        assert mapping["pending_set_since"] is None
+
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        observed = [
+            ManagedSlot(
+                slot=10,
+                managed=True,
+                status=SlotStatus.PENDING_CLEAR,
+                persisted_identity_key=pending_key,
+            )
+        ]
+        clear_plan = compute_desired_plan(
+            [],
+            observed,
+            max_events=2,
+            plan_id="pending-dates-clear",
+            generated_at=start,
+        )
+
+        assert any(
+            action.kind is ActionKind.RETRY_CLEAR and action.slot == 10
+            for action in clear_plan.actions
+        )
+
+    def test_pending_set_without_dates_blocks_then_clears(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """T088-12: Vanished pending SET without dates cannot orphan."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        entry = self._make_persist_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        pending_key = "pending-nodates." + "c" * 49
+        mapping = self._make_occupied_mapping(
+            pending_key,
+            "Pending No Dates",
+            10,
+            missing_count=0,
+            start_state=None,
+            end_state=None,
+        )
+        mapping["status"] = "pending_set"
+        mapping["operation_id"] = "set-token"
+        mapping["operation_kind"] = "set"
+        mapping["pending_set_since"] = "2026-08-01T00:00:00+00:00"
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {pending_key: mapping},
+            "blocked_slots": {},
+        }
+
+        reservations = coordinator._build_reservations([])
+
+        assert reservations == []
+        assert mapping["missing_count"] == 1
+        assert mapping["status"] == "pending_set"
+
+        hass.states.async_set("text.test_lock_code_slot_10_name", "")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "")
+        hass.states.async_set("text.test_lock_code_slot_11_name", "")
+        hass.states.async_set("text.test_lock_code_slot_11_pin", "")
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        observed = coordinator._observe_managed_slots()
+        slot10 = next(slot for slot in observed if slot.slot == 10)
+        slot11 = next(slot for slot in observed if slot.slot == 11)
+
+        assert slot10.status is SlotStatus.BLOCKED
+        assert slot10.blocked_reason == "pending_set"
+        assert slot11.status is SlotStatus.FREE
+
+        start = datetime(2026, 9, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 9, 5, 11, 0, tzinfo=dt_util.UTC)
+        new_key = "new-nodates." + "d" * 52
+        new_reservation = Reservation(
+            identity_key=new_key,
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="New Guest",
+            slot_name="New Guest",
+            display_slot_name="New Guest",
+            slot_code="1234",
+        )
+        plan = compute_desired_plan(
+            [new_reservation],
+            observed,
+            max_events=2,
+            plan_id="pending-nodates",
+            generated_at=start,
+        )
+
+        assert plan.selected[new_key] == 11
+        assert 10 not in set(plan.selected.values())
+
+        mapping["missing_count"] = 2
+        reservations = coordinator._build_reservations([])
+
+        assert reservations == []
+        assert mapping["missing_count"] == 3
+        assert mapping["status"] == "pending_clear"
+        assert mapping["operation_id"] is None
+        assert mapping["operation_kind"] == "clear"
+
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        observed = coordinator._observe_managed_slots()
+        slot10 = next(slot for slot in observed if slot.slot == 10)
+        clear_plan = compute_desired_plan(
+            [],
+            observed,
+            max_events=2,
+            plan_id="pending-nodates-clear",
+            generated_at=start,
+        )
+
+        assert slot10.status is SlotStatus.PENDING_CLEAR
+        assert any(
+            action.kind is ActionKind.RETRY_CLEAR and action.slot == 10
+            for action in clear_plan.actions
         )
 
     # ------------------------------------------------------------------
