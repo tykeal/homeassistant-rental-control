@@ -140,6 +140,21 @@ def _is_unreadable_keymaster_text(value: str | None) -> bool:
     return value in ("unknown", "unavailable")
 
 
+def _format_display_slot_name(
+    slot_name: str,
+    prefix: str,
+    trim_names: bool,
+    max_name_length: int,
+) -> str:
+    """Return the Keymaster display name for a reservation slot."""
+    display_name = f"{prefix}{slot_name}"
+    if not trim_names or max_name_length <= 0:
+        return display_name
+    if len(prefix) >= max_name_length:
+        return trim_name(display_name, max_name_length)
+    return f"{prefix}{trim_name(slot_name, max_name_length - len(prefix))}"
+
+
 class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
     """Coordinator for managing rental control calendar data."""
 
@@ -881,11 +896,9 @@ Please update Keymaster to at least v0.1.0-b0
             rematch_start: datetime = event.start  # type: ignore[assignment]
             rematch_end: datetime = event.end  # type: ignore[assignment]
             uid = normalize_uid(getattr(event, "uid", None))
-            if self.trim_names and self.max_name_length > 0:
-                guest_max = self.max_name_length - len(prefix)
-                display_slot_name = f"{prefix}{trim_name(slot_name, guest_max)}"
-            else:
-                display_slot_name = f"{prefix}{slot_name}"
+            display_slot_name = _format_display_slot_name(
+                slot_name, prefix, self.trim_names, self.max_name_length
+            )
             try:
                 current_reservations_for_rematch.append(
                     _Reservation(
@@ -944,11 +957,9 @@ Please update Keymaster to at least v0.1.0-b0
             booking_aliases = extract_booking_aliases(
                 event.summary, event.description or ""
             )
-            if self.trim_names and self.max_name_length > 0:
-                guest_max = self.max_name_length - len(prefix)
-                display_slot_name = f"{prefix}{trim_name(slot_name, guest_max)}"
-            else:
-                display_slot_name = f"{prefix}{slot_name}"
+            display_slot_name = _format_display_slot_name(
+                slot_name, prefix, self.trim_names, self.max_name_length
+            )
 
             provisional = _Reservation(
                 identity_key=identity_key,
@@ -1141,11 +1152,9 @@ Please update Keymaster to at least v0.1.0-b0
                 )
                 continue
 
-            if self.trim_names and self.max_name_length > 0:
-                guest_max = self.max_name_length - len(prefix)
-                display_slot_name = f"{prefix}{trim_name(slot_name, guest_max)}"
-            else:
-                display_slot_name = f"{prefix}{slot_name}"
+            display_slot_name = _format_display_slot_name(
+                slot_name, prefix, self.trim_names, self.max_name_length
+            )
 
             try:
                 ghost = _Reservation(

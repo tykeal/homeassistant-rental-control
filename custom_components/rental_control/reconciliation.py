@@ -979,14 +979,26 @@ def _has_competing_reservation(
     if current_reservations is None:
         return False
     candidate_mapping = persisted_mappings.get(candidate_key, {})
+    include_observed = _is_adopted_mapping(candidate_key, candidate_mapping)
+    candidate_dates_match_this = _mapping_dates_match_reservation(
+        candidate_mapping,
+        this_reservation,
+        include_observed=include_observed,
+    )
     for other in current_reservations:
         if other.identity_key == this_reservation.identity_key:
             continue  # skip self
         if _mapping_name_matches_reservation(
             candidate_mapping,
             other,
-            include_observed=_is_adopted_mapping(candidate_key, candidate_mapping),
+            include_observed=include_observed,
         ):
+            if candidate_dates_match_this and not _mapping_dates_match_reservation(
+                candidate_mapping,
+                other,
+                include_observed=include_observed,
+            ):
+                continue
             return True
     return False
 
@@ -1124,7 +1136,6 @@ def find_reservation_rematch(
         if _mapping_dates_match_reservation(
             mapping,
             reservation,
-            include_observed=_is_adopted_mapping(mapping_key, mapping),
         ):
             name_time_matches.append(mapping_key)
 
@@ -1184,7 +1195,7 @@ def find_reservation_rematch(
         ]
         if len(date_matches) == 1:
             return RematchResult(
-                kind=RematchKind.NAME_TIME,
+                kind=RematchKind.CONTINUITY,
                 matched_identity_key=date_matches[0],
             )
         return RematchResult(

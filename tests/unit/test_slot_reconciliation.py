@@ -2294,6 +2294,39 @@ class TestFindReservationRematchRulePriority:
 
         assert result.kind is not RematchKind.NAME_TIME
 
+    def test_adopted_observed_date_tiebreak_is_continuity(self) -> None:
+        """Observed-date disambiguation remains a continuity rematch."""
+        name = "Repeat Guest"
+        start = _dt(2026, 7, 10)
+        end = _dt(2026, 7, 14)
+        reservation = Reservation(
+            identity_key="new-repeat",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary=name,
+            slot_name=name,
+            display_slot_name=f"RC {name}",
+            slot_code="0000",
+        )
+        first = self._persisted("adopted.entry.slot10", name, slot=10)
+        second = self._persisted("adopted.entry.slot11", name, slot=11)
+        first["last_observed_actual"]["start_state"] = start.isoformat()
+        first["last_observed_actual"]["end_state"] = end.isoformat()
+
+        result = find_reservation_rematch(
+            reservation,
+            {
+                "adopted.entry.slot10": first,
+                "adopted.entry.slot11": second,
+            },
+            actual_slot_names={10: f"RC {name}", 11: f"RC {name}"},
+        )
+
+        assert result.kind is RematchKind.CONTINUITY
+        assert result.matched_identity_key == "adopted.entry.slot10"
+
     def test_empty_persisted_mappings_returns_no_match(self) -> None:
         """NO_MATCH returned when there are no persisted mappings at all."""
         reservation = self._reservation("fp-any", "Anyone")

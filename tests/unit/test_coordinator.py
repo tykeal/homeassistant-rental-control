@@ -5460,6 +5460,21 @@ class TestCoordinatorPersistenceUpdate:
         assert adopted_a not in mappings
         assert adopted_b not in mappings
 
+    def test_display_name_trims_full_name_when_prefix_consumes_limit(self) -> None:
+        """Display-name formatting avoids negative guest-name trim lengths."""
+        from custom_components.rental_control.coordinator import (
+            _format_display_slot_name,
+        )
+
+        display_name = _format_display_slot_name(
+            "Guest Name",
+            "VeryLongPrefix ",
+            trim_names=True,
+            max_name_length=8,
+        )
+
+        assert display_name == "VeryLong"
+
     async def test_wedged_350_store_recovers_on_load(
         self, hass: "HomeAssistant"
     ) -> None:
