@@ -1041,7 +1041,37 @@ class TestSlotBootstrapping:
         hass: HomeAssistant,
         mock_config_entry: MockConfigEntry,
     ) -> None:
-        """Verify unknown/unavailable states are converted to empty strings."""
+        """Verify unknown slot states are converted to empty strings."""
+        mock_config_entry.add_to_hass(hass)
+
+        with patch.object(
+            dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+        ):
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            hass.states.async_set("text.front_door_code_slot_10_pin", "unknown")
+            hass.states.async_set("text.front_door_code_slot_10_name", "unknown")
+
+            await coordinator.async_setup_keymaster_overrides()
+
+        mock_update.assert_awaited_once()
+        call_args = mock_update.call_args[0]
+        assert call_args[1] == ""
+        assert call_args[2] == ""
+
+    async def test_bootstrap_skips_unavailable_slot_states(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify unavailable slot states are not assumed empty."""
         mock_config_entry.add_to_hass(hass)
 
         with patch.object(
@@ -1061,10 +1091,37 @@ class TestSlotBootstrapping:
 
             await coordinator.async_setup_keymaster_overrides()
 
+        mock_update.assert_not_awaited()
+
+    async def test_bootstrap_marks_unnamed_real_pin_occupied(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Verify a real PIN with cleared name is not bootstrapped as free."""
+        mock_config_entry.add_to_hass(hass)
+
+        with patch.object(
+            dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY
+        ):
+            coordinator = RentalControlCoordinator(hass, mock_config_entry)
+            coordinator.lockname = "front_door"
+            mock_overrides = MagicMock()
+            mock_overrides.ready = False
+            mock_overrides.async_check_overrides = AsyncMock()
+            coordinator.event_overrides = mock_overrides
+            mock_update = AsyncMock()
+            object.__setattr__(coordinator, "update_event_overrides", mock_update)
+
+            hass.states.async_set("text.front_door_code_slot_10_pin", "9876")
+            hass.states.async_set("text.front_door_code_slot_10_name", "unknown")
+
+            await coordinator.async_setup_keymaster_overrides()
+
         mock_update.assert_awaited_once()
         call_args = mock_update.call_args[0]
-        assert call_args[1] == ""
-        assert call_args[2] == ""
+        assert call_args[1] == "9876"
+        assert call_args[2] == "Adopted Slot 10"
 
 
 # ---------------------------------------------------------------------------
@@ -1218,12 +1275,12 @@ class TestPartialSlotResetDetection:
         assert call_args[1] == ""
         assert call_args[2] == ""
 
-    async def test_startup_skips_reset_when_pin_unknown(
+    async def test_startup_resets_when_pin_unknown(
         self,
         hass: HomeAssistant,
         mock_config_entry: MockConfigEntry,
     ) -> None:
-        """Verify unknown PIN state does not trigger force-reset."""
+        """Verify retained name with unknown PIN triggers force-reset."""
         mock_config_entry.add_to_hass(hass)
 
         with patch.object(
@@ -1247,8 +1304,8 @@ class TestPartialSlotResetDetection:
             ) as mock_clear:
                 await coordinator.async_setup_keymaster_overrides()
 
-        mock_clear.assert_not_awaited()
-        # Normal load path with normalized empty code
+        mock_clear.assert_awaited_once_with(coordinator, 10)
+        # Normal load path with normalized empty code after the reset.
         mock_update.assert_awaited_once()
 
 
@@ -5332,10 +5389,414 @@ class TestCoordinatorPersistenceUpdate:
             assert set(plan.selected) == {"new-10", "new-11"}
             assert sorted(plan.selected.values()) == [10, 11]
 
+    async def test_wedge_self_heals_when_slots_are_unknown(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """Keymaster Null reset states self-heal across coordinator restarts."""
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+        from custom_components.rental_control.util import OperationResult
+
+        entry = self._make_persist_entry(max_events=2)
+        entry.add_to_hass(hass)
+        start = datetime(2026, 9, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 9, 5, 11, 0, tzinfo=dt_util.UTC)
+        store_mappings = {}
+        for slot in (10, 11):
+            key = f"wedged-unknown-{slot}"
+            mapping = self._make_occupied_mapping(key, f"Old Guest {slot}", slot)
+            mapping["status"] = "pending_clear"
+            mapping["operation_id"] = f"clear-token-{slot}"
+            mapping["operation_kind"] = "clear"
+            mapping["pending_clear_since"] = "2026-08-01T00:00:00+00:00"
+            store_mappings[key] = mapping
+            hass.states.async_set(f"text.test_lock_code_slot_{slot}_name", "unknown")
+            hass.states.async_set(f"text.test_lock_code_slot_{slot}_pin", "unknown")
+
+        events = []
+        for index, (slot, guest) in enumerate(
+            ((10, "Recovered Unknown A"), (11, "Recovered Unknown B"))
+        ):
+            event = MagicMock()
+            event.summary = guest
+            event.description = ""
+            event.start = start + timedelta(days=index * 7)
+            event.end = end + timedelta(days=index * 7)
+            event.uid = f"unknown-uid-{slot}"
+            events.append(event)
+
+        for restart in range(2):
+            coordinator = RentalControlCoordinator(hass, entry)
+            coordinator._slot_mappings = {
+                "schema_version": 1,
+                "entry_id": entry.entry_id,
+                "mappings": {key: dict(value) for key, value in store_mappings.items()},
+                "blocked_slots": {},
+            }
+            assert coordinator.event_overrides is not None
+            coordinator.event_overrides.load_persisted_mappings(
+                coordinator._slot_mappings["mappings"]
+            )
+            reservations = coordinator._build_reservations(events)
+            observed = coordinator._observe_managed_slots()
+
+            assert all(slot.status is SlotStatus.FREE for slot in observed)
+            assert coordinator.event_overrides.pending_clear_slots == {}
+
+            plan = compute_desired_plan(
+                reservations,
+                observed,
+                max_events=2,
+                plan_id=f"unknown-reset-recovery-{restart}",
+                generated_at=start,
+            )
+            assert plan.overflow == {}
+            assert sorted(plan.selected.values()) == [10, 11]
+
+            with patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                new_callable=AsyncMock,
+                return_value=OperationResult(kind="set", slot=10, confirmed=True),
+            ) as mock_set:
+                await coordinator.event_overrides.async_apply_plan(
+                    coordinator, plan, {res.identity_key: res for res in reservations}
+                )
+
+            assert mock_set.call_count == 2
+
+    def test_wedge_self_heals_when_unknown_state_mixed_case(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """Mixed-case Keymaster unknown reset states self-heal to free."""
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 9, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 9, 5, 11, 0, tzinfo=dt_util.UTC)
+        mapping = self._make_occupied_mapping(
+            "wedged-mixed-case-unknown", "Old Guest", 10
+        )
+        mapping["status"] = "pending_clear"
+        mapping["operation_id"] = "clear-token"
+        mapping["operation_kind"] = "clear"
+        mapping["pending_clear_since"] = "2026-08-01T00:00:00+00:00"
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {"wedged-mixed-case-unknown": mapping},
+            "blocked_slots": {},
+        }
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Unknown")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "UNKNOWN")
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        reservation = Reservation(
+            identity_key="new-mixed-case-unknown",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="New Guest",
+            slot_name="New Guest",
+            display_slot_name="New Guest",
+            slot_code="1234",
+        )
+
+        observed = coordinator._observe_managed_slots()
+        slot10 = next(slot for slot in observed if slot.slot == 10)
+        plan = compute_desired_plan(
+            [reservation],
+            observed,
+            max_events=1,
+            plan_id="mixed-case-unknown-reset",
+            generated_at=start,
+        )
+
+        assert slot10.status is SlotStatus.FREE
+        assert coordinator.event_overrides.pending_clear_slots == {}
+        assert plan.overflow == {}
+        assert plan.selected == {"new-mixed-case-unknown": 10}
+
+    async def test_wedge_self_heals_with_mixed_unknown_and_empty(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """Mixed Keymaster Null and blank reset states all become free."""
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+        from custom_components.rental_control.util import OperationResult
+
+        entry = self._make_persist_entry(max_events=3)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 9, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 9, 5, 11, 0, tzinfo=dt_util.UTC)
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {},
+            "blocked_slots": {},
+        }
+        reset_states = {
+            10: ("unknown", "unknown"),
+            11: ("", ""),
+            12: ("unknown", ""),
+        }
+        for slot, (name_state, pin_state) in reset_states.items():
+            key = f"wedged-mixed-{slot}"
+            mapping = self._make_occupied_mapping(key, f"Old Guest {slot}", slot)
+            mapping["status"] = "pending_clear"
+            mapping["operation_id"] = f"clear-token-{slot}"
+            mapping["operation_kind"] = "clear"
+            mapping["pending_clear_since"] = "2026-08-01T00:00:00+00:00"
+            coordinator._slot_mappings["mappings"][key] = mapping
+            hass.states.async_set(f"text.test_lock_code_slot_{slot}_name", name_state)
+            hass.states.async_set(f"text.test_lock_code_slot_{slot}_pin", pin_state)
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+
+        events = []
+        for index, slot in enumerate(reset_states):
+            event = MagicMock()
+            event.summary = f"Mixed Reset Guest {slot}"
+            event.description = ""
+            event.start = start + timedelta(days=index * 7)
+            event.end = end + timedelta(days=index * 7)
+            event.uid = f"mixed-reset-{slot}"
+            events.append(event)
+
+        reservations = coordinator._build_reservations(events)
+        observed = coordinator._observe_managed_slots()
+
+        assert all(slot.status is SlotStatus.FREE for slot in observed)
+        assert coordinator.event_overrides.pending_clear_slots == {}
+
+        plan = compute_desired_plan(
+            reservations,
+            observed,
+            max_events=3,
+            plan_id="mixed-reset-recovery",
+            generated_at=start,
+        )
+        assert plan.overflow == {}
+        assert sorted(plan.selected.values()) == [10, 11, 12]
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_set_code",
+            new_callable=AsyncMock,
+            return_value=OperationResult(kind="set", slot=10, confirmed=True),
+        ) as mock_set:
+            await coordinator.event_overrides.async_apply_plan(
+                coordinator, plan, {res.identity_key: res for res in reservations}
+            )
+
+        assert mock_set.call_count == 3
+
+    def test_slot_with_unknown_pin_not_treated_as_occupied(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """A Null-reset slot is free, not occupied, when PIN is unknown."""
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 9, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 9, 5, 11, 0, tzinfo=dt_util.UTC)
+        hass.states.async_set("text.test_lock_code_slot_10_name", "unknown")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "unknown")
+
+        observed = coordinator._observe_managed_slots()
+        slot10 = next(slot for slot in observed if slot.slot == 10)
+
+        assert slot10.status is SlotStatus.FREE
+        assert slot10.actual_code_present is False
+        assert coordinator.event_overrides is not None
+        actual_state = coordinator.event_overrides.get_actual_state(10)
+        assert actual_state is not None
+        assert actual_state["has_code"] is False
+
+        reservation = Reservation(
+            identity_key="new-unknown-pin",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="New Guest",
+            slot_name="New Guest",
+            display_slot_name="New Guest",
+            slot_code="1234",
+        )
+        plan = compute_desired_plan(
+            [reservation],
+            observed,
+            max_events=1,
+            plan_id="unknown-pin-free",
+            generated_at=start,
+        )
+
+        assert plan.overflow == {}
+        assert plan.selected == {"new-unknown-pin": 10}
+
+    def test_slot_with_real_pin_stays_fenced(self, hass: "HomeAssistant") -> None:
+        """A pending-clear slot with a real PIN remains fenced."""
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 9, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 9, 5, 11, 0, tzinfo=dt_util.UTC)
+        mapping = self._make_occupied_mapping("real-pin", "Old Guest", 10)
+        mapping["status"] = "pending_clear"
+        mapping["operation_id"] = "clear-token"
+        mapping["operation_kind"] = "clear"
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {"real-pin": mapping},
+            "blocked_slots": {},
+        }
+        hass.states.async_set("text.test_lock_code_slot_10_name", "unknown")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "9876")
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+
+        observed = coordinator._observe_managed_slots()
+        slot10 = next(slot for slot in observed if slot.slot == 10)
+
+        assert slot10.status is SlotStatus.PENDING_CLEAR
+        assert slot10.actual_code_present is True
+
+        reservation = Reservation(
+            identity_key="new-real-pin",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="New Guest",
+            slot_name="New Guest",
+            display_slot_name="New Guest",
+            slot_code="1234",
+        )
+        plan = compute_desired_plan(
+            [reservation],
+            observed,
+            max_events=1,
+            plan_id="real-pin-fenced",
+            generated_at=start,
+        )
+
+        assert plan.selected == {}
+        assert plan.overflow == {"new-real-pin": "no_free_slot"}
+
+    async def test_adoption_fences_unnamed_real_pin(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """Adoption records a real PIN with cleared name as occupied."""
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {}
+        hass.states.async_set("text.test_lock_code_slot_10_name", "unknown")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "9876")
+
+        await coordinator.async_adopt_keymaster_slots()
+
+        mappings = coordinator._slot_mappings["mappings"]
+        mapping = mappings[f"adopted.{entry.entry_id}.slot10"]
+        assert mapping["status"] == "occupied"
+        assert mapping["identity"]["slot_name"] == "Adopted Slot 10"
+        assert mapping["last_observed_actual"]["has_code"] is True
+
+    def test_unavailable_slot_not_freed(self, hass: "HomeAssistant") -> None:
+        """Unavailable pending-clear slots stay fenced until reset states load."""
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 9, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 9, 5, 11, 0, tzinfo=dt_util.UTC)
+        mapping = self._make_occupied_mapping("unavailable-slot", "Old Guest", 10)
+        mapping["status"] = "pending_clear"
+        mapping["operation_id"] = "clear-token"
+        mapping["operation_kind"] = "clear"
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {"unavailable-slot": mapping},
+            "blocked_slots": {},
+        }
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        reservation = Reservation(
+            identity_key="new-after-unavailable",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="New Guest",
+            slot_name="New Guest",
+            display_slot_name="New Guest",
+            slot_code="1234",
+        )
+
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Unavailable")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "UNAVAILABLE")
+        observed = coordinator._observe_managed_slots()
+        slot10 = next(slot for slot in observed if slot.slot == 10)
+        assert slot10.status is SlotStatus.UNKNOWN
+        plan = compute_desired_plan(
+            [reservation],
+            observed,
+            max_events=1,
+            plan_id="unavailable-stays-fenced",
+            generated_at=start,
+        )
+        assert plan.selected == {}
+        assert plan.overflow == {"new-after-unavailable": "no_free_slot"}
+        from custom_components.rental_control.reconciliation import ActionKind
+
+        assert plan.slots[10].action is ActionKind.BLOCKED
+
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Unknown")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "")
+        observed = coordinator._observe_managed_slots()
+        slot10 = next(slot for slot in observed if slot.slot == 10)
+        assert slot10.status is SlotStatus.FREE
+        plan = compute_desired_plan(
+            [reservation],
+            observed,
+            max_events=1,
+            plan_id="unavailable-recovers",
+            generated_at=start,
+        )
+        assert plan.overflow == {}
+        assert plan.selected == {"new-after-unavailable": 10}
+
     def test_pending_clear_stays_fenced_when_state_unreadable(
         self, hass: "HomeAssistant"
     ) -> None:
-        """Pending-clear slots are not freed from unknown/unavailable states."""
+        """Pending-clear slots are not freed from unavailable states."""
+        from custom_components.rental_control.reconciliation import ActionKind
         from custom_components.rental_control.reconciliation import Reservation
         from custom_components.rental_control.reconciliation import SlotStatus
         from custom_components.rental_control.reconciliation import compute_desired_plan
@@ -5355,8 +5816,8 @@ class TestCoordinatorPersistenceUpdate:
             "mappings": {"wedged-unknown": mapping},
             "blocked_slots": {},
         }
-        hass.states.async_set("text.test_lock_code_slot_10_name", "unknown")
-        hass.states.async_set("text.test_lock_code_slot_10_pin", "unavailable")
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Unknown")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "Unavailable")
         assert coordinator.event_overrides is not None
         coordinator.event_overrides.load_persisted_mappings(
             coordinator._slot_mappings["mappings"]
@@ -5364,7 +5825,7 @@ class TestCoordinatorPersistenceUpdate:
 
         observed = coordinator._observe_managed_slots()
         slot10 = next(slot for slot in observed if slot.slot == 10)
-        assert slot10.status is SlotStatus.PENDING_CLEAR
+        assert slot10.status is SlotStatus.UNKNOWN
 
         reservation = Reservation(
             identity_key="new-unreadable",
@@ -5387,6 +5848,7 @@ class TestCoordinatorPersistenceUpdate:
 
         assert plan.selected == {}
         assert plan.overflow == {"new-unreadable": "no_free_slot"}
+        assert plan.slots[10].action is ActionKind.BLOCKED
 
     def test_adoption_rematch_uses_buffered_observed_dates(
         self, hass: "HomeAssistant"
