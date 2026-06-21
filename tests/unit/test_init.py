@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -12,16 +13,25 @@ from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_NAME
+from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.const import STATE_UNKNOWN
+import homeassistant.util.dt as dt_util
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
+from custom_components.rental_control import async_arm_startup_readability_refresh
 from custom_components.rental_control import update_listener
 from custom_components.rental_control.const import CONF_CODE_LENGTH
 from custom_components.rental_control.const import CONF_CREATION_DATETIME
 from custom_components.rental_control.const import CONF_GENERATE
 from custom_components.rental_control.const import CONF_HONOR_EVENT_TIMES
+from custom_components.rental_control.const import CONF_LOCK_ENTRY
+from custom_components.rental_control.const import CONF_MAX_EVENTS
 from custom_components.rental_control.const import CONF_PATH
+from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
 from custom_components.rental_control.const import CONF_SHOULD_UPDATE_CODE
+from custom_components.rental_control.const import CONF_START_SLOT
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DEFAULT_CODE_LENGTH
 from custom_components.rental_control.const import DEFAULT_GENERATE
@@ -30,6 +40,44 @@ from custom_components.rental_control.const import UNSUB_LISTENERS
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+
+
+def _lock_config_entry(entry_id: str) -> MockConfigEntry:
+    """Return a config entry with one managed Keymaster slot."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        title="Listener Rental",
+        version=10,
+        unique_id=f"{entry_id}-unique",
+        data={
+            "name": "Listener Rental",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "UTC",
+            "checkin": "16:00",
+            "checkout": "11:00",
+            CONF_START_SLOT: 10,
+            CONF_MAX_EVENTS: 1,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+            "honor_event_times": False,
+            CONF_LOCK_ENTRY: "front_door",
+            CONF_REFRESH_FREQUENCY: 30,
+            "code_buffer_before": 0,
+            "code_buffer_after": 0,
+        },
+        entry_id=entry_id,
+    )
+
+
+def _set_slot_readability_states(hass: HomeAssistant, state: str) -> None:
+    """Set the Keymaster entities used by the startup readability watcher."""
+    hass.states.async_set("text.front_door_code_slot_10_name", state)
+    hass.states.async_set("text.front_door_code_slot_10_pin", state)
+    hass.states.async_set(
+        "switch.front_door_code_slot_10_enabled",
+        "off" if state == STATE_UNKNOWN else state,
+    )
 
 
 async def test_async_setup_entry(
@@ -69,6 +117,101 @@ async def test_async_setup_entry(
     assert coordinator is not None
     assert coordinator.hass == hass
     assert coordinator.config_entry == mock_config_entry
+
+
+async def test_healthy_startup_does_not_arm_watcher(
+    hass: HomeAssistant,
+    mock_aiohttp_session,
+) -> None:
+    """Verify readable Keymaster slots only register normal listeners."""
+    entry = _lock_config_entry("healthy_startup_entry")
+    entry.add_to_hass(hass)
+    _set_slot_readability_states(hass, STATE_UNKNOWN)
+    mock_aiohttp_session.get(
+        entry.data["url"],
+        status=200,
+        body="BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n",
+        repeat=True,
+    )
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    listeners = hass.data[DOMAIN][entry.entry_id][UNSUB_LISTENERS]
+    assert len(listeners) == 2
+
+
+async def test_startup_readability_watcher_unloads_cleanly(
+    hass: HomeAssistant,
+    mock_aiohttp_session,
+) -> None:
+    """Verify the startup readability watcher is removed on unload."""
+    entry = _lock_config_entry("unreadable_startup_entry")
+    entry.add_to_hass(hass)
+    _set_slot_readability_states(hass, STATE_UNAVAILABLE)
+    mock_aiohttp_session.get(
+        entry.data["url"],
+        status=200,
+        body="BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n",
+        repeat=True,
+    )
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    listeners = hass.data[DOMAIN][entry.entry_id][UNSUB_LISTENERS]
+    assert len(listeners) == 3
+    coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+    refresh_mock = AsyncMock()
+    coordinator.async_refresh = refresh_mock
+    hass.states.async_set("text.front_door_code_slot_10_name", STATE_UNKNOWN)
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    hass.states.async_set("text.front_door_code_slot_10_pin", STATE_UNKNOWN)
+    hass.states.async_set("switch.front_door_code_slot_10_enabled", "off")
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))
+    await hass.async_block_till_done()
+
+    refresh_mock.assert_not_awaited()
+    assert entry.entry_id not in hass.data.get(DOMAIN, {})
+
+
+async def test_startup_readability_watcher_handles_missed_transition(
+    hass: HomeAssistant,
+) -> None:
+    """Verify startup-unreadable slots refresh if readable before watcher arm."""
+    entry = _lock_config_entry("missed_transition_entry")
+    entry.add_to_hass(hass)
+    _set_slot_readability_states(hass, STATE_UNKNOWN)
+
+    coordinator = MagicMock()
+    coordinator.lockname = "front_door"
+    coordinator.start_slot = 10
+    coordinator.max_events = 1
+    coordinator.async_refresh = AsyncMock()
+    hass.data[DOMAIN] = {
+        entry.entry_id: {
+            COORDINATOR: coordinator,
+            UNSUB_LISTENERS: [],
+        },
+    }
+
+    async_arm_startup_readability_refresh(
+        hass,
+        entry,
+        coordinator,
+        startup_slots_unreadable=True,
+    )
+
+    assert len(hass.data[DOMAIN][entry.entry_id][UNSUB_LISTENERS]) == 1
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))
+    await hass.async_block_till_done()
+
+    coordinator.async_refresh.assert_awaited_once()
+    assert hass.data[DOMAIN][entry.entry_id][UNSUB_LISTENERS] == []
 
 
 async def test_async_unload_entry(

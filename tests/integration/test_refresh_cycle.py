@@ -19,12 +19,22 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from aioresponses import aioresponses
+from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.const import STATE_UNKNOWN
 from homeassistant.helpers import entity_registry as er
 import homeassistant.util.dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
+from custom_components.rental_control.const import CONF_LOCK_ENTRY
+from custom_components.rental_control.const import CONF_MAX_EVENTS
+from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
+from custom_components.rental_control.const import CONF_START_SLOT
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import SLOT_STATUS_PENDING_CLEAR
+from custom_components.rental_control.coordinator import RentalControlCoordinator
+from custom_components.rental_control.util import OperationResult
 
 from tests.fixtures import calendar_data
 from tests.integration.helpers import FROZEN_START_OF_DAY
@@ -128,6 +138,154 @@ async def test_scheduled_refresh(
 
     assert coordinator.data is not None
     assert coordinator.last_update_success is True
+
+
+async def test_wedged_recovers_promptly_when_slots_become_available(
+    hass: HomeAssistant,
+) -> None:
+    """Recover a pending-clear startup wedge when Keymaster becomes readable."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Prompt Recovery Rental",
+        version=10,
+        unique_id="prompt-recovery",
+        data={
+            "name": "Prompt Recovery Rental",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "UTC",
+            "checkin": "16:00",
+            "checkout": "11:00",
+            CONF_START_SLOT: 10,
+            CONF_MAX_EVENTS: 1,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+            "honor_event_times": False,
+            CONF_LOCK_ENTRY: "front_door",
+            CONF_REFRESH_FREQUENCY: 30,
+            "code_buffer_before": 0,
+            "code_buffer_after": 0,
+        },
+        entry_id="prompt_recovery_entry",
+    )
+    entry.add_to_hass(hass)
+
+    for suffix in ("name", "pin"):
+        hass.states.async_set(
+            f"text.front_door_code_slot_10_{suffix}",
+            STATE_UNAVAILABLE,
+        )
+    hass.states.async_set("switch.front_door_code_slot_10_enabled", STATE_UNAVAILABLE)
+
+    store_data: dict[str, Any] = {
+        "schema_version": 1,
+        "entry_id": entry.entry_id,
+        "lockname": "front_door",
+        "start_slot": 10,
+        "max_slots": 1,
+        "updated_at": "2026-06-21T00:00:00+00:00",
+        "mappings": {
+            "stale-pending-clear": {
+                "slot": 10,
+                "status": SLOT_STATUS_PENDING_CLEAR,
+                "operation_id": "pending-clear-token",
+                "operation_kind": "clear",
+                "identity": {
+                    "identity_key": "stale-pending-clear",
+                    "summary": "Old Guest",
+                    "slot_name": "Old Guest",
+                    "uid_aliases": [],
+                    "booking_aliases": [],
+                },
+                "missing_count": 0,
+                "pending_set_since": None,
+                "pending_clear_since": "2026-06-20T00:00:00+00:00",
+                "fingerprint_history": [],
+                "updated_at": "2026-06-20T00:00:00+00:00",
+                "last_observed_actual": {
+                    "slot": 10,
+                    "classification": SLOT_STATUS_PENDING_CLEAR,
+                    "name_state": None,
+                    "has_code": None,
+                    "start_state": None,
+                    "end_state": None,
+                    "use_date_range": None,
+                    "enabled": None,
+                },
+            }
+        },
+        "blocked_slots": {},
+    }
+
+    async def load_store(coordinator: RentalControlCoordinator) -> None:
+        """Load wedged pending-clear state into the coordinator."""
+        coordinator._slot_mappings = store_data
+
+    async def save_store(_coordinator: RentalControlCoordinator) -> None:
+        """Avoid writing the HA Store in the test."""
+
+    with (
+        aioresponses() as mock_session,
+        patch.object(
+            RentalControlCoordinator,
+            "async_load_slot_store",
+            autospec=True,
+            side_effect=load_store,
+        ),
+        patch.object(
+            RentalControlCoordinator,
+            "async_save_slot_store",
+            autospec=True,
+            side_effect=save_store,
+        ),
+        patch(
+            "custom_components.rental_control.event_overrides.async_fire_set_code",
+            new=AsyncMock(
+                return_value=OperationResult(kind="set", slot=10, confirmed=True)
+            ),
+        ) as set_code,
+        patch.object(dt_util, "now", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
+    ):
+        mock_session.get(
+            entry.data["url"],
+            status=200,
+            body=future_ics(),
+            repeat=True,
+        )
+
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.selected == {}
+        assert coordinator._latest_plan.overflow != {}
+        set_code.assert_not_awaited()
+
+        for suffix in ("name", "pin"):
+            hass.states.async_set(
+                f"text.front_door_code_slot_10_{suffix}",
+                STATE_UNKNOWN,
+            )
+        hass.states.async_set("switch.front_door_code_slot_10_enabled", "off")
+        await hass.async_block_till_done()
+
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))
+        await hass.async_block_till_done()
+        await hass.async_block_till_done()
+
+        assert set_code.await_count == 1
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.overflow == {}
+        assert coordinator._latest_plan.selected != {}
+
+        hass.states.async_set("text.front_door_code_slot_10_name", "Later Change")
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=6))
+        await hass.async_block_till_done()
+        await hass.async_block_till_done()
+
+        assert set_code.await_count == 1
 
 
 # ---------------------------------------------------------------------------
