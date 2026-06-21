@@ -134,3 +134,17 @@ CHECKIN_STATE_CHECKED_OUT = "checked_out"
 
 # Early checkout grace period in minutes
 EARLY_CHECKOUT_GRACE_MINUTES = 15
+
+# Store constants
+STORE_SLOT_MAPPINGS_KEY = "rental_control.slot_mappings"
+STORE_SCHEMA_VERSION = 1
+
+# Slot status string constants (mirror SlotStatus enum values)
+SLOT_STATUS_OCCUPIED = "occupied"
+SLOT_STATUS_PENDING_SET = "pending_set"
+SLOT_STATUS_PENDING_CLEAR = "pending_clear"
+SLOT_STATUS_BLOCKED = "blocked"
+
+# Operation kind constants
+OPERATION_KIND_SET = "set"
+OPERATION_KIND_CLEAR = "clear"

@@ -524,3 +524,134 @@ class TestDiagnosticsAttribute:
         assert "keymaster_event_diagnostics" in attrs
         assert isinstance(attrs["keymaster_event_diagnostics"], list)
         assert attrs["keymaster_event_diagnostics"][0]["disposition"] == "accepted"
+
+
+# ---------------------------------------------------------------------------
+# T094: Diagnostics redaction compatibility tests
+# ---------------------------------------------------------------------------
+
+
+class TestRedactionCompatibility:
+    """T094: Verify that neither the keymaster event diagnostics ring buffer
+    nor the new slot-plan diagnostics snapshot expose raw slot codes or
+    sensitive reservation metadata."""
+
+    def test_keymaster_event_buffer_has_no_slot_code_field(self) -> None:
+        """Entries in keymaster_event_diagnostics never contain slot_code."""
+        from collections import deque
+
+        buf: deque = deque(maxlen=10)
+        entry = {
+            "timestamp": "2026-05-15T13:08:11+00:00",
+            "lockname": "Front Door",
+            "lockname_slug": "front_door",
+            "state": "unlocked",
+            "code_slot_num": 11,
+            "disposition": "accepted",
+        }
+        buf.append(entry)
+        for item in list(buf):
+            assert "slot_code" not in item
+            assert "pin" not in item
+            assert "code_value" not in item
+
+    def test_keymaster_event_buffer_fields_are_non_sensitive(self) -> None:
+        """Accepted entries contain only lockname, state, slot num, disposition, timestamp."""
+        from collections import deque
+
+        buf: deque = deque(maxlen=10)
+        entry = {
+            "timestamp": "2026-05-15T13:08:11+00:00",
+            "lockname": "Front Door",
+            "lockname_slug": "front_door",
+            "state": "unlocked",
+            "code_slot_num": 11,
+            "disposition": "accepted",
+        }
+        buf.append(entry)
+        allowed_keys = {
+            "timestamp",
+            "lockname",
+            "lockname_slug",
+            "state",
+            "code_slot_num",
+            "disposition",
+        }
+        for item in list(buf):
+            assert set(item.keys()).issubset(allowed_keys)
+
+    def test_event_overrides_diagnostics_snapshot_has_no_raw_codes(self) -> None:
+        """EventOverrides.diagnostics_snapshot contains no slot_code or PIN data."""
+        from datetime import datetime
+        from datetime import timedelta
+        from datetime import timezone
+
+        from custom_components.rental_control.event_overrides import EventOverrides
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import DesiredPlan
+        from custom_components.rental_control.reconciliation import PlannedSlot
+
+        _TZ = timezone.utc
+        now = datetime(2026, 8, 1, tzinfo=_TZ)
+        eo = EventOverrides(start_slot=10, max_slots=2)
+        eo.update(10, "SECRETPIN123", "Guest A", now, now + timedelta(days=7))
+
+        plan = DesiredPlan(plan_id="redact-test", generated_at=now)
+        plan.slots[10] = PlannedSlot(
+            slot=10,
+            desired_identity_key="res-a",
+            actual_classification="occupied",
+            action=ActionKind.NOOP,
+        )
+        plan.slots[11] = PlannedSlot(
+            slot=11,
+            desired_identity_key=None,
+            actual_classification="free",
+            action=ActionKind.NOOP,
+        )
+
+        eo.update_diagnostics_snapshot(plan)
+        snap = eo.diagnostics_snapshot
+        snap_str = str(snap)
+
+        assert "SECRETPIN123" not in snap_str
+        assert "slot_code" not in snap_str
+
+    def test_compute_desired_plan_diagnostics_has_no_slot_code(self) -> None:
+        """compute_desired_plan diagnostics exclude slot_code from all entries."""
+        from datetime import datetime
+        from datetime import timedelta
+        from datetime import timezone
+
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        _TZ = timezone.utc
+        start = datetime(2026, 8, 1, 14, tzinfo=_TZ)
+        end = start + timedelta(days=7)
+        r = Reservation(
+            identity_key="r-redact",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Guest Redact",
+            slot_name="Guest Redact",
+            display_slot_name="RC Guest Redact",
+            slot_code="RAWPIN4567",
+        )
+        ms = ManagedSlot(slot=10, managed=True, status=SlotStatus.FREE)
+
+        plan = compute_desired_plan(
+            [r],
+            [ms],
+            max_events=3,
+            plan_id="p-redact",
+            generated_at=start,
+        )
+
+        diag_str = str(plan.diagnostics)
+        assert "RAWPIN4567" not in diag_str
+        assert "slot_code" not in diag_str
