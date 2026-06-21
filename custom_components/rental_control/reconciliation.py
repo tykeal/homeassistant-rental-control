@@ -282,6 +282,11 @@ class ManagedSlot:
         persisted_identity_key: Previously stored reservation for this
             slot.
         blocked_reason: Reason the slot cannot be reused.
+        preserve_unmatched: True when a populated physical slot with a
+            persisted owner should be fenced if it cannot be matched to a
+            current reservation yet.  This extends the adopted-slot
+            preservation invariant to freshly observed stale Store mappings
+            while their missing-count tolerance has not expired.
         retry_count: Consecutive failed physical operations for this
             slot.
         last_operation_id: Reconcile operation token used to classify
@@ -306,6 +311,7 @@ class ManagedSlot:
     desired_identity_key: str | None = None
     persisted_identity_key: str | None = None
     blocked_reason: str | None = None
+    preserve_unmatched: bool = False
     retry_count: int = 0
     last_operation_id: str | None = None
     dirty_during_operation: bool = False
@@ -825,6 +831,40 @@ def _is_adopted_mapping(mapping_key: str, mapping: dict[str, Any]) -> bool:
     )
 
 
+def _should_include_observed_mapping(
+    mapping_key: str,
+    mapping: dict[str, Any],
+    observed_mapping_keys: set[str] | None,
+) -> bool:
+    """Return whether observed physical fields may participate in rematch."""
+    return _is_adopted_mapping(mapping_key, mapping) or (
+        observed_mapping_keys is not None and mapping_key in observed_mapping_keys
+    )
+
+
+def _fresh_observed_name_conflicts(
+    reservation: Reservation,
+    mapping_key: str,
+    mapping: dict[str, Any],
+    actual_slot_names: dict[int, str] | None,
+    observed_mapping_keys: set[str] | None,
+) -> bool:
+    """Return whether a fresh physical slot name contradicts an exact mapping."""
+    if observed_mapping_keys is None or mapping_key not in observed_mapping_keys:
+        return False
+    if actual_slot_names is None:
+        return False
+    slot_num: int | None = mapping.get("slot")
+    if slot_num is None:
+        return False
+    actual_name = actual_slot_names.get(slot_num)
+    if not actual_name:
+        return False
+    return normalize_slot_name_for_fingerprint(
+        actual_name
+    ) not in _normalized_name_forms(reservation)
+
+
 def _as_utc_datetime(value: Any) -> datetime | None:
     """Parse a stored datetime value and normalize it to UTC."""
     if isinstance(value, datetime):
@@ -887,6 +927,7 @@ def _is_continuity_compatible(
     mapping_key: str,
     mapping: dict[str, Any],
     actual_slot_names: dict[int, str] | None,
+    observed_mapping_keys: set[str] | None,
 ) -> bool:
     """Return ``True`` if *mapping* is continuity-compatible with *reservation*.
 
@@ -909,6 +950,8 @@ def _is_continuity_compatible(
         mapping: Raw Store mapping dict.
         actual_slot_names: Optional mapping of slot number → current
             Keymaster slot name for actual-slot continuity checks.
+        observed_mapping_keys: Mapping keys whose observed state was
+            refreshed from physical Keymaster entities this cycle.
 
     Returns:
         ``True`` if the mapping is continuity-compatible with the
@@ -918,7 +961,9 @@ def _is_continuity_compatible(
         mapping,
         reservation,
         actual_slot_names,
-        include_observed=_is_adopted_mapping(mapping_key, mapping),
+        include_observed=_should_include_observed_mapping(
+            mapping_key, mapping, observed_mapping_keys
+        ),
     ):
         return False
 
@@ -957,6 +1002,7 @@ def _has_competing_reservation(
     persisted_mappings: dict[str, dict[str, Any]],
     current_reservations: list[Reservation] | None,
     this_reservation: Reservation,
+    observed_mapping_keys: set[str] | None,
 ) -> bool:
     """Return ``True`` if another current reservation also matches *candidate_key*.
 
@@ -971,6 +1017,8 @@ def _has_competing_reservation(
         current_reservations: All current reservations being reconciled.
         this_reservation: The reservation being matched (excluded from
             the competition check).
+        observed_mapping_keys: Mapping keys whose observed state was
+            refreshed from physical Keymaster entities this cycle.
 
     Returns:
         ``True`` if at least one other current reservation competes for
@@ -979,7 +1027,9 @@ def _has_competing_reservation(
     if current_reservations is None:
         return False
     candidate_mapping = persisted_mappings.get(candidate_key, {})
-    include_observed = _is_adopted_mapping(candidate_key, candidate_mapping)
+    include_observed = _should_include_observed_mapping(
+        candidate_key, candidate_mapping, observed_mapping_keys
+    )
     candidate_dates_match_this = _mapping_dates_match_reservation(
         candidate_mapping,
         this_reservation,
@@ -1008,6 +1058,7 @@ def find_reservation_rematch(
     persisted_mappings: dict[str, dict[str, Any]],
     current_reservations: list[Reservation] | None = None,
     actual_slot_names: dict[int, str] | None = None,
+    observed_mapping_keys: set[str] | None = None,
 ) -> RematchResult:
     """Find the best identity rematch for *reservation* in *persisted_mappings*.
 
@@ -1051,16 +1102,46 @@ def find_reservation_rematch(
         actual_slot_names: Mapping of Keymaster slot number to the
             currently observed slot name entity state.  Provides the
             actual-slot continuity signal in rule 5.  Optional.
+        observed_mapping_keys: Persisted mapping keys whose
+            ``last_observed_actual`` fields were refreshed from current
+            physical Keymaster state in this reconciliation cycle.
+            Observed fields for other non-adopted mappings are ignored
+            to avoid trusting stale Store snapshots.
 
     Returns:
         A :class:`RematchResult` describing the best match found.
     """
     # Rule 1: exact primary fingerprint match
     if reservation.identity_key in persisted_mappings:
-        return RematchResult(
-            kind=RematchKind.EXACT,
-            matched_identity_key=reservation.identity_key,
+        exact_mapping = persisted_mappings[reservation.identity_key]
+        if not _fresh_observed_name_conflicts(
+            reservation,
+            reservation.identity_key,
+            exact_mapping,
+            actual_slot_names,
+            observed_mapping_keys,
+        ):
+            return RematchResult(
+                kind=RematchKind.EXACT,
+                matched_identity_key=reservation.identity_key,
+            )
+        _LOGGER.debug(
+            "Exact persisted mapping %s skipped because current physical "
+            "slot name conflicts with the reservation",
+            reservation.identity_key,
         )
+
+    candidate_mappings = [
+        (mapping_key, mapping)
+        for mapping_key, mapping in persisted_mappings.items()
+        if not _fresh_observed_name_conflicts(
+            reservation,
+            mapping_key,
+            mapping,
+            actual_slot_names,
+            observed_mapping_keys,
+        )
+    ]
 
     # Rule 2: UID alias + normalized name match
     # If a UID alias matches but rule 1 did not fire, the fingerprint must
@@ -1068,7 +1149,7 @@ def find_reservation_rematch(
     # end, and entry_id is constant per instance, different fingerprint with
     # matching name means the dates shifted → date_shifted=True always.
     uid_matches: list[str] = []
-    for mapping_key, mapping in persisted_mappings.items():
+    for mapping_key, mapping in candidate_mappings:
         persisted_uids: set[str] = set(
             _get_nested(mapping, "identity", "uid_aliases") or []
         )
@@ -1077,7 +1158,9 @@ def find_reservation_rematch(
                 mapping,
                 reservation,
                 actual_slot_names,
-                include_observed=_is_adopted_mapping(mapping_key, mapping),
+                include_observed=_should_include_observed_mapping(
+                    mapping_key, mapping, observed_mapping_keys
+                ),
             ):
                 uid_matches.append(mapping_key)
 
@@ -1098,7 +1181,7 @@ def find_reservation_rematch(
     # Collect all matches to detect ambiguous scenarios (e.g. duplicate
     # booking codes across two persisted mappings).
     booking_matches: list[str] = []
-    for mapping_key, mapping in persisted_mappings.items():
+    for mapping_key, mapping in candidate_mappings:
         persisted_booking: set[str] = set(
             _get_nested(mapping, "identity", "booking_aliases") or []
         )
@@ -1107,7 +1190,9 @@ def find_reservation_rematch(
                 mapping,
                 reservation,
                 actual_slot_names,
-                include_observed=_is_adopted_mapping(mapping_key, mapping),
+                include_observed=_should_include_observed_mapping(
+                    mapping_key, mapping, observed_mapping_keys
+                ),
             ):
                 booking_matches.append(mapping_key)
 
@@ -1125,12 +1210,14 @@ def find_reservation_rematch(
 
     # Rule 4: name + exact start/end stored in identity dict
     name_time_matches: list[str] = []
-    for mapping_key, mapping in persisted_mappings.items():
+    for mapping_key, mapping in candidate_mappings:
         if not _mapping_name_matches_reservation(
             mapping,
             reservation,
             actual_slot_names,
-            include_observed=_is_adopted_mapping(mapping_key, mapping),
+            include_observed=_should_include_observed_mapping(
+                mapping_key, mapping, observed_mapping_keys
+            ),
         ):
             continue
         if _mapping_dates_match_reservation(
@@ -1154,12 +1241,13 @@ def find_reservation_rematch(
     # Rule 5: conservative continuity rematch
     candidates: list[str] = [
         mapping_key
-        for mapping_key, mapping in persisted_mappings.items()
+        for mapping_key, mapping in candidate_mappings
         if _is_continuity_compatible(
             reservation,
             mapping_key,
             mapping,
             actual_slot_names,
+            observed_mapping_keys,
         )
     ]
 
@@ -1169,6 +1257,7 @@ def find_reservation_rematch(
             persisted_mappings,
             current_reservations,
             reservation,
+            observed_mapping_keys,
         ):
             return RematchResult(
                 kind=RematchKind.CONTINUITY,
@@ -1188,8 +1277,8 @@ def find_reservation_rematch(
             if _mapping_dates_match_reservation(
                 persisted_mappings[candidate],
                 reservation,
-                include_observed=_is_adopted_mapping(
-                    candidate, persisted_mappings[candidate]
+                include_observed=_should_include_observed_mapping(
+                    candidate, persisted_mappings[candidate], observed_mapping_keys
                 ),
             )
         ]
@@ -1391,12 +1480,26 @@ def _build_slot_action(
     if desired_key is None:
         if ms.status is SlotStatus.FREE:
             return ActionKind.NOOP, None
+        persisted_res = (
+            res_by_key.get(ms.persisted_identity_key)
+            if ms.persisted_identity_key is not None
+            else None
+        )
         if (
             ms.status is SlotStatus.OCCUPIED
             and ms.persisted_identity_key is not None
-            and ms.persisted_identity_key.startswith("adopted.")
+            and not (persisted_res is not None and persisted_res.checked_out)
+            and (
+                ms.persisted_identity_key.startswith("adopted.")
+                or ms.preserve_unmatched
+            )
         ):
-            return ActionKind.BLOCKED, "adopted_unmatched"
+            reason = (
+                "adopted_unmatched"
+                if ms.persisted_identity_key.startswith("adopted.")
+                else "persisted_unmatched_physical"
+            )
+            return ActionKind.BLOCKED, reason
         return ActionKind.CLEAR, None
 
     desired_res = res_by_key.get(desired_key)
@@ -1675,7 +1778,11 @@ def compute_desired_plan(
         if not ms.managed:
             continue
         desired_key = slot_to_identity.get(ms.slot)
-        action, pending_reason = _build_slot_action(ms, desired_key, res_by_key)
+        if ms.slot in _non_canonical_slots:
+            action = ActionKind.CLEAR
+            pending_reason = None
+        else:
+            action, pending_reason = _build_slot_action(ms, desired_key, res_by_key)
         if (
             action is ActionKind.RETRY_CLEAR
             and ms.persisted_identity_key in plan.protected

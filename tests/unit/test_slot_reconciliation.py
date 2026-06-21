@@ -2294,6 +2294,39 @@ class TestFindReservationRematchRulePriority:
 
         assert result.kind is not RematchKind.NAME_TIME
 
+    def test_fresh_physical_name_conflict_excludes_mapping(self) -> None:
+        """A fresh physical name conflict excludes a mapping from all rules."""
+        name = "Alice Guest"
+        start = _dt(2026, 7, 1)
+        end = _dt(2026, 7, 8)
+        persisted = self._persisted(
+            "alice-key",
+            name,
+            start_iso=start.isoformat(),
+            end_iso=end.isoformat(),
+        )
+        persisted["last_observed_actual"]["name_state"] = "Occupied Stranger"
+        reservation = Reservation(
+            identity_key="alice-key",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary=name,
+            slot_name=name,
+            display_slot_name=f"RC {name}",
+            slot_code="0000",
+        )
+
+        result = find_reservation_rematch(
+            reservation,
+            {"alice-key": persisted},
+            actual_slot_names={10: "Occupied Stranger"},
+            observed_mapping_keys={"alice-key"},
+        )
+
+        assert result.kind is RematchKind.NO_MATCH
+
     def test_adopted_observed_date_tiebreak_is_continuity(self) -> None:
         """Observed-date disambiguation remains a continuity rematch."""
         name = "Repeat Guest"
@@ -3658,6 +3691,60 @@ class TestManualDriftOverwriteAction:
         ]
         assert len(overwrite_actions) == 1
         assert overwrite_actions[0].slot == 5
+
+    def test_checked_out_persisted_slot_is_clearable(self) -> None:
+        """Checked-out reservations bypass unmatched physical preservation."""
+        res = self._drift_res(identity_key="r-checked-out")
+        res.checked_out = True
+        ms = self._occupied_drifted_slot(
+            5,
+            "r-checked-out",
+            actual_name="RC Guest Drift",
+            actual_code_present=True,
+        )
+        ms.preserve_unmatched = True
+
+        plan = compute_desired_plan(
+            [res],
+            [ms],
+            max_events=3,
+            plan_id="t071-checked-out",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        clear_actions = [a for a in plan.actions if a.kind is ActionKind.CLEAR]
+        assert len(clear_actions) == 1
+        assert clear_actions[0].slot == 5
+
+    def test_duplicate_noncanonical_clear_overrides_preserve(self) -> None:
+        """Duplicate-collapse still clears non-canonical preserved slots."""
+        first = self._occupied_drifted_slot(
+            5,
+            "r-dup",
+            actual_name="RC Guest Drift",
+            actual_code_present=True,
+        )
+        second = self._occupied_drifted_slot(
+            6,
+            "r-dup",
+            actual_name="RC Guest Drift",
+            actual_code_present=True,
+        )
+        first.preserve_unmatched = True
+        second.preserve_unmatched = True
+
+        plan = compute_desired_plan(
+            [],
+            [first, second],
+            max_events=3,
+            plan_id="t071-dup-preserve",
+            generated_at=_dt(2026, 8, 1),
+        )
+
+        clear_actions = [a for a in plan.actions if a.kind is ActionKind.CLEAR]
+        assert len(clear_actions) == 1
+        assert clear_actions[0].slot == 6
+        assert clear_actions[0].reason == "duplicate_non_canonical"
 
     def test_overwrite_action_preserves_desired_identity_key(self) -> None:
         """OVERWRITE_MANUAL_CHANGE action carries the desired reservation's identity."""

@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
+from datetime import timezone
 import logging
 import random
 import re
@@ -108,6 +109,7 @@ from .reconciliation import compute_desired_plan
 from .reconciliation import extract_booking_aliases
 from .reconciliation import find_reservation_rematch
 from .reconciliation import make_reservation_fingerprint
+from .reconciliation import normalize_slot_name_for_fingerprint
 from .util import OperationResult
 from .util import add_call
 from .util import apply_buffer
@@ -855,7 +857,178 @@ Please update Keymaster to at least v0.1.0-b0
 
         return code if code is not None else self._generate_date_based_code(start, end)
 
-    def _build_reservations(self, calendar: list[CalendarEvent]) -> list[_Reservation]:
+    def _merge_observed_slots_into_mappings(
+        self, managed_slots: list[_ManagedSlot]
+    ) -> None:
+        """Refresh persisted actual snapshots from current physical slots.
+
+        Store mappings loaded on restart may contain stale
+        ``last_observed_actual`` snapshots.  Before rematching current
+        calendar reservations, physical Keymaster state must be allowed to
+        win over those stale snapshots so populated slots can be reclaimed
+        rather than stale-cleared.
+        """
+        persisted: dict[str, Any] = self._slot_mappings.get("mappings", {})
+        for ms in managed_slots:
+            if ms.persisted_identity_key is None:
+                continue
+            mapping = persisted.get(ms.persisted_identity_key)
+            if mapping is None:
+                continue
+            mapping["last_observed_actual"] = {
+                "slot": ms.slot,
+                "classification": ms.status.value,
+                "name_state": ms.actual_name,
+                "has_code": ms.actual_code_present,
+                "start_state": _store_datetime(ms.actual_start),
+                "end_state": _store_datetime(ms.actual_end),
+                "use_date_range": ms.date_range_enabled,
+                "enabled": ms.enabled,
+            }
+
+    @staticmethod
+    def _observed_value_as_datetime(value: Any) -> datetime | None:
+        """Return a datetime for an observed Store value, if parseable."""
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str):
+            parsed = dt.parse_datetime(value)
+            if not isinstance(parsed, datetime):
+                return None
+        else:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    @staticmethod
+    def _physical_mapping_matches_reservation(
+        mapping: dict[str, Any],
+        reservation: _Reservation,
+        actual_slot_names: dict[int, str],
+    ) -> bool:
+        """Return whether fresh physical state identifies a reservation."""
+        if not RentalControlCoordinator._physical_mapping_name_matches_reservation(
+            mapping, reservation, actual_slot_names
+        ):
+            return False
+
+        actual = mapping.get("last_observed_actual", {})
+        if not isinstance(actual, dict):
+            return True
+        actual_start = RentalControlCoordinator._observed_value_as_datetime(
+            actual.get("start_state")
+        )
+        actual_end = RentalControlCoordinator._observed_value_as_datetime(
+            actual.get("end_state")
+        )
+        if actual_start is None or actual_end is None:
+            return True
+        return (
+            actual_start == reservation.buffered_start
+            and actual_end == reservation.buffered_end
+        )
+
+    @staticmethod
+    def _physical_mapping_name_matches_reservation(
+        mapping: dict[str, Any],
+        reservation: _Reservation,
+        actual_slot_names: dict[int, str],
+    ) -> bool:
+        """Return whether a fresh physical slot name matches a reservation."""
+        slot_num = mapping.get("slot")
+        if not isinstance(slot_num, int):
+            return False
+        actual_name = actual_slot_names.get(slot_num)
+        if not actual_name:
+            return False
+        actual_name_form = normalize_slot_name_for_fingerprint(actual_name)
+        reservation_name_forms = {
+            normalize_slot_name_for_fingerprint(reservation.slot_name),
+            normalize_slot_name_for_fingerprint(reservation.display_slot_name),
+        }
+        if actual_name_form not in reservation_name_forms:
+            return False
+        return True
+
+    @staticmethod
+    def _remap_observed_mappings_to_physical_reservations(
+        persisted: dict[str, Any],
+        current_reservations: list[_Reservation],
+        actual_slot_names: dict[int, str],
+        observed_mapping_keys: set[str],
+    ) -> set[str]:
+        """Atomically re-key stale Store mappings to current physical occupants."""
+        remap: dict[str, str] = {}
+        target_counts: dict[str, int] = {}
+        for mapping_key in observed_mapping_keys:
+            mapping = persisted.get(mapping_key)
+            if not isinstance(mapping, dict):
+                continue
+            matches = [
+                res.identity_key
+                for res in current_reservations
+                if RentalControlCoordinator._physical_mapping_matches_reservation(
+                    mapping, res, actual_slot_names
+                )
+            ]
+            if len(matches) != 1:
+                continue
+            target_key = matches[0]
+            remap[mapping_key] = target_key
+            target_counts[target_key] = target_counts.get(target_key, 0) + 1
+
+        remap = {
+            source: target
+            for source, target in remap.items()
+            if target_counts.get(target) == 1
+        }
+        if not remap:
+            return observed_mapping_keys
+
+        sources = set(remap)
+        safe_remap = {
+            source: target
+            for source, target in remap.items()
+            if target not in persisted
+            or target in sources
+            or target == source
+            or target not in observed_mapping_keys
+        }
+        if not safe_remap:
+            return observed_mapping_keys
+
+        original_items = list(persisted.items())
+        rebuilt: dict[str, Any] = {}
+        replaced_stale_targets = {
+            target
+            for source, target in safe_remap.items()
+            if target != source and target in persisted and target not in sources
+        }
+        for source_key, mapping in original_items:
+            if source_key in replaced_stale_targets:
+                continue
+            target_key = safe_remap.get(source_key, source_key)
+            if target_key in rebuilt:
+                return observed_mapping_keys
+            if target_key != source_key:
+                history = set(mapping.get("fingerprint_history", []))
+                history.add(source_key)
+                mapping["fingerprint_history"] = sorted(history)
+                identity = mapping.setdefault("identity", {})
+                if isinstance(identity, dict):
+                    identity["identity_key"] = target_key
+            rebuilt[target_key] = mapping
+
+        persisted.clear()
+        persisted.update(rebuilt)
+        return {safe_remap.get(key, key) for key in observed_mapping_keys}
+
+    def _build_reservations(
+        self,
+        calendar: list[CalendarEvent],
+        managed_slots: list[_ManagedSlot] | None = None,
+    ) -> list[_Reservation]:
         """Convert parsed CalendarEvent objects to Reservation objects.
 
         Produces one :class:`~.reconciliation.Reservation` per calendar
@@ -873,6 +1046,9 @@ Please update Keymaster to at least v0.1.0-b0
         Args:
             calendar: Parsed and sorted calendar events from the current
                 refresh cycle.
+            managed_slots: Optional current physical slot observations.
+                When provided, observed names are treated as fresh
+                physical facts for rematching stale persisted mappings.
 
         Returns:
             List of :class:`~.reconciliation.Reservation` objects ready
@@ -887,12 +1063,25 @@ Please update Keymaster to at least v0.1.0-b0
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
         reservations: list[_Reservation] = []
         actual_slot_names: dict[int, str] = {}
-        for persisted_mapping in persisted.values():
-            slot_num = persisted_mapping.get("slot")
-            actual = persisted_mapping.get("last_observed_actual")
-            actual_name = actual.get("name_state") if isinstance(actual, dict) else None
-            if isinstance(slot_num, int) and isinstance(actual_name, str):
-                actual_slot_names[slot_num] = actual_name
+        observed_mapping_keys: set[str] = set()
+        if managed_slots is not None:
+            for ms in managed_slots:
+                if ms.actual_name is not None:
+                    actual_slot_names[ms.slot] = ms.actual_name
+                physical_present = (
+                    bool(ms.actual_name) or ms.actual_code_present is True
+                )
+                if ms.persisted_identity_key is not None and physical_present:
+                    observed_mapping_keys.add(ms.persisted_identity_key)
+        else:
+            for persisted_mapping in persisted.values():
+                slot_num = persisted_mapping.get("slot")
+                actual = persisted_mapping.get("last_observed_actual")
+                actual_name = (
+                    actual.get("name_state") if isinstance(actual, dict) else None
+                )
+                if isinstance(slot_num, int) and isinstance(actual_name, str):
+                    actual_slot_names[slot_num] = actual_name
         current_reservations_for_rematch: list[_Reservation] = []
         for event in calendar:
             slot_name = get_slot_name(
@@ -904,6 +1093,23 @@ Please update Keymaster to at least v0.1.0-b0
                 continue
             rematch_start: datetime = event.start  # type: ignore[assignment]
             rematch_end: datetime = event.end  # type: ignore[assignment]
+            rematch_buffered_start_raw, rematch_buffered_end_raw = apply_buffer(
+                rematch_start,
+                rematch_end,
+                self.code_buffer_before,
+                self.code_buffer_after,
+                self,
+            )
+            rematch_buffered_start: datetime = (
+                rematch_buffered_start_raw
+                if isinstance(rematch_buffered_start_raw, datetime)
+                else rematch_start
+            )
+            rematch_buffered_end: datetime = (
+                rematch_buffered_end_raw
+                if isinstance(rematch_buffered_end_raw, datetime)
+                else rematch_end
+            )
             uid = normalize_uid(getattr(event, "uid", None))
             display_slot_name = _format_display_slot_name(
                 slot_name, prefix, self.trim_names, self.max_name_length
@@ -916,8 +1122,8 @@ Please update Keymaster to at least v0.1.0-b0
                         ),
                         start=rematch_start,
                         end=rematch_end,
-                        buffered_start=rematch_start,
-                        buffered_end=rematch_end,
+                        buffered_start=rematch_buffered_start,
+                        buffered_end=rematch_buffered_end,
                         summary=event.summary,
                         slot_name=slot_name,
                         display_slot_name=display_slot_name,
@@ -930,6 +1136,13 @@ Please update Keymaster to at least v0.1.0-b0
                 )
             except ValueError:
                 continue
+
+        observed_mapping_keys = self._remap_observed_mappings_to_physical_reservations(
+            persisted,
+            current_reservations_for_rematch,
+            actual_slot_names,
+            observed_mapping_keys,
+        )
 
         for event in calendar:
             slot_name = get_slot_name(
@@ -988,10 +1201,47 @@ Please update Keymaster to at least v0.1.0-b0
                 persisted,
                 current_reservations=current_reservations_for_rematch,
                 actual_slot_names=actual_slot_names,
+                observed_mapping_keys=observed_mapping_keys,
             )
             matched_key = rematch.matched_identity_key
             if matched_key is not None and matched_key != identity_key:
+                if identity_key in persisted and identity_key in observed_mapping_keys:
+                    target_mapping = persisted.pop(identity_key)
+                    target_slot = target_mapping.get("slot")
+                    preserved_key = f"observed.{self._entry_id}.slot{target_slot}"
+                    if preserved_key in persisted and preserved_key != matched_key:
+                        persisted[identity_key] = target_mapping
+                        mapping = persisted.get(identity_key, {})
+                        _LOGGER.warning(
+                            "Reservation %s rematch to %s blocked because "
+                            "fresh observed target %s could not be preserved",
+                            identity_key,
+                            matched_key,
+                            preserved_key,
+                        )
+                        matched_key = None
+                    else:
+                        target_identity = target_mapping.setdefault("identity", {})
+                        if isinstance(target_identity, dict):
+                            target_identity["identity_key"] = preserved_key
+                            actual = target_mapping.get("last_observed_actual", {})
+                            actual_name = (
+                                actual.get("name_state")
+                                if isinstance(actual, dict)
+                                else None
+                            )
+                            if isinstance(actual_name, str) and actual_name:
+                                target_identity["summary"] = actual_name
+                                target_identity["slot_name"] = actual_name
+                        persisted[preserved_key] = target_mapping
+                        observed_mapping_keys.remove(identity_key)
+                        observed_mapping_keys.add(preserved_key)
+
+            if matched_key is not None and matched_key != identity_key:
                 mapping = persisted.pop(matched_key)
+                if matched_key in observed_mapping_keys:
+                    observed_mapping_keys.remove(matched_key)
+                    observed_mapping_keys.add(identity_key)
                 history = set(mapping.get("fingerprint_history", []))
                 history.add(matched_key)
                 mapping["fingerprint_history"] = sorted(history)
@@ -1001,6 +1251,32 @@ Please update Keymaster to at least v0.1.0-b0
                 persisted[identity_key] = mapping
             else:
                 mapping = persisted.get(identity_key, {})
+                if (
+                    mapping
+                    and identity_key in observed_mapping_keys
+                    and not self._physical_mapping_name_matches_reservation(
+                        mapping, provisional, actual_slot_names
+                    )
+                ):
+                    target_mapping = persisted.pop(identity_key)
+                    target_slot = target_mapping.get("slot")
+                    preserved_key = f"observed.{self._entry_id}.slot{target_slot}"
+                    target_identity = target_mapping.setdefault("identity", {})
+                    if isinstance(target_identity, dict):
+                        target_identity["identity_key"] = preserved_key
+                        actual = target_mapping.get("last_observed_actual", {})
+                        actual_name = (
+                            actual.get("name_state")
+                            if isinstance(actual, dict)
+                            else None
+                        )
+                        if isinstance(actual_name, str) and actual_name:
+                            target_identity["summary"] = actual_name
+                            target_identity["slot_name"] = actual_name
+                    persisted[preserved_key] = target_mapping
+                    observed_mapping_keys.remove(identity_key)
+                    observed_mapping_keys.add(preserved_key)
+                    mapping = {}
                 if rematch.kind.value == "ambiguous":
                     _LOGGER.warning(
                         "Reservation %s has ambiguous persisted rematch candidates: %s",
@@ -1055,7 +1331,9 @@ Please update Keymaster to at least v0.1.0-b0
         # Build ghost reservations for occupied slots absent from this feed cycle.
         if self.event_overrides is not None:
             current_keys: set[str] = {r.identity_key for r in reservations}
-            ghost_list = self._build_ghost_reservations(current_keys, persisted, prefix)
+            ghost_list = self._build_ghost_reservations(
+                current_keys, persisted, prefix, observed_mapping_keys
+            )
             reservations.extend(ghost_list)
 
         return reservations
@@ -1065,6 +1343,7 @@ Please update Keymaster to at least v0.1.0-b0
         current_keys: set[str],
         persisted: dict[str, Any],
         prefix: str,
+        observed_mapping_keys: set[str] | None = None,
     ) -> list[_Reservation]:
         """Build synthetic Reservations for assigned slots absent from the feed.
 
@@ -1088,6 +1367,8 @@ Please update Keymaster to at least v0.1.0-b0
                 here are reflected directly in the coordinator's live
                 store dict.
             prefix: Computed event-prefix string (e.g. ``"RC "``).
+            observed_mapping_keys: Mapping keys whose observed actual
+                state came from the current physical Keymaster read.
 
         Returns:
             List of ghost :class:`~.reconciliation.Reservation` objects
@@ -1129,6 +1410,35 @@ Please update Keymaster to at least v0.1.0-b0
 
             # Recover dates from the last observed Keymaster state.
             last_actual = mapping.get("last_observed_actual", {})
+            actual_name = last_actual.get("name_state")
+            if (
+                observed_mapping_keys is not None
+                and key in observed_mapping_keys
+                and isinstance(actual_name, str)
+                and slot_name
+                and normalize_slot_name_for_fingerprint(actual_name)
+                not in {
+                    normalize_slot_name_for_fingerprint(slot_name),
+                    normalize_slot_name_for_fingerprint(
+                        _format_display_slot_name(
+                            slot_name,
+                            prefix,
+                            self.trim_names,
+                            self.max_name_length,
+                        )
+                    ),
+                }
+            ):
+                _LOGGER.debug(
+                    "Ghost reservation %s: physical name %r differs from "
+                    "persisted identity %r; preserving slot as unmatched with "
+                    "missing_count=%d",
+                    key,
+                    actual_name,
+                    slot_name,
+                    new_mc,
+                )
+                continue
             start_raw = last_actual.get("start_state")
             end_raw = last_actual.get("end_state")
 
@@ -1469,6 +1779,14 @@ Please update Keymaster to at least v0.1.0-b0
                 if persisted_mapping is not None
                 else None
             )
+            persisted_missing_raw = (
+                persisted_mapping.get("missing_count", 0)
+                if persisted_mapping is not None
+                else 0
+            )
+            persisted_missing_count = (
+                persisted_missing_raw if isinstance(persisted_missing_raw, int) else 0
+            )
             if physically_empty and i in pending_clear:
                 self.event_overrides.release_pending_clear_slot(i)
                 for key in [
@@ -1482,6 +1800,7 @@ Please update Keymaster to at least v0.1.0-b0
                 persisted_key = None
                 persisted_mapping = None
                 persisted_status = None
+                persisted_missing_count = 0
 
             if i in pending_clear:
                 status = _SlotStatus.PENDING_CLEAR
@@ -1514,6 +1833,13 @@ Please update Keymaster to at least v0.1.0-b0
                 enabled=enabled,
                 persisted_identity_key=persisted_key,
                 blocked_reason=blocked_reason,
+                preserve_unmatched=(
+                    status is _SlotStatus.OCCUPIED
+                    and persisted_status
+                    in (SLOT_STATUS_OCCUPIED, SLOT_STATUS_PENDING_SET)
+                    and (bool(name_value) or has_code)
+                    and persisted_missing_count < 3
+                ),
                 last_error=self.event_overrides.get_last_slot_error(i),
             )
             slots.append(ms)
@@ -1693,7 +2019,12 @@ Please update Keymaster to at least v0.1.0-b0
 
         if self.event_overrides:
             try:
-                reservations = self._build_reservations(new_calendar)
+                self.event_overrides.load_persisted_mappings(
+                    self._slot_mappings.get("mappings", {})
+                )
+                observed_slots = self._observe_managed_slots()
+                self._merge_observed_slots_into_mappings(observed_slots)
+                reservations = self._build_reservations(new_calendar, observed_slots)
                 self.event_overrides.load_persisted_mappings(
                     self._slot_mappings.get("mappings", {})
                 )

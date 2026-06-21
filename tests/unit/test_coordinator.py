@@ -4424,6 +4424,838 @@ class TestStoreFirstUpgradeMigration:
         assert 10 in eo2.pending_clear_slots, "Fence should be restored after restart"
 
 
+class TestStaleStorePhysicalReconciliation:
+    """Regression tests for stale Store mappings over real Keymaster state."""
+
+    def _make_lock_entry(
+        self,
+        entry_id: str = "stale_store_entry",
+        lockname: str = "stale_lock",
+        start_slot: int = 6,
+        max_events: int = 2,
+        event_prefix: str | None = None,
+        trim_names: bool = False,
+        max_name_length: int = 40,
+    ) -> MockConfigEntry:
+        """Create a config entry with a Keymaster lock for stale-store tests."""
+        data = {
+            "name": "Stale Store Rental",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "UTC",
+            "checkin": "16:00",
+            "checkout": "11:00",
+            "start_slot": start_slot,
+            "max_events": max_events,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+            "honor_event_times": False,
+            "keymaster_entry_id": lockname,
+            "code_buffer_before": 0,
+            "code_buffer_after": 0,
+            "trim_names": trim_names,
+            "max_name_length": max_name_length,
+        }
+        if event_prefix is not None:
+            data["event_prefix"] = event_prefix
+        return MockConfigEntry(
+            domain="rental_control",
+            title="Stale Store Rental",
+            version=10,
+            unique_id=f"stale-store-{entry_id}",
+            data=data,
+            entry_id=entry_id,
+        )
+
+    @staticmethod
+    def _set_physical_slot(
+        hass: HomeAssistant,
+        *,
+        lockname: str = "stale_lock",
+        slot: int,
+        name: str,
+        pin: str,
+        start: datetime,
+        end: datetime,
+    ) -> None:
+        """Set Keymaster entity states exactly as HA exposes real slots."""
+        hass.states.async_set(f"text.{lockname}_code_slot_{slot}_name", name)
+        hass.states.async_set(f"text.{lockname}_code_slot_{slot}_pin", pin)
+        hass.states.async_set(
+            f"switch.{lockname}_code_slot_{slot}_use_date_range_limits", "on"
+        )
+        hass.states.async_set(f"switch.{lockname}_code_slot_{slot}_enabled", "on")
+        hass.states.async_set(
+            f"datetime.{lockname}_code_slot_{slot}_date_range_start",
+            start.isoformat(),
+        )
+        hass.states.async_set(
+            f"datetime.{lockname}_code_slot_{slot}_date_range_end",
+            end.isoformat(),
+        )
+
+    @staticmethod
+    def _stale_mapping(
+        *,
+        identity_key: str,
+        slot: int,
+        stale_name: str,
+        missing_count: int = 0,
+    ) -> dict[str, Any]:
+        """Build a stale persisted mapping whose observed state is not useful."""
+        return {
+            "slot": slot,
+            "status": "occupied",
+            "operation_id": None,
+            "operation_kind": None,
+            "identity": {
+                "identity_key": identity_key,
+                "summary": stale_name,
+                "slot_name": stale_name,
+                "uid_aliases": [],
+                "booking_aliases": [],
+            },
+            "missing_count": missing_count,
+            "pending_set_since": None,
+            "pending_clear_since": None,
+            "fingerprint_history": [],
+            "updated_at": "2026-06-01T00:00:00+00:00",
+            "last_observed_actual": {
+                "slot": slot,
+                "classification": "occupied",
+                "name_state": stale_name,
+                "has_code": True,
+                "start_state": None,
+                "end_state": None,
+                "use_date_range": True,
+                "enabled": True,
+            },
+        }
+
+    @staticmethod
+    async def _confirmed_clear(_coordinator: Any, slot: int, **_kwargs: Any) -> Any:
+        """Return a confirmed clear OperationResult for patched service calls."""
+        from custom_components.rental_control.util import OperationResult
+
+        return OperationResult(kind="clear", slot=slot, confirmed=True)
+
+    async def test_stale_store_does_not_wipe_populated_slots_on_load(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Stale Store identities must not clear populated physical slots."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_lock_entry()
+        entry.add_to_hass(hass)
+
+        start_a = datetime(2026, 7, 1, 16, 0, tzinfo=dt_util.UTC)
+        end_a = datetime(2026, 7, 5, 11, 0, tzinfo=dt_util.UTC)
+        start_b = datetime(2026, 7, 6, 16, 0, tzinfo=dt_util.UTC)
+        end_b = datetime(2026, 7, 10, 11, 0, tzinfo=dt_util.UTC)
+        self._set_physical_slot(
+            hass, slot=6, name="Alice Guest", pin="1234", start=start_a, end=end_a
+        )
+        self._set_physical_slot(
+            hass, slot=7, name="Bob Guest", pin="5678", start=start_b, end=end_b
+        )
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                "stale-alice": self._stale_mapping(
+                    identity_key="stale-alice",
+                    slot=6,
+                    stale_name="Former Alice",
+                ),
+                "stale-bob": self._stale_mapping(
+                    identity_key="stale-bob",
+                    slot=7,
+                    stale_name="Former Bob",
+                ),
+            },
+            "blocked_slots": {},
+        }
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        await coordinator.async_setup_keymaster_overrides()
+
+        events = [
+            CalendarEvent(start=start_a, end=end_a, summary="Alice Guest", uid="uid-a"),
+            CalendarEvent(start=start_b, end=end_b, summary="Bob Guest", uid="uid-b"),
+        ]
+        alice_key = make_reservation_fingerprint(
+            entry.entry_id, "Alice Guest", start_a, end_a
+        )
+        bob_key = make_reservation_fingerprint(
+            entry.entry_id, "Bob Guest", start_b, end_b
+        )
+
+        with (
+            patch.object(
+                dt_util, "now", return_value=datetime(2026, 6, 21, tzinfo=dt_util.UTC)
+            ),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=datetime(2026, 6, 21, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                coordinator, "_async_fetch_calendar", new=AsyncMock(return_value=events)
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new=AsyncMock(side_effect=self._confirmed_clear),
+            ) as clear_mock,
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                new=AsyncMock(),
+            ) as set_mock,
+        ):
+            await coordinator._async_update_data()
+
+        cleared_slots = [call.args[1] for call in clear_mock.await_args_list]
+        assert 6 not in cleared_slots
+        assert 7 not in cleared_slots
+        set_mock.assert_not_awaited()
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.overflow == {}
+        assert coordinator._latest_plan.selected[alice_key] == 6
+        assert coordinator._latest_plan.selected[bob_key] == 7
+        assert hass.states.get("text.stale_lock_code_slot_6_pin").state == "1234"  # type: ignore[union-attr]
+        assert hass.states.get("text.stale_lock_code_slot_7_pin").state == "5678"  # type: ignore[union-attr]
+
+    async def test_stale_store_current_reservations_reclaim_slots(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Current reservations reclaim the slots their codes occupy."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_lock_entry(entry_id="stale_store_reclaim")
+        entry.add_to_hass(hass)
+
+        start = datetime(2026, 8, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 8, 4, 11, 0, tzinfo=dt_util.UTC)
+        self._set_physical_slot(
+            hass, slot=6, name="Carol Guest", pin="2468", start=start, end=end
+        )
+        self._set_physical_slot(
+            hass,
+            slot=7,
+            name="Other Occupant",
+            pin="1357",
+            start=start + timedelta(days=5),
+            end=end + timedelta(days=5),
+        )
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                "stale-carol": self._stale_mapping(
+                    identity_key="stale-carol",
+                    slot=6,
+                    stale_name="Old Carol",
+                ),
+                "stale-other": self._stale_mapping(
+                    identity_key="stale-other",
+                    slot=7,
+                    stale_name="Old Other",
+                ),
+            },
+            "blocked_slots": {},
+        }
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        await coordinator.async_setup_keymaster_overrides()
+
+        event = CalendarEvent(start=start, end=end, summary="Carol Guest", uid="uid-c")
+        current_key = make_reservation_fingerprint(
+            entry.entry_id, "Carol Guest", start, end
+        )
+
+        with (
+            patch.object(
+                dt_util, "now", return_value=datetime(2026, 7, 1, tzinfo=dt_util.UTC)
+            ),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=datetime(2026, 7, 1, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                coordinator,
+                "_async_fetch_calendar",
+                new=AsyncMock(return_value=[event]),
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new=AsyncMock(side_effect=self._confirmed_clear),
+            ) as clear_mock,
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                new=AsyncMock(),
+            ) as set_mock,
+        ):
+            await coordinator._async_update_data()
+
+        clear_mock.assert_not_awaited()
+        set_mock.assert_not_awaited()
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.selected[current_key] == 6
+        mappings = coordinator._slot_mappings["mappings"]
+        assert mappings[current_key]["slot"] == 6
+        assert "stale-carol" not in mappings
+
+    async def test_genuine_departure_still_clears_after_miss_tolerance(
+        self, hass: HomeAssistant
+    ) -> None:
+        """A truly departed persisted mapping still clears on the third miss."""
+        entry = self._make_lock_entry(entry_id="stale_store_departed", max_events=1)
+        entry.add_to_hass(hass)
+
+        start = datetime(2026, 9, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 9, 5, 11, 0, tzinfo=dt_util.UTC)
+        self._set_physical_slot(
+            hass, slot=6, name="Departed Guest", pin="7777", start=start, end=end
+        )
+
+        mapping = self._stale_mapping(
+            identity_key="departed-key",
+            slot=6,
+            stale_name="Departed Guest",
+            missing_count=2,
+        )
+        mapping["last_observed_actual"]["start_state"] = start.isoformat()
+        mapping["last_observed_actual"]["end_state"] = end.isoformat()
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {"departed-key": mapping},
+            "blocked_slots": {},
+        }
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        await coordinator.async_setup_keymaster_overrides()
+
+        with (
+            patch.object(
+                dt_util, "now", return_value=datetime(2026, 8, 1, tzinfo=dt_util.UTC)
+            ),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=datetime(2026, 8, 1, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                coordinator, "_async_fetch_calendar", new=AsyncMock(return_value=[])
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new=AsyncMock(side_effect=self._confirmed_clear),
+            ) as clear_mock,
+        ):
+            await coordinator._async_update_data()
+
+        clear_mock.assert_awaited()
+        assert any(call.args[1] == 6 for call in clear_mock.await_args_list)
+
+    async def test_coded_slot_is_not_reassigned_to_different_reservation(
+        self, hass: HomeAssistant
+    ) -> None:
+        """A coded slot is never handed to a different reservation."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_lock_entry(entry_id="stale_store_no_double", max_events=1)
+        entry.add_to_hass(hass)
+
+        occupied_start = datetime(2026, 10, 1, 16, 0, tzinfo=dt_util.UTC)
+        occupied_end = datetime(2026, 10, 5, 11, 0, tzinfo=dt_util.UTC)
+        self._set_physical_slot(
+            hass,
+            slot=6,
+            name="Occupied Stranger",
+            pin="8888",
+            start=occupied_start,
+            end=occupied_end,
+        )
+
+        new_start = datetime(2026, 10, 6, 16, 0, tzinfo=dt_util.UTC)
+        new_end = datetime(2026, 10, 10, 11, 0, tzinfo=dt_util.UTC)
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                "stale-stranger": self._stale_mapping(
+                    identity_key="stale-stranger",
+                    slot=6,
+                    stale_name="Old Stranger",
+                )
+            },
+            "blocked_slots": {},
+        }
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        await coordinator.async_setup_keymaster_overrides()
+
+        event = CalendarEvent(start=new_start, end=new_end, summary="New Guest")
+        new_key = make_reservation_fingerprint(
+            entry.entry_id, "New Guest", new_start, new_end
+        )
+
+        with (
+            patch.object(
+                dt_util, "now", return_value=datetime(2026, 9, 1, tzinfo=dt_util.UTC)
+            ),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=datetime(2026, 9, 1, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                coordinator,
+                "_async_fetch_calendar",
+                new=AsyncMock(return_value=[event]),
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new=AsyncMock(side_effect=self._confirmed_clear),
+            ) as clear_mock,
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                new=AsyncMock(),
+            ) as set_mock,
+        ):
+            await coordinator._async_update_data()
+
+        clear_mock.assert_not_awaited()
+        set_mock.assert_not_awaited()
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.selected.get(new_key) is None
+        assert coordinator._latest_plan.overflow[new_key] == "no_free_slot"
+
+    async def test_exact_store_identity_yields_to_conflicting_physical_slot(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Fresh physical names win over exact but stale Store slot claims."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_lock_entry(entry_id="stale_store_exact_swap")
+        entry.add_to_hass(hass)
+
+        alice_start = datetime(2026, 11, 1, 16, 0, tzinfo=dt_util.UTC)
+        alice_end = datetime(2026, 11, 5, 11, 0, tzinfo=dt_util.UTC)
+        bob_start = datetime(2026, 11, 6, 16, 0, tzinfo=dt_util.UTC)
+        bob_end = datetime(2026, 11, 10, 11, 0, tzinfo=dt_util.UTC)
+        alice_key = make_reservation_fingerprint(
+            entry.entry_id, "Alice Guest", alice_start, alice_end
+        )
+        bob_key = make_reservation_fingerprint(
+            entry.entry_id, "Bob Guest", bob_start, bob_end
+        )
+
+        self._set_physical_slot(
+            hass, slot=6, name="Bob Guest", pin="5678", start=bob_start, end=bob_end
+        )
+        self._set_physical_slot(
+            hass,
+            slot=7,
+            name="Alice Guest",
+            pin="1234",
+            start=alice_start,
+            end=alice_end,
+        )
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                alice_key: self._stale_mapping(
+                    identity_key=alice_key,
+                    slot=6,
+                    stale_name="Alice Guest",
+                ),
+                bob_key: self._stale_mapping(
+                    identity_key=bob_key,
+                    slot=7,
+                    stale_name="Bob Guest",
+                ),
+            },
+            "blocked_slots": {},
+        }
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        await coordinator.async_setup_keymaster_overrides()
+
+        events = [
+            CalendarEvent(
+                start=alice_start, end=alice_end, summary="Alice Guest", uid="uid-a"
+            ),
+            CalendarEvent(
+                start=bob_start, end=bob_end, summary="Bob Guest", uid="uid-b"
+            ),
+        ]
+        with (
+            patch.object(
+                dt_util,
+                "now",
+                return_value=datetime(2026, 10, 1, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=datetime(2026, 10, 1, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                coordinator, "_async_fetch_calendar", new=AsyncMock(return_value=events)
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new=AsyncMock(side_effect=self._confirmed_clear),
+            ) as clear_mock,
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                new=AsyncMock(),
+            ) as set_mock,
+        ):
+            await coordinator._async_update_data()
+
+        clear_mock.assert_not_awaited()
+        set_mock.assert_not_awaited()
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.selected[alice_key] == 7
+        assert coordinator._latest_plan.selected[bob_key] == 6
+
+    async def test_exact_conflict_without_rematch_is_quarantined(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Exact Store key with different physical occupant is not overwritten."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_lock_entry(entry_id="stale_store_exact_conflict")
+        entry.add_to_hass(hass)
+
+        alice_start = datetime(2027, 2, 1, 16, 0, tzinfo=dt_util.UTC)
+        alice_end = datetime(2027, 2, 5, 11, 0, tzinfo=dt_util.UTC)
+        stranger_start = datetime(2027, 2, 6, 16, 0, tzinfo=dt_util.UTC)
+        stranger_end = datetime(2027, 2, 10, 11, 0, tzinfo=dt_util.UTC)
+        alice_key = make_reservation_fingerprint(
+            entry.entry_id, "Alice Guest", alice_start, alice_end
+        )
+        self._set_physical_slot(
+            hass,
+            slot=6,
+            name="Occupied Stranger",
+            pin="8888",
+            start=stranger_start,
+            end=stranger_end,
+        )
+        hass.states.async_set("text.stale_lock_code_slot_7_name", "")
+        hass.states.async_set("text.stale_lock_code_slot_7_pin", "")
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                alice_key: self._stale_mapping(
+                    identity_key=alice_key,
+                    slot=6,
+                    stale_name="Alice Guest",
+                )
+            },
+            "blocked_slots": {},
+        }
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        await coordinator.async_setup_keymaster_overrides()
+
+        event = CalendarEvent(start=alice_start, end=alice_end, summary="Alice Guest")
+        with (
+            patch.object(
+                dt_util,
+                "now",
+                return_value=datetime(2027, 1, 1, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=datetime(2027, 1, 1, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                coordinator,
+                "_async_fetch_calendar",
+                new=AsyncMock(return_value=[event]),
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new=AsyncMock(side_effect=self._confirmed_clear),
+            ) as clear_mock,
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                new=AsyncMock(),
+            ) as set_mock,
+        ):
+            await coordinator._async_update_data()
+
+        clear_mock.assert_not_awaited()
+        set_slots = [call.args[1] for call in set_mock.await_args_list]
+        assert 6 not in set_slots
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.selected[alice_key] == 7
+        assert any(
+            mapping["slot"] == 6 and key.startswith("observed.")
+            for key, mapping in coordinator._slot_mappings["mappings"].items()
+        )
+
+    async def test_physical_reclaim_replaces_stale_empty_exact_mapping(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Fresh occupied physical mapping replaces same-key stale empty slot."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_lock_entry(entry_id="stale_store_empty_target")
+        entry.add_to_hass(hass)
+
+        start = datetime(2026, 12, 1, 16, 0, tzinfo=dt_util.UTC)
+        end = datetime(2026, 12, 5, 11, 0, tzinfo=dt_util.UTC)
+        current_key = make_reservation_fingerprint(
+            entry.entry_id, "Alice Guest", start, end
+        )
+        self._set_physical_slot(
+            hass, slot=6, name="Alice Guest", pin="1234", start=start, end=end
+        )
+        hass.states.async_set("text.stale_lock_code_slot_7_name", "")
+        hass.states.async_set("text.stale_lock_code_slot_7_pin", "")
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                "stale-alice": self._stale_mapping(
+                    identity_key="stale-alice",
+                    slot=6,
+                    stale_name="Old Alice",
+                ),
+                current_key: self._stale_mapping(
+                    identity_key=current_key,
+                    slot=7,
+                    stale_name="Alice Guest",
+                ),
+            },
+            "blocked_slots": {},
+        }
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        await coordinator.async_setup_keymaster_overrides()
+
+        event = CalendarEvent(start=start, end=end, summary="Alice Guest")
+        with (
+            patch.object(
+                dt_util,
+                "now",
+                return_value=datetime(2026, 11, 1, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=datetime(2026, 11, 1, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                coordinator,
+                "_async_fetch_calendar",
+                new=AsyncMock(return_value=[event]),
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new=AsyncMock(side_effect=self._confirmed_clear),
+            ) as clear_mock,
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                new=AsyncMock(),
+            ) as set_mock,
+        ):
+            await coordinator._async_update_data()
+
+        clear_mock.assert_not_awaited()
+        set_mock.assert_not_awaited()
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.selected[current_key] == 6
+        assert coordinator._slot_mappings["mappings"][current_key]["slot"] == 6
+        assert "stale-alice" not in coordinator._slot_mappings["mappings"]
+
+    async def test_rematch_preserves_conflicting_fresh_target_mapping(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Rematch does not orphan a fresh occupied target-key mapping."""
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_lock_entry(entry_id="stale_store_fresh_target")
+        entry.add_to_hass(hass)
+
+        alice_start = datetime(2027, 1, 1, 16, 0, tzinfo=dt_util.UTC)
+        alice_end = datetime(2027, 1, 5, 11, 0, tzinfo=dt_util.UTC)
+        charlie_start = datetime(2027, 1, 6, 16, 0, tzinfo=dt_util.UTC)
+        charlie_end = datetime(2027, 1, 10, 11, 0, tzinfo=dt_util.UTC)
+        alice_key = make_reservation_fingerprint(
+            entry.entry_id, "Alice Guest", alice_start, alice_end
+        )
+        self._set_physical_slot(
+            hass,
+            slot=6,
+            name="Alice Guest",
+            pin="1234",
+            start=alice_start,
+            end=alice_end,
+        )
+        self._set_physical_slot(
+            hass,
+            slot=7,
+            name="Charlie Guest",
+            pin="9999",
+            start=charlie_start,
+            end=charlie_end,
+        )
+
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {
+            "schema_version": 1,
+            "entry_id": entry.entry_id,
+            "mappings": {
+                "stale-alice": self._stale_mapping(
+                    identity_key="stale-alice",
+                    slot=6,
+                    stale_name="Old Alice",
+                ),
+                alice_key: self._stale_mapping(
+                    identity_key=alice_key,
+                    slot=7,
+                    stale_name="Alice Guest",
+                ),
+            },
+            "blocked_slots": {},
+        }
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings(
+            coordinator._slot_mappings["mappings"]
+        )
+        await coordinator.async_setup_keymaster_overrides()
+
+        event = CalendarEvent(start=alice_start, end=alice_end, summary="Alice Guest")
+        with (
+            patch.object(
+                dt_util,
+                "now",
+                return_value=datetime(2026, 12, 1, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                dt_util,
+                "start_of_local_day",
+                return_value=datetime(2026, 12, 1, tzinfo=dt_util.UTC),
+            ),
+            patch.object(
+                coordinator,
+                "_async_fetch_calendar",
+                new=AsyncMock(return_value=[event]),
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new=AsyncMock(side_effect=self._confirmed_clear),
+            ) as clear_mock,
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                new=AsyncMock(),
+            ) as set_mock,
+        ):
+            await coordinator._async_update_data()
+
+        clear_mock.assert_not_awaited()
+        set_mock.assert_not_awaited()
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.selected[alice_key] == 6
+        mappings = coordinator._slot_mappings["mappings"]
+        assert mappings[alice_key]["slot"] == 6
+        assert any(
+            mapping["slot"] == 7 and key.startswith("observed.")
+            for key, mapping in mappings.items()
+        )
+
+    def test_trimmed_prefixed_physical_name_does_not_skip_ghost(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Trimmed Keymaster display names do not look like ghost conflicts."""
+        entry = self._make_lock_entry(
+            entry_id="stale_store_trimmed_ghost",
+            event_prefix="RC",
+            trim_names=True,
+            max_name_length=12,
+        )
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        mapping = self._stale_mapping(
+            identity_key="trimmed-key",
+            slot=6,
+            stale_name="Alexandria Longguest",
+        )
+        mapping["last_observed_actual"]["name_state"] = "RC Alexandri"
+        mapping["last_observed_actual"]["start_state"] = "2027-03-01T16:00:00+00:00"
+        mapping["last_observed_actual"]["end_state"] = "2027-03-05T11:00:00+00:00"
+        persisted = {"trimmed-key": mapping}
+
+        ghosts = coordinator._build_ghost_reservations(
+            set(),
+            persisted,
+            "RC ",
+            {"trimmed-key"},
+        )
+
+        assert len(ghosts) == 1
+        assert ghosts[0].identity_key == "trimmed-key"
+
+    def test_observed_datetime_values_normalize_to_utc(self) -> None:
+        """Naive observed datetimes normalize before remap comparisons."""
+        parsed = RentalControlCoordinator._observed_value_as_datetime(
+            "2027-03-01T16:00:00"
+        )
+
+        assert parsed == datetime(2027, 3, 1, 16, 0, tzinfo=dt_util.UTC)
+
+
 class TestCoordinatorReconciliation:
     """Tests for coordinator-owned reconciliation (T028/T043)."""
 
