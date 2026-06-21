@@ -879,9 +879,8 @@ Please update Keymaster to at least v0.1.0-b0
         actual_slot_names: dict[int, str] = {}
         for persisted_mapping in persisted.values():
             slot_num = persisted_mapping.get("slot")
-            actual_name = (persisted_mapping.get("last_observed_actual", {}) or {}).get(
-                "name_state"
-            )
+            actual = persisted_mapping.get("last_observed_actual")
+            actual_name = actual.get("name_state") if isinstance(actual, dict) else None
             if isinstance(slot_num, int) and isinstance(actual_name, str):
                 actual_slot_names[slot_num] = actual_name
         current_reservations_for_rematch: list[_Reservation] = []
