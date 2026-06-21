@@ -924,8 +924,8 @@ class TestHandleStateChangeStateMutation:
         call_args = mock_coordinator.update_event_overrides.call_args
         assert call_args[0][1] == ""  # slot_code_value should be ""
 
-    async def test_unavailable_slot_name_not_mutated(self) -> None:
-        """Verify State.state is not mutated when slot_name is 'unavailable'.
+    async def test_unavailable_slot_name_not_assumed_empty(self) -> None:
+        """Verify unavailable slot_name state is not assumed empty.
 
         The original code directly set slot_name.state = "" which mutates
         Home Assistant internal State objects. The fix uses local variables.
@@ -973,10 +973,52 @@ class TestHandleStateChangeStateMutation:
 
         # State object must NOT have been mutated
         assert mock_slot_name_state.state == "unavailable"
-        # But update_event_overrides should have been called with ""
-        mock_coordinator.update_event_overrides.assert_awaited_once()
-        call_args = mock_coordinator.update_event_overrides.call_args
-        assert call_args[0][2] == ""  # slot_name_value should be ""
+        mock_coordinator.update_event_overrides.assert_not_awaited()
+
+    async def test_real_pin_without_name_not_marked_free(self) -> None:
+        """Verify a real PIN with cleared name does not clear the override."""
+        lockname = "test_lock"
+        slot_num = 10
+        mock_slot_code_state = MagicMock()
+        mock_slot_code_state.state = "9876"
+        mock_slot_name_state = MagicMock()
+        mock_slot_name_state.state = "unknown"
+        mock_slot_enabled = MagicMock()
+        mock_slot_enabled.state = "on"
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.lockname = lockname
+        mock_coordinator.trim_names = False
+        mock_coordinator.event_overrides = MagicMock()
+        mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
+        mock_coordinator.update_event_overrides = AsyncMock()
+
+        def states_get(entity_id: str) -> MagicMock | None:
+            """Return mock states for various entities."""
+            if "enabled" in entity_id:
+                return mock_slot_enabled
+            if "pin" in entity_id:
+                return mock_slot_code_state
+            if "name" in entity_id:
+                return mock_slot_name_state
+            if "use_date_range" in entity_id:
+                return None
+            return None
+
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry_id": {COORDINATOR: mock_coordinator}}}
+        hass.states.get = states_get
+
+        config_entry = MagicMock()
+        config_entry.entry_id = "entry_id"
+
+        event = MagicMock(spec=Event)
+        event.data = {"entity_id": f"switch.{lockname}_code_slot_{slot_num}_enabled"}
+
+        with patch("custom_components.rental_control.util.asyncio.sleep"):
+            await handle_state_change(hass, config_entry, event)
+
+        mock_coordinator.update_event_overrides.assert_not_awaited()
 
     async def test_trim_preserve_guest_starting_with_prefix(self) -> None:
         """Verify no double prefix stripping when guest name starts with prefix.
@@ -1387,14 +1429,15 @@ class TestClearCodePostClearVerification:
         name_state.state = "unknown"
         coordinator.hass.states.get.return_value = name_state
 
-        await async_fire_clear_code(coordinator, 10)
+        result = await async_fire_clear_code(coordinator, 10)
 
         coordinator.hass.services.async_call.assert_awaited_once()
+        assert result.confirmed is True
 
     async def test_clear_code_skips_unavailable_name_state(
         self,
     ) -> None:
-        """Verify no force-clear when name state is 'unavailable'."""
+        """Verify unavailable name state leaves the clear unconfirmed."""
         coordinator = MagicMock()
         coordinator.name = "Test Rental"
         coordinator.lockname = "front_door"
@@ -1404,9 +1447,36 @@ class TestClearCodePostClearVerification:
         name_state.state = "unavailable"
         coordinator.hass.states.get.return_value = name_state
 
-        await async_fire_clear_code(coordinator, 10)
+        result = await async_fire_clear_code(coordinator, 10)
 
         coordinator.hass.services.async_call.assert_awaited_once()
+        assert result.unconfirmed is True
+
+    async def test_clear_code_keeps_real_pin_unconfirmed(
+        self,
+    ) -> None:
+        """Verify a real PIN prevents clear confirmation with unknown name."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.hass.services.async_call = AsyncMock()
+
+        name_state = MagicMock()
+        name_state.state = "unknown"
+        pin_state = MagicMock()
+        pin_state.state = "9876"
+
+        def states_get(entity_id: str) -> MagicMock:
+            """Return name or PIN state for the clear confirmation."""
+            return pin_state if entity_id.endswith("_pin") else name_state
+
+        coordinator.hass.states.get.side_effect = states_get
+
+        result = await async_fire_clear_code(coordinator, 10)
+
+        coordinator.hass.services.async_call.assert_awaited_once()
+        assert result.unconfirmed is True
+        assert result.lingering_pin is True
 
 
 # ---------------------------------------------------------------------------

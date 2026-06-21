@@ -114,6 +114,8 @@ from .util import apply_buffer
 from .util import async_fire_clear_code
 from .util import check_gather_results
 from .util import get_slot_name
+from .util import is_cleared_keymaster_text_state as _is_blank_keymaster_text
+from .util import is_unreadable_keymaster_text_state
 from .util import normalize_uid
 from .util import trim_name
 
@@ -130,14 +132,9 @@ def _store_datetime(value: Any) -> Any:
     return value
 
 
-def _is_blank_keymaster_text(value: str | None) -> bool:
-    """Return whether a Keymaster text state is confirmed blank."""
-    return value == ""
-
-
-def _is_unreadable_keymaster_text(value: str | None) -> bool:
-    """Return whether a Keymaster text state is unreadable."""
-    return value in ("unknown", "unavailable")
+def _adopted_slot_placeholder(slot: int) -> str:
+    """Return a safe placeholder name for a code-bearing unnamed slot."""
+    return f"Adopted Slot {slot}"
 
 
 def _format_display_slot_name(
@@ -452,8 +449,10 @@ Please update Keymaster to at least v0.1.0-b0
             _LOGGER.debug("Slot code: '%s'", slot_code)
             if slot_code is None:
                 continue
+            if is_unreadable_keymaster_text_state(slot_code.state):
+                continue
             slot_code_value = (
-                "" if slot_code.state in ("unknown", "unavailable") else slot_code.state
+                "" if _is_blank_keymaster_text(slot_code.state) else slot_code.state
             )
 
             slot_name = self.hass.states.get(
@@ -462,8 +461,10 @@ Please update Keymaster to at least v0.1.0-b0
             _LOGGER.debug("Slot name: '%s'", slot_name)
             if slot_name is None:
                 continue
+            if is_unreadable_keymaster_text_state(slot_name.state):
+                continue
             slot_name_value = (
-                "" if slot_name.state in ("unknown", "unavailable") else slot_name.state
+                "" if _is_blank_keymaster_text(slot_name.state) else slot_name.state
             )
 
             use_date_range = self.hass.states.get(
@@ -472,14 +473,14 @@ Please update Keymaster to at least v0.1.0-b0
 
             if (
                 slot_name_value
-                and slot_code.state == ""
+                and _is_blank_keymaster_text(slot_code.state)
                 and not slot_code_value
                 and (use_date_range is None or use_date_range.state == "off")
             ):
                 # Partially-reset slot: name persists but code was cleared
-                # and date-range limits are off.  Only trigger when the raw
-                # PIN state is explicitly empty, not when it is
-                # unknown/unavailable (entity not yet loaded).
+                # and date-range limits are off.  Keymaster reset exposes
+                # Null as HA "unknown"; "unavailable" was skipped above
+                # because that state is not evidence that the code cleared.
                 _LOGGER.warning(
                     "Slot %d has name '%s' but no code; forcing "
                     "reset (Keymaster may not have fully cleared "
@@ -498,6 +499,13 @@ Please update Keymaster to at least v0.1.0-b0
                 # reaches max_slots and ready becomes True.
                 slot_name_value = ""
                 slot_code_value = ""
+            elif slot_code_value and not slot_name_value:
+                _LOGGER.warning(
+                    "Slot %d has a code but no readable name; marking it "
+                    "occupied with a placeholder to avoid reuse",
+                    i,
+                )
+                slot_name_value = _adopted_slot_placeholder(i)
 
             if use_date_range and use_date_range.state == "on":
                 start_time_state = self.hass.states.get(
@@ -662,25 +670,27 @@ Please update Keymaster to at least v0.1.0-b0
             )
             if name_state is None:
                 continue
-            name_value = (
-                ""
-                if name_state.state in ("unknown", "unavailable")
-                else name_state.state
-            )
-            if not name_value:
+            if is_unreadable_keymaster_text_state(name_state.state):
                 continue
+            name_value = (
+                "" if _is_blank_keymaster_text(name_state.state) else name_state.state
+            )
 
             code_state = self.hass.states.get(
                 f"{TEXT}.{self.lockname}_code_slot_{i}_pin"
             )
             has_code = False
             if code_state is not None:
+                if is_unreadable_keymaster_text_state(code_state.state):
+                    continue
                 code_value = (
                     ""
-                    if code_state.state in ("unknown", "unavailable")
+                    if _is_blank_keymaster_text(code_state.state)
                     else code_state.state
                 )
                 has_code = bool(code_value)
+            if not name_value and not has_code:
+                continue
 
             use_date_range_state = self.hass.states.get(
                 f"{SWITCH}.{self.lockname}_code_slot_{i}_use_date_range_limits"
@@ -702,7 +712,7 @@ Please update Keymaster to at least v0.1.0-b0
                 if end_dt_state is not None:
                     actual_end = dt.parse_datetime(end_dt_state.state)
 
-            slot_name = name_value
+            slot_name = name_value or _adopted_slot_placeholder(i)
             if prefix and slot_name.startswith(prefix):
                 slot_name = slot_name[len(prefix) :]
 
@@ -1387,17 +1397,15 @@ Please update Keymaster to at least v0.1.0-b0
             name_empty = _is_blank_keymaster_text(name_state.state)
             code_empty = _is_blank_keymaster_text(code_state.state)
             physically_empty = name_empty and code_empty
-            unreadable = _is_unreadable_keymaster_text(
+            unreadable = is_unreadable_keymaster_text_state(
                 name_state.state
-            ) or _is_unreadable_keymaster_text(code_state.state)
+            ) or is_unreadable_keymaster_text_state(code_state.state)
 
             if not physically_empty and unreadable:
-                status = (
-                    _SlotStatus.PENDING_CLEAR
-                    if i in pending_clear
-                    else _SlotStatus.UNKNOWN
+                status = _SlotStatus.UNKNOWN
+                blocked_reason = (
+                    "pending_clear_unreadable" if i in pending_clear else None
                 )
-                blocked_reason = "pending_clear" if i in pending_clear else None
                 ms = _ManagedSlot(
                     slot=i,
                     managed=True,
@@ -1481,7 +1489,7 @@ Please update Keymaster to at least v0.1.0-b0
             elif persisted_status == SLOT_STATUS_BLOCKED:
                 status = _SlotStatus.BLOCKED
                 blocked_reason = SLOT_STATUS_BLOCKED
-            elif name_value and has_code:
+            elif has_code:
                 status = _SlotStatus.OCCUPIED
                 blocked_reason = None
             elif persisted_status == SLOT_STATUS_PENDING_SET:

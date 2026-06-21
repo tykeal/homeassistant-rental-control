@@ -44,6 +44,8 @@ from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.const import SERVICE_RELOAD
+from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.const import STATE_UNKNOWN
 from homeassistant.core import Event
 from homeassistant.core import EventStateChangedData
 from homeassistant.core import HomeAssistant
@@ -59,6 +61,35 @@ from .const import EARLY_CHECKOUT_GRACE_MINUTES
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
+_CLEARED_KEYMASTER_TEXT_STATES = frozenset(("", str(STATE_UNKNOWN).casefold()))
+_UNREADABLE_KEYMASTER_TEXT_STATE = str(STATE_UNAVAILABLE).casefold()
+
+
+def _keymaster_text_state_token(value: Any) -> str | None:
+    """Return a canonical comparison token for a Keymaster text state."""
+    if value is None:
+        return None
+    return str(value).strip().casefold()
+
+
+def is_cleared_keymaster_text_state(value: Any) -> bool:
+    """Return whether a Keymaster text state is confirmed cleared."""
+    token = _keymaster_text_state_token(value)
+    return token is None or token in _CLEARED_KEYMASTER_TEXT_STATES
+
+
+def is_unreadable_keymaster_text_state(value: Any) -> bool:
+    """Return whether a Keymaster text state is unreadable."""
+    return _keymaster_text_state_token(value) == _UNREADABLE_KEYMASTER_TEXT_STATE
+
+
+def normalize_keymaster_text_state(value: Any) -> str | None:
+    """Return normalized text state, or ``None`` when it is unreadable."""
+    if is_unreadable_keymaster_text_state(value):
+        return None
+    if is_cleared_keymaster_text_state(value):
+        return ""
+    return str(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,7 +287,9 @@ async def async_fire_clear_code(
     name_state = hass.states.get(name_entity)
     if name_state is None:
         unconfirmed = True
-    elif name_state.state not in ("", "unknown", "unavailable"):
+    elif is_unreadable_keymaster_text_state(name_state.state):
+        unconfirmed = True
+    elif not is_cleared_keymaster_text_state(name_state.state):
         _LOGGER.warning(
             "Slot %d name '%s' persisted after reset; "
             "forcing name clear via text.set_value",
@@ -281,13 +314,17 @@ async def async_fire_clear_code(
         name_state = hass.states.get(name_entity)
         if name_state is None:
             unconfirmed = True
-        elif name_state.state not in ("", "unknown", "unavailable"):
+        elif is_unreadable_keymaster_text_state(name_state.state):
+            unconfirmed = True
+        elif not is_cleared_keymaster_text_state(name_state.state):
             lingering_name = True
 
     pin_state = hass.states.get(pin_entity)
     if pin_state is None:
         unconfirmed = True
-    elif pin_state.state not in ("", "unknown", "unavailable"):
+    elif is_unreadable_keymaster_text_state(pin_state.state):
+        unconfirmed = True
+    elif not is_cleared_keymaster_text_state(pin_state.state):
         lingering_pin = True
 
     if lingering_name or lingering_pin:
@@ -873,27 +910,30 @@ async def handle_state_change(
     if slot_code is None:
         return
     if event_has_new_value and entity_id == slot_code_entity_id:
-        slot_code_value = (
-            "" if event_new_value in ("unknown", "unavailable") else event_new_value
-        )
+        slot_code_value = normalize_keymaster_text_state(event_new_value)
     elif event_has_new_value and existing_override is not None:
         slot_code_value = str(existing_override["slot_code"])
     else:
-        slot_code_value = (
-            "" if slot_code.state in ("unknown", "unavailable") else slot_code.state
-        )
+        slot_code_value = normalize_keymaster_text_state(slot_code.state)
+    if slot_code_value is None:
+        return
     if slot_name is None:
         return
     if event_has_new_value and entity_id == slot_name_entity_id:
-        slot_name_value = (
-            "" if event_new_value in ("unknown", "unavailable") else event_new_value
-        )
+        slot_name_value = normalize_keymaster_text_state(event_new_value)
     elif event_has_new_value and existing_override is not None:
         slot_name_value = str(existing_override["slot_name"])
     else:
-        slot_name_value = (
-            "" if slot_name.state in ("unknown", "unavailable") else slot_name.state
+        slot_name_value = normalize_keymaster_text_state(slot_name.state)
+    if slot_name_value is None:
+        return
+    if slot_code_value and not slot_name_value:
+        _LOGGER.warning(
+            "Ignoring Keymaster slot %s state change with a code but no "
+            "readable name; keeping the slot out of the free pool.",
+            slot_num,
         )
+        return
 
     start_time = dt.start_of_local_day()
     end_time = dt.start_of_local_day()
