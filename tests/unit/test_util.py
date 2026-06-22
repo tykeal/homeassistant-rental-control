@@ -24,6 +24,7 @@ from homeassistant.exceptions import ServiceNotFound
 from homeassistant.util import dt as dt_util
 import pytest
 
+from custom_components.rental_control import util as util_module
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DEFAULT_PATH
 from custom_components.rental_control.const import DOMAIN
@@ -1662,8 +1663,8 @@ class TestAsyncFireSetCode:
         assert result.error is not None
         coordinator.event_overrides.record_retry_failure.assert_called_once_with(10)
 
-    async def test_set_code_flushes_before_verification(self) -> None:
-        """Verify set_code flushes HA jobs before reading state."""
+    async def test_set_code_confirms_without_blocking_whole_loop(self) -> None:
+        """Verify set_code confirms without flushing every pending HA job."""
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
@@ -1674,13 +1675,133 @@ class TestAsyncFireSetCode:
         coordinator.event_overrides._escalated = {}
         coordinator.event_overrides.record_retry_success.return_value = None
         coordinator.hass.services.async_call = AsyncMock()
-        coordinator.hass.async_block_till_done = AsyncMock()
+        coordinator.hass.async_block_till_done = AsyncMock(
+            side_effect=AssertionError("whole-loop flush must not be used")
+        )
         coordinator.hass.states.get.return_value = MagicMock(state="Guest")
 
         result = await async_fire_set_code(coordinator, self._make_event(), 10)
 
-        coordinator.hass.async_block_till_done.assert_awaited_once()
+        coordinator.hass.async_block_till_done.assert_not_called()
         assert result.confirmed is True
+
+    async def test_set_code_unconfirmed_on_confirmation_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify confirmation timeout leaves a set unconfirmed, not failed."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides.record_retry_failure.return_value = False
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.states.get.return_value = MagicMock(state="Old Guest")
+        monkeypatch.setattr(util_module, "_SET_CODE_CONFIRMATION_TIMEOUT", 0.01)
+        unsub = MagicMock()
+        monkeypatch.setattr(
+            util_module,
+            "async_track_state_change_event",
+            MagicMock(return_value=unsub),
+        )
+
+        result = await async_fire_set_code(coordinator, self._make_event(), 10)
+
+        assert result == OperationResult(kind="set", slot=10, unconfirmed=True)
+        coordinator.event_overrides.record_retry_failure.assert_not_called()
+        unsub.assert_called_once_with()
+
+    async def test_set_code_confirmed_when_name_updates_after_short_delay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify a matching name update confirms through a targeted wait."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides._escalated = {}
+        coordinator.event_overrides.record_retry_success.return_value = None
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.states.get.return_value = MagicMock(state="Old Guest")
+        monkeypatch.setattr(util_module, "_SET_CODE_CONFIRMATION_TIMEOUT", 0.5)
+        callbacks = []
+        unsub = MagicMock()
+
+        def track_state_change(hass, entity_ids, action):
+            """Capture the targeted listener registered by the wait helper."""
+            callbacks.append((entity_ids, action))
+            return unsub
+
+        monkeypatch.setattr(
+            util_module,
+            "async_track_state_change_event",
+            track_state_change,
+        )
+
+        async def update_name() -> None:
+            """Fire the captured listener after the wait helper is armed."""
+            await asyncio.sleep(0.01)
+            _entity_ids, action = callbacks[0]
+            coordinator.hass.states.get.return_value = MagicMock(state="Guest")
+            event = MagicMock()
+            event.data = {"new_state": MagicMock(state="Guest")}
+            action(event)
+
+        update_task = asyncio.create_task(update_name())
+        result = await async_fire_set_code(coordinator, self._make_event(), 10)
+        await update_task
+
+        assert result == OperationResult(kind="set", slot=10, confirmed=True)
+        assert callbacks[0][0] == ["text.front_door_code_slot_10_name"]
+        unsub.assert_called_once_with()
+
+    async def test_set_code_unconfirmed_when_matching_event_is_stale(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify confirmation re-checks state after a matching event."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = ""
+        coordinator.trim_names = False
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.event_overrides.verify_slot_ownership.return_value = True
+        coordinator.event_overrides.record_retry_failure.return_value = False
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.hass.states.get.return_value = MagicMock(state="Old Guest")
+        monkeypatch.setattr(util_module, "_SET_CODE_CONFIRMATION_TIMEOUT", 0.5)
+        callbacks = []
+
+        def track_state_change(hass, entity_ids, action):
+            """Capture the targeted listener registered by the wait helper."""
+            callbacks.append(action)
+            return MagicMock()
+
+        monkeypatch.setattr(
+            util_module,
+            "async_track_state_change_event",
+            track_state_change,
+        )
+
+        async def update_name() -> None:
+            """Fire a stale matching event while current state is mismatched."""
+            await asyncio.sleep(0.01)
+            coordinator.hass.states.get.return_value = MagicMock(state="Other")
+            event = MagicMock()
+            event.data = {"new_state": MagicMock(state="Guest")}
+            callbacks[0](event)
+
+        update_task = asyncio.create_task(update_name())
+        result = await async_fire_set_code(coordinator, self._make_event(), 10)
+        await update_task
+
+        assert result == OperationResult(kind="set", slot=10, unconfirmed=True)
+        coordinator.event_overrides.record_retry_failure.assert_not_called()
 
     async def test_set_code_cancelled_error_propagates(self) -> None:
         """Verify set_code does not swallow task cancellation."""
@@ -2894,10 +3015,13 @@ class TestAsyncFireSetCodeOperationResult:
 
         assert result == OperationResult(kind="set", slot=10, confirmed=True)
 
-    async def test_unconfirmed_when_name_state_none(self) -> None:
+    async def test_unconfirmed_when_name_state_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Set is unconfirmed when the name entity is unreadable."""
         coordinator = self._make_coordinator()
         coordinator.hass.states.get.return_value = None
+        monkeypatch.setattr(util_module, "_SET_CODE_CONFIRMATION_TIMEOUT", 0.01)
 
         result = await async_fire_set_code(coordinator, self._make_event(), 10)
 

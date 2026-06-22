@@ -25,7 +25,6 @@ from datetime import time
 from datetime import timedelta
 from datetime import tzinfo
 import hashlib
-import inspect
 import logging
 from pathlib import Path
 import re
@@ -50,6 +49,7 @@ from homeassistant.core import Event
 from homeassistant.core import EventStateChangedData
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceNotFound
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt
 from homeassistant.util import slugify
 
@@ -63,6 +63,7 @@ from .const import NAME
 _LOGGER = logging.getLogger(__name__)
 _CLEARED_KEYMASTER_TEXT_STATES = frozenset(("", str(STATE_UNKNOWN).casefold()))
 _UNREADABLE_KEYMASTER_TEXT_STATE = str(STATE_UNAVAILABLE).casefold()
+_SET_CODE_CONFIRMATION_TIMEOUT = 5.0
 
 
 def _keymaster_text_state_token(value: Any) -> str | None:
@@ -193,6 +194,53 @@ def add_call(
         )
     )
     return coro
+
+
+def _state_matches_expected_name(
+    hass: HomeAssistant, entity_id: str, name: str
+) -> bool:
+    """Return whether the entity state currently matches the expected name."""
+    state = hass.states.get(entity_id)
+    return state is not None and isinstance(state.state, str) and state.state == name
+
+
+def _state_has_non_string_value(hass: HomeAssistant, entity_id: str) -> bool:
+    """Return whether the entity exists with a non-HA state value."""
+    state = hass.states.get(entity_id)
+    return state is not None and not isinstance(state.state, str)
+
+
+async def _async_wait_for_expected_name(
+    hass: HomeAssistant, entity_id: str, name: str, timeout: float
+) -> bool:
+    """Wait briefly for one name entity to match the expected slot name."""
+    if _state_matches_expected_name(hass, entity_id, name):
+        return True
+    if _state_has_non_string_value(hass, entity_id):
+        return False
+
+    matched = asyncio.Event()
+
+    def _handle_state_change(event: Event[EventStateChangedData]) -> None:
+        """Set the wait flag when the target entity reaches the expected name."""
+        new_state = event.data.get("new_state")
+        if new_state is not None and new_state.state == name:
+            matched.set()
+
+    unsub = async_track_state_change_event(hass, [entity_id], _handle_state_change)
+    try:
+        if _state_matches_expected_name(hass, entity_id, name):
+            return True
+        if _state_has_non_string_value(hass, entity_id):
+            return False
+        try:
+            async with asyncio.timeout(timeout):
+                await matched.wait()
+        except TimeoutError:
+            return False
+        return _state_matches_expected_name(hass, entity_id, name)
+    finally:
+        unsub()
 
 
 def delete_rc_and_base_folder(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
@@ -561,24 +609,22 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
         )
 
     name_entity = f"{TEXT}.{lockname}_code_slot_{slot}_name"
-    block_till_done = getattr(coordinator.hass, "async_block_till_done", None)
-    if block_till_done is not None:
-        done_result = block_till_done()
-        if inspect.isawaitable(done_result):
-            await done_result
-    name_state = coordinator.hass.states.get(name_entity)
-    if name_state is None:
+    if not await _async_wait_for_expected_name(
+        coordinator.hass,
+        name_entity,
+        slot_name,
+        _SET_CODE_CONFIRMATION_TIMEOUT,
+    ):
         return OperationResult(kind="set", slot=slot, unconfirmed=True)
-    if name_state.state == slot_name:
-        was_escalated = coordinator.event_overrides._escalated.get(slot, False)
-        coordinator.event_overrides.record_retry_success(slot)
-        if was_escalated:
-            pn_dismiss(
-                coordinator.hass,
-                notification_id=f"rental_control_slot_{slot}_failure",
-            )
-        return OperationResult(kind="set", slot=slot, confirmed=True)
-    return OperationResult(kind="set", slot=slot, unconfirmed=True)
+
+    was_escalated = coordinator.event_overrides._escalated.get(slot, False)
+    coordinator.event_overrides.record_retry_success(slot)
+    if was_escalated:
+        pn_dismiss(
+            coordinator.hass,
+            notification_id=f"rental_control_slot_{slot}_failure",
+        )
+    return OperationResult(kind="set", slot=slot, confirmed=True)
 
 
 async def async_fire_update_times(coordinator, event, slot: int) -> OperationResult:
