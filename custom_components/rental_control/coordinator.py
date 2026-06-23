@@ -591,11 +591,15 @@ Please update Keymaster to at least v0.1.0-b0
             self._slot_mappings = self._empty_slot_cache("cache_corrupt")
             return
         aliases = raw.get("aliases", {})
-        if aliases is not None and not isinstance(aliases, dict):
+        if aliases is None:
+            raw["aliases"] = {}
+        elif not isinstance(aliases, dict):
             self._slot_mappings = self._empty_slot_cache("cache_corrupt")
             return
         migration_notes = raw.get("migration_notes", [])
-        if migration_notes is not None and not isinstance(migration_notes, list):
+        if migration_notes is None:
+            raw["migration_notes"] = []
+        elif not isinstance(migration_notes, list):
             self._slot_mappings = self._empty_slot_cache("cache_corrupt")
             return
         for mapping in mappings.values():
@@ -1106,6 +1110,7 @@ Please update Keymaster to at least v0.1.0-b0
         require_date_match: bool = False,
         reserved_date_windows: set[tuple[datetime, datetime]] | None = None,
         block_unknown_date_fallback: bool = False,
+        expected_name_count: int = 1,
     ) -> _ManagedSlot | None:
         """Return the current physical slot matching a stable/display name."""
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
@@ -1115,6 +1120,7 @@ Please update Keymaster to at least v0.1.0-b0
         }
         consumed = consumed_slots if consumed_slots is not None else set()
         candidates: list[_ManagedSlot] = []
+        matching_candidate_count = 0
         for slot in sorted(
             managed_slots,
             key=lambda observed: (
@@ -1122,8 +1128,6 @@ Please update Keymaster to at least v0.1.0-b0
                 observed.slot,
             ),
         ):
-            if slot.slot in consumed:
-                continue
             if not slot.managed or not slot.actual_name:
                 continue
             actual = slot.actual_name
@@ -1133,6 +1137,9 @@ Please update Keymaster to at least v0.1.0-b0
                     normalize_slot_name_for_fingerprint(actual[len(prefix) :])
                 )
             if actual_forms & desired_forms:
+                matching_candidate_count += 1
+                if slot.slot in consumed:
+                    continue
                 candidates.append(slot)
         if desired_start is not None and desired_end is not None:
             for slot in candidates:
@@ -1146,6 +1153,8 @@ Please update Keymaster to at least v0.1.0-b0
         if reserved_date_windows and (
             require_date_match or block_unknown_date_fallback
         ):
+            if require_date_match and matching_candidate_count < expected_name_count:
+                return None
             fallback_candidates = [
                 slot
                 for slot in candidates
@@ -1364,6 +1373,7 @@ Please update Keymaster to at least v0.1.0-b0
                     active_windows
                     and (buffered_start, buffered_end) not in active_windows
                 ),
+                slot_name_counts.get(normalize_slot_name_for_fingerprint(slot_name), 1),
             )
             if matched_physical is not None and matched_physical.actual_code:
                 observed_code = matched_physical.actual_code
@@ -1387,7 +1397,10 @@ Please update Keymaster to at least v0.1.0-b0
                     if observed_start is not None and observed_end is not None
                     else None
                 )
-                if old_generated is not None and observed_code != old_generated:
+                if old_generated is None:
+                    slot_code = observed_code
+                    code_source = "manual_observed"
+                elif observed_code != old_generated:
                     slot_code = observed_code
                     code_source = "manual_observed"
                 elif not self.should_update_code:
