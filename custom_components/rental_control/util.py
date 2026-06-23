@@ -61,7 +61,7 @@ from .const import EARLY_CHECKOUT_GRACE_MINUTES
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
-_CLEARED_KEYMASTER_TEXT_STATES = frozenset(("", str(STATE_UNKNOWN).casefold()))
+_CLEARED_KEYMASTER_TEXT_STATES = frozenset(("", str(STATE_UNKNOWN).casefold(), "none"))
 _UNREADABLE_KEYMASTER_TEXT_STATE = str(STATE_UNAVAILABLE).casefold()
 _SET_CODE_CONFIRMATION_TIMEOUT = 5.0
 

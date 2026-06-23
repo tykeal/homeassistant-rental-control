@@ -165,6 +165,14 @@ def test_observed_slot_blank_name_and_pin_is_confirmed_empty() -> None:
     assert slot.empty_confirmed is True
 
 
+def test_observed_slot_none_text_token_is_confirmed_empty() -> None:
+    """The literal None text token is accepted as a cleared Keymaster value."""
+    slot = ObservedSlot(slot=1, managed=True, raw_name="None", raw_pin="none")
+
+    assert slot.classification is ObservedSlotStatus.EMPTY
+    assert slot.empty_confirmed is True
+
+
 def test_observed_slot_derives_pin_presence_from_raw_pin() -> None:
     """A raw physical PIN prevents confirmed-empty classification."""
     slot = ObservedSlot(slot=1, managed=True, raw_name="", raw_pin="9999")

@@ -45,6 +45,7 @@ from custom_components.rental_control.util import get_event_identities
 from custom_components.rental_control.util import get_event_names
 from custom_components.rental_control.util import get_slot_name
 from custom_components.rental_control.util import handle_state_change
+from custom_components.rental_control.util import is_cleared_keymaster_text_state
 from custom_components.rental_control.util import normalize_uid
 from custom_components.rental_control.util import trim_name
 
@@ -52,6 +53,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from homeassistant.core import HomeAssistant
+
+
+def test_keymaster_none_text_token_is_cleared() -> None:
+    """The literal None text token is treated as a cleared slot state."""
+    assert is_cleared_keymaster_text_state("None")
+    assert is_cleared_keymaster_text_state(" none ")
 
 
 # ---------------------------------------------------------------------------

@@ -568,41 +568,41 @@ Please update Keymaster to at least v0.1.0-b0
                 self._entry_id,
                 err,
             )
-            self._slot_mappings = {
-                "schema_version": STORE_SCHEMA_VERSION,
-                "entry_id": self._entry_id,
-                "lockname": self.lockname,
-                "mappings": {},
-                "aliases": {},
-                "migration_notes": ["cache_load_failed"],
-            }
+            self._slot_mappings = self._empty_slot_cache("cache_load_failed")
             return
         if raw is None:
-            self._slot_mappings = {
-                "schema_version": STORE_SCHEMA_VERSION,
-                "entry_id": self._entry_id,
-                "lockname": self.lockname,
-                "mappings": {},
-                "aliases": {},
-                "migration_notes": ["cache_missing"],
-            }
+            self._slot_mappings = self._empty_slot_cache("cache_missing")
             return
         if not isinstance(raw, dict):
-            self._slot_mappings = {
-                "schema_version": STORE_SCHEMA_VERSION,
-                "entry_id": self._entry_id,
-                "lockname": self.lockname,
-                "mappings": {},
-                "aliases": {},
-                "migration_notes": ["cache_corrupt"],
-            }
+            self._slot_mappings = self._empty_slot_cache("cache_corrupt")
             return
         schema_version = raw.get("schema_version", 0)
+        if not isinstance(schema_version, int):
+            self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+            return
         if schema_version < 1:
             raw = await self._migrate_slot_store_v1(raw)
-        for mapping in raw.get("mappings", {}).values():
+        mappings = raw.get("mappings", {})
+        if not isinstance(mappings, dict):
+            self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+            return
+        aliases = raw.get("aliases", {})
+        if aliases is not None and not isinstance(aliases, dict):
+            self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+            return
+        migration_notes = raw.get("migration_notes", [])
+        if migration_notes is not None and not isinstance(migration_notes, list):
+            self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+            return
+        for mapping in mappings.values():
+            if not isinstance(mapping, dict):
+                self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+                return
             last_obs = mapping.get("last_observed_actual")
             if last_obs is not None:
+                if not isinstance(last_obs, dict):
+                    self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+                    return
                 last_obs.pop("pin", None)
                 last_obs.pop("code", None)
                 last_obs.pop("slot_code", None)
@@ -610,6 +610,17 @@ Please update Keymaster to at least v0.1.0-b0
         raw.setdefault("aliases", {})
         raw.setdefault("migration_notes", [])
         self._slot_mappings = raw
+
+    def _empty_slot_cache(self, note: str) -> dict[str, Any]:
+        """Return an empty cache-only Store payload with a migration note."""
+        return {
+            "schema_version": STORE_SCHEMA_VERSION,
+            "entry_id": self._entry_id,
+            "lockname": self.lockname,
+            "mappings": {},
+            "aliases": {},
+            "migration_notes": [note],
+        }
 
     def get_persisted_slot_mappings(self) -> dict[str, Any]:
         """Return entry-scoped persisted reservation-slot mappings."""
@@ -1086,6 +1097,7 @@ Please update Keymaster to at least v0.1.0-b0
         desired_start: datetime | None = None,
         desired_end: datetime | None = None,
         require_date_match: bool = False,
+        reserved_date_windows: set[tuple[datetime, datetime]] | None = None,
     ) -> _ManagedSlot | None:
         """Return the current physical slot matching a stable/display name."""
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
@@ -1122,11 +1134,18 @@ Please update Keymaster to at least v0.1.0-b0
                 ):
                     consumed.add(slot.slot)
                     return slot
-        if require_date_match:
-            return None
-        if candidates:
-            consumed.add(candidates[0].slot)
-            return candidates[0]
+        fallback_candidates = candidates
+        if require_date_match and reserved_date_windows:
+            fallback_candidates = [
+                slot
+                for slot in candidates
+                if slot.actual_start is None
+                or slot.actual_end is None
+                or (slot.actual_start, slot.actual_end) not in reserved_date_windows
+            ]
+        if fallback_candidates:
+            consumed.add(fallback_candidates[0].slot)
+            return fallback_candidates[0]
         return None
 
     @staticmethod
@@ -1237,6 +1256,7 @@ Please update Keymaster to at least v0.1.0-b0
         observed_slots = managed_slots or []
         consumed_observed_slots: set[int] = set()
         slot_name_counts: dict[str, int] = {}
+        slot_name_date_windows: dict[str, set[tuple[datetime, datetime]]] = {}
         for event in calendar:
             slot_name = get_slot_name(
                 event.summary,
@@ -1246,6 +1266,28 @@ Please update Keymaster to at least v0.1.0-b0
             if slot_name:
                 key = normalize_slot_name_for_fingerprint(slot_name)
                 slot_name_counts[key] = slot_name_counts.get(key, 0) + 1
+                event_start: datetime = event.start  # type: ignore[assignment]
+                event_end: datetime = event.end  # type: ignore[assignment]
+                buffered_start_raw, buffered_end_raw = apply_buffer(
+                    event_start,
+                    event_end,
+                    self.code_buffer_before,
+                    self.code_buffer_after,
+                    self,
+                )
+                buffered_start_dt = (
+                    buffered_start_raw
+                    if isinstance(buffered_start_raw, datetime)
+                    else event_start
+                )
+                buffered_end_dt = (
+                    buffered_end_raw
+                    if isinstance(buffered_end_raw, datetime)
+                    else event_end
+                )
+                slot_name_date_windows.setdefault(key, set()).add(
+                    (buffered_start_dt, buffered_end_dt)
+                )
 
         for event in calendar:
             slot_name = get_slot_name(
@@ -1297,6 +1339,9 @@ Please update Keymaster to at least v0.1.0-b0
                 buffered_end,
                 slot_name_counts.get(normalize_slot_name_for_fingerprint(slot_name), 0)
                 > 1,
+                slot_name_date_windows.get(
+                    normalize_slot_name_for_fingerprint(slot_name)
+                ),
             )
             if matched_physical is not None and matched_physical.actual_code:
                 observed_code = matched_physical.actual_code
@@ -1776,7 +1821,11 @@ Please update Keymaster to at least v0.1.0-b0
 
         return slots
 
-    def _apply_checkin_protection(self, reservations: list[_Reservation]) -> None:
+    def _apply_checkin_protection(
+        self,
+        reservations: list[_Reservation],
+        managed_slots: list[_ManagedSlot] | None = None,
+    ) -> None:
         """Mark active checked-in reservation as protected, if present.
 
         Reads :class:`~.sensors.checkinsensor.CheckinTrackingSensor` state
@@ -1808,14 +1857,97 @@ Please update Keymaster to at least v0.1.0-b0
         guest_name: str | None = attrs.get("guest_name")
         if not guest_name:
             return
+        tracked_start = self._coerce_checkin_datetime(attrs.get("start"))
+        tracked_end = self._coerce_checkin_datetime(attrs.get("end"))
 
-        for res in reservations:
-            if res.slot_name == guest_name:
-                if sensor_state == CHECKIN_STATE_CHECKED_IN:
-                    res.protected_active = True
-                elif sensor_state == CHECKIN_STATE_CHECKED_OUT:
-                    res.checked_out = True
-                break
+        name_matches = [res for res in reservations if res.slot_name == guest_name]
+        exact_matches = [
+            res
+            for res in name_matches
+            if tracked_start is not None
+            and tracked_end is not None
+            and res.start == tracked_start
+            and res.end == tracked_end
+        ]
+        matches = exact_matches or (name_matches if len(name_matches) == 1 else [])
+        for res in matches[:1]:
+            if sensor_state == CHECKIN_STATE_CHECKED_IN:
+                res.protected_active = True
+            elif sensor_state == CHECKIN_STATE_CHECKED_OUT:
+                res.checked_out = True
+            return
+
+        if (
+            sensor_state == CHECKIN_STATE_CHECKED_IN
+            and tracked_start is not None
+            and tracked_end is not None
+            and managed_slots
+        ):
+            prefix = f"{self.event_prefix} " if self.event_prefix else ""
+            display_slot_name = _format_display_slot_name(
+                guest_name, prefix, self.trim_names, self.max_name_length
+            )
+            buffered_start_raw, buffered_end_raw = apply_buffer(
+                tracked_start,
+                tracked_end,
+                self.code_buffer_before,
+                self.code_buffer_after,
+                self,
+            )
+            buffered_start = (
+                buffered_start_raw
+                if isinstance(buffered_start_raw, datetime)
+                else tracked_start
+            )
+            buffered_end = (
+                buffered_end_raw
+                if isinstance(buffered_end_raw, datetime)
+                else tracked_end
+            )
+            matched_physical = self._find_observed_slot_by_name(
+                managed_slots,
+                guest_name,
+                display_slot_name,
+                desired_start=buffered_start,
+                desired_end=buffered_end,
+            )
+            if matched_physical is None:
+                return
+            identity_key = make_reservation_fingerprint(
+                self._entry_id, guest_name, tracked_start, tracked_end
+            )
+            slot_code = matched_physical.actual_code or self._generate_slot_code(
+                tracked_start, tracked_end, None, None
+            )
+            protected = _Reservation(
+                identity_key=identity_key,
+                start=tracked_start,
+                end=tracked_end,
+                buffered_start=buffered_start,
+                buffered_end=buffered_end,
+                summary=str(attrs.get("summary") or guest_name),
+                slot_name=guest_name,
+                display_slot_name=display_slot_name,
+                slot_code=slot_code,
+                protected_active=True,
+                code_source=(
+                    "manual_observed"
+                    if matched_physical.actual_code is not None
+                    else "generated"
+                ),
+            )
+            protected.sensor_lookup_keys.add(identity_key)
+            reservations.append(protected)
+
+    @staticmethod
+    def _coerce_checkin_datetime(value: Any) -> datetime | None:
+        """Return a datetime from check-in sensor attributes."""
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            parsed = dt.parse_datetime(value)
+            return parsed if isinstance(parsed, datetime) else None
+        return None
 
     async def _async_fetch_calendar(self) -> list[CalendarEvent]:
         """Fetch iCalendar data from URL and parse into events."""
@@ -1937,7 +2069,7 @@ Please update Keymaster to at least v0.1.0-b0
             try:
                 observed_slots = self._observe_managed_slots()
                 reservations = self._build_reservations(new_calendar, observed_slots)
-                self._apply_checkin_protection(reservations)
+                self._apply_checkin_protection(reservations, observed_slots)
 
                 plan_id = str(uuid.uuid4())
                 plan = compute_desired_plan(

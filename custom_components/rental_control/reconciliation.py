@@ -350,7 +350,7 @@ def _keymaster_text_cleared(value: str | None) -> bool:
     if value is None:
         return True
     text = value.strip().casefold()
-    return text == "" or text == "unknown"
+    return text in {"", "unknown", "none"}
 
 
 def _keymaster_text_unreadable(value: str | None) -> bool:
@@ -379,6 +379,7 @@ class ObservedSlot:
 
     def __post_init__(self) -> None:
         """Validate and derive normalized physical name forms."""
+        name_present = not _keymaster_text_cleared(self.raw_name)
         if self.has_pin is None and self.raw_pin is not None:
             self.has_pin = not _keymaster_text_cleared(self.raw_pin)
         if _keymaster_text_unreadable(self.raw_name) or _keymaster_text_unreadable(
@@ -393,14 +394,14 @@ class ObservedSlot:
             self.empty_confirmed = False
         elif self.empty_confirmed:
             self.classification = ObservedSlotStatus.EMPTY
-        elif self.raw_name and self.has_pin:
+        elif name_present and self.has_pin:
             self.classification = ObservedSlotStatus.OCCUPIED
-        elif self.raw_name or self.has_pin:
+        elif name_present or self.has_pin:
             self.classification = ObservedSlotStatus.PHANTOM
         else:
             self.classification = ObservedSlotStatus.EMPTY
             self.empty_confirmed = True
-        if self.raw_name:
+        if name_present and self.raw_name:
             self.normalized_name_forms.add(
                 normalize_slot_name_for_fingerprint(self.raw_name)
             )
