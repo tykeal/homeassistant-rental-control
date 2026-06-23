@@ -288,6 +288,234 @@ async def test_wedged_recovers_promptly_when_slots_become_available(
         assert set_code.await_count == 1
 
 
+async def test_missing_store_adopts_coded_slots_when_unavailable_at_setup(
+    hass: HomeAssistant,
+) -> None:
+    """Adopt a coded slot that was unreadable during empty-store setup."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Readable Adoption Rental",
+        version=10,
+        unique_id="readable-adoption",
+        data={
+            "name": "Readable Adoption Rental",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "UTC",
+            "checkin": "16:00",
+            "checkout": "11:00",
+            CONF_START_SLOT: 10,
+            CONF_MAX_EVENTS: 1,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+            "honor_event_times": False,
+            CONF_LOCK_ENTRY: "front_door",
+            CONF_REFRESH_FREQUENCY: 30,
+            "code_buffer_before": 0,
+            "code_buffer_after": 0,
+        },
+        entry_id="readable_adoption_entry",
+    )
+    entry.add_to_hass(hass)
+
+    for suffix in ("name", "pin"):
+        hass.states.async_set(
+            f"text.front_door_code_slot_10_{suffix}",
+            STATE_UNAVAILABLE,
+        )
+    hass.states.async_set("switch.front_door_code_slot_10_enabled", STATE_UNAVAILABLE)
+
+    async def load_empty_store(coordinator: RentalControlCoordinator) -> None:
+        """Simulate a missing mappings Store file."""
+        coordinator._slot_mappings = {}
+
+    async def save_store(_coordinator: RentalControlCoordinator) -> None:
+        """Avoid writing the HA Store in the test."""
+
+    with (
+        aioresponses() as mock_session,
+        patch.object(
+            RentalControlCoordinator,
+            "async_load_slot_store",
+            autospec=True,
+            side_effect=load_empty_store,
+        ),
+        patch.object(
+            RentalControlCoordinator,
+            "async_save_slot_store",
+            autospec=True,
+            side_effect=save_store,
+        ),
+        patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            new=AsyncMock(
+                return_value=OperationResult(kind="clear", slot=10, confirmed=True)
+            ),
+        ) as clear_code,
+        patch(
+            "custom_components.rental_control.event_overrides.async_fire_set_code",
+            new=AsyncMock(
+                return_value=OperationResult(kind="set", slot=10, confirmed=True)
+            ),
+        ) as set_code,
+        patch.object(dt_util, "now", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
+    ):
+        mock_session.get(
+            entry.data["url"],
+            status=200,
+            body=future_ics(summary="Current Guest"),
+            repeat=True,
+        )
+
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+        assert coordinator.get_persisted_slot_mappings() == {}
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.selected == {}
+
+        hass.states.async_set("text.front_door_code_slot_10_name", "Current Guest")
+        hass.states.async_set("text.front_door_code_slot_10_pin", "2468")
+        hass.states.async_set("switch.front_door_code_slot_10_enabled", "on")
+        await hass.async_block_till_done()
+
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))
+        await hass.async_block_till_done()
+        await hass.async_block_till_done()
+
+        mappings = coordinator.get_persisted_slot_mappings()
+        assert len(mappings) == 1
+        identity_key = next(iter(mappings))
+        assert not identity_key.startswith("adopted.")
+        mapping = next(iter(mappings.values()))
+        assert mapping["slot"] == 10
+        assert mapping["status"] == "occupied"
+        assert mapping["identity"]["slot_name"] == "Current Guest"
+        assert mapping["last_observed_actual"]["has_code"] is True
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.selected == {identity_key: 10}
+        assert coordinator._latest_plan.overflow == {}
+        assert not any(
+            action.slot == 10 and action.kind.value == "clear"
+            for action in coordinator._latest_plan.actions
+        )
+        assert not any(
+            action.slot == 10 and action.kind.value == "overwrite_manual_change"
+            for action in coordinator._latest_plan.actions
+        )
+        clear_code.assert_not_awaited()
+        set_code.assert_not_awaited()
+
+
+async def test_deleted_store_reenable_recovers_coded_slots(
+    hass: HomeAssistant,
+) -> None:
+    """Recover existing coded slots after disable, Store delete, re-enable."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Deleted Store Rental",
+        version=10,
+        unique_id="deleted-store-adoption",
+        data={
+            "name": "Deleted Store Rental",
+            "url": "https://example.com/calendar.ics",
+            "timezone": "UTC",
+            "checkin": "16:00",
+            "checkout": "11:00",
+            CONF_START_SLOT: 10,
+            CONF_MAX_EVENTS: 1,
+            "days": 90,
+            "verify_ssl": True,
+            "ignore_non_reserved": False,
+            "honor_event_times": False,
+            CONF_LOCK_ENTRY: "front_door",
+            CONF_REFRESH_FREQUENCY: 30,
+            "code_buffer_before": 0,
+            "code_buffer_after": 0,
+        },
+        entry_id="deleted_store_adoption_entry",
+    )
+    entry.add_to_hass(hass)
+
+    async def load_deleted_store(coordinator: RentalControlCoordinator) -> None:
+        """Simulate the maintainer-deleted mappings Store file."""
+        coordinator._slot_mappings = {}
+
+    async def save_store(_coordinator: RentalControlCoordinator) -> None:
+        """Avoid writing the HA Store in the test."""
+
+    with (
+        aioresponses() as mock_session,
+        patch.object(
+            RentalControlCoordinator,
+            "async_load_slot_store",
+            autospec=True,
+            side_effect=load_deleted_store,
+        ),
+        patch.object(
+            RentalControlCoordinator,
+            "async_save_slot_store",
+            autospec=True,
+            side_effect=save_store,
+        ),
+        patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            new=AsyncMock(
+                return_value=OperationResult(kind="clear", slot=10, confirmed=True)
+            ),
+        ) as clear_code,
+        patch(
+            "custom_components.rental_control.event_overrides.async_fire_set_code",
+            new=AsyncMock(
+                return_value=OperationResult(kind="set", slot=10, confirmed=True)
+            ),
+        ) as set_code,
+        patch.object(dt_util, "now", return_value=FROZEN_TIME),
+        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
+    ):
+        mock_session.get(
+            entry.data["url"],
+            status=200,
+            body=future_ics(summary="Reenabled Guest"),
+            repeat=True,
+        )
+
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+        assert coordinator.get_persisted_slot_mappings() == {}
+
+        hass.states.async_set("text.front_door_code_slot_10_name", "Reenabled Guest")
+        hass.states.async_set("text.front_door_code_slot_10_pin", "8642")
+        hass.states.async_set("switch.front_door_code_slot_10_enabled", "on")
+        await hass.async_block_till_done()
+
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))
+        await hass.async_block_till_done()
+        await hass.async_block_till_done()
+
+        mappings = coordinator.get_persisted_slot_mappings()
+        assert len(mappings) == 1
+        identity_key = next(iter(mappings))
+        assert not identity_key.startswith("adopted.")
+        mapping = next(iter(mappings.values()))
+        assert mapping["slot"] == 10
+        assert mapping["status"] == "occupied"
+        assert mapping["identity"]["slot_name"] == "Reenabled Guest"
+        assert coordinator._latest_plan is not None
+        assert coordinator._latest_plan.selected == {identity_key: 10}
+        assert coordinator._latest_plan.overflow == {}
+        assert not any(
+            action.slot == 10 and action.kind.value == "overwrite_manual_change"
+            for action in coordinator._latest_plan.actions
+        )
+        clear_code.assert_not_awaited()
+        set_code.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # T114 – sensor state updates on refresh
 # ---------------------------------------------------------------------------
