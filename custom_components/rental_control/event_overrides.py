@@ -482,7 +482,7 @@ class EventOverrides:
                 "states are not concrete strings",
                 slot,
             )
-            return None
+            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
 
         if is_unreadable_keymaster_text_state(
             fresh_name

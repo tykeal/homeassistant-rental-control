@@ -3907,6 +3907,43 @@ class TestApplyPlanActions:
         assert results[0].confirmed is True
         mock_clear.assert_called_once()
 
+    async def test_preflight_clear_skips_non_string_text_state(self) -> None:
+        """Preflight aborts when fresh text states are not concrete strings."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = _make_dt(2026, 8, 1)
+        eo.update(1, "1234", "Guest", now, now)
+        coordinator = self._make_coordinator(eo)
+
+        def _state(value: object) -> MagicMock:
+            """Return a fake Home Assistant state object with *value*."""
+            state = MagicMock()
+            state.state = value
+            return state
+
+        coordinator.hass.states.get.side_effect = lambda entity_id: (
+            _state(object()) if entity_id.endswith("_name") else _state("1234")
+        )
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            new_callable=AsyncMock,
+        ) as mock_clear:
+            results = await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(
+                    SlotAction(
+                        kind=ActionKind.RESET,
+                        slot=1,
+                        reason="stale",
+                        preflight_read=True,
+                    )
+                ),
+                {},
+            )
+
+        assert results[0].unconfirmed is True
+        mock_clear.assert_not_called()
+
     async def test_preflight_clear_allows_pin_only_physical_slot(self) -> None:
         """A blank-name slot with a lingering PIN is allowed to reset."""
         eo = EventOverrides(start_slot=1, max_slots=1)
