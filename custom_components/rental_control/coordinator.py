@@ -958,7 +958,6 @@ Please update Keymaster to at least v0.1.0-b0
         are adopted here so deleted or missing stores recover on any
         refresh once Keymaster entities settle.
         """
-        persisted: dict[str, Any] = self._slot_mappings.get("mappings", {})
         self._adopt_observed_coded_slots(managed_slots)
         persisted = self._slot_mappings.get("mappings", {})
         for ms in managed_slots:
