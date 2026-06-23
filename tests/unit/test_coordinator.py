@@ -215,6 +215,59 @@ async def test_duplicate_name_date_shift_preserves_ordered_manual_pins(
     ]
 
 
+async def test_duplicate_name_shift_into_old_date_preserves_order(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Same-name date shifts pair by physical order, not exact old dates."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    old_start_one = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    old_end_one = old_start_one + timedelta(days=7)
+    old_start_two = old_end_one
+    old_end_two = old_start_two + timedelta(days=7)
+    new_start_one = old_start_two
+    new_end_one = old_end_two
+    new_start_two = old_end_two
+    new_end_two = new_start_two + timedelta(days=7)
+    calendar = [
+        CalendarEvent(start=new_start_one, end=new_end_one, summary="Bob"),
+        CalendarEvent(start=new_start_two, end=new_end_two, summary="Bob"),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=old_start_one,
+            actual_end=old_end_one,
+        ),
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=old_start_two,
+            actual_end=old_end_two,
+        ),
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert [reservation.slot_code for reservation in reservations] == ["1111", "2222"]
+    assert [reservation.code_source for reservation in reservations] == [
+        "manual_observed",
+        "manual_observed",
+    ]
+
+
 async def test_checkin_protection_matches_duplicate_by_start_end(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:

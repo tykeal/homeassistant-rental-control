@@ -1141,6 +1141,26 @@ Please update Keymaster to at least v0.1.0-b0
                 if slot.slot in consumed:
                     continue
                 candidates.append(slot)
+        if require_date_match:
+            if matching_candidate_count < expected_name_count:
+                if desired_start is not None and desired_end is not None:
+                    for slot in candidates:
+                        if (
+                            slot.actual_start == desired_start
+                            and slot.actual_end == desired_end
+                        ):
+                            consumed.add(slot.slot)
+                            return slot
+                return None
+            if any(
+                slot.actual_start is None or slot.actual_end is None
+                for slot in candidates
+            ):
+                return None
+            if candidates:
+                consumed.add(candidates[0].slot)
+                return candidates[0]
+            return None
         if desired_start is not None and desired_end is not None:
             for slot in candidates:
                 if (
@@ -1150,20 +1170,12 @@ Please update Keymaster to at least v0.1.0-b0
                     consumed.add(slot.slot)
                     return slot
         fallback_candidates = candidates
-        if reserved_date_windows and (
-            require_date_match or block_unknown_date_fallback
-        ):
-            if require_date_match and matching_candidate_count < expected_name_count:
-                return None
+        if reserved_date_windows and block_unknown_date_fallback:
             fallback_candidates = [
                 slot
                 for slot in candidates
                 if slot.actual_start is not None
                 and slot.actual_end is not None
-                and (
-                    not block_unknown_date_fallback
-                    or (slot.actual_start, slot.actual_end) not in reserved_date_windows
-                )
                 and (slot.actual_start, slot.actual_end) not in reserved_date_windows
             ]
         if fallback_candidates:
