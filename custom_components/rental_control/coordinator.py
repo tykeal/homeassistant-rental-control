@@ -1147,15 +1147,13 @@ Please update Keymaster to at least v0.1.0-b0
             fallback_candidates = [
                 slot
                 for slot in candidates
-                if (
-                    not block_unknown_date_fallback
-                    or (slot.actual_start is not None and slot.actual_end is not None)
-                )
+                if slot.actual_start is not None
+                and slot.actual_end is not None
                 and (
-                    slot.actual_start is None
-                    or slot.actual_end is None
+                    not block_unknown_date_fallback
                     or (slot.actual_start, slot.actual_end) not in reserved_date_windows
                 )
+                and (slot.actual_start, slot.actual_end) not in reserved_date_windows
             ]
         if fallback_candidates:
             consumed.add(fallback_candidates[0].slot)
@@ -1984,6 +1982,25 @@ Please update Keymaster to at least v0.1.0-b0
             return parsed if isinstance(parsed, datetime) else None
         return None
 
+    def _must_defer_for_checkin_restore(
+        self, reservations: list[_Reservation], managed_slots: list[_ManagedSlot]
+    ) -> bool:
+        """Return whether apply should wait for check-in sensor restore."""
+        domain_data: dict[str, Any] | None = self.hass.data.get(DOMAIN)
+        entry_data: dict[str, Any] = (
+            domain_data.get(self._entry_id, {}) if domain_data is not None else {}
+        )
+        if entry_data.get(CHECKIN_SENSOR) is not None:
+            return False
+        reservation_names = {res.slot_name for res in reservations}
+        return any(
+            slot.managed
+            and slot.status is _SlotStatus.OCCUPIED
+            and slot.actual_name in reservation_names
+            and (slot.actual_start is None or slot.actual_end is None)
+            for slot in managed_slots
+        )
+
     def _active_checkin_windows_for_name(
         self, slot_name: str
     ) -> set[tuple[datetime, datetime]]:
@@ -2164,9 +2181,17 @@ Please update Keymaster to at least v0.1.0-b0
                 res_by_key: dict[str, _Reservation] = {
                     r.identity_key: r for r in reservations
                 }
-                operation_results = await self.event_overrides.async_apply_plan(
-                    self, plan, res_by_key
-                )
+                if self._must_defer_for_checkin_restore(reservations, observed_slots):
+                    _LOGGER.warning(
+                        "Deferring reconciliation for %s until check-in state is "
+                        "available; same-name physical slot has missing date state",
+                        self._name,
+                    )
+                    operation_results = []
+                else:
+                    operation_results = await self.event_overrides.async_apply_plan(
+                        self, plan, res_by_key
+                    )
                 self._sync_slot_store_from_plan(plan, res_by_key, operation_results)
 
                 self._latest_plan = plan

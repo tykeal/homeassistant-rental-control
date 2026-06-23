@@ -243,6 +243,49 @@ async def _async_wait_for_expected_name(
         unsub()
 
 
+def _state_matches_expected_datetime(
+    hass: HomeAssistant, entity_id: str, expected: datetime
+) -> bool:
+    """Return whether the entity state matches the expected datetime."""
+    state = hass.states.get(entity_id)
+    if state is None or not isinstance(state.state, str):
+        return False
+    parsed = dt.parse_datetime(state.state)
+    return parsed is not None and dt.as_utc(parsed) == dt.as_utc(expected)
+
+
+async def _async_wait_for_expected_datetime(
+    hass: HomeAssistant, entity_id: str, expected: datetime, timeout: float
+) -> bool:
+    """Wait briefly for one datetime entity to match the expected value."""
+    if _state_matches_expected_datetime(hass, entity_id, expected):
+        return True
+
+    matched = asyncio.Event()
+
+    def _handle_state_change(event: Event[EventStateChangedData]) -> None:
+        """Set the wait flag when the target entity reaches the expected time."""
+        new_state = event.data.get("new_state")
+        if new_state is None or not isinstance(new_state.state, str):
+            return
+        parsed = dt.parse_datetime(new_state.state)
+        if parsed is not None and dt.as_utc(parsed) == dt.as_utc(expected):
+            matched.set()
+
+    unsub = async_track_state_change_event(hass, [entity_id], _handle_state_change)
+    try:
+        if _state_matches_expected_datetime(hass, entity_id, expected):
+            return True
+        try:
+            async with asyncio.timeout(timeout):
+                await matched.wait()
+        except TimeoutError:
+            return False
+        return _state_matches_expected_datetime(hass, entity_id, expected)
+    finally:
+        unsub()
+
+
 def delete_rc_and_base_folder(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Delete packages folder for RC and base rental_control folder if empty."""
     base_path = Path(hass.config.path(), config_entry.data.get(CONF_PATH, DEFAULT_PATH))
@@ -684,6 +727,28 @@ async def async_fire_update_times(coordinator, event, slot: int) -> OperationRes
             failed=True,
             error=str(exc),
         )
+    if not isinstance(buffered_start, datetime) or not isinstance(
+        buffered_end, datetime
+    ):
+        return OperationResult(kind="update_times", slot=slot, unconfirmed=True)
+    start_entity_id = f"datetime.{lockname}_code_slot_{slot}_date_range_start"
+    end_entity_id = f"datetime.{lockname}_code_slot_{slot}_date_range_end"
+    start_confirmed, end_confirmed = await asyncio.gather(
+        _async_wait_for_expected_datetime(
+            coordinator.hass,
+            start_entity_id,
+            buffered_start,
+            _SET_CODE_CONFIRMATION_TIMEOUT,
+        ),
+        _async_wait_for_expected_datetime(
+            coordinator.hass,
+            end_entity_id,
+            buffered_end,
+            _SET_CODE_CONFIRMATION_TIMEOUT,
+        ),
+    )
+    if not start_confirmed or not end_confirmed:
+        return OperationResult(kind="update_times", slot=slot, unconfirmed=True)
     return OperationResult(kind="update_times", slot=slot, confirmed=True)
 
 

@@ -387,12 +387,14 @@ class ObservedSlot:
         ):
             self.readable = False
             self.empty_confirmed = False
+        if name_present or self.has_pin:
+            self.empty_confirmed = False
         if not self.managed:
             self.classification = ObservedSlotStatus.UNKNOWN
         elif not self.readable:
             self.classification = ObservedSlotStatus.UNKNOWN
             self.empty_confirmed = False
-        elif self.empty_confirmed:
+        elif self.empty_confirmed and not name_present and not self.has_pin:
             self.classification = ObservedSlotStatus.EMPTY
         elif name_present and self.has_pin:
             self.classification = ObservedSlotStatus.OCCUPIED

@@ -3066,8 +3066,8 @@ class TestAsyncFireUpdateTimesOperationResult:
         event = MagicMock()
         event.extra_state_attributes = {
             "slot_name": "Guest",
-            "start": "2025-01-15T16:00:00",
-            "end": "2025-01-17T11:00:00",
+            "start": datetime(2025, 1, 15, 16, tzinfo=dt_util.UTC),
+            "end": datetime(2025, 1, 17, 11, tzinfo=dt_util.UTC),
         }
         return event
 
@@ -3081,9 +3081,31 @@ class TestAsyncFireUpdateTimesOperationResult:
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         return coordinator
 
+    @staticmethod
+    def _confirm_datetime_states(coordinator: MagicMock) -> None:
+        """Configure coordinator state reads to confirm updated datetimes."""
+        expected = {
+            "datetime.front_door_code_slot_10_date_range_start": (
+                "2025-01-15T16:00:00+00:00"
+            ),
+            "datetime.front_door_code_slot_10_date_range_end": (
+                "2025-01-17T11:00:00+00:00"
+            ),
+        }
+
+        def _get_state(entity_id: str) -> MagicMock | None:
+            """Return a matching state object for datetime confirmation."""
+            value = expected.get(entity_id)
+            if value is None:
+                return None
+            return MagicMock(state=value)
+
+        coordinator.hass.states.get.side_effect = _get_state
+
     async def test_confirmed_on_success(self) -> None:
         """Successful service calls return confirmed."""
         coordinator = self._make_coordinator()
+        self._confirm_datetime_states(coordinator)
 
         result = await async_fire_update_times(coordinator, self._make_event(), 10)
 

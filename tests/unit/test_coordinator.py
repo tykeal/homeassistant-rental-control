@@ -433,6 +433,44 @@ async def test_build_reservations_does_not_copy_active_pin_to_future_same_name(
     assert reservations[1].slot_code == "1111"
 
 
+async def test_missing_checkin_restore_defers_unknown_date_same_name_apply(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Startup apply waits when check-in state may own an unknown-date slot."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 9, 1, 14))
+    end = start + timedelta(days=7)
+    reservations = [
+        Reservation(
+            identity_key="future-bob",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Bob",
+            slot_name="Bob",
+            display_slot_name="Bob",
+            slot_code="2222",
+        )
+    ]
+    slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code_present=True,
+        )
+    ]
+
+    assert coordinator._must_defer_for_checkin_restore(reservations, slots)
+
+
 async def test_coordinator_first_refresh(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
