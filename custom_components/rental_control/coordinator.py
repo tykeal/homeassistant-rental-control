@@ -581,7 +581,11 @@ Please update Keymaster to at least v0.1.0-b0
             self._slot_mappings = self._empty_slot_cache("cache_corrupt")
             return
         if schema_version < 1:
-            raw = await self._migrate_slot_store_v1(raw)
+            try:
+                raw = await self._migrate_slot_store_v1(raw)
+            except Exception:
+                self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+                return
         mappings = raw.get("mappings", {})
         if not isinstance(mappings, dict):
             self._slot_mappings = self._empty_slot_cache("cache_corrupt")
@@ -675,6 +679,9 @@ Please update Keymaster to at least v0.1.0-b0
         Returns:
             A dict conforming to schema version 1.
         """
+        migration_notes = raw.get("migration_notes", [])
+        if not isinstance(migration_notes, list):
+            migration_notes = []
         return {
             "schema_version": 1,
             "entry_id": raw.get("entry_id", self._entry_id),
@@ -685,7 +692,7 @@ Please update Keymaster to at least v0.1.0-b0
             "mappings": raw.get("mappings", {}),
             "aliases": raw.get("aliases", {}),
             "migration_notes": [
-                *raw.get("migration_notes", []),
+                *migration_notes,
                 "legacy_authoritative_fields_ignored",
             ],
         }
@@ -1869,7 +1876,9 @@ Please update Keymaster to at least v0.1.0-b0
             and res.start == tracked_start
             and res.end == tracked_end
         ]
-        matches = exact_matches or (name_matches if len(name_matches) == 1 else [])
+        matches = exact_matches
+        if tracked_start is None or tracked_end is None:
+            matches = name_matches if len(name_matches) == 1 else []
         for res in matches[:1]:
             if sensor_state == CHECKIN_STATE_CHECKED_IN:
                 res.protected_active = True
