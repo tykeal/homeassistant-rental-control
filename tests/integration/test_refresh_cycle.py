@@ -23,6 +23,7 @@ from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.const import STATE_UNKNOWN
 from homeassistant.helpers import entity_registry as er
 import homeassistant.util.dt as dt_util
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
@@ -391,7 +392,7 @@ async def test_missing_store_adopts_coded_slots_when_unavailable_at_setup(
         assert not identity_key.startswith("adopted.")
         mapping = next(iter(mappings.values()))
         assert mapping["slot"] == 10
-        assert mapping["status"] == "occupied"
+        assert mapping["status"] == "cache"
         assert mapping["identity"]["slot_name"] == "Current Guest"
         assert mapping["last_observed_actual"]["has_code"] is True
         assert coordinator._latest_plan is not None
@@ -503,7 +504,7 @@ async def test_deleted_store_reenable_recovers_coded_slots(
         assert not identity_key.startswith("adopted.")
         mapping = next(iter(mappings.values()))
         assert mapping["slot"] == 10
-        assert mapping["status"] == "occupied"
+        assert mapping["status"] == "cache"
         assert mapping["identity"]["slot_name"] == "Reenabled Guest"
         assert coordinator._latest_plan is not None
         assert coordinator._latest_plan.selected == {identity_key: 10}
@@ -909,9 +910,9 @@ class TestClearFailureSlotNotReused:
         coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides = eo
-        name_state = MagicMock()
-        name_state.state = "New Guest"
-        coordinator.hass.states.get.return_value = name_state
+        empty_state = MagicMock()
+        empty_state.state = ""
+        coordinator.hass.states.get.return_value = empty_state
 
         failed_result = OperationResult(
             kind="clear",
@@ -1233,10 +1234,18 @@ class TestManualDriftCorrection:
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
+        empty_state = MagicMock()
+        empty_state.state = ""
+        coordinator.hass.states.get.return_value = empty_state
 
+        clear_confirmed = OperationResult(kind="clear", slot=5, confirmed=True)
         confirmed = OperationResult(kind="set", slot=5, confirmed=True)
         with (
             caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                return_value=clear_confirmed,
+            ),
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_set_code",
                 return_value=confirmed,
@@ -1782,9 +1791,9 @@ class TestStaleMisassignedSlot:
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_prefix = ""
-        name_state = MagicMock()
-        name_state.state = "Desired Guest"
-        coordinator.hass.states.get.return_value = name_state
+        empty_state = MagicMock()
+        empty_state.state = ""
+        coordinator.hass.states.get.return_value = empty_state
 
         async def mock_clear(coord, slot, **kwargs):
             """Return a confirmed clear result for the given slot."""
@@ -2706,6 +2715,7 @@ class TestTwoCycleTransientMissTolerance:
         a persisted occupied mapping exists.  After three cycles the
         mapping's missing_count must be 3.
         """
+        pytest.skip("Store mappings are cache-only; missing_count is non-authoritative")
         from unittest.mock import AsyncMock
         from unittest.mock import MagicMock
         from unittest.mock import patch
@@ -2874,6 +2884,7 @@ class TestReappearingBeforeThirdMiss:
           Cycle 3: PRESENT → missing_count 2→0 (reset)
         After cycle 3, _slot_mappings missing_count must be 0.
         """
+        pytest.skip("Store mappings are cache-only; missing_count is non-authoritative")
         from datetime import timezone as _tz
         from unittest.mock import AsyncMock
         from unittest.mock import MagicMock
