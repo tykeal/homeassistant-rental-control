@@ -84,19 +84,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     # Load Store before Keymaster bootstrap (ordering fix for #597)
     await coordinator.async_load_slot_store()
 
-    # Inject persisted mappings or adopt slots on first upgrade
+    # Inject cache-only mappings. Physical Keymaster state is re-read during
+    # every coordinator refresh, so missing cache never triggers adoption.
     persisted = coordinator.get_persisted_slot_mappings()
-    if persisted:
-        if coordinator.event_overrides is not None:
-            try:
-                coordinator.event_overrides.load_persisted_mappings(persisted)
-            except ValueError:
-                _LOGGER.exception(
-                    "Failed to load persisted slot mappings for %s",
-                    config_entry.entry_id,
-                )
-    elif coordinator.lockname:
-        await coordinator.async_adopt_keymaster_slots()
+    if persisted and coordinator.event_overrides is not None:
+        coordinator.event_overrides.load_persisted_mappings(persisted)
 
     # Bootstrap Keymaster slot overrides from current HA state before
     # first refresh so overrides are checked against the initial data

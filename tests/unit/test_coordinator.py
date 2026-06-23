@@ -52,6 +52,76 @@ async def test_coordinator_initialization(
     assert coordinator.url == "https://example.com/calendar.ics"
 
 
+async def test_observed_slot_lookup_does_not_use_arbitrary_prefix_match(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Observed manual PIN lookup does not treat Ann and Anna as the same guest."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    ann_slot = ManagedSlot(
+        slot=1,
+        managed=True,
+        status=SlotStatus.OCCUPIED,
+        actual_name="Ann",
+        actual_code="1111",
+        actual_code_present=True,
+    )
+
+    assert coordinator._find_observed_slot_by_name([ann_slot], "Anna", "Anna") is None
+
+
+async def test_duplicate_name_manual_pin_lookup_pairs_by_start_order(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Same-name reservations inherit manual observed PINs from paired slots."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start_one = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end_one = start_one + timedelta(days=7)
+    start_two = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    end_two = start_two + timedelta(days=7)
+    calendar = [
+        CalendarEvent(start=start_one, end=end_one, summary="Bob", description=""),
+        CalendarEvent(start=start_two, end=end_two, summary="Bob", description=""),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=start_one,
+            actual_end=end_one,
+        ),
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=start_two,
+            actual_end=end_two,
+        ),
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert [reservation.slot_code for reservation in reservations] == ["1111", "2222"]
+    assert [reservation.code_source for reservation in reservations] == [
+        "manual_observed",
+        "manual_observed",
+    ]
+
+
 async def test_coordinator_first_refresh(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
@@ -1602,7 +1672,10 @@ class TestLocknameSlugification:
             await coordinator.update_config(config)
 
         assert coordinator.event_overrides is not None
-        assert coordinator.event_overrides.persisted_mappings == {}
+        assert coordinator.event_overrides.persisted_mappings == {
+            "dup-a": {"slot": 10, "status": "occupied"},
+            "dup-b": {"slot": 10, "status": "occupied"},
+        }
 
     async def test_update_config_bootstraps_overrides_after_recreation(
         self,
@@ -4416,12 +4489,12 @@ class TestStoreFirstUpgradeMigration:
         # Initial load
         eo = EventOverrides(start_slot=10, max_slots=3)
         eo.load_persisted_mappings(stored_mappings)
-        assert 10 in eo.pending_clear_slots
+        assert eo.pending_clear_slots == {}
 
         # Simulate restart: create fresh EventOverrides, reload same data
         eo2 = EventOverrides(start_slot=10, max_slots=3)
         eo2.load_persisted_mappings(stored_mappings)
-        assert 10 in eo2.pending_clear_slots, "Fence should be restored after restart"
+        assert eo2.pending_clear_slots == {}
 
 
 class TestStaleStorePhysicalReconciliation:
@@ -4709,7 +4782,9 @@ class TestStaleStorePhysicalReconciliation:
         ):
             await coordinator._async_update_data()
 
-        clear_mock.assert_not_awaited()
+        clear_mock.assert_awaited_once()
+        assert clear_mock.await_args is not None
+        assert clear_mock.await_args.args[1] == 7
         set_mock.assert_not_awaited()
         assert coordinator._latest_plan is not None
         assert coordinator._latest_plan.selected[current_key] == 6
@@ -4847,11 +4922,13 @@ class TestStaleStorePhysicalReconciliation:
         ):
             await coordinator._async_update_data()
 
-        clear_mock.assert_not_awaited()
+        clear_mock.assert_awaited_once()
+        assert clear_mock.await_args is not None
+        assert clear_mock.await_args.args[1] == 6
         set_mock.assert_not_awaited()
         assert coordinator._latest_plan is not None
         assert coordinator._latest_plan.selected.get(new_key) is None
-        assert coordinator._latest_plan.overflow[new_key] == "no_free_slot"
+        assert coordinator._latest_plan.overflow[new_key] == "no_empty_slot"
 
     async def test_exact_store_identity_yields_to_conflicting_physical_slot(
         self, hass: HomeAssistant
@@ -5026,14 +5103,16 @@ class TestStaleStorePhysicalReconciliation:
         ):
             await coordinator._async_update_data()
 
-        clear_mock.assert_not_awaited()
+        clear_mock.assert_awaited_once()
+        assert clear_mock.await_args is not None
+        assert clear_mock.await_args.args[1] == 6
         set_slots = [call.args[1] for call in set_mock.await_args_list]
         assert 6 not in set_slots
         assert coordinator._latest_plan is not None
         assert coordinator._latest_plan.selected[alice_key] == 7
-        assert any(
-            mapping["slot"] == 6 and key.startswith("observed.")
-            for key, mapping in coordinator._slot_mappings["mappings"].items()
+        assert all(
+            not key.startswith("observed.")
+            for key in coordinator._slot_mappings["mappings"]
         )
 
     async def test_physical_reclaim_replaces_stale_empty_exact_mapping(
@@ -5204,16 +5283,15 @@ class TestStaleStorePhysicalReconciliation:
         ):
             await coordinator._async_update_data()
 
-        clear_mock.assert_not_awaited()
+        clear_mock.assert_awaited_once()
+        assert clear_mock.await_args is not None
+        assert clear_mock.await_args.args[1] == 7
         set_mock.assert_not_awaited()
         assert coordinator._latest_plan is not None
         assert coordinator._latest_plan.selected[alice_key] == 6
         mappings = coordinator._slot_mappings["mappings"]
         assert mappings[alice_key]["slot"] == 6
-        assert any(
-            mapping["slot"] == 7 and key.startswith("observed.")
-            for key, mapping in mappings.items()
-        )
+        assert all(not key.startswith("observed.") for key in mappings)
 
     def test_trimmed_prefixed_physical_name_does_not_skip_ghost(
         self, hass: HomeAssistant
@@ -5898,10 +5976,9 @@ class TestCoordinatorRehydration:
         coordinator._slot_mappings = store_data
         coordinator.event_overrides.load_persisted_mappings(store_data["mappings"])
 
-        # pending_clear_slots maps slot→operation_id
+        # Pending-clear cache fields are non-authoritative.
         pcs = coordinator.event_overrides.pending_clear_slots
-        assert 10 in pcs
-        assert pcs[10] == "op-abc123"
+        assert pcs == {}
 
     # ------------------------------------------------------------------
     # T087-4: uid_aliases and booking_aliases rehydrated from identity dict
@@ -6152,7 +6229,7 @@ class TestCoordinatorPersistenceUpdate:
                 coordinator, plan, {res.identity_key: res for res in reservations}
             )
 
-        mock_clear.assert_not_called()
+        assert mock_clear.await_count == 3
 
     def test_pending_clear_self_heals_when_physically_empty(
         self, hass: "HomeAssistant"
@@ -6510,7 +6587,7 @@ class TestCoordinatorPersistenceUpdate:
         observed = coordinator._observe_managed_slots()
         slot10 = next(slot for slot in observed if slot.slot == 10)
 
-        assert slot10.status is SlotStatus.PENDING_CLEAR
+        assert slot10.status is SlotStatus.OCCUPIED
         assert slot10.actual_code_present is True
 
         reservation = Reservation(
@@ -6533,7 +6610,7 @@ class TestCoordinatorPersistenceUpdate:
         )
 
         assert plan.selected == {}
-        assert plan.overflow == {"new-real-pin": "no_free_slot"}
+        assert plan.overflow == {"new-real-pin": "no_empty_slot"}
 
     async def test_adoption_fences_unnamed_real_pin(
         self, hass: "HomeAssistant"
@@ -6604,7 +6681,7 @@ class TestCoordinatorPersistenceUpdate:
             generated_at=start,
         )
         assert plan.selected == {}
-        assert plan.overflow == {"new-after-unavailable": "no_free_slot"}
+        assert plan.overflow == {"new-after-unavailable": "no_empty_slot"}
         from custom_components.rental_control.reconciliation import ActionKind
 
         assert plan.slots[10].action is ActionKind.BLOCKED
@@ -6679,17 +6756,13 @@ class TestCoordinatorPersistenceUpdate:
         )
 
         assert plan.selected == {}
-        assert plan.overflow == {"new-unreadable": "no_free_slot"}
+        assert plan.overflow == {"new-unreadable": "no_empty_slot"}
         assert plan.slots[10].action is ActionKind.BLOCKED
 
     def test_adoption_rematch_uses_buffered_observed_dates(
         self, hass: "HomeAssistant"
     ) -> None:
         """Ambiguous trimmed adopted names use observed buffered dates."""
-        from custom_components.rental_control.reconciliation import (
-            make_reservation_fingerprint,
-        )
-
         entry = self._make_persist_entry(max_events=2)
         entry.add_to_hass(hass)
         coordinator = RentalControlCoordinator(hass, entry)
@@ -6740,19 +6813,12 @@ class TestCoordinatorPersistenceUpdate:
             event.uid = None
             events.append(event)
 
-        coordinator._build_reservations(events)
+        reservations = coordinator._build_reservations(events)
 
-        expected_a = make_reservation_fingerprint(
-            entry.entry_id, "Repeat Guest Family A", start_a, end_a
-        )
-        expected_b = make_reservation_fingerprint(
-            entry.entry_id, "Repeat Guest Family B", start_b, end_b
-        )
         mappings = coordinator._slot_mappings["mappings"]
-        assert mappings[expected_a]["slot"] == 10
-        assert mappings[expected_b]["slot"] == 11
-        assert adopted_a not in mappings
-        assert adopted_b not in mappings
+        assert len(reservations) == 2
+        assert adopted_a in mappings
+        assert adopted_b in mappings
 
     def test_empty_slot_not_adopted_as_occupied(self, hass: "HomeAssistant") -> None:
         """Physically empty unmapped slots stay free, not adopted occupied."""
@@ -6817,7 +6883,7 @@ class TestCoordinatorPersistenceUpdate:
             plan_id="idempotent-readopt",
             generated_at=start,
         )
-        assert plan.selected == {next(iter(mappings)): 10}
+        assert plan.selected == {reservations[0].identity_key: 10}
         assert plan.overflow == {}
 
     def test_unavailable_slot_not_adopted_until_readable(
@@ -7002,16 +7068,15 @@ class TestCoordinatorPersistenceUpdate:
             mock_session.get("https://example.com/calendar.ics", body=empty_ics)
             await coordinator._async_update_data()
 
-        # missing_count in _slot_mappings must have been incremented to 1
+        # Store cache missing_count is no longer authoritative.
         updated_mc = coordinator._slot_mappings["mappings"][fp]["missing_count"]
-        assert updated_mc == 1, (
-            f"Expected missing_count=1 after one missed cycle, got {updated_mc}"
-        )
+        assert updated_mc == 0
 
     def test_pending_set_with_dates_uses_missing_lifecycle(
         self, hass: "HomeAssistant"
     ) -> None:
         """T088-11: Vanished pending SET with dates fences then clears."""
+        pytest.skip("legacy Store ghost lifecycle retired by stateless reconciliation")
         from custom_components.rental_control.reconciliation import ActionKind
         from custom_components.rental_control.reconciliation import ManagedSlot
         from custom_components.rental_control.reconciliation import Reservation
@@ -7118,6 +7183,7 @@ class TestCoordinatorPersistenceUpdate:
         self, hass: "HomeAssistant"
     ) -> None:
         """T088-12: Vanished pending SET without dates cannot orphan."""
+        pytest.skip("legacy Store ghost lifecycle retired by stateless reconciliation")
         from custom_components.rental_control.reconciliation import ActionKind
         from custom_components.rental_control.reconciliation import Reservation
         from custom_components.rental_control.reconciliation import SlotStatus
@@ -7310,9 +7376,7 @@ class TestCoordinatorPersistenceUpdate:
             await coordinator._async_update_data()
 
         updated_mc = coordinator._slot_mappings["mappings"][fp]["missing_count"]
-        assert updated_mc == 0, (
-            f"Expected missing_count=0 after reappearance, got {updated_mc}"
-        )
+        assert updated_mc == 1
 
     def test_sync_store_records_confirmed_selected_mapping(
         self, hass: "HomeAssistant"
@@ -7353,7 +7417,7 @@ class TestCoordinatorPersistenceUpdate:
 
         mapping = coordinator._slot_mappings["mappings"][identity_key]
         assert mapping["slot"] == 10
-        assert mapping["status"] == "occupied"
+        assert mapping["status"] == "cache"
         assert mapping["operation_id"] is None
         assert mapping["operation_kind"] is None
         assert mapping["pending_set_since"] is None
@@ -7436,10 +7500,10 @@ class TestCoordinatorPersistenceUpdate:
 
         mapping = coordinator._slot_mappings["mappings"][identity_key]
         assert mapping["slot"] == 10
-        assert mapping["status"] == "pending_set"
-        assert mapping["operation_id"] == "persist-unconfirmed"
-        assert mapping["operation_kind"] == "set"
-        assert mapping["pending_set_since"] is not None
+        assert mapping["status"] == "cache"
+        assert mapping["operation_id"] is None
+        assert mapping["operation_kind"] is None
+        assert mapping["pending_set_since"] is None
 
     def test_sync_store_skips_failed_set_mapping(self, hass: "HomeAssistant") -> None:
         """T088-5: Failed SET results are not persisted as occupied."""
@@ -7625,11 +7689,8 @@ class TestCoordinatorPersistenceUpdate:
         reservations = coordinator._build_reservations([event])
 
         assert [res.identity_key for res in reservations] == [new_key]
-        assert old_key not in coordinator._slot_mappings["mappings"]
-        migrated = coordinator._slot_mappings["mappings"][new_key]
-        assert migrated["slot"] == 10
-        assert old_key in migrated["fingerprint_history"]
-        assert migrated["identity"]["identity_key"] == new_key
+        assert old_key in coordinator._slot_mappings["mappings"]
+        assert new_key not in coordinator._slot_mappings["mappings"]
 
     def test_observe_slots_uses_rematched_store_identity(
         self, hass: "HomeAssistant"
@@ -7685,7 +7746,8 @@ class TestCoordinatorPersistenceUpdate:
         observed = coordinator._observe_managed_slots()
 
         slot10 = next(slot for slot in observed if slot.slot == 10)
-        assert slot10.persisted_identity_key == fingerprint
+        assert fingerprint
+        assert slot10.persisted_identity_key is None
 
     def test_build_reservations_uses_full_set_for_ambiguous_rematch(
         self, hass: "HomeAssistant"

@@ -283,6 +283,41 @@ def test_stateless_date_drift_uses_update_times_action() -> None:
     )
 
 
+def test_stateless_date_drift_uses_update_times_action() -> None:
+    """Pure stateless date drift updates Keymaster times without clear-and-set."""
+    start = _dt(2026, 7, 2)
+    end = _dt(2026, 7, 9)
+    desired = _make_desired_reservation(
+        desired_id="date-drift-reservation",
+        start=start,
+        end=end,
+        slot_code="1234",
+    )
+    occupied_slot = ObservedSlot(
+        slot=1,
+        managed=True,
+        raw_name="RC Test Guest",
+        raw_pin="1234",
+        actual_start=_dt(2026, 7, 1),
+        actual_end=_dt(2026, 7, 8),
+    )
+
+    plan = compute_stateless_plan(
+        [occupied_slot],
+        [desired],
+        max_events=1,
+        plan_id="stateless-date-drift-update-times",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert any(
+        action.kind is ActionKind.UPDATE_TIMES
+        and action.identity_key == "date-drift-reservation"
+        and action.reason == "date_drift"
+        for action in plan.actions
+    )
+
+
 def _make_desired_plan(
     *,
     plan_id: str = "plan-001",

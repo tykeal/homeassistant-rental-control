@@ -2293,7 +2293,7 @@ def compute_stateless_plan(
         ):
             plan.actions.append(
                 SlotAction(
-                    kind=ActionKind.UPDATE_IN_PLACE,
+                    kind=ActionKind.UPDATE_TIMES,
                     slot=slot.slot,
                     desired_id=action_desired.desired_id,
                     matched_by="name_exact",

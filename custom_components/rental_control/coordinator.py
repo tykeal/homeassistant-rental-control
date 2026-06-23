@@ -1082,6 +1082,7 @@ Please update Keymaster to at least v0.1.0-b0
         managed_slots: list[_ManagedSlot],
         slot_name: str,
         display_slot_name: str,
+        consumed_slots: set[int] | None = None,
     ) -> _ManagedSlot | None:
         """Return the current physical slot matching a stable/display name."""
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
@@ -1089,7 +1090,16 @@ Please update Keymaster to at least v0.1.0-b0
             normalize_slot_name_for_fingerprint(slot_name),
             normalize_slot_name_for_fingerprint(display_slot_name),
         }
-        for slot in managed_slots:
+        consumed = consumed_slots if consumed_slots is not None else set()
+        for slot in sorted(
+            managed_slots,
+            key=lambda observed: (
+                observed.actual_start or datetime.max.replace(tzinfo=timezone.utc),
+                observed.slot,
+            ),
+        ):
+            if slot.slot in consumed:
+                continue
             if not slot.managed or not slot.actual_name:
                 continue
             actual = slot.actual_name
@@ -1099,12 +1109,7 @@ Please update Keymaster to at least v0.1.0-b0
                     normalize_slot_name_for_fingerprint(actual[len(prefix) :])
                 )
             if actual_forms & desired_forms:
-                return slot
-            if any(
-                desired.startswith(actual_form) or actual_form.startswith(desired)
-                for desired in desired_forms
-                for actual_form in actual_forms
-            ):
+                consumed.add(slot.slot)
                 return slot
         return None
 
@@ -1214,6 +1219,7 @@ Please update Keymaster to at least v0.1.0-b0
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
         reservations: list[_Reservation] = []
         observed_slots = managed_slots or []
+        consumed_observed_slots: set[int] = set()
 
         for event in calendar:
             slot_name = get_slot_name(
@@ -1257,7 +1263,10 @@ Please update Keymaster to at least v0.1.0-b0
             slot_code = self._generate_slot_code(start, end, event.description, uid)
             code_source = "generated"
             matched_physical = self._find_observed_slot_by_name(
-                observed_slots, slot_name, display_slot_name
+                observed_slots,
+                slot_name,
+                display_slot_name,
+                consumed_observed_slots,
             )
             if matched_physical is not None and matched_physical.actual_code:
                 observed_code = matched_physical.actual_code
