@@ -6754,6 +6754,106 @@ class TestCoordinatorPersistenceUpdate:
         assert adopted_a not in mappings
         assert adopted_b not in mappings
 
+    def test_empty_slot_not_adopted_as_occupied(self, hass: "HomeAssistant") -> None:
+        """Physically empty unmapped slots stay free, not adopted occupied."""
+        from custom_components.rental_control.reconciliation import SlotStatus
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {"mappings": {}, "blocked_slots": {}}
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings({})
+        hass.states.async_set("text.test_lock_code_slot_10_name", "unknown")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "")
+
+        observed = coordinator._observe_managed_slots()
+        coordinator._merge_observed_slots_into_mappings(observed)
+
+        slot10 = next(slot for slot in observed if slot.slot == 10)
+        assert slot10.status is SlotStatus.FREE
+        assert coordinator.get_persisted_slot_mappings() == {}
+
+    def test_readopt_is_idempotent(self, hass: "HomeAssistant") -> None:
+        """Repeated observation adoption keeps one stable rematched mapping."""
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {"mappings": {}, "blocked_slots": {}}
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings({})
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Idempotent Guest")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "1357")
+
+        start = datetime(2026, 9, 1, 16, 0, tzinfo=dt_util.UTC)
+        event = MagicMock()
+        event.summary = "Idempotent Guest"
+        event.description = ""
+        event.start = start
+        event.end = start + timedelta(days=4)
+        event.uid = "idempotent-guest"
+
+        for _ in range(2):
+            observed = coordinator._observe_managed_slots()
+            coordinator._merge_observed_slots_into_mappings(observed)
+            reservations = coordinator._build_reservations([event], observed)
+            coordinator.event_overrides.load_persisted_mappings(
+                coordinator.get_persisted_slot_mappings()
+            )
+            observed = coordinator._observe_managed_slots()
+
+        mappings = coordinator.get_persisted_slot_mappings()
+        assert len(mappings) == 1
+        mapping = next(iter(mappings.values()))
+        assert mapping["slot"] == 10
+        assert mapping["identity"]["slot_name"] == "Idempotent Guest"
+
+        plan = compute_desired_plan(
+            reservations,
+            observed,
+            max_events=1,
+            plan_id="idempotent-readopt",
+            generated_at=start,
+        )
+        assert plan.selected == {next(iter(mappings)): 10}
+        assert plan.overflow == {}
+
+    def test_unavailable_slot_not_adopted_until_readable(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """Unreadable unmapped slots wait, then adopt after readable code."""
+        from custom_components.rental_control.reconciliation import SlotStatus
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        coordinator._slot_mappings = {"mappings": {}, "blocked_slots": {}}
+        assert coordinator.event_overrides is not None
+        coordinator.event_overrides.load_persisted_mappings({})
+        hass.states.async_set("text.test_lock_code_slot_10_name", "unavailable")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "unavailable")
+
+        observed = coordinator._observe_managed_slots()
+        coordinator._merge_observed_slots_into_mappings(observed)
+
+        slot10 = next(slot for slot in observed if slot.slot == 10)
+        assert slot10.status is SlotStatus.UNKNOWN
+        assert coordinator.get_persisted_slot_mappings() == {}
+
+        hass.states.async_set("text.test_lock_code_slot_10_name", "Readable Guest")
+        hass.states.async_set("text.test_lock_code_slot_10_pin", "9753")
+        observed = coordinator._observe_managed_slots()
+        coordinator._merge_observed_slots_into_mappings(observed)
+
+        mappings = coordinator.get_persisted_slot_mappings()
+        assert len(mappings) == 1
+        mapping = next(iter(mappings.values()))
+        assert mapping["slot"] == 10
+        assert mapping["status"] == "occupied"
+        assert mapping["identity"]["slot_name"] == "Readable Guest"
+
     def test_display_name_trims_full_name_when_prefix_consumes_limit(self) -> None:
         """Display-name formatting avoids negative guest-name trim lengths."""
         from custom_components.rental_control.coordinator import (

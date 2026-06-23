@@ -665,8 +665,15 @@ Please update Keymaster to at least v0.1.0-b0
         now_str = dt.now().isoformat()
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
         mappings: dict[str, Any] = {}
+        existing_slots = {
+            mapping.get("slot")
+            for mapping in self._slot_mappings.get("mappings", {}).values()
+            if isinstance(mapping, dict)
+        }
 
         for i in range(self.start_slot, self.start_slot + self.max_events):
+            if i in existing_slots:
+                continue
             name_state = self.hass.states.get(
                 f"{TEXT}.{self.lockname}_code_slot_{i}_name"
             )
@@ -721,6 +728,8 @@ Please update Keymaster to at least v0.1.0-b0
             status = SLOT_STATUS_OCCUPIED if has_code else SLOT_STATUS_PENDING_CLEAR
             pending_clear_since: str | None = now_str if not has_code else None
             identity_key = f"adopted.{self._entry_id}.slot{i}"
+            if identity_key in self._slot_mappings.get("mappings", {}):
+                continue
 
             mappings[identity_key] = {
                 "slot": i,
@@ -772,6 +781,85 @@ Please update Keymaster to at least v0.1.0-b0
                 self.event_overrides.load_persisted_mappings(
                     self._slot_mappings.get("mappings", {})
                 )
+
+    def _adopt_observed_coded_slots(self, managed_slots: list[_ManagedSlot]) -> None:
+        """Adopt readable coded slots that have no persisted mapping yet."""
+        persisted: dict[str, Any] = self._slot_mappings.setdefault("mappings", {})
+        existing_slots = {
+            mapping.get("slot")
+            for mapping in persisted.values()
+            if isinstance(mapping, dict)
+        }
+        now_str = dt.now().isoformat()
+        prefix = f"{self.event_prefix} " if self.event_prefix else ""
+        adopted = False
+
+        for ms in managed_slots:
+            if (
+                not ms.managed
+                or ms.persisted_identity_key is not None
+                or ms.slot in existing_slots
+                or ms.status is not _SlotStatus.OCCUPIED
+                or ms.actual_code_present is not True
+            ):
+                continue
+
+            slot_name = ms.actual_name or _adopted_slot_placeholder(ms.slot)
+            if prefix and slot_name.startswith(prefix):
+                slot_name = slot_name[len(prefix) :]
+
+            identity_key = f"adopted.{self._entry_id}.slot{ms.slot}"
+            if identity_key in persisted:
+                continue
+
+            persisted[identity_key] = {
+                "slot": ms.slot,
+                "status": SLOT_STATUS_OCCUPIED,
+                "operation_id": None,
+                "operation_kind": None,
+                "identity": {
+                    "identity_key": identity_key,
+                    "summary": slot_name,
+                    "slot_name": slot_name,
+                    "start": _store_datetime(ms.actual_start),
+                    "end": _store_datetime(ms.actual_end),
+                    "uid_aliases": [],
+                    "booking_aliases": [],
+                },
+                "missing_count": 0,
+                "pending_set_since": None,
+                "pending_clear_since": None,
+                "fingerprint_history": [],
+                "updated_at": now_str,
+                "last_observed_actual": {
+                    "slot": ms.slot,
+                    "classification": ms.status.value,
+                    "name_state": ms.actual_name,
+                    "has_code": True,
+                    "start_state": _store_datetime(ms.actual_start),
+                    "end_state": _store_datetime(ms.actual_end),
+                    "use_date_range": ms.date_range_enabled,
+                    "enabled": ms.enabled,
+                },
+            }
+            ms.persisted_identity_key = identity_key
+            existing_slots.add(ms.slot)
+            adopted = True
+
+        if adopted:
+            self._slot_mappings.update(
+                {
+                    "schema_version": STORE_SCHEMA_VERSION,
+                    "entry_id": self._entry_id,
+                    "lockname": self.lockname,
+                    "start_slot": self.start_slot,
+                    "max_slots": self.max_events,
+                    "updated_at": now_str,
+                    "blocked_slots": self._slot_mappings.get("blocked_slots", {}),
+                }
+            )
+            if self.event_overrides is not None:
+                self.event_overrides.load_persisted_mappings(persisted)
 
     def _generate_date_based_code(self, start: datetime, end: datetime) -> str:
         """Generate a date-based door code from reservation start/end times.
@@ -866,9 +954,12 @@ Please update Keymaster to at least v0.1.0-b0
         ``last_observed_actual`` snapshots.  Before rematching current
         calendar reservations, physical Keymaster state must be allowed to
         win over those stale snapshots so populated slots can be reclaimed
-        rather than stale-cleared.
+        rather than stale-cleared.  Readable coded slots with no mapping
+        are adopted here so deleted or missing stores recover on any
+        refresh once Keymaster entities settle.
         """
-        persisted: dict[str, Any] = self._slot_mappings.get("mappings", {})
+        self._adopt_observed_coded_slots(managed_slots)
+        persisted = self._slot_mappings.get("mappings", {})
         for ms in managed_slots:
             if ms.persisted_identity_key is None:
                 continue
@@ -1758,8 +1849,14 @@ Please update Keymaster to at least v0.1.0-b0
             date_range_on = (
                 use_date_range_state is not None and use_date_range_state.state == "on"
             )
+            date_range_enabled: bool | None = None
+            if use_date_range_state is not None and use_date_range_state.state in (
+                "on",
+                "off",
+            ):
+                date_range_enabled = date_range_on
             enabled: bool | None = None
-            if enabled_state is not None:
+            if enabled_state is not None and enabled_state.state in ("on", "off"):
                 enabled = enabled_state.state == "on"
 
             actual_start: datetime | None = None
@@ -1829,7 +1926,7 @@ Please update Keymaster to at least v0.1.0-b0
                 actual_code_present=has_code,
                 actual_start=actual_start,
                 actual_end=actual_end,
-                date_range_enabled=date_range_on,
+                date_range_enabled=date_range_enabled,
                 enabled=enabled,
                 persisted_identity_key=persisted_key,
                 blocked_reason=blocked_reason,
@@ -1853,7 +1950,7 @@ Please update Keymaster to at least v0.1.0-b0
                     "has_code": has_code,
                     "start_state": actual_start,
                     "end_state": actual_end,
-                    "use_date_range": date_range_on,
+                    "use_date_range": date_range_enabled,
                     "enabled": enabled,
                 },
             )
