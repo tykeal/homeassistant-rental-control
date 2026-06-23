@@ -1142,7 +1142,7 @@ Please update Keymaster to at least v0.1.0-b0
                     consumed.add(slot.slot)
                     return slot
         fallback_candidates = candidates
-        if require_date_match and reserved_date_windows:
+        if reserved_date_windows:
             fallback_candidates = [
                 slot
                 for slot in candidates
@@ -1295,6 +1295,9 @@ Please update Keymaster to at least v0.1.0-b0
                 slot_name_date_windows.setdefault(key, set()).add(
                     (buffered_start_dt, buffered_end_dt)
                 )
+                active_windows = self._active_checkin_windows_for_name(slot_name)
+                if active_windows:
+                    slot_name_date_windows.setdefault(key, set()).update(active_windows)
 
         for event in calendar:
             slot_name = get_slot_name(
@@ -1864,8 +1867,12 @@ Please update Keymaster to at least v0.1.0-b0
         guest_name: str | None = attrs.get("guest_name")
         if not guest_name:
             return
-        tracked_start = self._coerce_checkin_datetime(attrs.get("start"))
-        tracked_end = self._coerce_checkin_datetime(attrs.get("end"))
+        tracked_start = RentalControlCoordinator._coerce_checkin_datetime(
+            attrs.get("start")
+        )
+        tracked_end = RentalControlCoordinator._coerce_checkin_datetime(
+            attrs.get("end")
+        )
 
         name_matches = [res for res in reservations if res.slot_name == guest_name]
         exact_matches = [
@@ -1920,7 +1927,11 @@ Please update Keymaster to at least v0.1.0-b0
                 desired_start=buffered_start,
                 desired_end=buffered_end,
             )
-            if matched_physical is None:
+            if (
+                matched_physical is None
+                or matched_physical.actual_start != buffered_start
+                or matched_physical.actual_end != buffered_end
+            ):
                 return
             identity_key = make_reservation_fingerprint(
                 self._entry_id, guest_name, tracked_start, tracked_end
@@ -1957,6 +1968,45 @@ Please update Keymaster to at least v0.1.0-b0
             parsed = dt.parse_datetime(value)
             return parsed if isinstance(parsed, datetime) else None
         return None
+
+    def _active_checkin_windows_for_name(
+        self, slot_name: str
+    ) -> set[tuple[datetime, datetime]]:
+        """Return active check-in windows that physical slots must reserve."""
+        domain_data: dict[str, Any] | None = self.hass.data.get(DOMAIN)
+        entry_data: dict[str, Any] = (
+            domain_data.get(self._entry_id, {}) if domain_data is not None else {}
+        )
+        checkin_sensor = entry_data.get(CHECKIN_SENSOR)
+        if checkin_sensor is None or checkin_sensor.state != CHECKIN_STATE_CHECKED_IN:
+            return set()
+        attrs: dict[str, Any] = checkin_sensor.extra_state_attributes
+        if attrs.get("guest_name") != slot_name:
+            return set()
+        tracked_start = RentalControlCoordinator._coerce_checkin_datetime(
+            attrs.get("start")
+        )
+        tracked_end = RentalControlCoordinator._coerce_checkin_datetime(
+            attrs.get("end")
+        )
+        if tracked_start is None or tracked_end is None:
+            return set()
+        buffered_start_raw, buffered_end_raw = apply_buffer(
+            tracked_start,
+            tracked_end,
+            self.code_buffer_before,
+            self.code_buffer_after,
+            self,
+        )
+        buffered_start = (
+            buffered_start_raw
+            if isinstance(buffered_start_raw, datetime)
+            else tracked_start
+        )
+        buffered_end = (
+            buffered_end_raw if isinstance(buffered_end_raw, datetime) else tracked_end
+        )
+        return {(tracked_start, tracked_end), (buffered_start, buffered_end)}
 
     async def _async_fetch_calendar(self) -> list[CalendarEvent]:
         """Fetch iCalendar data from URL and parse into events."""
