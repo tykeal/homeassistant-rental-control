@@ -19,7 +19,7 @@ physical state with persisted mapping status (`reconciliation.py:252-319`).
 | `managed` | `bool` | True only inside `start_slot .. start_slot + max_events - 1`. |
 | `raw_name` | `str \| None` | Raw Keymaster name text state for this refresh; never from Store. |
 | `raw_pin` | `str \| None` | Raw Keymaster PIN in memory only for this refresh; never logged or persisted. |
-| `has_pin` | `bool \| None` | True when PIN is non-empty, false when confirmed blank/unknown/None, none when unreadable. |
+| `has_pin` | `bool \| None` | True when PIN is non-empty, false when confirmed blank/unknown/None, `None` when unreadable. |
 | `actual_start` | `datetime \| None` | Observed Keymaster date-range start when readable. |
 | `actual_end` | `datetime \| None` | Observed Keymaster date-range end when readable. |
 | `date_range_enabled` | `bool \| None` | Observed Keymaster date-range switch state. |
@@ -38,8 +38,9 @@ physical state with persisted mapping status (`reconciliation.py:252-319`).
 - `unavailable` makes `readable == False` via
   `is_unreadable_keymaster_text_state()` (`util.py:82-84`) and forces
   `classification == unknown`.
-- `raw_pin` is memory-only and must not appear in Store, logs, diagnostics, or
-  sensor attributes.
+- `raw_pin` is memory-only and must not appear in Store, logs, or
+  diagnostics. A desired `slot_code` derived from the raw PIN may continue to
+  appear in existing `event_N` sensor attributes for compatibility.
 - A slot with `classification == occupied` cannot receive a different
   reservation until a reset is confirmed empty.
 
