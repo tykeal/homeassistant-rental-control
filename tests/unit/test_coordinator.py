@@ -471,6 +471,45 @@ async def test_missing_checkin_restore_defers_unknown_date_same_name_apply(
     assert coordinator._must_defer_for_checkin_restore(reservations, slots)
 
 
+async def test_missing_checkin_restore_defers_prefixed_unknown_date_apply(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Startup deferral compares prefixed physical display names."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    coordinator.event_prefix = "RC"
+    start = dt_util.as_utc(datetime(2026, 9, 1, 14))
+    end = start + timedelta(days=7)
+    reservations = [
+        Reservation(
+            identity_key="future-bob",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Bob",
+            slot_name="Bob",
+            display_slot_name="RC Bob",
+            slot_code="2222",
+        )
+    ]
+    slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="RC Bob",
+            actual_code_present=True,
+        )
+    ]
+
+    assert coordinator._must_defer_for_checkin_restore(reservations, slots)
+
+
 async def test_coordinator_first_refresh(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:

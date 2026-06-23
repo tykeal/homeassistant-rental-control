@@ -1321,7 +1321,12 @@ class EventOverrides:
                 slot,
             )
             return clear_result
-        return await self._apply_set(coordinator, slot, res, f"replace-{slot}")
+        return await self._apply_set(
+            coordinator,
+            slot,
+            res,
+            f"replace-{slot}-{uuid.uuid4()}",
+        )
 
     def _slot_has_matching_event(
         self,

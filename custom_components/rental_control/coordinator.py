@@ -1143,7 +1143,9 @@ Please update Keymaster to at least v0.1.0-b0
                     consumed.add(slot.slot)
                     return slot
         fallback_candidates = candidates
-        if reserved_date_windows:
+        if reserved_date_windows and (
+            require_date_match or block_unknown_date_fallback
+        ):
             fallback_candidates = [
                 slot
                 for slot in candidates
@@ -1992,14 +1994,34 @@ Please update Keymaster to at least v0.1.0-b0
         )
         if entry_data.get(CHECKIN_SENSOR) is not None:
             return False
-        reservation_names = {res.slot_name for res in reservations}
         return any(
             slot.managed
             and slot.status is _SlotStatus.OCCUPIED
-            and slot.actual_name in reservation_names
             and (slot.actual_start is None or slot.actual_end is None)
+            and any(
+                self._physical_slot_name_matches_reservation(slot.actual_name, res)
+                for res in reservations
+            )
             for slot in managed_slots
         )
+
+    def _physical_slot_name_matches_reservation(
+        self, actual_name: str | None, reservation: _Reservation
+    ) -> bool:
+        """Return whether a physical display name matches a reservation name."""
+        if not actual_name:
+            return False
+        prefix = f"{self.event_prefix} " if self.event_prefix else ""
+        actual_forms = {normalize_slot_name_for_fingerprint(actual_name)}
+        if prefix and actual_name.startswith(prefix):
+            actual_forms.add(
+                normalize_slot_name_for_fingerprint(actual_name[len(prefix) :])
+            )
+        desired_forms = {
+            normalize_slot_name_for_fingerprint(reservation.slot_name),
+            normalize_slot_name_for_fingerprint(reservation.display_slot_name),
+        }
+        return bool(actual_forms & desired_forms)
 
     def _active_checkin_windows_for_name(
         self, slot_name: str
