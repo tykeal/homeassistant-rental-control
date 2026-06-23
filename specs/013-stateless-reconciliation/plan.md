@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 `013-stateless-reconciliation-plan` | **Date**: 2026-06-23 | **Spec**:
 [spec.md](spec.md)
 **Input**: Feature specification from
-`/specs/013-stateless-reconciliation/spec.md` and GitHub issue #607
+`specs/013-stateless-reconciliation/spec.md` and GitHub issue #607
 
 ## Summary
 

@@ -17,18 +17,18 @@ physical state with persisted mapping status (`reconciliation.py:252-319`).
 |-------|------|---------|
 | `slot` | `int` | Physical Keymaster slot number. |
 | `managed` | `bool` | True only inside `start_slot .. start_slot + max_events - 1`. |
-| `raw_name` | `str | None` | Raw Keymaster name text state for this refresh; never from Store. |
-| `raw_pin` | `str | None` | Raw Keymaster PIN in memory only for this refresh; never logged or persisted. |
-| `has_pin` | `bool | None` | True when PIN is non-empty, false when confirmed blank/unknown/None, none when unreadable. |
-| `actual_start` | `datetime | None` | Observed Keymaster date-range start when readable. |
-| `actual_end` | `datetime | None` | Observed Keymaster date-range end when readable. |
-| `date_range_enabled` | `bool | None` | Observed Keymaster date-range switch state. |
-| `enabled` | `bool | None` | Observed Keymaster slot-enabled switch state. |
+| `raw_name` | `str \| None` | Raw Keymaster name text state for this refresh; never from Store. |
+| `raw_pin` | `str \| None` | Raw Keymaster PIN in memory only for this refresh; never logged or persisted. |
+| `has_pin` | `bool \| None` | True when PIN is non-empty, false when confirmed blank/unknown/None, none when unreadable. |
+| `actual_start` | `datetime \| None` | Observed Keymaster date-range start when readable. |
+| `actual_end` | `datetime \| None` | Observed Keymaster date-range end when readable. |
+| `date_range_enabled` | `bool \| None` | Observed Keymaster date-range switch state. |
+| `enabled` | `bool \| None` | Observed Keymaster slot-enabled switch state. |
 | `readable` | `bool` | False when any safety-critical state is `unavailable` or missing. |
 | `empty_confirmed` | `bool` | True only when both name and PIN are cleared by util helpers. |
 | `classification` | `ObservedSlotStatus` | `empty`, `occupied`, `phantom`, or `unknown`. |
 | `normalized_name_forms` | `set[str]` | Full/prefix-stripped/trim-aware normalized names for matching. |
-| `matched_desired_id` | `str | None` | Desired reservation matched by stable name in this refresh. |
+| `matched_desired_id` | `str \| None` | Desired reservation matched by stable name in this refresh. |
 
 **Validation rules**:
 
@@ -59,18 +59,18 @@ current refresh.
 | `buffered_start` | `datetime` | Keymaster date-range start after `apply_buffer()` (`util.py:442-463`). |
 | `buffered_end` | `datetime` | Keymaster date-range end after `apply_buffer()`. |
 | `slot_code` | `str` | Desired PIN for this refresh; generated or manual override. |
-| `code_source` | `generated | manual_observed | manual_config` | Why `slot_code` was chosen; never persisted raw. |
-| `event_uid` | `str | None` | Optional current iCal UID for cache-only aliases. |
+| `code_source` | `generated \| manual_observed \| manual_config` | Why `slot_code` was chosen; never persisted raw. |
+| `event_uid` | `str \| None` | Optional current iCal UID for cache-only aliases. |
 | `booking_aliases` | `set[str]` | Optional booking IDs for cache-only diagnostics. |
 | `eligible` | `bool` | True when existing calendar parsing/config includes the reservation. |
 | `protected_active` | `bool` | True for current checked-in guest from check-in sensor state. |
 | `checked_out` | `bool` | True when check-in sensor says the stay checked out. |
-| `selected_rank` | `int | None` | Rank in the should-be set after active protection and soonest-N selection. |
-| `matched_slot` | `int | None` | Physical slot matched by stable name this refresh. |
-| `assigned_slot` | `int | None` | Physical slot planned to contain this reservation after actions. |
+| `selected_rank` | `int \| None` | Rank in the should-be set after active protection and soonest-N selection. |
+| `matched_slot` | `int \| None` | Physical slot matched by stable name this refresh. |
+| `assigned_slot` | `int \| None` | Physical slot planned to contain this reservation after actions. |
 | `sensor_lookup_keys` | `set[str]` | Current-event fingerprints, UID aliases, and compatibility keys used by `event_N` sensors to find this desired record. |
-| `physical_time_override` | `tuple[datetime, datetime] | None` | Access window derived from a matched physical slot after reversing buffers when manual time override semantics apply. |
-| `overflow_reason` | `str | None` | Why the reservation is not selected or assignable. |
+| `physical_time_override` | `tuple[datetime, datetime] \| None` | Access window derived from a matched physical slot after reversing buffers when manual time override semantics apply. |
+| `overflow_reason` | `str \| None` | Why the reservation is not selected or assignable. |
 
 **Validation rules**:
 
@@ -94,15 +94,15 @@ A stateless per-slot decision emitted by the planner. This replaces the current
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `kind` | `noop | update_in_place | reset | assign | blocked` | Action category for this slot. |
+| `kind` | `noop \| update_in_place \| reset \| assign \| blocked` | Action category for this slot. |
 | `slot` | `int` | Physical Keymaster slot number. |
-| `desired_id` | `str | None` | Desired reservation involved in the action. |
-| `matched_by` | `name_exact | name_trimmed | name_prefixed | duplicate_order | none` | How identity was established. |
+| `desired_id` | `str \| None` | Desired reservation involved in the action. |
+| `matched_by` | `name_exact \| name_trimmed \| name_prefixed \| duplicate_order \| none` | How identity was established. |
 | `requires_confirmed_empty` | `bool` | True before any replacement PIN can be written. |
-| `reason` | `str | None` | Diagnostic reason such as stale, duplicate, phantom, drift, or unreadable. |
+| `reason` | `str \| None` | Diagnostic reason such as stale, duplicate, phantom, drift, or unreadable. |
 | `sequence` | `list[PhysicalOperation]` | Ordered service operations for apply: clear, update_times, set, or none. |
 | `preflight_read` | `bool` | True when apply must re-read physical name/PIN immediately before the operation. |
-| `blocked_reason` | `str | None` | Why no physical write is safe this cycle. |
+| `blocked_reason` | `str \| None` | Why no physical write is safe this cycle. |
 
 **Action semantics**:
 
@@ -159,7 +159,7 @@ Optional HA Store cache record. The current schema/key may remain
 |-------|------|---------|
 | `schema_version` | `int` | Cache schema version. Existing v1 files are accepted as cache input. |
 | `entry_id` | `str` | Integration config entry scope. |
-| `lockname` | `str | None` | Keymaster lock scope for diagnostics only. |
+| `lockname` | `str \| None` | Keymaster lock scope for diagnostics only. |
 | `updated_at` | `str` | Last successful cache write. |
 | `aliases` | `dict[str, AliasRecord]` | UID/booking aliases keyed by normalized stable name and start order. |
 | `last_plan` | `dict[str, Any]` | Redacted last stateless plan diagnostics. |

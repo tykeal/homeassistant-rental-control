@@ -17,7 +17,7 @@ without persisted fences, and the Store is cache-only.
 ## Developer Setup
 
 ```bash
-cd /home/tykeal/repos/personal/homeassistant/rental-control
+cd path/to/homeassistant-rental-control
 uv sync
 ```
 
@@ -240,7 +240,7 @@ Before merging the implementation PR, run:
 ```bash
 uv run pytest tests/ -x -q
 uv run ruff check custom_components/ tests/
-pre-commit run --all-files
+uv run pre-commit run --all-files
 ```
 
 All tests and hooks must pass without `--no-verify`, `--no-gpg-sign`, or other
