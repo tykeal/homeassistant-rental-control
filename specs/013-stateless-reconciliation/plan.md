@@ -32,7 +32,7 @@ protection, deterministic code generation, check-in sensors, and read-only
 
 ## Technical Context
 
-**Language/Version**: Python >=3.14.2
+**Language/Version**: Python ≥3.14.2
 **Primary Dependencies**: Home Assistant core, Keymaster integration,
 `pytest-homeassistant-custom-component`, existing `homeassistant.helpers.storage.Store`
 **Storage**: Home Assistant `Store` remains available but is cache-only for
