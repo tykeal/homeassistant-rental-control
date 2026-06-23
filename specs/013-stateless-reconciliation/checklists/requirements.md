@@ -5,8 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Specification Quality Checklist: Stateless Slot Reconciliation
 
-**Purpose**: Validate specification completeness and quality before proceeding
- to planning
+**Purpose**: Validate specification completeness and quality before planning
 **Created**: 2026-06-23
 **Feature**: [spec.md](../spec.md)
 
