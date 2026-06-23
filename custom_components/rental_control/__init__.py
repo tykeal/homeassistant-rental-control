@@ -96,17 +96,18 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     startup_slots_unreadable, _ = _needs_startup_readability_refresh(hass, coordinator)
 
+    hass.data[DOMAIN][config_entry.entry_id] = {
+        COORDINATOR: coordinator,
+        UNSUB_LISTENERS: [],
+    }
+
     # Perform first data refresh before platform setup to guarantee
     # coordinator.data is populated when entities are created
     try:
         await coordinator.async_config_entry_first_refresh()
     except ConfigEntryNotReady:
+        hass.data[DOMAIN].pop(config_entry.entry_id, None)
         raise
-
-    hass.data[DOMAIN][config_entry.entry_id] = {
-        COORDINATOR: coordinator,
-        UNSUB_LISTENERS: [],
-    }
 
     async_arm_startup_readability_refresh(
         hass,

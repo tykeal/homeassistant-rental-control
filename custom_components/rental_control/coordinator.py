@@ -1964,13 +1964,25 @@ Please update Keymaster to at least v0.1.0-b0
                 desired_start=buffered_start,
                 desired_end=buffered_end,
             )
-            if matched_physical is None or (
+            same_name_slots = [
+                slot
+                for slot in managed_slots
+                if slot.managed
+                and slot.status is _SlotStatus.OCCUPIED
+                and self._physical_slot_name_matches_name(
+                    slot.actual_name, guest_name, display_slot_name
+                )
+            ]
+            if matched_physical is None:
+                return
+            if (
                 matched_physical.actual_start is not None
                 and matched_physical.actual_end is not None
                 and (
                     matched_physical.actual_start != buffered_start
                     or matched_physical.actual_end != buffered_end
                 )
+                and len(same_name_slots) != 1
             ):
                 return
             identity_key = make_reservation_fingerprint(
@@ -2014,26 +2026,36 @@ Please update Keymaster to at least v0.1.0-b0
     ) -> bool:
         """Return whether apply should wait for check-in sensor restore."""
         domain_data: dict[str, Any] | None = self.hass.data.get(DOMAIN)
-        entry_data: dict[str, Any] = (
-            domain_data.get(self._entry_id, {}) if domain_data is not None else {}
-        )
+        if domain_data is None or self._entry_id not in domain_data:
+            return False
+        entry_data: dict[str, Any] = domain_data.get(self._entry_id, {})
         if entry_data.get(CHECKIN_SENSOR) is not None:
             return False
         return any(
             slot.managed
             and slot.status is _SlotStatus.OCCUPIED
-            and (slot.actual_start is None or slot.actual_end is None)
-            and any(
-                self._physical_slot_name_matches_reservation(slot.actual_name, res)
-                for res in reservations
+            and (
+                not any(
+                    self._physical_slot_name_matches_reservation(slot.actual_name, res)
+                    for res in reservations
+                )
+                or (
+                    (slot.actual_start is None or slot.actual_end is None)
+                    and any(
+                        self._physical_slot_name_matches_reservation(
+                            slot.actual_name, res
+                        )
+                        for res in reservations
+                    )
+                )
             )
             for slot in managed_slots
         )
 
-    def _physical_slot_name_matches_reservation(
-        self, actual_name: str | None, reservation: _Reservation
+    def _physical_slot_name_matches_name(
+        self, actual_name: str | None, slot_name: str, display_slot_name: str
     ) -> bool:
-        """Return whether a physical display name matches a reservation name."""
+        """Return whether a physical display name matches a logical name."""
         if not actual_name:
             return False
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
@@ -2043,10 +2065,18 @@ Please update Keymaster to at least v0.1.0-b0
                 normalize_slot_name_for_fingerprint(actual_name[len(prefix) :])
             )
         desired_forms = {
-            normalize_slot_name_for_fingerprint(reservation.slot_name),
-            normalize_slot_name_for_fingerprint(reservation.display_slot_name),
+            normalize_slot_name_for_fingerprint(slot_name),
+            normalize_slot_name_for_fingerprint(display_slot_name),
         }
         return bool(actual_forms & desired_forms)
+
+    def _physical_slot_name_matches_reservation(
+        self, actual_name: str | None, reservation: _Reservation
+    ) -> bool:
+        """Return whether a physical display name matches a reservation name."""
+        return self._physical_slot_name_matches_name(
+            actual_name, reservation.slot_name, reservation.display_slot_name
+        )
 
     def _active_checkin_windows_for_name(
         self, slot_name: str

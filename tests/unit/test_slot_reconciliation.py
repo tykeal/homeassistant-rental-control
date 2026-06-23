@@ -344,6 +344,91 @@ def test_stateless_duplicate_name_partial_physical_match_uses_observed_dates() -
     assert plan.selected == {"bob-late": 2, "bob-early": 1}
 
 
+def test_stateless_duplicate_name_date_shift_preserves_physical_order() -> None:
+    """Complete same-name groups pair by order when dates shift onto old dates."""
+    bob_one = _make_desired_reservation(
+        desired_id="bob-one",
+        stable_slot_name="Bob",
+        display_slot_name="Bob",
+        start=_dt(2026, 8, 8),
+        end=_dt(2026, 8, 15),
+        slot_code="1111",
+    )
+    bob_two = _make_desired_reservation(
+        desired_id="bob-two",
+        stable_slot_name="Bob",
+        display_slot_name="Bob",
+        start=_dt(2026, 8, 15),
+        end=_dt(2026, 8, 22),
+        slot_code="2222",
+    )
+    slot_one = ObservedSlot(
+        slot=1,
+        managed=True,
+        raw_name="Bob",
+        raw_pin="1111",
+        actual_start=_dt(2026, 8, 1),
+        actual_end=_dt(2026, 8, 8),
+    )
+    slot_two = ObservedSlot(
+        slot=2,
+        managed=True,
+        raw_name="Bob",
+        raw_pin="2222",
+        actual_start=_dt(2026, 8, 8),
+        actual_end=_dt(2026, 8, 15),
+    )
+
+    plan = compute_stateless_plan(
+        [slot_one, slot_two],
+        [bob_one, bob_two],
+        max_events=2,
+        plan_id="stateless-duplicate-order",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert plan.selected == {"bob-one": 1, "bob-two": 2}
+
+
+def test_stateless_prefix_equivalent_names_do_not_share_slot() -> None:
+    """A physical slot already matched by one name group cannot be reused."""
+    prefixed = _make_desired_reservation(
+        desired_id="prefixed",
+        stable_slot_name="RC Bob",
+        display_slot_name="RC Bob",
+        slot_code="1111",
+    )
+    plain = _make_desired_reservation(
+        desired_id="plain",
+        stable_slot_name="Bob",
+        display_slot_name="RC Bob",
+        start=_dt(2026, 7, 8),
+        end=_dt(2026, 7, 15),
+        slot_code="2222",
+    )
+    occupied_slot = ObservedSlot(
+        slot=1,
+        managed=True,
+        raw_name="RC Bob",
+        raw_pin="1111",
+        actual_start=prefixed.buffered_start,
+        actual_end=prefixed.buffered_end,
+    )
+    empty_slot = ObservedSlot(slot=2, managed=True, raw_name="", has_pin=False)
+
+    plan = compute_stateless_plan(
+        [occupied_slot, empty_slot],
+        [prefixed, plain],
+        max_events=2,
+        plan_id="stateless-prefix-unique",
+        generated_at=_dt(2026, 6, 1),
+        prefix="RC ",
+    )
+
+    assert len(set(plan.selected.values())) == len(plan.selected)
+    assert plan.selected == {"prefixed": 1, "plain": 2}
+
+
 def test_duplicate_name_partial_physical_match_uses_observed_dates() -> None:
     """Legacy desired plan also keeps a same-name slot paired by exact dates."""
     early = Reservation(
@@ -389,6 +474,62 @@ def test_duplicate_name_partial_physical_match_uses_observed_dates() -> None:
     )
 
     assert plan.selected == {"bob-late": 2, "bob-early": 1}
+
+
+def test_duplicate_name_date_shift_preserves_physical_order() -> None:
+    """Legacy plan pairs complete same-name groups by physical order."""
+    bob_one = Reservation(
+        identity_key="bob-one",
+        start=_dt(2026, 8, 8),
+        end=_dt(2026, 8, 15),
+        buffered_start=_dt(2026, 8, 8),
+        buffered_end=_dt(2026, 8, 15),
+        summary="Bob",
+        slot_name="Bob",
+        display_slot_name="Bob",
+        slot_code="1111",
+    )
+    bob_two = Reservation(
+        identity_key="bob-two",
+        start=_dt(2026, 8, 15),
+        end=_dt(2026, 8, 22),
+        buffered_start=_dt(2026, 8, 15),
+        buffered_end=_dt(2026, 8, 22),
+        summary="Bob",
+        slot_name="Bob",
+        display_slot_name="Bob",
+        slot_code="2222",
+    )
+    slot_one = ManagedSlot(
+        slot=1,
+        managed=True,
+        status=SlotStatus.OCCUPIED,
+        actual_name="Bob",
+        actual_code="1111",
+        actual_code_present=True,
+        actual_start=_dt(2026, 8, 1),
+        actual_end=_dt(2026, 8, 8),
+    )
+    slot_two = ManagedSlot(
+        slot=2,
+        managed=True,
+        status=SlotStatus.OCCUPIED,
+        actual_name="Bob",
+        actual_code="2222",
+        actual_code_present=True,
+        actual_start=_dt(2026, 8, 8),
+        actual_end=_dt(2026, 8, 15),
+    )
+
+    plan = compute_desired_plan(
+        [bob_one, bob_two],
+        [slot_one, slot_two],
+        max_events=2,
+        plan_id="legacy-duplicate-order",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert plan.selected == {"bob-one": 1, "bob-two": 2}
 
 
 def _make_desired_plan(

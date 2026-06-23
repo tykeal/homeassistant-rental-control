@@ -371,6 +371,56 @@ async def test_checkin_protection_synthesizes_missing_active_physical_stay(
     assert reservations[0].slot_code == "1111"
 
 
+async def test_checkin_missing_active_survives_buffer_config_change(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A changed buffer does not make an active physical stay clearable."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    coordinator.code_buffer_before = 60
+    coordinator.code_buffer_after = 60
+    start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end = start + timedelta(days=7)
+    old_buffered_start = start
+    old_buffered_end = end
+    hass.data[DOMAIN] = {
+        coordinator._entry_id: {
+            CHECKIN_SENSOR: MagicMock(
+                state=CHECKIN_STATE_CHECKED_IN,
+                extra_state_attributes={
+                    "guest_name": "Bob",
+                    "start": start,
+                    "end": end,
+                    "summary": "Bob",
+                },
+            )
+        }
+    }
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=old_buffered_start,
+            actual_end=old_buffered_end,
+        )
+    ]
+    reservations: list[Reservation] = []
+
+    coordinator._apply_checkin_protection(reservations, observed_slots)
+
+    assert len(reservations) == 1
+    assert reservations[0].protected_active
+    assert reservations[0].slot_code == "1111"
+
+
 async def test_checkin_missing_active_does_not_protect_future_same_name(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
@@ -554,6 +604,48 @@ async def test_missing_checkin_restore_defers_unknown_date_same_name_apply(
             actual_code_present=True,
         )
     ]
+    hass.data[DOMAIN] = {coordinator._entry_id: {}}
+
+    assert coordinator._must_defer_for_checkin_restore(reservations, slots)
+
+
+async def test_missing_checkin_restore_defers_stale_physical_occupant(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Startup apply waits before clearing a possible active missing stay."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 9, 1, 14))
+    end = start + timedelta(days=7)
+    reservations = [
+        Reservation(
+            identity_key="future-alice",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Alice",
+            slot_name="Alice",
+            display_slot_name="Alice",
+            slot_code="2222",
+        )
+    ]
+    slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code_present=True,
+            actual_start=start - timedelta(days=14),
+            actual_end=end - timedelta(days=14),
+        )
+    ]
+    hass.data[DOMAIN] = {coordinator._entry_id: {}}
 
     assert coordinator._must_defer_for_checkin_restore(reservations, slots)
 
@@ -593,6 +685,7 @@ async def test_missing_checkin_restore_defers_prefixed_unknown_date_apply(
             actual_code_present=True,
         )
     ]
+    hass.data[DOMAIN] = {coordinator._entry_id: {}}
 
     assert coordinator._must_defer_for_checkin_restore(reservations, slots)
 

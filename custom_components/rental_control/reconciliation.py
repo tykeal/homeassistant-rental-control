@@ -1981,23 +1981,37 @@ def compute_desired_plan(
         pairs: list[tuple[ManagedSlot, Reservation]] = []
         paired_slots: set[int] = set()
         paired_reservations: set[str] = set()
-        for res in desired_group:
-            exact_matches = [
-                ms
+        complete_known_duplicate_group = (
+            len(desired_group) > 1
+            and len(physical_group) >= len(desired_group)
+            and all(
+                ms.actual_start is not None and ms.actual_end is not None
                 for ms in physical_group
-                if ms.slot not in paired_slots
-                and _slot_times_match(
-                    ms.actual_start,
-                    ms.actual_end,
-                    res.buffered_start,
-                    res.buffered_end,
-                )
-            ]
-            if exact_matches:
-                ms = exact_matches[0]
+            )
+        )
+        if complete_known_duplicate_group:
+            for ms, res in zip(physical_group, desired_group, strict=False):
                 pairs.append((ms, res))
                 paired_slots.add(ms.slot)
                 paired_reservations.add(res.identity_key)
+        else:
+            for res in desired_group:
+                exact_matches = [
+                    ms
+                    for ms in physical_group
+                    if ms.slot not in paired_slots
+                    and _slot_times_match(
+                        ms.actual_start,
+                        ms.actual_end,
+                        res.buffered_start,
+                        res.buffered_end,
+                    )
+                ]
+                if exact_matches:
+                    ms = exact_matches[0]
+                    pairs.append((ms, res))
+                    paired_slots.add(ms.slot)
+                    paired_reservations.add(res.identity_key)
         remaining_physical = [
             ms for ms in physical_group if ms.slot not in paired_slots
         ]
@@ -2225,7 +2239,8 @@ def compute_stateless_plan(
         physical_group = [
             slot
             for slot in occupied
-            if _names_match(
+            if slot.slot not in slot_to_desired
+            and _names_match(
                 slot.raw_name,
                 group[0].stable_slot_name,
                 group[0].display_slot_name,
@@ -2241,23 +2256,37 @@ def compute_stateless_plan(
         pairs: list[tuple[ObservedSlot, DesiredReservation]] = []
         paired_slots: set[int] = set()
         paired_desired: set[str] = set()
-        for desired in group:
-            exact_matches = [
-                slot
+        complete_known_duplicate_group = (
+            len(group) > 1
+            and len(physical_group) >= len(group)
+            and all(
+                slot.actual_start is not None and slot.actual_end is not None
                 for slot in physical_group
-                if slot.slot not in paired_slots
-                and _slot_times_match(
-                    slot.actual_start,
-                    slot.actual_end,
-                    desired.buffered_start,
-                    desired.buffered_end,
-                )
-            ]
-            if exact_matches:
-                slot = exact_matches[0]
+            )
+        )
+        if complete_known_duplicate_group:
+            for slot, desired in zip(physical_group, group, strict=False):
                 pairs.append((slot, desired))
                 paired_slots.add(slot.slot)
                 paired_desired.add(desired.desired_id)
+        else:
+            for desired in group:
+                exact_matches = [
+                    slot
+                    for slot in physical_group
+                    if slot.slot not in paired_slots
+                    and _slot_times_match(
+                        slot.actual_start,
+                        slot.actual_end,
+                        desired.buffered_start,
+                        desired.buffered_end,
+                    )
+                ]
+                if exact_matches:
+                    slot = exact_matches[0]
+                    pairs.append((slot, desired))
+                    paired_slots.add(slot.slot)
+                    paired_desired.add(desired.desired_id)
         remaining_physical = [
             slot for slot in physical_group if slot.slot not in paired_slots
         ]
