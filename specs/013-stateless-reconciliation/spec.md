@@ -227,7 +227,7 @@ refreshes converge to the desired state without using persisted data as truth.
 **Acceptance Scenarios**:
 
 1. **Given** a physical managed slot has both name and PIN empty, blank,
-   `unknown`, or missing-equivalent, **When** reconciliation runs, **Then** the
+   `unknown`, or `None`, **When** reconciliation runs, **Then** the
    slot is treated as physically free regardless of cached status.
 2. **Given** a physical managed slot contains a name or PIN that matches no
    should-be reservation, **When** reconciliation runs, **Then** the slot is
@@ -424,8 +424,8 @@ refreshes converge to the desired state without using persisted data as truth.
   exactly one managed slot.
 - **SC-004**: In 100% of refreshes where all required physical operations are
   confirmed, the set of programmed managed slots equals the should-be set of
-  soonest eligible reservations plus protected active guests, up to managed-slot
-  capacity.
+  reservations, with active-guest protection and managed-slot capacity already
+  reflected in that should-be set.
 - **SC-005**: In 100% of missing, deleted, stale, or contradictory persisted
   cache scenarios, normal refresh cycles reconcile correctly from physical
   Keymaster state and the calendar without manual cache repair.
