@@ -8,6 +8,8 @@ pythonenv*
 .coverage
 venv
 .venv
+dist/
+*.egg-info/
 htmlcov/
 .pytest_cache/
 *.pyc
@@ -16,3 +18,8 @@ htmlcov/
 .aislop/install_id
 .tox/
 *.log
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.idea/
