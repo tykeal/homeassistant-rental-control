@@ -345,6 +345,19 @@ class ManagedSlot:
     last_error: str | None = None
 
 
+def _keymaster_text_cleared(value: str | None) -> bool:
+    """Return whether a Keymaster text state represents a cleared value."""
+    if value is None:
+        return True
+    text = value.strip().casefold()
+    return text == "" or text == "unknown"
+
+
+def _keymaster_text_unreadable(value: str | None) -> bool:
+    """Return whether a Keymaster text state is unreadable."""
+    return value is not None and value.strip().casefold() == "unavailable"
+
+
 @dataclass(slots=True)
 class ObservedSlot:
     """Physical Keymaster slot facts read during one stateless refresh."""
@@ -366,6 +379,13 @@ class ObservedSlot:
 
     def __post_init__(self) -> None:
         """Validate and derive normalized physical name forms."""
+        if self.has_pin is None and self.raw_pin is not None:
+            self.has_pin = not _keymaster_text_cleared(self.raw_pin)
+        if _keymaster_text_unreadable(self.raw_name) or _keymaster_text_unreadable(
+            self.raw_pin
+        ):
+            self.readable = False
+            self.empty_confirmed = False
         if not self.managed:
             self.classification = ObservedSlotStatus.UNKNOWN
         elif not self.readable:

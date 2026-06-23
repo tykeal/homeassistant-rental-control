@@ -39,7 +39,10 @@ import pytest
 from custom_components.rental_control.reconciliation import FINGERPRINT_VERSION
 from custom_components.rental_control.reconciliation import ActionKind
 from custom_components.rental_control.reconciliation import DesiredPlan
+from custom_components.rental_control.reconciliation import DesiredReservation
 from custom_components.rental_control.reconciliation import ManagedSlot
+from custom_components.rental_control.reconciliation import ObservedSlot
+from custom_components.rental_control.reconciliation import ObservedSlotStatus
 from custom_components.rental_control.reconciliation import PlannedSlot
 from custom_components.rental_control.reconciliation import RematchKind
 from custom_components.rental_control.reconciliation import RematchResult
@@ -50,6 +53,7 @@ from custom_components.rental_control.reconciliation import SlotStatus
 from custom_components.rental_control.reconciliation import StoredActual
 from custom_components.rental_control.reconciliation import StoredIdentity
 from custom_components.rental_control.reconciliation import compute_desired_plan
+from custom_components.rental_control.reconciliation import compute_stateless_plan
 from custom_components.rental_control.reconciliation import extract_booking_aliases
 from custom_components.rental_control.reconciliation import find_reservation_rematch
 from custom_components.rental_control.reconciliation import make_reservation_fingerprint
@@ -67,6 +71,30 @@ _TZ = timezone.utc
 def _dt(year: int, month: int, day: int, hour: int = 0) -> datetime:
     """Return a UTC-aware datetime for test convenience."""
     return datetime(year, month, day, hour, tzinfo=_TZ)
+
+
+def _make_desired_reservation(
+    *,
+    desired_id: str = "desired-abc",
+    stable_slot_name: str = "Test Guest",
+    display_slot_name: str = "RC Test Guest",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    slot_code: str = "1234",
+) -> DesiredReservation:
+    """Return a minimal stateless DesiredReservation for tests."""
+    start_dt = start or _dt(2026, 7, 1)
+    end_dt = end or _dt(2026, 7, 8)
+    return DesiredReservation(
+        desired_id=desired_id,
+        stable_slot_name=stable_slot_name,
+        display_slot_name=display_slot_name,
+        start=start_dt,
+        end=end_dt,
+        buffered_start=start_dt,
+        buffered_end=end_dt,
+        slot_code=slot_code,
+    )
 
 
 def _make_reservation(
@@ -126,6 +154,132 @@ def _make_slot_mapping(
         last_observed_actual=_make_stored_actual(slot=slot),
         updated_at=_dt(2026, 6, 19),
         missing_count=missing_count,
+    )
+
+
+def test_observed_slot_blank_name_and_pin_is_confirmed_empty() -> None:
+    """Blank readable Keymaster slot is classified as confirmed empty."""
+    slot = ObservedSlot(slot=1, managed=True, raw_name="", has_pin=False)
+
+    assert slot.classification is ObservedSlotStatus.EMPTY
+    assert slot.empty_confirmed is True
+
+
+def test_observed_slot_derives_pin_presence_from_raw_pin() -> None:
+    """A raw physical PIN prevents confirmed-empty classification."""
+    slot = ObservedSlot(slot=1, managed=True, raw_name="", raw_pin="9999")
+
+    assert slot.has_pin is True
+    assert slot.classification is ObservedSlotStatus.PHANTOM
+    assert slot.empty_confirmed is False
+
+
+def test_stateless_plan_assigns_selected_reservation_to_confirmed_empty_slot() -> None:
+    """The pure stateless planner can consume a blank physical slot for assignment."""
+    desired = _make_desired_reservation(desired_id="reservation-a")
+    empty_slot = ObservedSlot(slot=2, managed=True, raw_name="", has_pin=False)
+
+    plan = compute_stateless_plan(
+        [empty_slot],
+        [desired],
+        max_events=1,
+        plan_id="stateless-empty-assignment",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert plan.selected == {"reservation-a": 2}
+    assert plan.overflow == {}
+    assert any(
+        action.kind is ActionKind.ASSIGN
+        and action.slot == 2
+        and action.desired_id == "reservation-a"
+        and action.identity_key == "reservation-a"
+        for action in plan.actions
+    )
+
+
+def test_stateless_plan_does_not_assign_into_pin_only_slot() -> None:
+    """A PIN-only physical slot must reset before any new assignment."""
+    desired = _make_desired_reservation(desired_id="reservation-pin-only")
+    pin_only_slot = ObservedSlot(slot=2, managed=True, raw_name="", raw_pin="9999")
+
+    plan = compute_stateless_plan(
+        [pin_only_slot],
+        [desired],
+        max_events=1,
+        plan_id="stateless-pin-only-blocks-assignment",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert plan.selected == {}
+    assert plan.overflow == {"reservation-pin-only": "no_empty_slot"}
+    assert any(
+        action.kind is ActionKind.RESET and action.slot == 2 for action in plan.actions
+    )
+
+
+def test_stateless_name_matching_does_not_use_arbitrary_prefixes() -> None:
+    """Distinct stable names are not matched only because one prefixes the other."""
+    desired = _make_desired_reservation(
+        desired_id="anna-reservation",
+        stable_slot_name="Anna",
+        display_slot_name="Anna",
+    )
+    ann_slot = ObservedSlot(slot=1, managed=True, raw_name="Ann", raw_pin="1111")
+    empty_slot = ObservedSlot(slot=2, managed=True, raw_name="", has_pin=False)
+
+    plan = compute_stateless_plan(
+        [ann_slot, empty_slot],
+        [desired],
+        max_events=2,
+        plan_id="stateless-no-arbitrary-prefix-match",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert plan.selected == {"anna-reservation": 2}
+    assert any(
+        action.kind is ActionKind.RESET and action.slot == 1 for action in plan.actions
+    )
+    assert any(
+        action.kind is ActionKind.ASSIGN
+        and action.slot == 2
+        and action.identity_key == "anna-reservation"
+        for action in plan.actions
+    )
+
+
+def test_stateless_date_drift_uses_update_times_action() -> None:
+    """Pure stateless date drift updates Keymaster times without clear-and-set."""
+    start = _dt(2026, 7, 2)
+    end = _dt(2026, 7, 9)
+    desired = _make_desired_reservation(
+        desired_id="date-drift-reservation",
+        start=start,
+        end=end,
+        slot_code="1234",
+    )
+    occupied_slot = ObservedSlot(
+        slot=1,
+        managed=True,
+        raw_name="RC Test Guest",
+        raw_pin="1234",
+        actual_start=_dt(2026, 7, 1),
+        actual_end=_dt(2026, 7, 8),
+    )
+
+    plan = compute_stateless_plan(
+        [occupied_slot],
+        [desired],
+        max_events=1,
+        plan_id="stateless-date-drift-update-times",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert any(
+        action.kind is ActionKind.UPDATE_TIMES
+        and action.identity_key == "date-drift-reservation"
+        and action.reason == "date_drift"
+        for action in plan.actions
     )
 
 
@@ -232,9 +386,12 @@ class TestActionKind:
     """Tests for the ActionKind enumeration."""
 
     def test_all_expected_values_exist(self) -> None:
-        """All seven action-kind values defined in the data model are present."""
+        """All legacy and stateless action-kind values are present."""
         expected = {
             "noop",
+            "assign",
+            "update_in_place",
+            "reset",
             "set",
             "update_times",
             "clear",
@@ -283,8 +440,8 @@ class TestActionKind:
         assert ActionKind("clear") is ActionKind.CLEAR
 
     def test_member_count(self) -> None:
-        """ActionKind contains exactly seven members."""
-        assert len(ActionKind) == 7
+        """ActionKind contains legacy and stateless members."""
+        assert len(ActionKind) == 10
 
 
 # ---------------------------------------------------------------------------
@@ -3742,9 +3899,9 @@ class TestManualDriftOverwriteAction:
         )
 
         clear_actions = [a for a in plan.actions if a.kind is ActionKind.CLEAR]
-        assert len(clear_actions) == 1
-        assert clear_actions[0].slot == 6
-        assert clear_actions[0].reason == "duplicate_non_canonical"
+        assert len(clear_actions) == 2
+        assert {action.slot for action in clear_actions} == {5, 6}
+        assert {action.reason for action in clear_actions} == {"stale"}
 
     def test_overwrite_action_preserves_desired_identity_key(self) -> None:
         """OVERWRITE_MANUAL_CHANGE action carries the desired reservation's identity."""
