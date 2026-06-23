@@ -1983,7 +1983,7 @@ def compute_desired_plan(
         paired_reservations: set[str] = set()
         complete_known_duplicate_group = (
             len(desired_group) > 1
-            and len(physical_group) >= len(desired_group)
+            and len(physical_group) == len(desired_group)
             and all(
                 ms.actual_start is not None and ms.actual_end is not None
                 for ms in physical_group
@@ -2258,7 +2258,7 @@ def compute_stateless_plan(
         paired_desired: set[str] = set()
         complete_known_duplicate_group = (
             len(group) > 1
-            and len(physical_group) >= len(group)
+            and len(physical_group) == len(group)
             and all(
                 slot.actual_start is not None and slot.actual_end is not None
                 for slot in physical_group

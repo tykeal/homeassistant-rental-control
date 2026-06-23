@@ -225,6 +225,7 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
         # Reconciliation state (T022/T031/T033)
         self._latest_plan: _DesiredPlan | None = None
         self._latest_res_by_key: dict[str, _Reservation] = {}
+        self._checkin_restore_pending = False
 
         super().__init__(
             hass=hass,
@@ -2028,6 +2029,8 @@ Please update Keymaster to at least v0.1.0-b0
         domain_data: dict[str, Any] | None = self.hass.data.get(DOMAIN)
         if domain_data is None or self._entry_id not in domain_data:
             return False
+        if not self._checkin_restore_pending:
+            return False
         entry_data: dict[str, Any] = domain_data.get(self._entry_id, {})
         if entry_data.get(CHECKIN_SENSOR) is not None:
             return False
@@ -2040,7 +2043,18 @@ Please update Keymaster to at least v0.1.0-b0
                     for res in reservations
                 )
                 or (
-                    (slot.actual_start is None or slot.actual_end is None)
+                    (
+                        slot.actual_start is None
+                        or slot.actual_end is None
+                        or not any(
+                            slot.actual_start == res.buffered_start
+                            and slot.actual_end == res.buffered_end
+                            for res in reservations
+                            if self._physical_slot_name_matches_reservation(
+                                slot.actual_name, res
+                            )
+                        )
+                    )
                     and any(
                         self._physical_slot_name_matches_reservation(
                             slot.actual_name, res
@@ -2387,8 +2401,6 @@ Please update Keymaster to at least v0.1.0-b0
         self.ignore_non_reserved = bool(config.get(CONF_IGNORE_NON_RESERVED))
         self.verify_ssl = bool(config.get(CONF_VERIFY_SSL))
 
-        await self.async_request_refresh()
-
         buffer_changed = (
             self.code_buffer_before != previous_buffer_before
             or self.code_buffer_after != previous_buffer_after
@@ -2397,6 +2409,7 @@ Please update Keymaster to at least v0.1.0-b0
             await self._async_update_buffer_times(
                 previous_buffer_before, previous_buffer_after
             )
+        await self.async_request_refresh()
 
     async def _async_update_buffer_times(self, old_before: int, old_after: int) -> None:
         """Re-apply buffer to all assigned slots after config change.

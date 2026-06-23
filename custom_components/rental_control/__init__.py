@@ -100,6 +100,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         COORDINATOR: coordinator,
         UNSUB_LISTENERS: [],
     }
+    coordinator._checkin_restore_pending = True
 
     # Perform first data refresh before platform setup to guarantee
     # coordinator.data is populated when entities are created
@@ -120,6 +121,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     await async_start_listener(hass, config_entry)
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
+    coordinator._checkin_restore_pending = False
 
     # Register keymaster event bus listener after platform setup
     # so the checkin sensor reference is available (T024/T026)

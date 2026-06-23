@@ -25,6 +25,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rental_control.const import CHECKIN_SENSOR
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
+from custom_components.rental_control.const import CONF_CODE_BUFFER_BEFORE
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import CONF_MAX_EVENTS
 from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
@@ -605,6 +606,7 @@ async def test_missing_checkin_restore_defers_unknown_date_same_name_apply(
         )
     ]
     hass.data[DOMAIN] = {coordinator._entry_id: {}}
+    coordinator._checkin_restore_pending = True
 
     assert coordinator._must_defer_for_checkin_restore(reservations, slots)
 
@@ -646,6 +648,49 @@ async def test_missing_checkin_restore_defers_stale_physical_occupant(
         )
     ]
     hass.data[DOMAIN] = {coordinator._entry_id: {}}
+    coordinator._checkin_restore_pending = True
+
+    assert coordinator._must_defer_for_checkin_restore(reservations, slots)
+
+
+async def test_missing_checkin_restore_defers_same_name_different_dates(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Startup waits before rewriting a possible active same-name slot."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 9, 1, 14))
+    end = start + timedelta(days=7)
+    reservations = [
+        Reservation(
+            identity_key="future-bob",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Bob",
+            slot_name="Bob",
+            display_slot_name="Bob",
+            slot_code="2222",
+        )
+    ]
+    slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code_present=True,
+            actual_start=start - timedelta(days=14),
+            actual_end=end - timedelta(days=14),
+        )
+    ]
+    hass.data[DOMAIN] = {coordinator._entry_id: {}}
+    coordinator._checkin_restore_pending = True
 
     assert coordinator._must_defer_for_checkin_restore(reservations, slots)
 
@@ -686,6 +731,7 @@ async def test_missing_checkin_restore_defers_prefixed_unknown_date_apply(
         )
     ]
     hass.data[DOMAIN] = {coordinator._entry_id: {}}
+    coordinator._checkin_restore_pending = True
 
     assert coordinator._must_defer_for_checkin_restore(reservations, slots)
 
@@ -969,6 +1015,43 @@ async def test_coordinator_update_interval_change(
     assert coordinator.refresh_frequency != initial_frequency
     assert coordinator.update_interval == timedelta(minutes=30)
     assert coordinator.async_request_refresh.called
+
+
+async def test_buffer_config_updates_times_before_refresh(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Buffer changes update existing overrides before refreshing plans."""
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    calls: list[str] = []
+
+    async def update_buffer_times(_old_before: int, _old_after: int) -> None:
+        """Record buffer update ordering."""
+        calls.append("buffer")
+
+    async def request_refresh() -> None:
+        """Record refresh ordering."""
+        calls.append("refresh")
+
+    new_config = dict(mock_config_entry.data)
+    new_config[CONF_REFRESH_FREQUENCY] = DEFAULT_REFRESH_FREQUENCY
+    new_config[CONF_CODE_BUFFER_BEFORE] = 60
+
+    with (
+        patch.object(
+            coordinator,
+            "_async_update_buffer_times",
+            side_effect=update_buffer_times,
+        ),
+        patch.object(
+            coordinator,
+            "async_request_refresh",
+            side_effect=request_refresh,
+        ),
+    ):
+        await coordinator.update_config(new_config)
+
+    assert calls == ["buffer", "refresh"]
 
 
 # ---------------------------------------------------------------------------
