@@ -30,8 +30,6 @@ import uuid
 from homeassistant.util import dt
 
 from .const import DEFAULT_MAX_RETRY_CYCLES
-from .const import SLOT_STATUS_OCCUPIED
-from .const import SLOT_STATUS_PENDING_CLEAR
 from .reconciliation import ActionKind
 from .reconciliation import DesiredPlan
 from .reconciliation import Reservation
@@ -42,6 +40,8 @@ from .util import async_fire_clear_code
 from .util import async_fire_set_code
 from .util import async_fire_update_times
 from .util import get_event_identities
+from .util import is_cleared_keymaster_text_state
+from .util import is_unreadable_keymaster_text_state
 from .util import normalize_uid
 from .util import trim_name
 
@@ -407,41 +407,8 @@ class EventOverrides:
         }
 
     def load_persisted_mappings(self, mappings: dict[str, dict[str, Any]]) -> None:
-        """Load persisted slot mappings from the HA Store.
-
-        Validates that no two mappings both claim the same slot with
-        status ``occupied``; raises ``ValueError`` on conflict.
-
-        Args:
-            mappings: Identity-key → mapping dict from the HA Store.
-
-        Raises:
-            ValueError: If two mappings claim the same slot and both
-                have ``occupied`` status.
-        """
-        slot_owners: dict[int, str] = {}
-        for identity_key, mapping in mappings.items():
-            slot = mapping.get("slot")
-            status = mapping.get("status")
-            if slot is not None and status == SLOT_STATUS_OCCUPIED:
-                if slot in slot_owners:
-                    raise ValueError(
-                        f"Duplicate occupied slot {slot}: claimed by both "
-                        f"{slot_owners[slot]!r} and {identity_key!r}"
-                    )
-                slot_owners[slot] = identity_key
-
+        """Load cache-only mappings without creating assignment fences."""
         self._persisted_mappings = {k: dict(v) for k, v in mappings.items()}
-
-        self._pending_clear_slots = {}
-        for identity_key, mapping in mappings.items():
-            if mapping.get("status") == SLOT_STATUS_PENDING_CLEAR:
-                slot = mapping.get("slot")
-                if slot is not None:
-                    operation_id = mapping.get("operation_id")
-                    self._pending_clear_slots[slot] = (
-                        operation_id if operation_id is not None else identity_key
-                    )
 
     def update_actual_state(self, slot: int, state: dict[str, Any]) -> None:
         """Store the observed Keymaster state snapshot for a slot.
@@ -462,6 +429,110 @@ class EventOverrides:
             The cached state dict, or ``None`` if not yet observed.
         """
         return self._actual_state_cache.get(slot)
+
+    @staticmethod
+    def _slot_confirmed_empty(coordinator: Any, slot: int) -> bool:
+        """Return whether a fresh Keymaster read shows blank name and PIN."""
+        lockname = getattr(coordinator, "lockname", None)
+        hass = getattr(coordinator, "hass", None)
+        if not lockname or hass is None:
+            return False
+        name_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_name")
+        pin_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_pin")
+        if name_state is None or pin_state is None:
+            return False
+        return is_cleared_keymaster_text_state(
+            name_state.state
+        ) and is_cleared_keymaster_text_state(pin_state.state)
+
+    @staticmethod
+    def _fresh_slot_text_states(coordinator: Any, slot: int) -> tuple[Any, Any] | None:
+        """Return a fresh physical Keymaster name/PIN read for *slot*."""
+        lockname = getattr(coordinator, "lockname", None)
+        hass = getattr(coordinator, "hass", None)
+        if not lockname or hass is None:
+            return None
+        name_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_name")
+        pin_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_pin")
+        if name_state is None or pin_state is None:
+            return None
+        return name_state.state, pin_state.state
+
+    def _preflight_clear_result(
+        self,
+        coordinator: Any,
+        slot: int,
+        expected_name: str | None,
+    ) -> OperationResult | None:
+        """Abort stale clear actions when the physical slot changed after plan."""
+        fresh = self._fresh_slot_text_states(coordinator, slot)
+        if fresh is None:
+            _LOGGER.warning(
+                "Skipping clear for slot %d because a fresh Keymaster read failed",
+                slot,
+            )
+            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
+
+        fresh_name, fresh_pin = fresh
+        if not isinstance(fresh_name, (str, type(None))) or not isinstance(
+            fresh_pin, (str, type(None))
+        ):
+            _LOGGER.debug(
+                "Skipping clear preflight for slot %d because Keymaster text "
+                "states are not concrete strings",
+                slot,
+            )
+            return None
+
+        if is_unreadable_keymaster_text_state(
+            fresh_name
+        ) or is_unreadable_keymaster_text_state(fresh_pin):
+            _LOGGER.warning(
+                "Skipping clear for slot %d because a fresh Keymaster read is unreadable",
+                slot,
+            )
+            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
+
+        fresh_empty = is_cleared_keymaster_text_state(
+            fresh_name
+        ) and is_cleared_keymaster_text_state(fresh_pin)
+        if fresh_empty:
+            self.release_pending_clear_slot(slot)
+            return OperationResult(kind="clear", slot=slot, confirmed=True)
+
+        actual = self._actual_state_cache.get(slot) or {}
+        planned_name = (
+            actual.get("name_state") if "name_state" in actual else expected_name
+        )
+        planned_has_code = actual.get("has_code")
+        fresh_name_text = "" if fresh_name is None else str(fresh_name)
+        fresh_has_code = not is_cleared_keymaster_text_state(fresh_pin)
+
+        if planned_name:
+            if not _states_match(str(planned_name), fresh_name_text):
+                _LOGGER.warning(
+                    "Skipping clear for slot %d because physical name changed "
+                    "after planning",
+                    slot,
+                )
+                return OperationResult(kind="clear", slot=slot, unconfirmed=True)
+        elif not is_cleared_keymaster_text_state(fresh_name):
+            _LOGGER.warning(
+                "Skipping clear for slot %d because physical name appeared "
+                "after planning",
+                slot,
+            )
+            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
+
+        if isinstance(planned_has_code, bool) and planned_has_code != fresh_has_code:
+            _LOGGER.warning(
+                "Skipping clear for slot %d because physical PIN presence changed "
+                "after planning",
+                slot,
+            )
+            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
+
+        return None
 
     def release_pending_clear_slot(self, slot: int) -> None:
         """Release a pending-clear fence after observing an empty slot.
@@ -882,7 +953,11 @@ class EventOverrides:
                 slot = action.slot
                 identity_key = action.identity_key
 
-                if action.kind in {ActionKind.CLEAR, ActionKind.RETRY_CLEAR}:
+                if action.kind in {
+                    ActionKind.CLEAR,
+                    ActionKind.RETRY_CLEAR,
+                    ActionKind.RESET,
+                }:
                     _clear_reason = action.reason
                     clear_warning = None
                     if _clear_reason is not None:
@@ -909,8 +984,10 @@ class EventOverrides:
                             clear_warning,
                             slot,
                         )
-                    result = await self._apply_clear(coordinator, slot)
-                elif action.kind is ActionKind.SET:
+                    result = await self._apply_clear(
+                        coordinator, slot, preflight_read=action.preflight_read
+                    )
+                elif action.kind in {ActionKind.SET, ActionKind.ASSIGN}:
                     res = res_by_key.get(identity_key) if identity_key else None
                     if res is None:
                         _LOGGER.warning(
@@ -928,7 +1005,10 @@ class EventOverrides:
                         )
                         continue
                     result = await self._apply_update_times(coordinator, slot, res)
-                elif action.kind is ActionKind.OVERWRITE_MANUAL_CHANGE:
+                elif action.kind in {
+                    ActionKind.OVERWRITE_MANUAL_CHANGE,
+                    ActionKind.UPDATE_IN_PLACE,
+                }:
                     res = res_by_key.get(identity_key) if identity_key else None
                     if res is None:
                         _LOGGER.warning(
@@ -955,6 +1035,8 @@ class EventOverrides:
         self,
         coordinator: Any,
         slot: int,
+        *,
+        preflight_read: bool = False,
     ) -> OperationResult:
         """Apply a CLEAR or RETRY_CLEAR action for one slot."""
         operation_id = str(uuid.uuid4())
@@ -966,6 +1048,16 @@ class EventOverrides:
             override = self._overrides.get(slot)
             if override is not None:
                 expected_name = override.get("slot_name")
+
+        if preflight_read:
+            preflight_result = self._preflight_clear_result(
+                coordinator, slot, expected_name
+            )
+            if preflight_result is not None:
+                async with self._lock:
+                    self._pending_fences.pop(slot, None)
+                    self._pending_clear_slots.pop(slot, None)
+                return preflight_result
 
         result = await async_fire_clear_code(
             coordinator, slot, expected_name=expected_name
@@ -1031,6 +1123,15 @@ class EventOverrides:
     ) -> OperationResult:
         """Apply a SET action for one slot."""
         import hashlib as _hashlib
+
+        if not self._slot_confirmed_empty(coordinator, slot):
+            self._record_slot_error(slot, "slot not confirmed empty before set")
+            return OperationResult(
+                kind="set",
+                slot=slot,
+                unconfirmed=True,
+                error="slot not confirmed empty",
+            )
 
         operation_id = (
             f"{plan_id}-set-{slot}-"
@@ -1178,8 +1279,6 @@ class EventOverrides:
             An :class:`~.util.OperationResult` from the underlying
             :func:`~.util.async_fire_set_code` call.
         """
-        import hashlib as _hashlib
-
         drift_fields: list[str] = []
         if action.reason and action.reason.startswith("drifted fields: "):
             drift_fields = [
@@ -1212,81 +1311,17 @@ class EventOverrides:
             observed_has_code,
         )
 
-        operation_id = (
-            f"overwrite-{slot}-"
-            f"{_hashlib.sha256(res.identity_key.encode()).hexdigest()[:8]}"
+        clear_result = await self._apply_clear(
+            coordinator, slot, preflight_read=action.preflight_read
         )
-
-        async with self._lock:
-            self._pending_fences[slot] = operation_id
-            self._overrides[slot] = {
-                "slot_name": res.slot_name,
-                "slot_code": res.slot_code,
-                "start_time": res.buffered_start,
-                "end_time": res.buffered_end,
-            }
-            self._slot_miss_counts.pop(slot, None)
-            self.suppress_state_changes(
+        if not clear_result.confirmed:
+            _LOGGER.warning(
+                "Skipping replacement set for slot %d because clear was not "
+                "physically confirmed",
                 slot,
-                {
-                    f"switch.{coordinator.lockname}_code_slot_"
-                    f"{slot}_use_date_range_limits": "on",
-                    f"text.{coordinator.lockname}_code_slot_{slot}_name": (
-                        res.display_slot_name
-                    ),
-                    f"text.{coordinator.lockname}_code_slot_{slot}_pin": res.slot_code,
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_start": res.buffered_start.isoformat(),
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_end": res.buffered_end.isoformat(),
-                },
             )
-
-        event = _SlotEvent(
-            slot_name=res.slot_name,
-            slot_code=res.slot_code,
-            start=res.start,
-            end=res.end,
-        )
-        result = await async_fire_set_code(coordinator, event, slot)
-
-        async with self._lock:
-            current_token = self._pending_fences.get(slot)
-            if current_token != operation_id:
-                _LOGGER.warning(
-                    "Stale overwrite token for slot %d; discarding result", slot
-                )
-                return OperationResult(kind="set", slot=slot, unconfirmed=True)
-
-            if result.confirmed:
-                _LOGGER.debug(
-                    "Overwrite confirmed for slot %d; desired state restored "
-                    "for reservation %s.",
-                    slot,
-                    res.identity_key,
-                )
-                self._pending_fences.pop(slot, None)
-                self._clear_slot_error(slot)
-                # NOTE: __assign_next_slot() is intentionally NOT called here.
-                # Slot selection in the reconciliation path is determined by
-                # compute_desired_plan(), not by the deprecated _next_slot field.
-            elif result.failed:
-                _LOGGER.warning(
-                    "Overwrite failed for slot %d (error: %s); "
-                    "slot may remain drifted.",
-                    slot,
-                    result.error,
-                )
-                self._pending_fences.pop(slot, None)
-                self._record_slot_error(slot, result.error or "overwrite failed")
-            else:
-                _LOGGER.debug(
-                    "Overwrite unconfirmed for slot %d; keeping tentative assignment.",
-                    slot,
-                )
-                self._pending_fences.pop(slot, None)
-
-        return result
+            return clear_result
+        return await self._apply_set(coordinator, slot, res, f"replace-{slot}")
 
     def _slot_has_matching_event(
         self,

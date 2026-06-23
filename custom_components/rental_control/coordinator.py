@@ -1083,6 +1083,9 @@ Please update Keymaster to at least v0.1.0-b0
         slot_name: str,
         display_slot_name: str,
         consumed_slots: set[int] | None = None,
+        desired_start: datetime | None = None,
+        desired_end: datetime | None = None,
+        require_date_match: bool = False,
     ) -> _ManagedSlot | None:
         """Return the current physical slot matching a stable/display name."""
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
@@ -1091,6 +1094,7 @@ Please update Keymaster to at least v0.1.0-b0
             normalize_slot_name_for_fingerprint(display_slot_name),
         }
         consumed = consumed_slots if consumed_slots is not None else set()
+        candidates: list[_ManagedSlot] = []
         for slot in sorted(
             managed_slots,
             key=lambda observed: (
@@ -1109,8 +1113,20 @@ Please update Keymaster to at least v0.1.0-b0
                     normalize_slot_name_for_fingerprint(actual[len(prefix) :])
                 )
             if actual_forms & desired_forms:
-                consumed.add(slot.slot)
-                return slot
+                candidates.append(slot)
+        if desired_start is not None and desired_end is not None:
+            for slot in candidates:
+                if (
+                    slot.actual_start == desired_start
+                    and slot.actual_end == desired_end
+                ):
+                    consumed.add(slot.slot)
+                    return slot
+        if require_date_match:
+            return None
+        if candidates:
+            consumed.add(candidates[0].slot)
+            return candidates[0]
         return None
 
     @staticmethod
@@ -1220,6 +1236,16 @@ Please update Keymaster to at least v0.1.0-b0
         reservations: list[_Reservation] = []
         observed_slots = managed_slots or []
         consumed_observed_slots: set[int] = set()
+        slot_name_counts: dict[str, int] = {}
+        for event in calendar:
+            slot_name = get_slot_name(
+                event.summary,
+                event.description or "",
+                self.event_prefix or "",
+            )
+            if slot_name:
+                key = normalize_slot_name_for_fingerprint(slot_name)
+                slot_name_counts[key] = slot_name_counts.get(key, 0) + 1
 
         for event in calendar:
             slot_name = get_slot_name(
@@ -1267,6 +1293,10 @@ Please update Keymaster to at least v0.1.0-b0
                 slot_name,
                 display_slot_name,
                 consumed_observed_slots,
+                buffered_start,
+                buffered_end,
+                slot_name_counts.get(normalize_slot_name_for_fingerprint(slot_name), 0)
+                > 1,
             )
             if matched_physical is not None and matched_physical.actual_code:
                 observed_code = matched_physical.actual_code

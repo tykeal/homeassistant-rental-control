@@ -283,39 +283,90 @@ def test_stateless_date_drift_uses_update_times_action() -> None:
     )
 
 
-def test_stateless_date_drift_uses_update_times_action() -> None:
-    """Pure stateless date drift updates Keymaster times without clear-and-set."""
-    start = _dt(2026, 7, 2)
-    end = _dt(2026, 7, 9)
-    desired = _make_desired_reservation(
-        desired_id="date-drift-reservation",
-        start=start,
-        end=end,
-        slot_code="1234",
+def test_stateless_duplicate_name_partial_physical_match_uses_observed_dates() -> None:
+    """A later same-name physical slot stays paired with its matching dates."""
+    early = _make_desired_reservation(
+        desired_id="bob-early",
+        stable_slot_name="Bob",
+        display_slot_name="Bob",
+        start=_dt(2026, 8, 1),
+        end=_dt(2026, 8, 8),
+        slot_code="1111",
     )
-    occupied_slot = ObservedSlot(
-        slot=1,
+    late = _make_desired_reservation(
+        desired_id="bob-late",
+        stable_slot_name="Bob",
+        display_slot_name="Bob",
+        start=_dt(2026, 8, 15),
+        end=_dt(2026, 8, 22),
+        slot_code="2222",
+    )
+    empty_slot = ObservedSlot(slot=1, managed=True, raw_name="", has_pin=False)
+    late_slot = ObservedSlot(
+        slot=2,
         managed=True,
-        raw_name="RC Test Guest",
-        raw_pin="1234",
-        actual_start=_dt(2026, 7, 1),
-        actual_end=_dt(2026, 7, 8),
+        raw_name="Bob",
+        raw_pin="2222",
+        actual_start=late.buffered_start,
+        actual_end=late.buffered_end,
     )
 
     plan = compute_stateless_plan(
-        [occupied_slot],
-        [desired],
-        max_events=1,
-        plan_id="stateless-date-drift-update-times",
+        [empty_slot, late_slot],
+        [early, late],
+        max_events=2,
+        plan_id="stateless-duplicate-partial-match",
         generated_at=_dt(2026, 6, 1),
     )
 
-    assert any(
-        action.kind is ActionKind.UPDATE_TIMES
-        and action.identity_key == "date-drift-reservation"
-        and action.reason == "date_drift"
-        for action in plan.actions
+    assert plan.selected == {"bob-late": 2, "bob-early": 1}
+
+
+def test_duplicate_name_partial_physical_match_uses_observed_dates() -> None:
+    """Legacy desired plan also keeps a same-name slot paired by exact dates."""
+    early = Reservation(
+        identity_key="bob-early",
+        start=_dt(2026, 8, 1),
+        end=_dt(2026, 8, 8),
+        buffered_start=_dt(2026, 8, 1),
+        buffered_end=_dt(2026, 8, 8),
+        summary="Bob",
+        slot_name="Bob",
+        display_slot_name="Bob",
+        slot_code="1111",
     )
+    late = Reservation(
+        identity_key="bob-late",
+        start=_dt(2026, 8, 15),
+        end=_dt(2026, 8, 22),
+        buffered_start=_dt(2026, 8, 15),
+        buffered_end=_dt(2026, 8, 22),
+        summary="Bob",
+        slot_name="Bob",
+        display_slot_name="Bob",
+        slot_code="2222",
+    )
+    empty_slot = ManagedSlot(slot=1, managed=True, status=SlotStatus.FREE)
+    late_slot = ManagedSlot(
+        slot=2,
+        managed=True,
+        status=SlotStatus.OCCUPIED,
+        actual_name="Bob",
+        actual_code="2222",
+        actual_code_present=True,
+        actual_start=late.buffered_start,
+        actual_end=late.buffered_end,
+    )
+
+    plan = compute_desired_plan(
+        [early, late],
+        [empty_slot, late_slot],
+        max_events=2,
+        plan_id="legacy-duplicate-partial-match",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert plan.selected == {"bob-late": 2, "bob-early": 1}
 
 
 def _make_desired_plan(

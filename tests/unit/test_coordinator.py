@@ -122,6 +122,43 @@ async def test_duplicate_name_manual_pin_lookup_pairs_by_start_order(
     ]
 
 
+async def test_duplicate_name_manual_pin_lookup_does_not_steal_later_slot(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """An earlier same-name stay cannot consume a later stay's observed PIN."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start_one = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end_one = start_one + timedelta(days=7)
+    start_two = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    end_two = start_two + timedelta(days=7)
+    calendar = [
+        CalendarEvent(start=start_one, end=end_one, summary="Bob", description=""),
+        CalendarEvent(start=start_two, end=end_two, summary="Bob", description=""),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=start_two,
+            actual_end=end_two,
+        )
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert reservations[0].code_source == "generated"
+    assert reservations[1].slot_code == "2222"
+    assert reservations[1].code_source == "manual_observed"
+
+
 async def test_coordinator_first_refresh(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:

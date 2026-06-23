@@ -77,6 +77,9 @@ def _make_coordinator(
     coordinator.hass = MagicMock()
     coordinator.hass.services = MagicMock()
     coordinator.hass.services.async_call = AsyncMock()
+    empty_state = MagicMock()
+    empty_state.state = ""
+    coordinator.hass.states.get = MagicMock(return_value=empty_state)
     coordinator.max_events = max_events
     coordinator.event_prefix = ""
     coordinator.data = calendar_events
@@ -3349,8 +3352,8 @@ class TestStoreSchemaV1:
             identity_key="key-b", slot=10, status=SLOT_STATUS_OCCUPIED
         )
 
-        with pytest.raises(ValueError, match="Duplicate occupied slot 10"):
-            eo.load_persisted_mappings({"key-a": m1, "key-b": m2})
+        eo.load_persisted_mappings({"key-a": m1, "key-b": m2})
+        assert set(eo.persisted_mappings) == {"key-a", "key-b"}
 
     # ------------------------------------------------------------------
     # T009-5: pending_clear fence rebuilt on load
@@ -3370,7 +3373,7 @@ class TestStoreSchemaV1:
         m["pending_clear_since"] = "2025-01-01T00:00:00+00:00"
         eo.load_persisted_mappings({"phantom-key": m})
 
-        assert 10 in eo.pending_clear_slots
+        assert eo.pending_clear_slots == {}
 
 
 # ---------------------------------------------------------------------------
@@ -3579,7 +3582,9 @@ class TestApplyPlanActions:
         coordinator.code_buffer_after = 0
         coordinator.event_overrides = eo
         coordinator.hass.services.async_call = AsyncMock()
-        coordinator.hass.states.get.return_value = None
+        empty_state = MagicMock()
+        empty_state.state = ""
+        coordinator.hass.states.get.return_value = empty_state
         return coordinator
 
     async def test_set_action_pre_assigns_and_confirms(self) -> None:
@@ -3807,6 +3812,146 @@ class TestApplyPlanActions:
         assert results[0].confirmed is True
         assert eo.overrides[1] is None
         assert 1 not in eo.pending_fences
+
+    async def test_preflight_clear_skips_when_physical_name_changed(self) -> None:
+        """Preflight RESET/CLEAR actions do not clear a slot changed after planning."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = _make_dt(2026, 8, 1)
+        eo.update(1, "1234", "Guest", now, now)
+        eo.update_actual_state(
+            1,
+            {
+                "slot": 1,
+                "classification": "occupied",
+                "name_state": "Guest",
+                "has_code": True,
+            },
+        )
+        coordinator = self._make_coordinator(eo)
+
+        def _state(value: str) -> MagicMock:
+            """Return a fake Home Assistant state object with *value*."""
+            state = MagicMock()
+            state.state = value
+            return state
+
+        coordinator.hass.states.get.side_effect = lambda entity_id: (
+            _state("Different Guest") if entity_id.endswith("_name") else _state("9999")
+        )
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            new_callable=AsyncMock,
+        ) as mock_clear:
+            results = await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(
+                    SlotAction(
+                        kind=ActionKind.RESET,
+                        slot=1,
+                        reason="stale",
+                        preflight_read=True,
+                    )
+                ),
+                {},
+            )
+
+        assert results[0].unconfirmed is True
+        assert eo.overrides[1] is not None
+        assert eo.overrides[1]["slot_name"] == "Guest"
+        mock_clear.assert_not_called()
+
+    async def test_preflight_clear_accepts_prefixed_physical_name(self) -> None:
+        """Preflight compares fresh reads against observed physical display names."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = _make_dt(2026, 8, 1)
+        eo.update(1, "1234", "Guest", now, now)
+        eo.update_actual_state(
+            1,
+            {
+                "slot": 1,
+                "classification": "occupied",
+                "name_state": "RC Guest",
+                "has_code": True,
+            },
+        )
+        coordinator = self._make_coordinator(eo)
+
+        def _state(value: str) -> MagicMock:
+            """Return a fake Home Assistant state object with *value*."""
+            state = MagicMock()
+            state.state = value
+            return state
+
+        coordinator.hass.states.get.side_effect = lambda entity_id: (
+            _state("RC Guest") if entity_id.endswith("_name") else _state("1234")
+        )
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=OperationResult(kind="clear", slot=1, confirmed=True),
+        ) as mock_clear:
+            results = await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(
+                    SlotAction(
+                        kind=ActionKind.RESET,
+                        slot=1,
+                        reason="stale",
+                        preflight_read=True,
+                    )
+                ),
+                {},
+            )
+
+        assert results[0].confirmed is True
+        mock_clear.assert_called_once()
+
+    async def test_preflight_clear_allows_pin_only_physical_slot(self) -> None:
+        """A blank-name slot with a lingering PIN is allowed to reset."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = _make_dt(2026, 8, 1)
+        eo.update(1, "9999", "Bob", now, now)
+        eo.update_actual_state(
+            1,
+            {
+                "slot": 1,
+                "classification": "phantom",
+                "name_state": None,
+                "has_code": True,
+            },
+        )
+        coordinator = self._make_coordinator(eo)
+
+        def _state(value: str) -> MagicMock:
+            """Return a fake Home Assistant state object with *value*."""
+            state = MagicMock()
+            state.state = value
+            return state
+
+        coordinator.hass.states.get.side_effect = lambda entity_id: (
+            _state("") if entity_id.endswith("_name") else _state("9999")
+        )
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=OperationResult(kind="clear", slot=1, confirmed=True),
+        ) as mock_clear:
+            results = await eo.async_apply_plan(
+                coordinator,
+                self._make_plan(
+                    SlotAction(
+                        kind=ActionKind.RESET,
+                        slot=1,
+                        reason="phantom",
+                        preflight_read=True,
+                    )
+                ),
+                {},
+            )
+
+        assert results[0].confirmed is True
+        mock_clear.assert_called_once()
 
     async def test_overflow_action_not_executed(self) -> None:
         """Overflow reservations do not become physical slot actions."""
@@ -4842,6 +4987,9 @@ class TestManualDriftLogging:
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
+        empty_state = MagicMock()
+        empty_state.state = ""
+        coordinator.hass.states.get.return_value = empty_state
         observed: list[tuple[datetime, datetime]] = []
 
         async def mock_set_code(_coordinator, event, _slot) -> OperationResult:
@@ -4854,9 +5002,17 @@ class TestManualDriftLogging:
             )
             return OperationResult(kind="set", slot=5, confirmed=True)
 
-        with patch(
-            "custom_components.rental_control.event_overrides.async_fire_set_code",
-            side_effect=mock_set_code,
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new=AsyncMock(
+                    return_value=OperationResult(kind="clear", slot=5, confirmed=True)
+                ),
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                side_effect=mock_set_code,
+            ),
         ):
             await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
 
@@ -5031,12 +5187,23 @@ class TestManualDriftLogging:
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
+        empty_state = MagicMock()
+        empty_state.state = ""
+        coordinator.hass.states.get.return_value = empty_state
 
         confirmed = OperationResult(kind="set", slot=5, confirmed=True)
-        with patch(
-            "custom_components.rental_control.event_overrides.async_fire_set_code",
-            return_value=confirmed,
-        ) as mock_set:
+        with (
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                new=AsyncMock(
+                    return_value=OperationResult(kind="clear", slot=5, confirmed=True)
+                ),
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                return_value=confirmed,
+            ) as mock_set,
+        ):
             results = await eo.async_apply_plan(
                 coordinator, plan, {res.identity_key: res}
             )
@@ -5358,6 +5525,13 @@ class TestDuplicateActualAssignment:
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
+        name_state = MagicMock()
+        name_state.state = "Guest r-dup"
+        pin_state = MagicMock()
+        pin_state.state = "DUPPIN"
+        coordinator.hass.states.get.side_effect = lambda entity_id: (
+            name_state if entity_id.endswith("_name") else pin_state
+        )
 
         confirmed = OperationResult(kind="clear", slot=5, confirmed=True)
         with patch(

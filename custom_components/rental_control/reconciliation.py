@@ -771,15 +771,10 @@ def _names_match(
     desired_forms = _desired_name_forms(stable_slot_name, display_slot_name)
     if physical_forms & desired_forms:
         return True
-    # Conservative trim-aware fallback: an observed display name may be a
-    # shortened form of the stable name.  Require it to be a prefix-like
-    # reduction to avoid matching unrelated names.
-    for actual in physical_forms:
-        for desired in desired_forms:
-            if actual != desired and (
-                desired.startswith(actual) or actual.startswith(desired)
-            ):
-                return True
+    # Trim-aware matching is handled by requiring callers to provide the exact
+    # display_slot_name that Rental Control would write to Keymaster.  Do not use
+    # generic prefix matching here: names like "Ann" and "Anna" are distinct
+    # stable identities even though one is a string prefix of the other.
     return False
 
 
@@ -791,6 +786,16 @@ def _reservation_name_key(reservation: Reservation) -> str:
 def _desired_name_key(reservation: DesiredReservation) -> str:
     """Return the stable name grouping key for a DesiredReservation."""
     return normalize_slot_name_for_fingerprint(reservation.stable_slot_name)
+
+
+def _slot_times_match(
+    actual_start: datetime | None,
+    actual_end: datetime | None,
+    desired_start: datetime,
+    desired_end: datetime,
+) -> bool:
+    """Return whether observed Keymaster dates exactly match desired dates."""
+    return actual_start == desired_start and actual_end == desired_end
 
 
 def _dt_to_utc_iso(dt: datetime) -> str:
@@ -1970,7 +1975,35 @@ def compute_desired_plan(
                 ambiguous_slots.add(ms.slot)
             plan.diagnostics.setdefault("ambiguous_name_groups", []).append(name_key)
             continue
-        for ms, res in zip(physical_group, desired_group, strict=False):
+        pairs: list[tuple[ManagedSlot, Reservation]] = []
+        paired_slots: set[int] = set()
+        paired_reservations: set[str] = set()
+        for res in desired_group:
+            exact_matches = [
+                ms
+                for ms in physical_group
+                if ms.slot not in paired_slots
+                and _slot_times_match(
+                    ms.actual_start,
+                    ms.actual_end,
+                    res.buffered_start,
+                    res.buffered_end,
+                )
+            ]
+            if exact_matches:
+                ms = exact_matches[0]
+                pairs.append((ms, res))
+                paired_slots.add(ms.slot)
+                paired_reservations.add(res.identity_key)
+        remaining_physical = [
+            ms for ms in physical_group if ms.slot not in paired_slots
+        ]
+        remaining_desired = [
+            res for res in desired_group if res.identity_key not in paired_reservations
+        ]
+        pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
+
+        for ms, res in pairs:
             matched_slots[ms.slot] = res.identity_key
             matched_reservations.add(res.identity_key)
             duplicate_slots.discard(ms.slot)
@@ -1979,7 +2012,7 @@ def compute_desired_plan(
                 "identity_key": res.identity_key,
                 "slot_name": res.slot_name,
             }
-        for extra_ms in physical_group[len(desired_group) :]:
+        for extra_ms in remaining_physical[len(remaining_desired) :]:
             duplicate_slots.add(extra_ms.slot)
             _LOGGER.warning(
                 "Duplicate physical slot-name match for %s in slot %d; "
@@ -2202,14 +2235,42 @@ def compute_stateless_plan(
                 slot.slot,
             )
         )
-        for slot, desired in zip(physical_group, group, strict=False):
+        pairs: list[tuple[ObservedSlot, DesiredReservation]] = []
+        paired_slots: set[int] = set()
+        paired_desired: set[str] = set()
+        for desired in group:
+            exact_matches = [
+                slot
+                for slot in physical_group
+                if slot.slot not in paired_slots
+                and _slot_times_match(
+                    slot.actual_start,
+                    slot.actual_end,
+                    desired.buffered_start,
+                    desired.buffered_end,
+                )
+            ]
+            if exact_matches:
+                slot = exact_matches[0]
+                pairs.append((slot, desired))
+                paired_slots.add(slot.slot)
+                paired_desired.add(desired.desired_id)
+        remaining_physical = [
+            slot for slot in physical_group if slot.slot not in paired_slots
+        ]
+        remaining_desired = [
+            desired for desired in group if desired.desired_id not in paired_desired
+        ]
+        pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
+
+        for slot, desired in pairs:
             slot.matched_desired_id = desired.desired_id
             desired.matched_slot = slot.slot
             desired.assigned_slot = slot.slot
             slot_to_desired[slot.slot] = desired.desired_id
             matched_desired.add(desired.desired_id)
             plan.selected[desired.desired_id] = slot.slot
-        for extra_slot in physical_group[len(group) :]:
+        for extra_slot in remaining_physical[len(remaining_desired) :]:
             duplicate_slots.add(extra_slot.slot)
 
     free_slots = sorted(
@@ -2268,6 +2329,7 @@ def compute_stateless_plan(
                 SlotAction(
                     kind=ActionKind.ASSIGN,
                     slot=slot.slot,
+                    identity_key=action_desired.desired_id,
                     desired_id=action_desired.desired_id,
                     requires_confirmed_empty=True,
                     preflight_read=True,
@@ -2280,6 +2342,7 @@ def compute_stateless_plan(
                 SlotAction(
                     kind=ActionKind.UPDATE_IN_PLACE,
                     slot=slot.slot,
+                    identity_key=action_desired.desired_id,
                     desired_id=action_desired.desired_id,
                     matched_by="name_exact",
                     requires_confirmed_empty=True,
@@ -2295,6 +2358,7 @@ def compute_stateless_plan(
                 SlotAction(
                     kind=ActionKind.UPDATE_TIMES,
                     slot=slot.slot,
+                    identity_key=action_desired.desired_id,
                     desired_id=action_desired.desired_id,
                     matched_by="name_exact",
                     reason="date_drift",
