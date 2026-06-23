@@ -1105,6 +1105,7 @@ Please update Keymaster to at least v0.1.0-b0
         desired_end: datetime | None = None,
         require_date_match: bool = False,
         reserved_date_windows: set[tuple[datetime, datetime]] | None = None,
+        block_unknown_date_fallback: bool = False,
     ) -> _ManagedSlot | None:
         """Return the current physical slot matching a stable/display name."""
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
@@ -1146,9 +1147,15 @@ Please update Keymaster to at least v0.1.0-b0
             fallback_candidates = [
                 slot
                 for slot in candidates
-                if slot.actual_start is None
-                or slot.actual_end is None
-                or (slot.actual_start, slot.actual_end) not in reserved_date_windows
+                if (
+                    not block_unknown_date_fallback
+                    or (slot.actual_start is not None and slot.actual_end is not None)
+                )
+                and (
+                    slot.actual_start is None
+                    or slot.actual_end is None
+                    or (slot.actual_start, slot.actual_end) not in reserved_date_windows
+                )
             ]
         if fallback_candidates:
             consumed.add(fallback_candidates[0].slot)
@@ -1340,6 +1347,7 @@ Please update Keymaster to at least v0.1.0-b0
 
             slot_code = self._generate_slot_code(start, end, event.description, uid)
             code_source = "generated"
+            active_windows = self._active_checkin_windows_for_name(slot_name)
             matched_physical = self._find_observed_slot_by_name(
                 observed_slots,
                 slot_name,
@@ -1351,6 +1359,10 @@ Please update Keymaster to at least v0.1.0-b0
                 > 1,
                 slot_name_date_windows.get(
                     normalize_slot_name_for_fingerprint(slot_name)
+                ),
+                bool(
+                    active_windows
+                    and (buffered_start, buffered_end) not in active_windows
                 ),
             )
             if matched_physical is not None and matched_physical.actual_code:
@@ -1927,10 +1939,13 @@ Please update Keymaster to at least v0.1.0-b0
                 desired_start=buffered_start,
                 desired_end=buffered_end,
             )
-            if (
-                matched_physical is None
-                or matched_physical.actual_start != buffered_start
-                or matched_physical.actual_end != buffered_end
+            if matched_physical is None or (
+                matched_physical.actual_start is not None
+                and matched_physical.actual_end is not None
+                and (
+                    matched_physical.actual_start != buffered_start
+                    or matched_physical.actual_end != buffered_end
+                )
             ):
                 return
             identity_key = make_reservation_fingerprint(

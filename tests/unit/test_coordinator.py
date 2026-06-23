@@ -364,8 +364,8 @@ async def test_checkin_missing_active_does_not_protect_future_same_name(
             actual_name="Bob",
             actual_code="1111",
             actual_code_present=True,
-            actual_start=active_start,
-            actual_end=active_end,
+            actual_start=None,
+            actual_end=None,
         )
     ]
     reservations = [future]
@@ -413,8 +413,8 @@ async def test_build_reservations_does_not_copy_active_pin_to_future_same_name(
             actual_name="Bob",
             actual_code="1111",
             actual_code_present=True,
-            actual_start=active_start,
-            actual_end=active_end,
+            actual_start=None,
+            actual_end=None,
         )
     ]
 
