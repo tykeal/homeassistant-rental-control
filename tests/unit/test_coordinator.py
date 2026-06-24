@@ -202,6 +202,43 @@ async def test_partial_duplicate_shift_preserves_unreserved_manual_pin(
     assert reservations[1].code_source == "generated"
 
 
+async def test_partial_duplicate_shift_pairs_closest_reservation(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A lone shifted duplicate physical slot pairs with the closest stay."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    early_start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    early_end = early_start + timedelta(days=7)
+    late_start = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    late_end = late_start + timedelta(days=7)
+    calendar = [
+        CalendarEvent(start=early_start, end=early_end, summary="Bob"),
+        CalendarEvent(start=late_start, end=late_end, summary="Bob"),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=late_start - timedelta(days=1),
+            actual_end=late_end - timedelta(days=1),
+        )
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert reservations[0].code_source == "generated"
+    assert reservations[1].slot_code == "2222"
+    assert reservations[1].code_source == "manual_observed"
+
+
 async def test_duplicate_name_date_shift_preserves_ordered_manual_pins(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:

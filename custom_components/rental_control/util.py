@@ -570,16 +570,24 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
             blocking=True,
         )
 
-        # Compute buffered validity window for Keymaster
-        buffered_start, buffered_end = apply_buffer(
-            event.extra_state_attributes["start"],
-            event.extra_state_attributes["end"],
-            coordinator.code_buffer_before,
-            coordinator.code_buffer_after,
-            coordinator,
-        )
-        buffered_start = _ensure_datetime(buffered_start, coordinator)
-        buffered_end = _ensure_datetime(buffered_end, coordinator)
+        try:
+            # Compute buffered validity window for Keymaster
+            buffered_start, buffered_end = apply_buffer(
+                event.extra_state_attributes["start"],
+                event.extra_state_attributes["end"],
+                coordinator.code_buffer_before,
+                coordinator.code_buffer_after,
+                coordinator,
+            )
+            buffered_start = _ensure_datetime(buffered_start, coordinator)
+            buffered_end = _ensure_datetime(buffered_end, coordinator)
+        except (TypeError, ValueError) as exc:
+            return OperationResult(
+                kind="update_times",
+                slot=slot,
+                failed=True,
+                error=str(exc),
+            )
 
         coro = add_call(
             coordinator.hass,
@@ -690,16 +698,24 @@ async def async_fire_update_times(coordinator, event, slot: int) -> OperationRes
         )
         return OperationResult(kind="update_times", slot=slot, unconfirmed=True)
 
-    # Compute buffered validity window for Keymaster
-    buffered_start, buffered_end = apply_buffer(
-        event.extra_state_attributes["start"],
-        event.extra_state_attributes["end"],
-        coordinator.code_buffer_before,
-        coordinator.code_buffer_after,
-        coordinator,
-    )
-    buffered_start = _ensure_datetime(buffered_start, coordinator)
-    buffered_end = _ensure_datetime(buffered_end, coordinator)
+    try:
+        # Compute buffered validity window for Keymaster
+        buffered_start, buffered_end = apply_buffer(
+            event.extra_state_attributes["start"],
+            event.extra_state_attributes["end"],
+            coordinator.code_buffer_before,
+            coordinator.code_buffer_after,
+            coordinator,
+        )
+        buffered_start = _ensure_datetime(buffered_start, coordinator)
+        buffered_end = _ensure_datetime(buffered_end, coordinator)
+    except (TypeError, ValueError) as exc:
+        return OperationResult(
+            kind="update_times",
+            slot=slot,
+            failed=True,
+            error=str(exc),
+        )
 
     coro = add_call(
         coordinator.hass,
@@ -771,9 +787,11 @@ def _ensure_datetime(value: str | date | datetime, rc) -> datetime:
         if parsed_date is not None:
             value = cast("date", parsed_date)
         else:
-            return cast("datetime", dt.now())
+            msg = f"Cannot coerce {value!r} to datetime"
+            raise ValueError(msg)
     if not isinstance(value, date):
-        return cast("datetime", dt.now())
+        msg = f"Cannot coerce {value!r} to datetime"
+        raise ValueError(msg)
     tz = getattr(rc, "timezone", None)
     if not isinstance(tz, tzinfo):
         tz = dt.UTC

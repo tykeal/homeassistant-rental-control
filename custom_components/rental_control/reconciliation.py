@@ -383,6 +383,9 @@ class ObservedSlot:
         name_present = not _keymaster_text_cleared(self.raw_name)
         if self.has_pin is None and self.raw_pin is not None:
             self.has_pin = not _keymaster_text_cleared(self.raw_pin)
+        if self.raw_pin is None and self.has_pin is None:
+            self.readable = False
+            self.empty_confirmed = False
         if _keymaster_text_unreadable(self.raw_name) or _keymaster_text_unreadable(
             self.raw_pin
         ):

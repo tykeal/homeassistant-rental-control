@@ -3144,6 +3144,21 @@ class TestAsyncFireUpdateTimesOperationResult:
         payloads = [call.kwargs["service_data"] for call in calls]
         assert all(isinstance(payload["datetime"], datetime) for payload in payloads)
 
+    async def test_invalid_datetime_payload_fails_safely(self) -> None:
+        """Invalid update dates fail instead of using nondeterministic times."""
+        coordinator = self._make_coordinator()
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "start": object(),
+            "end": date(2025, 1, 17),
+        }
+
+        result = await async_fire_update_times(coordinator, event, 10)
+
+        assert result.failed is True
+        coordinator.hass.services.async_call.assert_not_awaited()
+
     async def test_failed_on_service_exception(self) -> None:
         """Gather failures are returned as failed."""
         coordinator = self._make_coordinator()

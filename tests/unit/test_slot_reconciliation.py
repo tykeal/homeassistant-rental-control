@@ -173,6 +173,14 @@ def test_observed_slot_none_text_token_is_confirmed_empty() -> None:
     assert slot.empty_confirmed is True
 
 
+def test_observed_slot_missing_pin_state_is_unknown_not_empty() -> None:
+    """Missing PIN state cannot prove a physical slot is empty."""
+    slot = ObservedSlot(slot=1, managed=True, raw_name="")
+
+    assert slot.classification is ObservedSlotStatus.UNKNOWN
+    assert slot.empty_confirmed is False
+
+
 def test_observed_slot_empty_confirmation_cannot_override_present_pin() -> None:
     """Present physical state wins over an inconsistent empty-confirmed hint."""
     slot = ObservedSlot(

@@ -1157,6 +1157,24 @@ Please update Keymaster to at least v0.1.0-b0
                         ):
                             consumed.add(slot.slot)
                             return slot
+                if ordered_date_windows:
+                    pairings = self._select_partial_ordered_pairings(
+                        all_candidates, ordered_date_windows
+                    )
+                    desired_window = (
+                        (desired_start, desired_end)
+                        if desired_start is not None and desired_end is not None
+                        else None
+                    )
+                    matched_slot = (
+                        pairings.get(desired_window)
+                        if desired_window is not None
+                        else None
+                    )
+                    if matched_slot is not None and matched_slot.slot not in consumed:
+                        consumed.add(matched_slot.slot)
+                        return matched_slot
+                    return None
                 shifted_candidates = [
                     slot
                     for slot in candidates
@@ -1252,6 +1270,50 @@ Please update Keymaster to at least v0.1.0-b0
 
         _, indices = _best(0, 0)
         return [slots[index] for index in indices]
+
+    @staticmethod
+    def _select_partial_ordered_pairings(
+        slots: list[_ManagedSlot], desired_windows: list[tuple[datetime, datetime]]
+    ) -> dict[tuple[datetime, datetime], _ManagedSlot]:
+        """Return ordered pairings when physical duplicates are missing."""
+        dated_slots = [
+            slot
+            for slot in slots
+            if slot.actual_start is not None and slot.actual_end is not None
+        ]
+        if not dated_slots:
+            return {}
+
+        def _distance(slot: _ManagedSlot, window: tuple[datetime, datetime]) -> float:
+            """Return absolute date distance for one physical/desired pair."""
+            assert slot.actual_start is not None
+            assert slot.actual_end is not None
+            return abs((slot.actual_start - window[0]).total_seconds()) + abs(
+                (slot.actual_end - window[1]).total_seconds()
+            )
+
+        @lru_cache
+        def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+            """Return best desired-window indices for remaining physical slots."""
+            if slot_index == len(dated_slots):
+                return 0.0, ()
+            if desired_index == len(desired_windows):
+                return float("inf"), ()
+            skip_cost, skip_indices = _best(slot_index, desired_index + 1)
+            take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+            take_cost = (
+                _distance(dated_slots[slot_index], desired_windows[desired_index])
+                + take_rest_cost
+            )
+            if take_cost < skip_cost:
+                return take_cost, (desired_index, *take_indices)
+            return skip_cost, skip_indices
+
+        _, indices = _best(0, 0)
+        return {
+            desired_windows[desired_index]: dated_slots[slot_index]
+            for slot_index, desired_index in enumerate(indices)
+        }
 
     @staticmethod
     def _remap_observed_mappings_to_physical_reservations(
