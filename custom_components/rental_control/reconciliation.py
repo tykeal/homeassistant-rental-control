@@ -1962,6 +1962,7 @@ def compute_desired_plan(
         physical_group.sort(
             key=lambda ms: (
                 ms.actual_start or datetime.max.replace(tzinfo=timezone.utc),
+                ms.actual_end or datetime.max.replace(tzinfo=timezone.utc),
                 ms.slot,
             )
         )
@@ -2250,6 +2251,7 @@ def compute_stateless_plan(
         physical_group.sort(
             key=lambda slot: (
                 slot.actual_start or datetime.max.replace(tzinfo=timezone.utc),
+                slot.actual_end or datetime.max.replace(tzinfo=timezone.utc),
                 slot.slot,
             )
         )

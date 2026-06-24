@@ -1126,6 +1126,7 @@ Please update Keymaster to at least v0.1.0-b0
             managed_slots,
             key=lambda observed: (
                 observed.actual_start or datetime.max.replace(tzinfo=timezone.utc),
+                observed.actual_end or datetime.max.replace(tzinfo=timezone.utc),
                 observed.slot,
             ),
         ):
