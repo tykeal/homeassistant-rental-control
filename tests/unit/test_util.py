@@ -2647,7 +2647,7 @@ class TestBufferInSetCode:
         ]
         assert len(start_calls) == 1
         sent = start_calls[0].kwargs["service_data"]["datetime"]
-        assert sent == datetime(2025, 1, 15, 15, 30, 0)
+        assert sent == datetime(2025, 1, 15, 15, 30, 0, tzinfo=dt_util.UTC)
 
     async def test_after_buffer_extends_end(self) -> None:
         """Verify date_range_end is 15 minutes later."""
@@ -2671,7 +2671,7 @@ class TestBufferInSetCode:
         ]
         assert len(end_calls) == 1
         sent = end_calls[0].kwargs["service_data"]["datetime"]
-        assert sent == datetime(2025, 1, 17, 11, 15, 0)
+        assert sent == datetime(2025, 1, 17, 11, 15, 0, tzinfo=dt_util.UTC)
 
     async def test_both_buffers_applied(self) -> None:
         """Verify both offsets applied simultaneously."""
@@ -2699,10 +2699,10 @@ class TestBufferInSetCode:
             if "date_range_end" in c.kwargs.get("target", {}).get("entity_id", "")
         ]
         assert start_calls[0].kwargs["service_data"]["datetime"] == (
-            datetime(2025, 1, 15, 15, 0, 0)
+            datetime(2025, 1, 15, 15, 0, 0, tzinfo=dt_util.UTC)
         )
         assert end_calls[0].kwargs["service_data"]["datetime"] == (
-            datetime(2025, 1, 17, 11, 30, 0)
+            datetime(2025, 1, 17, 11, 30, 0, tzinfo=dt_util.UTC)
         )
 
     async def test_zero_buffer_unchanged(self) -> None:
@@ -2716,8 +2716,8 @@ class TestBufferInSetCode:
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
 
-        start = datetime(2025, 1, 15, 16, 0, 0)
-        end = datetime(2025, 1, 17, 11, 0, 0)
+        start = datetime(2025, 1, 15, 16, 0, 0, tzinfo=dt_util.UTC)
+        end = datetime(2025, 1, 17, 11, 0, 0, tzinfo=dt_util.UTC)
         event = self._make_event(start=start, end=end)
         await async_fire_set_code(coordinator, event, 10)
 
@@ -2777,7 +2777,7 @@ class TestBufferInUpdateTimes:
             if "date_range_start" in c.kwargs.get("target", {}).get("entity_id", "")
         ]
         assert start_calls[0].kwargs["service_data"]["datetime"] == (
-            datetime(2025, 1, 15, 15, 30, 0)
+            datetime(2025, 1, 15, 15, 30, 0, tzinfo=dt_util.UTC)
         )
 
     async def test_after_buffer_extends_end(self) -> None:
@@ -2799,7 +2799,7 @@ class TestBufferInUpdateTimes:
             if "date_range_end" in c.kwargs.get("target", {}).get("entity_id", "")
         ]
         assert end_calls[0].kwargs["service_data"]["datetime"] == (
-            datetime(2025, 1, 17, 11, 15, 0)
+            datetime(2025, 1, 17, 11, 15, 0, tzinfo=dt_util.UTC)
         )
 
     async def test_zero_buffer_unchanged(self) -> None:
@@ -2811,8 +2811,8 @@ class TestBufferInUpdateTimes:
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
 
-        start = datetime(2025, 1, 15, 16, 0, 0)
-        end = datetime(2025, 1, 17, 11, 0, 0)
+        start = datetime(2025, 1, 15, 16, 0, 0, tzinfo=dt_util.UTC)
+        end = datetime(2025, 1, 17, 11, 0, 0, tzinfo=dt_util.UTC)
         event = self._make_event(start=start, end=end)
         await async_fire_update_times(coordinator, event, 10)
 

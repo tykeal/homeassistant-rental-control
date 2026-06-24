@@ -1402,11 +1402,9 @@ Please update Keymaster to at least v0.1.0-b0
         to populate :attr:`~.reconciliation.Reservation.fingerprint_history`
         and :attr:`~.reconciliation.Reservation.missing_count`.
 
-        After building reservations from calendar events, ghost Reservation
-        objects are synthesised for occupied persisted mappings that are
-        absent from the current feed (T089).  Their ``missing_count`` is
-        incremented in ``_slot_mappings`` so the planner can apply the
-        two-cycle miss tolerance before generating a CLEAR action.
+        Physical Keymaster observations are used only as current-cycle facts
+        for stable-name matching and manual PIN preservation; missing feed
+        entries are handled by the stateless planner from physical state.
 
         Args:
             calendar: Parsed and sorted calendar events from the current

@@ -2073,9 +2073,8 @@ def compute_desired_plan(
     matched_slots: dict[int, str] = {}
     matched_reservations: set[str] = set()
     duplicate_slots: set[int] = set()
-    ambiguous_slots: set[int] = set()
 
-    for name_key, desired_group in selected_by_name.items():
+    for desired_group in selected_by_name.values():
         physical_group = [
             ms
             for ms in occupied_slots
@@ -2101,19 +2100,6 @@ def compute_desired_plan(
                 ms.slot,
             )
         )
-        if (
-            len(
-                {
-                    normalize_slot_name_for_fingerprint(r.slot_name)
-                    for r in desired_group
-                }
-            )
-            > 1
-        ):
-            for ms in physical_group:
-                ambiguous_slots.add(ms.slot)
-            plan.diagnostics.setdefault("ambiguous_name_groups", []).append(name_key)
-            continue
         extra_physical_group: list[ManagedSlot] = []
         if len(desired_group) > 1 and len(physical_group) > len(desired_group):
             canonical_physical = _select_managed_subset(physical_group, desired_group)
@@ -2233,10 +2219,7 @@ def compute_desired_plan(
         action = ActionKind.NOOP
         reason: str | None = None
 
-        if ms.slot in ambiguous_slots:
-            action = ActionKind.BLOCKED
-            pending_reason = "ambiguous_name_group"
-        elif ms.status is SlotStatus.PENDING_CLEAR:
+        if ms.status is SlotStatus.PENDING_CLEAR:
             if ms.persisted_identity_key in plan.protected:
                 action = ActionKind.BLOCKED
                 pending_reason = "protected_active_pending_clear"

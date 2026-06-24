@@ -779,12 +779,20 @@ def _ensure_datetime(value: str | date | datetime, rc) -> datetime:
     override timestamps.  Falls back to UTC when no valid
     timezone is available.
     """
+    tz = getattr(rc, "timezone", None)
+    if not isinstance(tz, tzinfo):
+        tz = dt.UTC
     if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=tz)
         return value
     if isinstance(value, str):
         parsed = dt.parse_datetime(value)
         if parsed is not None:
-            return cast("datetime", parsed)
+            parsed_dt = cast("datetime", parsed)
+            if parsed_dt.tzinfo is None:
+                return parsed_dt.replace(tzinfo=tz)
+            return parsed_dt
         parsed_date = dt.parse_date(value)
         if parsed_date is not None:
             value = cast("date", parsed_date)
@@ -794,9 +802,6 @@ def _ensure_datetime(value: str | date | datetime, rc) -> datetime:
     if not isinstance(value, date):
         msg = f"Cannot coerce {value!r} to datetime"
         raise ValueError(msg)
-    tz = getattr(rc, "timezone", None)
-    if not isinstance(tz, tzinfo):
-        tz = dt.UTC
     return datetime.combine(value, time.min, tz)
 
 
