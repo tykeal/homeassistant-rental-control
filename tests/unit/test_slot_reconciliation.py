@@ -541,6 +541,45 @@ def test_stateless_extra_stale_same_name_keeps_ordered_subset() -> None:
     assert plan.selected == {"bob-one": 2, "bob-two": 3}
 
 
+def test_stateless_partial_duplicate_pairs_closest_reservation() -> None:
+    """A lone shifted duplicate slot pairs with the closest desired stay."""
+    early = _make_desired_reservation(
+        desired_id="bob-early",
+        stable_slot_name="Bob",
+        display_slot_name="Bob",
+        start=_dt(2026, 8, 1),
+        end=_dt(2026, 8, 8),
+        slot_code="1111",
+    )
+    late = _make_desired_reservation(
+        desired_id="bob-late",
+        stable_slot_name="Bob",
+        display_slot_name="Bob",
+        start=_dt(2026, 8, 15),
+        end=_dt(2026, 8, 22),
+        slot_code="2222",
+    )
+    shifted_late_slot = ObservedSlot(
+        slot=2,
+        managed=True,
+        raw_name="Bob",
+        raw_pin="2222",
+        actual_start=_dt(2026, 8, 14),
+        actual_end=_dt(2026, 8, 21),
+    )
+    empty_slot = ObservedSlot(slot=1, managed=True, raw_name="", has_pin=False)
+
+    plan = compute_stateless_plan(
+        [empty_slot, shifted_late_slot],
+        [early, late],
+        max_events=2,
+        plan_id="stateless-partial-closest",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert plan.selected == {"bob-late": 2, "bob-early": 1}
+
+
 def test_stateless_prefix_equivalent_names_do_not_share_slot() -> None:
     """A physical slot already matched by one name group cannot be reused."""
     prefixed = _make_desired_reservation(
@@ -852,6 +891,53 @@ def test_extra_stale_same_name_keeps_ordered_subset() -> None:
 
     assert plan.selected == {"bob-one": 2, "bob-two": 3}
     assert plan.slots[1].action is ActionKind.CLEAR
+
+
+def test_partial_duplicate_pairs_closest_reservation() -> None:
+    """Legacy partial duplicate pairing uses closest desired stay."""
+    early = Reservation(
+        identity_key="bob-early",
+        start=_dt(2026, 8, 1),
+        end=_dt(2026, 8, 8),
+        buffered_start=_dt(2026, 8, 1),
+        buffered_end=_dt(2026, 8, 8),
+        summary="Bob",
+        slot_name="Bob",
+        display_slot_name="Bob",
+        slot_code="1111",
+    )
+    late = Reservation(
+        identity_key="bob-late",
+        start=_dt(2026, 8, 15),
+        end=_dt(2026, 8, 22),
+        buffered_start=_dt(2026, 8, 15),
+        buffered_end=_dt(2026, 8, 22),
+        summary="Bob",
+        slot_name="Bob",
+        display_slot_name="Bob",
+        slot_code="2222",
+    )
+    empty_slot = ManagedSlot(slot=1, managed=True, status=SlotStatus.FREE)
+    shifted_late_slot = ManagedSlot(
+        slot=2,
+        managed=True,
+        status=SlotStatus.OCCUPIED,
+        actual_name="Bob",
+        actual_code="2222",
+        actual_code_present=True,
+        actual_start=_dt(2026, 8, 14),
+        actual_end=_dt(2026, 8, 21),
+    )
+
+    plan = compute_desired_plan(
+        [early, late],
+        [empty_slot, shifted_late_slot],
+        max_events=2,
+        plan_id="legacy-partial-closest",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert plan.selected == {"bob-late": 2, "bob-early": 1}
 
 
 def _make_desired_plan(

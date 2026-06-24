@@ -583,7 +583,7 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
             buffered_end = _ensure_datetime(buffered_end, coordinator)
         except (TypeError, ValueError) as exc:
             return OperationResult(
-                kind="update_times",
+                kind="set",
                 slot=slot,
                 failed=True,
                 error=str(exc),

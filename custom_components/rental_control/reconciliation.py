@@ -878,6 +878,64 @@ def _select_observed_subset(
     return [slots[index] for index in indices]
 
 
+def _pair_partial_managed(
+    slots: list[ManagedSlot], desired: list[Reservation]
+) -> list[tuple[ManagedSlot, Reservation]]:
+    """Pair fewer managed slots to the best ordered desired reservations."""
+
+    @lru_cache
+    def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+        """Return best desired indices for remaining managed slots."""
+        if slot_index == len(slots):
+            return 0.0, ()
+        if desired_index == len(desired):
+            return float("inf"), ()
+        skip_cost, skip_indices = _best(slot_index, desired_index + 1)
+        take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+        take_cost = (
+            _managed_slot_distance(slots[slot_index], desired[desired_index])
+            + take_rest_cost
+        )
+        if take_cost < skip_cost:
+            return take_cost, (desired_index, *take_indices)
+        return skip_cost, skip_indices
+
+    _, desired_indices = _best(0, 0)
+    return [
+        (slots[slot_index], desired[desired_index])
+        for slot_index, desired_index in enumerate(desired_indices)
+    ]
+
+
+def _pair_partial_observed(
+    slots: list[ObservedSlot], desired: list[DesiredReservation]
+) -> list[tuple[ObservedSlot, DesiredReservation]]:
+    """Pair fewer observed slots to the best ordered desired reservations."""
+
+    @lru_cache
+    def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+        """Return best desired indices for remaining observed slots."""
+        if slot_index == len(slots):
+            return 0.0, ()
+        if desired_index == len(desired):
+            return float("inf"), ()
+        skip_cost, skip_indices = _best(slot_index, desired_index + 1)
+        take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+        take_cost = (
+            _observed_slot_distance(slots[slot_index], desired[desired_index])
+            + take_rest_cost
+        )
+        if take_cost < skip_cost:
+            return take_cost, (desired_index, *take_indices)
+        return skip_cost, skip_indices
+
+    _, desired_indices = _best(0, 0)
+    return [
+        (slots[slot_index], desired[desired_index])
+        for slot_index, desired_index in enumerate(desired_indices)
+    ]
+
+
 def _dt_to_utc_iso(dt: datetime) -> str:
     """Convert *dt* to a UTC ISO-8601 string for fingerprint computation.
 
@@ -2113,7 +2171,10 @@ def compute_desired_plan(
                 *canonical_physical,
                 *[ms for ms in remaining_physical if ms.slot not in canonical_slots],
             ]
-        pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
+        if len(remaining_physical) < len(remaining_desired):
+            pairs.extend(_pair_partial_managed(remaining_physical, remaining_desired))
+        else:
+            pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
 
         for ms, res in pairs:
             matched_slots[ms.slot] = res.identity_key
@@ -2413,7 +2474,10 @@ def compute_stateless_plan(
                     if slot.slot not in canonical_slots
                 ],
             ]
-        pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
+        if len(remaining_physical) < len(remaining_desired):
+            pairs.extend(_pair_partial_observed(remaining_physical, remaining_desired))
+        else:
+            pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
 
         for slot, desired in pairs:
             slot.matched_desired_id = desired.desired_id

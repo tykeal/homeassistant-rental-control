@@ -3047,6 +3047,17 @@ class TestAsyncFireSetCodeOperationResult:
         assert result.failed is True
         assert result.error == "service unavailable"
 
+    async def test_invalid_datetime_payload_returns_failed_set(self) -> None:
+        """Invalid set-code dates fail as set operations."""
+        coordinator = self._make_coordinator()
+        event = self._make_event()
+        event.extra_state_attributes["start"] = object()
+
+        result = await async_fire_set_code(coordinator, event, 10)
+
+        assert result.failed is True
+        assert result.kind == "set"
+
     async def test_no_lockname_returns_unconfirmed(self) -> None:
         """Missing lockname returns an unconfirmed result."""
         coordinator = self._make_coordinator()
