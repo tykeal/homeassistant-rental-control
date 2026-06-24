@@ -19,6 +19,7 @@ import asyncio
 from collections import deque
 from collections.abc import Coroutine
 from collections.abc import Mapping
+from datetime import date
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
@@ -1442,8 +1443,8 @@ Please update Keymaster to at least v0.1.0-b0
             if slot_name:
                 key = normalize_slot_name_for_fingerprint(slot_name)
                 slot_name_counts[key] = slot_name_counts.get(key, 0) + 1
-                event_start: datetime = event.start  # type: ignore[assignment]
-                event_end: datetime = event.end  # type: ignore[assignment]
+                event_start = self._coerce_event_datetime(event.start)
+                event_end = self._coerce_event_datetime(event.end)
                 buffered_start_raw, buffered_end_raw = apply_buffer(
                     event_start,
                     event_end,
@@ -1480,8 +1481,8 @@ Please update Keymaster to at least v0.1.0-b0
             if not slot_name:
                 continue
 
-            start: datetime = event.start  # type: ignore[assignment]
-            end: datetime = event.end  # type: ignore[assignment]
+            start = self._coerce_event_datetime(event.start)
+            end = self._coerce_event_datetime(event.end)
 
             buffered_start_raw, buffered_end_raw = apply_buffer(
                 start, end, self.code_buffer_before, self.code_buffer_after, self
@@ -1514,25 +1515,29 @@ Please update Keymaster to at least v0.1.0-b0
             code_source = "generated"
             active_windows = self._active_checkin_windows_for_name(slot_name)
             matched_physical = self._find_observed_slot_by_name(
-                observed_slots,
-                slot_name,
-                display_slot_name,
-                consumed_observed_slots,
-                buffered_start,
-                buffered_end,
-                slot_name_counts.get(normalize_slot_name_for_fingerprint(slot_name), 0)
+                managed_slots=observed_slots,
+                slot_name=slot_name,
+                display_slot_name=display_slot_name,
+                consumed_slots=consumed_observed_slots,
+                desired_start=buffered_start,
+                desired_end=buffered_end,
+                require_date_match=slot_name_counts.get(
+                    normalize_slot_name_for_fingerprint(slot_name), 0
+                )
                 > 1,
-                slot_name_date_windows.get(
+                reserved_date_windows=slot_name_date_windows.get(
                     normalize_slot_name_for_fingerprint(slot_name)
                 ),
-                slot_name_ordered_windows.get(
+                ordered_date_windows=slot_name_ordered_windows.get(
                     normalize_slot_name_for_fingerprint(slot_name)
                 ),
-                bool(
+                block_unknown_date_fallback=bool(
                     active_windows
                     and (buffered_start, buffered_end) not in active_windows
                 ),
-                slot_name_counts.get(normalize_slot_name_for_fingerprint(slot_name), 1),
+                expected_name_count=slot_name_counts.get(
+                    normalize_slot_name_for_fingerprint(slot_name), 1
+                ),
             )
             if matched_physical is not None and matched_physical.actual_code:
                 observed_code = matched_physical.actual_code
@@ -2167,6 +2172,12 @@ Please update Keymaster to at least v0.1.0-b0
             parsed = dt.parse_datetime(value)
             return parsed if isinstance(parsed, datetime) else None
         return None
+
+    def _coerce_event_datetime(self, value: date | datetime) -> datetime:
+        """Return a timezone-aware datetime for calendar date/datetime values."""
+        if isinstance(value, datetime):
+            return value
+        return datetime.combine(value, time.min, self.timezone)
 
     def _must_defer_for_checkin_restore(
         self, reservations: list[_Reservation], managed_slots: list[_ManagedSlot]

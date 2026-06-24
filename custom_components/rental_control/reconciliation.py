@@ -2180,7 +2180,6 @@ def compute_desired_plan(
             matched_slots[ms.slot] = res.identity_key
             matched_reservations.add(res.identity_key)
             duplicate_slots.discard(ms.slot)
-            ms.persisted_identity_key = res.identity_key
             plan.diagnostics.setdefault("stable_name_matches", {})[ms.slot] = {
                 "identity_key": res.identity_key,
                 "slot_name": res.slot_name,

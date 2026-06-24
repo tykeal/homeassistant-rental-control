@@ -14,6 +14,7 @@ from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -59,6 +60,7 @@ def _install_keymaster_text_states(
     pins: dict[int, str],
 ) -> None:
     """Install concrete Keymaster name/PIN reads for preflight tests."""
+    previous_side_effect = coordinator.hass.states.get.side_effect
 
     def _get_state(entity_id: str) -> MagicMock | None:
         """Return configured name or PIN state for a Keymaster text entity."""
@@ -68,6 +70,8 @@ def _install_keymaster_text_states(
         for slot, pin in pins.items():
             if entity_id.endswith(f"_code_slot_{slot}_pin"):
                 return _state(pin)
+        if callable(previous_side_effect):
+            return cast("MagicMock | None", previous_side_effect(entity_id))
         return None
 
     coordinator.hass.states.get.side_effect = _get_state
