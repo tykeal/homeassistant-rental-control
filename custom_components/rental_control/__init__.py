@@ -84,19 +84,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     # Load Store before Keymaster bootstrap (ordering fix for #597)
     await coordinator.async_load_slot_store()
 
-    # Inject persisted mappings or adopt slots on first upgrade
+    # Inject cache-only mappings. Physical Keymaster state is re-read during
+    # every coordinator refresh, so missing cache never triggers adoption.
     persisted = coordinator.get_persisted_slot_mappings()
-    if persisted:
-        if coordinator.event_overrides is not None:
-            try:
-                coordinator.event_overrides.load_persisted_mappings(persisted)
-            except ValueError:
-                _LOGGER.exception(
-                    "Failed to load persisted slot mappings for %s",
-                    config_entry.entry_id,
-                )
-    elif coordinator.lockname:
-        await coordinator.async_adopt_keymaster_slots()
+    if persisted and coordinator.event_overrides is not None:
+        coordinator.event_overrides.load_persisted_mappings(persisted)
 
     # Bootstrap Keymaster slot overrides from current HA state before
     # first refresh so overrides are checked against the initial data
@@ -104,17 +96,19 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     startup_slots_unreadable, _ = _needs_startup_readability_refresh(hass, coordinator)
 
+    hass.data[DOMAIN][config_entry.entry_id] = {
+        COORDINATOR: coordinator,
+        UNSUB_LISTENERS: [],
+    }
+    coordinator._checkin_restore_pending = True
+
     # Perform first data refresh before platform setup to guarantee
     # coordinator.data is populated when entities are created
     try:
         await coordinator.async_config_entry_first_refresh()
     except ConfigEntryNotReady:
+        hass.data[DOMAIN].pop(config_entry.entry_id, None)
         raise
-
-    hass.data[DOMAIN][config_entry.entry_id] = {
-        COORDINATOR: coordinator,
-        UNSUB_LISTENERS: [],
-    }
 
     async_arm_startup_readability_refresh(
         hass,
@@ -127,6 +121,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     await async_start_listener(hass, config_entry)
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
+    coordinator._checkin_restore_pending = False
 
     # Register keymaster event bus listener after platform setup
     # so the checkin sensor reference is available (T024/T026)

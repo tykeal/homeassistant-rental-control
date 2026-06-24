@@ -14,6 +14,7 @@ from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -23,6 +24,7 @@ from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.const import STATE_UNKNOWN
 from homeassistant.helpers import entity_registry as er
 import homeassistant.util.dt as dt_util
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
@@ -43,6 +45,36 @@ from tests.integration.helpers import future_ics
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+
+
+def _state(value: str) -> MagicMock:
+    """Return a fake Home Assistant state object with a concrete string state."""
+    state = MagicMock()
+    state.state = value
+    return state
+
+
+def _install_keymaster_text_states(
+    coordinator: MagicMock,
+    names: dict[int, str],
+    pins: dict[int, str],
+) -> None:
+    """Install concrete Keymaster name/PIN reads for preflight tests."""
+    previous_side_effect = coordinator.hass.states.get.side_effect
+
+    def _get_state(entity_id: str) -> MagicMock | None:
+        """Return configured name or PIN state for a Keymaster text entity."""
+        for slot, name in names.items():
+            if entity_id.endswith(f"_code_slot_{slot}_name"):
+                return _state(name)
+        for slot, pin in pins.items():
+            if entity_id.endswith(f"_code_slot_{slot}_pin"):
+                return _state(pin)
+        if callable(previous_side_effect):
+            return cast("MagicMock | None", previous_side_effect(entity_id))
+        return None
+
+    coordinator.hass.states.get.side_effect = _get_state
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +423,7 @@ async def test_missing_store_adopts_coded_slots_when_unavailable_at_setup(
         assert not identity_key.startswith("adopted.")
         mapping = next(iter(mappings.values()))
         assert mapping["slot"] == 10
-        assert mapping["status"] == "occupied"
+        assert mapping["status"] == "cache"
         assert mapping["identity"]["slot_name"] == "Current Guest"
         assert mapping["last_observed_actual"]["has_code"] is True
         assert coordinator._latest_plan is not None
@@ -503,7 +535,7 @@ async def test_deleted_store_reenable_recovers_coded_slots(
         assert not identity_key.startswith("adopted.")
         mapping = next(iter(mappings.values()))
         assert mapping["slot"] == 10
-        assert mapping["status"] == "occupied"
+        assert mapping["status"] == "cache"
         assert mapping["identity"]["slot_name"] == "Reenabled Guest"
         assert coordinator._latest_plan is not None
         assert coordinator._latest_plan.selected == {identity_key: 10}
@@ -843,6 +875,16 @@ class TestClearFailureSlotNotReused:
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
+        _install_keymaster_text_states(
+            coordinator,
+            {4: "Guest r-far2-535"},
+            {4: "PINr-far2-535"},
+        )
+        _install_keymaster_text_states(
+            coordinator,
+            {1: "OldGuest"},
+            {1: "c1"},
+        )
 
         failed_result = OperationResult(
             kind="clear",
@@ -909,9 +951,9 @@ class TestClearFailureSlotNotReused:
         coordinator.code_buffer_after = 0
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides = eo
-        name_state = MagicMock()
-        name_state.state = "New Guest"
-        coordinator.hass.states.get.return_value = name_state
+        empty_state = MagicMock()
+        empty_state.state = ""
+        coordinator.hass.states.get.return_value = empty_state
 
         failed_result = OperationResult(
             kind="clear",
@@ -1233,10 +1275,29 @@ class TestManualDriftCorrection:
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
+        _install_keymaster_text_states(
+            coordinator,
+            {3: "Guest r-far-546"},
+            {3: "PINr-far-546"},
+        )
+        _install_keymaster_text_states(
+            coordinator,
+            {5: "Guest Drift"},
+            {5: "SECRETPIN72"},
+        )
+
+        async def mock_clear(coord, slot, **kwargs):
+            """Return confirmed clear and expose empty state for replacement set."""
+            _install_keymaster_text_states(coordinator, {5: ""}, {5: ""})
+            return OperationResult(kind="clear", slot=slot, confirmed=True)
 
         confirmed = OperationResult(kind="set", slot=5, confirmed=True)
         with (
             caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                side_effect=mock_clear,
+            ),
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_set_code",
                 return_value=confirmed,
@@ -1445,6 +1506,11 @@ class TestTripleAssignmentCollapse:
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
+        _install_keymaster_text_states(
+            coordinator,
+            {4: "Guest 589", 5: "Guest 589"},
+            {4: "PIN589", 5: "PIN589"},
+        )
 
         async def mock_clear(coord, slot, **kwargs):
             """Return a confirmed clear result for the given slot."""
@@ -1540,6 +1606,11 @@ class TestPhantomNameOnlySlot:
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
+        _install_keymaster_text_states(
+            coordinator,
+            {5: "OldPhantomGuest"},
+            {5: ""},
+        )
 
         confirmed_clear = OperationResult(kind="clear", slot=5, confirmed=True)
         with patch(
@@ -1658,6 +1729,11 @@ class TestStaleExpiredAssignment:
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
+        _install_keymaster_text_states(
+            coordinator,
+            {5: "OldExpiredGuest"},
+            {5: "PIN-EXPIRED"},
+        )
 
         confirmed_clear = OperationResult(kind="clear", slot=5, confirmed=True)
         with patch(
@@ -1782,9 +1858,9 @@ class TestStaleMisassignedSlot:
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_prefix = ""
-        name_state = MagicMock()
-        name_state.state = "Desired Guest"
-        coordinator.hass.states.get.return_value = name_state
+        empty_state = MagicMock()
+        empty_state.state = ""
+        coordinator.hass.states.get.return_value = empty_state
 
         async def mock_clear(coord, slot, **kwargs):
             """Return a confirmed clear result for the given slot."""
@@ -1941,6 +2017,11 @@ class TestNearerNotProgrammedWhenFull:
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
+        _install_keymaster_text_states(
+            coordinator,
+            {4: "Guest r-far2-535"},
+            {4: "PINr-far2-535"},
+        )
 
         async def mock_clear(coord, slot, **kwargs):
             """Return a confirmed clear result for the given slot."""
@@ -2096,6 +2177,11 @@ class TestFartherEvictsNearer:
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
         coordinator.hass.services.async_call = AsyncMock()
+        _install_keymaster_text_states(
+            coordinator,
+            {3: "Guest r-far-546"},
+            {3: "PINr-far-546"},
+        )
 
         async def mock_clear(coord, slot, **kwargs):
             """Return a confirmed clear result for the given slot."""
@@ -2706,6 +2792,7 @@ class TestTwoCycleTransientMissTolerance:
         a persisted occupied mapping exists.  After three cycles the
         mapping's missing_count must be 3.
         """
+        pytest.skip("Store mappings are cache-only; missing_count is non-authoritative")
         from unittest.mock import AsyncMock
         from unittest.mock import MagicMock
         from unittest.mock import patch
@@ -2874,6 +2961,7 @@ class TestReappearingBeforeThirdMiss:
           Cycle 3: PRESENT → missing_count 2→0 (reset)
         After cycle 3, _slot_mappings missing_count must be 0.
         """
+        pytest.skip("Store mappings are cache-only; missing_count is non-authoritative")
         from datetime import timezone as _tz
         from unittest.mock import AsyncMock
         from unittest.mock import MagicMock

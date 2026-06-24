@@ -61,7 +61,7 @@ from .const import EARLY_CHECKOUT_GRACE_MINUTES
 from .const import NAME
 
 _LOGGER = logging.getLogger(__name__)
-_CLEARED_KEYMASTER_TEXT_STATES = frozenset(("", str(STATE_UNKNOWN).casefold()))
+_CLEARED_KEYMASTER_TEXT_STATES = frozenset(("", str(STATE_UNKNOWN).casefold(), "none"))
 _UNREADABLE_KEYMASTER_TEXT_STATE = str(STATE_UNAVAILABLE).casefold()
 _SET_CODE_CONFIRMATION_TIMEOUT = 5.0
 
@@ -239,6 +239,53 @@ async def _async_wait_for_expected_name(
         except TimeoutError:
             return False
         return _state_matches_expected_name(hass, entity_id, name)
+    finally:
+        unsub()
+
+
+def _state_matches_expected_datetime(
+    hass: HomeAssistant, entity_id: str, expected: datetime
+) -> bool:
+    """Return whether the entity state matches the expected datetime."""
+    state = hass.states.get(entity_id)
+    if state is None or not isinstance(state.state, str):
+        return False
+    parsed = dt.parse_datetime(state.state)
+    return parsed is not None and dt.as_utc(parsed) == dt.as_utc(expected)
+
+
+async def _async_wait_for_expected_datetime(
+    hass: HomeAssistant, entity_id: str, expected: datetime, timeout: float
+) -> bool:
+    """Wait briefly for one datetime entity to match the expected value."""
+    if _state_matches_expected_datetime(hass, entity_id, expected):
+        return True
+    if _state_has_non_string_value(hass, entity_id):
+        return False
+
+    matched = asyncio.Event()
+
+    def _handle_state_change(event: Event[EventStateChangedData]) -> None:
+        """Set the wait flag when the target entity reaches the expected time."""
+        new_state = event.data.get("new_state")
+        if new_state is None or not isinstance(new_state.state, str):
+            return
+        parsed = dt.parse_datetime(new_state.state)
+        if parsed is not None and dt.as_utc(parsed) == dt.as_utc(expected):
+            matched.set()
+
+    unsub = async_track_state_change_event(hass, [entity_id], _handle_state_change)
+    try:
+        if _state_matches_expected_datetime(hass, entity_id, expected):
+            return True
+        if _state_has_non_string_value(hass, entity_id):
+            return False
+        try:
+            async with asyncio.timeout(timeout):
+                await matched.wait()
+        except TimeoutError:
+            return False
+        return _state_matches_expected_datetime(hass, entity_id, expected)
     finally:
         unsub()
 
@@ -497,6 +544,27 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
         return OperationResult(kind="set", slot=slot, unconfirmed=True)
 
     try:
+        # Compute buffered validity window for Keymaster before mutating state.
+        before = getattr(coordinator, "code_buffer_before", 0)
+        after = getattr(coordinator, "code_buffer_after", 0)
+        buffered_start, buffered_end = apply_buffer(
+            event.extra_state_attributes["start"],
+            event.extra_state_attributes["end"],
+            before if isinstance(before, int) else 0,
+            after if isinstance(after, int) else 0,
+            coordinator,
+        )
+        buffered_start = _ensure_datetime(buffered_start, coordinator)
+        buffered_end = _ensure_datetime(buffered_end, coordinator)
+    except (TypeError, ValueError) as exc:
+        return OperationResult(
+            kind="set",
+            slot=slot,
+            failed=True,
+            error=str(exc),
+        )
+
+    try:
         # Disable the slot, this should help avoid notices from Keymaster
         # about pin changes
         coro = add_call(
@@ -525,15 +593,6 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
                 )
             },
             blocking=True,
-        )
-
-        # Compute buffered validity window for Keymaster
-        buffered_start, buffered_end = apply_buffer(
-            event.extra_state_attributes["start"],
-            event.extra_state_attributes["end"],
-            coordinator.code_buffer_before,
-            coordinator.code_buffer_after,
-            coordinator,
         )
 
         coro = add_call(
@@ -645,14 +704,24 @@ async def async_fire_update_times(coordinator, event, slot: int) -> OperationRes
         )
         return OperationResult(kind="update_times", slot=slot, unconfirmed=True)
 
-    # Compute buffered validity window for Keymaster
-    buffered_start, buffered_end = apply_buffer(
-        event.extra_state_attributes["start"],
-        event.extra_state_attributes["end"],
-        coordinator.code_buffer_before,
-        coordinator.code_buffer_after,
-        coordinator,
-    )
+    try:
+        # Compute buffered validity window for Keymaster
+        buffered_start, buffered_end = apply_buffer(
+            event.extra_state_attributes["start"],
+            event.extra_state_attributes["end"],
+            coordinator.code_buffer_before,
+            coordinator.code_buffer_after,
+            coordinator,
+        )
+        buffered_start = _ensure_datetime(buffered_start, coordinator)
+        buffered_end = _ensure_datetime(buffered_end, coordinator)
+    except (TypeError, ValueError) as exc:
+        return OperationResult(
+            kind="update_times",
+            slot=slot,
+            failed=True,
+            error=str(exc),
+        )
 
     coro = add_call(
         coordinator.hass,
@@ -684,10 +753,28 @@ async def async_fire_update_times(coordinator, event, slot: int) -> OperationRes
             failed=True,
             error=str(exc),
         )
+    start_entity_id = f"datetime.{lockname}_code_slot_{slot}_date_range_start"
+    end_entity_id = f"datetime.{lockname}_code_slot_{slot}_date_range_end"
+    start_confirmed, end_confirmed = await asyncio.gather(
+        _async_wait_for_expected_datetime(
+            coordinator.hass,
+            start_entity_id,
+            buffered_start,
+            _SET_CODE_CONFIRMATION_TIMEOUT,
+        ),
+        _async_wait_for_expected_datetime(
+            coordinator.hass,
+            end_entity_id,
+            buffered_end,
+            _SET_CODE_CONFIRMATION_TIMEOUT,
+        ),
+    )
+    if not start_confirmed or not end_confirmed:
+        return OperationResult(kind="update_times", slot=slot, unconfirmed=True)
     return OperationResult(kind="update_times", slot=slot, confirmed=True)
 
 
-def _ensure_datetime(value: date | datetime, rc) -> datetime:
+def _ensure_datetime(value: str | date | datetime, rc) -> datetime:
     """Coerce a bare ``date`` to a timezone-aware ``datetime``.
 
     ``CalendarEvent`` may carry ``date`` values for all-day
@@ -696,11 +783,29 @@ def _ensure_datetime(value: date | datetime, rc) -> datetime:
     override timestamps.  Falls back to UTC when no valid
     timezone is available.
     """
-    if isinstance(value, datetime):
-        return value
     tz = getattr(rc, "timezone", None)
     if not isinstance(tz, tzinfo):
         tz = dt.UTC
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=tz)
+        return value
+    if isinstance(value, str):
+        parsed = dt.parse_datetime(value)
+        if parsed is not None:
+            parsed_dt = cast("datetime", parsed)
+            if parsed_dt.tzinfo is None:
+                return parsed_dt.replace(tzinfo=tz)
+            return parsed_dt
+        parsed_date = dt.parse_date(value)
+        if parsed_date is not None:
+            value = cast("date", parsed_date)
+        else:
+            msg = f"Cannot coerce {value!r} to datetime"
+            raise ValueError(msg)
+    if not isinstance(value, date):
+        msg = f"Cannot coerce {value!r} to datetime"
+        raise ValueError(msg)
     return datetime.combine(value, time.min, tz)
 
 

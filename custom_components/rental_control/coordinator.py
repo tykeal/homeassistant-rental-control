@@ -19,10 +19,12 @@ import asyncio
 from collections import deque
 from collections.abc import Coroutine
 from collections.abc import Mapping
+from datetime import date
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
 from datetime import timezone
+from functools import lru_cache
 import logging
 import random
 import re
@@ -89,9 +91,7 @@ from .const import DOMAIN
 from .const import EVENT_AGE_THRESHOLD_DAYS
 from .const import LOCK_MANAGER
 from .const import OPERATION_KIND_CLEAR
-from .const import OPERATION_KIND_SET
 from .const import REQUEST_TIMEOUT
-from .const import SLOT_STATUS_BLOCKED
 from .const import SLOT_STATUS_OCCUPIED
 from .const import SLOT_STATUS_PENDING_CLEAR
 from .const import SLOT_STATUS_PENDING_SET
@@ -107,7 +107,6 @@ from .reconciliation import Reservation as _Reservation
 from .reconciliation import SlotStatus as _SlotStatus
 from .reconciliation import compute_desired_plan
 from .reconciliation import extract_booking_aliases
-from .reconciliation import find_reservation_rematch
 from .reconciliation import make_reservation_fingerprint
 from .reconciliation import normalize_slot_name_for_fingerprint
 from .util import OperationResult
@@ -228,6 +227,7 @@ class RentalControlCoordinator(DataUpdateCoordinator[list[CalendarEvent]]):
         # Reconciliation state (T022/T031/T033)
         self._latest_plan: _DesiredPlan | None = None
         self._latest_res_by_key: dict[str, _Reservation] = {}
+        self._checkin_restore_pending = False
 
         super().__init__(
             hass=hass,
@@ -557,44 +557,88 @@ Please update Keymaster to at least v0.1.0-b0
             )
 
     async def async_load_slot_store(self) -> None:
-        """Load persisted slot mappings from the HA Store.
-
-        Creates the Store on first call using the entry-scoped key
-        ``STORE_SLOT_MAPPINGS_KEY.{entry_id}``.  Applies schema v1
-        migration when the stored schema version is absent or below 1.
-        Raw PINs are stripped after loading as a safety measure.
-        """
+        """Load cache-only slot metadata from the HA Store."""
         self._store = Store(
             self.hass,
             STORE_SCHEMA_VERSION,
             f"{STORE_SLOT_MAPPINGS_KEY}.{self._entry_id}",
         )
-        raw: dict[str, Any] | None = await self._store.async_load()
+        try:
+            raw: dict[str, Any] | None = await self._store.async_load()
+        except Exception as err:
+            _LOGGER.warning(
+                "Ignoring unreadable Rental Control slot cache for %s: %s",
+                self._entry_id,
+                err,
+            )
+            self._slot_mappings = self._empty_slot_cache("cache_load_failed")
+            return
         if raw is None:
-            self._slot_mappings = {}
+            self._slot_mappings = self._empty_slot_cache("cache_missing")
+            return
+        if not isinstance(raw, dict):
+            self._slot_mappings = self._empty_slot_cache("cache_corrupt")
             return
         schema_version = raw.get("schema_version", 0)
+        if not isinstance(schema_version, int):
+            self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+            return
         if schema_version < 1:
-            raw = await self._migrate_slot_store_v1(raw)
-        for mapping in raw.get("mappings", {}).values():
+            try:
+                raw = await self._migrate_slot_store_v1(raw)
+            except Exception:
+                self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+                return
+        mappings = raw.get("mappings", {})
+        if not isinstance(mappings, dict):
+            self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+            return
+        aliases = raw.get("aliases", {})
+        if aliases is None:
+            raw["aliases"] = {}
+        elif not isinstance(aliases, dict):
+            self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+            return
+        migration_notes = raw.get("migration_notes", [])
+        if migration_notes is None:
+            raw["migration_notes"] = []
+        elif not isinstance(migration_notes, list):
+            self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+            return
+        for mapping in mappings.values():
+            if not isinstance(mapping, dict):
+                self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+                return
             last_obs = mapping.get("last_observed_actual")
             if last_obs is not None:
+                if not isinstance(last_obs, dict):
+                    self._slot_mappings = self._empty_slot_cache("cache_corrupt")
+                    return
                 last_obs.pop("pin", None)
                 last_obs.pop("code", None)
                 last_obs.pop("slot_code", None)
+        raw.setdefault("mappings", {})
+        raw.setdefault("aliases", {})
+        raw.setdefault("migration_notes", [])
         self._slot_mappings = raw
+
+    def _empty_slot_cache(self, note: str) -> dict[str, Any]:
+        """Return an empty cache-only Store payload with a migration note."""
+        return {
+            "schema_version": STORE_SCHEMA_VERSION,
+            "entry_id": self._entry_id,
+            "lockname": self.lockname,
+            "mappings": {},
+            "aliases": {},
+            "migration_notes": [note],
+        }
 
     def get_persisted_slot_mappings(self) -> dict[str, Any]:
         """Return entry-scoped persisted reservation-slot mappings."""
         return cast("dict[str, Any]", self._slot_mappings.get("mappings", {}))
 
     async def async_save_slot_store(self) -> None:
-        """Save current slot mappings to the HA Store.
-
-        A no-op when ``_store`` is ``None`` (store not yet
-        initialised).  Raw PINs are stripped from
-        ``last_observed_actual`` before persisting as a safety measure.
-        """
+        """Best-effort save of cache-only slot metadata to the HA Store."""
         if self._store is None:
             return
         mappings: dict[str, Any] = {}
@@ -616,9 +660,18 @@ Please update Keymaster to at least v0.1.0-b0
             "max_slots": self.max_events,
             "updated_at": dt.now().isoformat(),
             "mappings": mappings,
-            "blocked_slots": self._slot_mappings.get("blocked_slots", {}),
+            "aliases": self._slot_mappings.get("aliases", {}),
+            "last_plan": self._slot_mappings.get("last_plan", {}),
+            "migration_notes": self._slot_mappings.get("migration_notes", []),
         }
-        await self._store.async_save(data)
+        try:
+            await self._store.async_save(data)
+        except Exception as err:
+            _LOGGER.warning(
+                "Failed to save Rental Control slot cache for %s: %s",
+                self._entry_id,
+                err,
+            )
 
     async def _migrate_slot_store_v1(self, raw: dict[str, Any]) -> dict[str, Any]:
         """Migrate store data to schema version 1.
@@ -633,6 +686,9 @@ Please update Keymaster to at least v0.1.0-b0
         Returns:
             A dict conforming to schema version 1.
         """
+        migration_notes = raw.get("migration_notes", [])
+        if not isinstance(migration_notes, list):
+            migration_notes = []
         return {
             "schema_version": 1,
             "entry_id": raw.get("entry_id", self._entry_id),
@@ -641,7 +697,11 @@ Please update Keymaster to at least v0.1.0-b0
             "max_slots": raw.get("max_slots", self.max_events),
             "updated_at": raw.get("updated_at", dt.now().isoformat()),
             "mappings": raw.get("mappings", {}),
-            "blocked_slots": raw.get("blocked_slots", {}),
+            "aliases": raw.get("aliases", {}),
+            "migration_notes": [
+                *migration_notes,
+                "legacy_authoritative_fields_ignored",
+            ],
         }
 
     async def async_adopt_keymaster_slots(self) -> None:
@@ -1042,6 +1102,220 @@ Please update Keymaster to at least v0.1.0-b0
             return False
         return True
 
+    def _find_observed_slot_by_name(
+        self,
+        managed_slots: list[_ManagedSlot],
+        slot_name: str,
+        display_slot_name: str,
+        consumed_slots: set[int] | None = None,
+        desired_start: datetime | None = None,
+        desired_end: datetime | None = None,
+        require_date_match: bool = False,
+        reserved_date_windows: set[tuple[datetime, datetime]] | None = None,
+        ordered_date_windows: list[tuple[datetime, datetime]] | None = None,
+        block_unknown_date_fallback: bool = False,
+        expected_name_count: int = 1,
+    ) -> _ManagedSlot | None:
+        """Return the current physical slot matching a stable/display name."""
+        prefix = f"{self.event_prefix} " if self.event_prefix else ""
+        desired_forms = {
+            normalize_slot_name_for_fingerprint(slot_name),
+            normalize_slot_name_for_fingerprint(display_slot_name),
+        }
+        consumed = consumed_slots if consumed_slots is not None else set()
+        all_candidates: list[_ManagedSlot] = []
+        candidates: list[_ManagedSlot] = []
+        matching_candidate_count = 0
+        for slot in sorted(
+            managed_slots,
+            key=lambda observed: (
+                observed.actual_start or datetime.max.replace(tzinfo=timezone.utc),
+                observed.actual_end or datetime.max.replace(tzinfo=timezone.utc),
+                observed.slot,
+            ),
+        ):
+            if not slot.managed or not slot.actual_name:
+                continue
+            actual = slot.actual_name
+            actual_forms = {normalize_slot_name_for_fingerprint(actual)}
+            if prefix and actual.startswith(prefix):
+                actual_forms.add(
+                    normalize_slot_name_for_fingerprint(actual[len(prefix) :])
+                )
+            if actual_forms & desired_forms:
+                matching_candidate_count += 1
+                all_candidates.append(slot)
+                if slot.slot in consumed:
+                    continue
+                candidates.append(slot)
+        if require_date_match:
+            if matching_candidate_count < expected_name_count:
+                if desired_start is not None and desired_end is not None:
+                    for slot in candidates:
+                        if (
+                            slot.actual_start == desired_start
+                            and slot.actual_end == desired_end
+                        ):
+                            consumed.add(slot.slot)
+                            return slot
+                if ordered_date_windows:
+                    pairings = self._select_partial_ordered_pairings(
+                        all_candidates, ordered_date_windows
+                    )
+                    desired_window = (
+                        (desired_start, desired_end)
+                        if desired_start is not None and desired_end is not None
+                        else None
+                    )
+                    matched_slot = (
+                        pairings.get(desired_window)
+                        if desired_window is not None
+                        else None
+                    )
+                    if matched_slot is not None and matched_slot.slot not in consumed:
+                        consumed.add(matched_slot.slot)
+                        return matched_slot
+                    return None
+                shifted_candidates = [
+                    slot
+                    for slot in candidates
+                    if slot.actual_start is not None
+                    and slot.actual_end is not None
+                    and (
+                        not reserved_date_windows
+                        or (slot.actual_start, slot.actual_end)
+                        not in reserved_date_windows
+                    )
+                ]
+                if len(shifted_candidates) == 1:
+                    consumed.add(shifted_candidates[0].slot)
+                    return shifted_candidates[0]
+                return None
+            if any(
+                slot.actual_start is None or slot.actual_end is None
+                for slot in all_candidates
+            ):
+                return None
+            if ordered_date_windows and matching_candidate_count > expected_name_count:
+                canonical = self._select_ordered_physical_subset(
+                    all_candidates, ordered_date_windows
+                )
+                desired_window = (
+                    (desired_start, desired_end)
+                    if desired_start is not None and desired_end is not None
+                    else None
+                )
+                for slot, window in zip(canonical, ordered_date_windows, strict=False):
+                    if slot.slot not in consumed and (
+                        desired_window is None or window == desired_window
+                    ):
+                        consumed.add(slot.slot)
+                        return slot
+                return None
+            if candidates:
+                consumed.add(candidates[0].slot)
+                return candidates[0]
+            return None
+        if desired_start is not None and desired_end is not None:
+            for slot in candidates:
+                if (
+                    slot.actual_start == desired_start
+                    and slot.actual_end == desired_end
+                ):
+                    consumed.add(slot.slot)
+                    return slot
+        fallback_candidates = candidates
+        if reserved_date_windows and block_unknown_date_fallback:
+            fallback_candidates = [
+                slot
+                for slot in candidates
+                if slot.actual_start is not None
+                and slot.actual_end is not None
+                and (slot.actual_start, slot.actual_end) not in reserved_date_windows
+            ]
+        if fallback_candidates:
+            consumed.add(fallback_candidates[0].slot)
+            return fallback_candidates[0]
+        return None
+
+    @staticmethod
+    def _select_ordered_physical_subset(
+        slots: list[_ManagedSlot], desired_windows: list[tuple[datetime, datetime]]
+    ) -> list[_ManagedSlot]:
+        """Return minimum-distance ordered physical subset for desired windows."""
+
+        def _distance(slot: _ManagedSlot, window: tuple[datetime, datetime]) -> float:
+            """Return absolute date distance for one physical/desired pair."""
+            assert slot.actual_start is not None
+            assert slot.actual_end is not None
+            return abs((slot.actual_start - window[0]).total_seconds()) + abs(
+                (slot.actual_end - window[1]).total_seconds()
+            )
+
+        @lru_cache(maxsize=None)
+        def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+            """Return best ordered subset cost and indices from this position."""
+            if desired_index == len(desired_windows):
+                return 0.0, ()
+            if slot_index == len(slots):
+                return float("inf"), ()
+            skip_cost, skip_indices = _best(slot_index + 1, desired_index)
+            take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+            take_cost = (
+                _distance(slots[slot_index], desired_windows[desired_index])
+                + take_rest_cost
+            )
+            if take_cost < skip_cost:
+                return take_cost, (slot_index, *take_indices)
+            return skip_cost, skip_indices
+
+        _, indices = _best(0, 0)
+        return [slots[index] for index in indices]
+
+    @staticmethod
+    def _select_partial_ordered_pairings(
+        slots: list[_ManagedSlot], desired_windows: list[tuple[datetime, datetime]]
+    ) -> dict[tuple[datetime, datetime], _ManagedSlot]:
+        """Return ordered pairings when physical duplicates are missing."""
+        dated_slots = [
+            slot
+            for slot in slots
+            if slot.actual_start is not None and slot.actual_end is not None
+        ]
+        if not dated_slots:
+            return {}
+
+        def _distance(slot: _ManagedSlot, window: tuple[datetime, datetime]) -> float:
+            """Return absolute date distance for one physical/desired pair."""
+            assert slot.actual_start is not None
+            assert slot.actual_end is not None
+            return abs((slot.actual_start - window[0]).total_seconds()) + abs(
+                (slot.actual_end - window[1]).total_seconds()
+            )
+
+        @lru_cache(maxsize=None)
+        def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+            """Return best desired-window indices for remaining physical slots."""
+            if slot_index == len(dated_slots):
+                return 0.0, ()
+            if desired_index == len(desired_windows):
+                return float("inf"), ()
+            skip_cost, skip_indices = _best(slot_index, desired_index + 1)
+            take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+            take_cost = (
+                _distance(dated_slots[slot_index], desired_windows[desired_index])
+                + take_rest_cost
+            )
+            if take_cost < skip_cost:
+                return take_cost, (desired_index, *take_indices)
+            return skip_cost, skip_indices
+
+        _, indices = _best(0, 0)
+        return {
+            desired_windows[desired_index]: dated_slots[slot_index]
+            for slot_index, desired_index in enumerate(indices)
+        }
+
     @staticmethod
     def _remap_observed_mappings_to_physical_reservations(
         persisted: dict[str, Any],
@@ -1123,16 +1397,13 @@ Please update Keymaster to at least v0.1.0-b0
         """Convert parsed CalendarEvent objects to Reservation objects.
 
         Produces one :class:`~.reconciliation.Reservation` per calendar
-        event that has a usable slot name.  The coordinator's current
-        persisted mappings (``_slot_mappings["mappings"]``) are consulted
-        to populate :attr:`~.reconciliation.Reservation.fingerprint_history`
-        and :attr:`~.reconciliation.Reservation.missing_count`.
+        event that has a usable slot name.  Persisted Store mappings are
+        deliberately not consulted as authority; reservation identity and
+        desired windows come from the current calendar cycle.
 
-        After building reservations from calendar events, ghost Reservation
-        objects are synthesised for occupied persisted mappings that are
-        absent from the current feed (T089).  Their ``missing_count`` is
-        incremented in ``_slot_mappings`` so the planner can apply the
-        two-cycle miss tolerance before generating a CLEAR action.
+        Physical Keymaster observations are used only as current-cycle facts
+        for stable-name matching and manual PIN preservation; missing feed
+        entries are handled by the stateless planner from physical state.
 
         Args:
             calendar: Parsed and sorted calendar events from the current
@@ -1143,99 +1414,62 @@ Please update Keymaster to at least v0.1.0-b0
 
         Returns:
             List of :class:`~.reconciliation.Reservation` objects ready
-            for the planner; includes ghost reservations for absent slots.
+            for the planner.
         """
-        # Use _slot_mappings["mappings"] as the live source of truth so that
-        # missing_count updates made by ghost logic in previous cycles are
-        # visible here.  At startup this is identical to what was loaded from
-        # the HA Store; ghost cycles then keep it up to date.
-        persisted: dict[str, Any] = self._slot_mappings.get("mappings", {})
-
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
         reservations: list[_Reservation] = []
-        actual_slot_names: dict[int, str] = {}
-        observed_mapping_keys: set[str] = set()
-        if managed_slots is not None:
-            for ms in managed_slots:
-                if ms.actual_name is not None:
-                    actual_slot_names[ms.slot] = ms.actual_name
-                physical_present = (
-                    bool(ms.actual_name) or ms.actual_code_present is True
-                )
-                if ms.persisted_identity_key is not None and physical_present:
-                    observed_mapping_keys.add(ms.persisted_identity_key)
-        else:
-            for persisted_mapping in persisted.values():
-                slot_num = persisted_mapping.get("slot")
-                actual = persisted_mapping.get("last_observed_actual")
-                actual_name = (
-                    actual.get("name_state") if isinstance(actual, dict) else None
-                )
-                if isinstance(slot_num, int) and isinstance(actual_name, str):
-                    actual_slot_names[slot_num] = actual_name
-        current_reservations_for_rematch: list[_Reservation] = []
-        for event in calendar:
-            slot_name = get_slot_name(
-                event.summary,
-                event.description or "",
-                self.event_prefix or "",
-            )
-            if not slot_name:
-                continue
-            rematch_start: datetime = event.start  # type: ignore[assignment]
-            rematch_end: datetime = event.end  # type: ignore[assignment]
-            rematch_buffered_start_raw, rematch_buffered_end_raw = apply_buffer(
-                rematch_start,
-                rematch_end,
-                self.code_buffer_before,
-                self.code_buffer_after,
-                self,
-            )
-            rematch_buffered_start: datetime = (
-                rematch_buffered_start_raw
-                if isinstance(rematch_buffered_start_raw, datetime)
-                else rematch_start
-            )
-            rematch_buffered_end: datetime = (
-                rematch_buffered_end_raw
-                if isinstance(rematch_buffered_end_raw, datetime)
-                else rematch_end
-            )
-            uid = normalize_uid(getattr(event, "uid", None))
-            display_slot_name = _format_display_slot_name(
-                slot_name, prefix, self.trim_names, self.max_name_length
-            )
-            try:
-                current_reservations_for_rematch.append(
-                    _Reservation(
-                        identity_key=make_reservation_fingerprint(
-                            self._entry_id, slot_name, rematch_start, rematch_end
-                        ),
-                        start=rematch_start,
-                        end=rematch_end,
-                        buffered_start=rematch_buffered_start,
-                        buffered_end=rematch_buffered_end,
-                        summary=event.summary,
-                        slot_name=slot_name,
-                        display_slot_name=display_slot_name,
-                        slot_code="",
-                        uid_aliases={uid} if uid else set(),
-                        booking_aliases=extract_booking_aliases(
-                            event.summary, event.description or ""
-                        ),
-                    )
-                )
-            except ValueError:
-                continue
-
-        observed_mapping_keys = self._remap_observed_mappings_to_physical_reservations(
-            persisted,
-            current_reservations_for_rematch,
-            actual_slot_names,
-            observed_mapping_keys,
+        observed_slots = managed_slots or []
+        consumed_observed_slots: set[int] = set()
+        slot_name_counts: dict[str, int] = {}
+        slot_name_date_windows: dict[str, set[tuple[datetime, datetime]]] = {}
+        slot_name_ordered_windows: dict[str, list[tuple[datetime, datetime]]] = {}
+        ordered_calendar = sorted(
+            calendar,
+            key=lambda event: (
+                self._coerce_event_datetime(event.start),
+                self._coerce_event_datetime(event.end),
+                event.summary or "",
+            ),
         )
+        for event in ordered_calendar:
+            slot_name = get_slot_name(
+                event.summary,
+                event.description or "",
+                self.event_prefix or "",
+            )
+            if slot_name:
+                key = normalize_slot_name_for_fingerprint(slot_name)
+                slot_name_counts[key] = slot_name_counts.get(key, 0) + 1
+                event_start = self._coerce_event_datetime(event.start)
+                event_end = self._coerce_event_datetime(event.end)
+                buffered_start_raw, buffered_end_raw = apply_buffer(
+                    event_start,
+                    event_end,
+                    self.code_buffer_before,
+                    self.code_buffer_after,
+                    self,
+                )
+                buffered_start_dt = (
+                    buffered_start_raw
+                    if isinstance(buffered_start_raw, datetime)
+                    else event_start
+                )
+                buffered_end_dt = (
+                    buffered_end_raw
+                    if isinstance(buffered_end_raw, datetime)
+                    else event_end
+                )
+                slot_name_date_windows.setdefault(key, set()).add(
+                    (buffered_start_dt, buffered_end_dt)
+                )
+                slot_name_ordered_windows.setdefault(key, []).append(
+                    (buffered_start_dt, buffered_end_dt)
+                )
+                active_windows = self._active_checkin_windows_for_name(slot_name)
+                if active_windows:
+                    slot_name_date_windows.setdefault(key, set()).update(active_windows)
 
-        for event in calendar:
+        for event in ordered_calendar:
             slot_name = get_slot_name(
                 event.summary,
                 event.description or "",
@@ -1244,8 +1478,8 @@ Please update Keymaster to at least v0.1.0-b0
             if not slot_name:
                 continue
 
-            start: datetime = event.start  # type: ignore[assignment]
-            end: datetime = event.end  # type: ignore[assignment]
+            start = self._coerce_event_datetime(event.start)
+            end = self._coerce_event_datetime(event.end)
 
             buffered_start_raw, buffered_end_raw = apply_buffer(
                 start, end, self.code_buffer_before, self.code_buffer_after, self
@@ -1274,125 +1508,65 @@ Please update Keymaster to at least v0.1.0-b0
                 slot_name, prefix, self.trim_names, self.max_name_length
             )
 
-            provisional = _Reservation(
-                identity_key=identity_key,
-                start=start,
-                end=end,
-                buffered_start=buffered_start,
-                buffered_end=buffered_end,
-                summary=event.summary,
+            slot_code = self._generate_slot_code(start, end, event.description, uid)
+            code_source = "generated"
+            active_windows = self._active_checkin_windows_for_name(slot_name)
+            matched_physical = self._find_observed_slot_by_name(
+                managed_slots=observed_slots,
                 slot_name=slot_name,
                 display_slot_name=display_slot_name,
-                slot_code="",
-                uid_aliases=uid_aliases,
-                booking_aliases=booking_aliases,
-            )
-            rematch = find_reservation_rematch(
-                provisional,
-                persisted,
-                current_reservations=current_reservations_for_rematch,
-                actual_slot_names=actual_slot_names,
-                observed_mapping_keys=observed_mapping_keys,
-            )
-            matched_key = rematch.matched_identity_key
-            if matched_key is not None and matched_key != identity_key:
-                if identity_key in persisted and identity_key in observed_mapping_keys:
-                    target_mapping = persisted.pop(identity_key)
-                    target_slot = target_mapping.get("slot")
-                    preserved_key = f"observed.{self._entry_id}.slot{target_slot}"
-                    if preserved_key in persisted and preserved_key != matched_key:
-                        persisted[identity_key] = target_mapping
-                        mapping = persisted.get(identity_key, {})
-                        _LOGGER.warning(
-                            "Reservation %s rematch to %s blocked because "
-                            "fresh observed target %s could not be preserved",
-                            identity_key,
-                            matched_key,
-                            preserved_key,
-                        )
-                        matched_key = None
-                    else:
-                        target_identity = target_mapping.setdefault("identity", {})
-                        if isinstance(target_identity, dict):
-                            target_identity["identity_key"] = preserved_key
-                            actual = target_mapping.get("last_observed_actual", {})
-                            actual_name = (
-                                actual.get("name_state")
-                                if isinstance(actual, dict)
-                                else None
-                            )
-                            if isinstance(actual_name, str) and actual_name:
-                                target_identity["summary"] = actual_name
-                                target_identity["slot_name"] = actual_name
-                        persisted[preserved_key] = target_mapping
-                        observed_mapping_keys.remove(identity_key)
-                        observed_mapping_keys.add(preserved_key)
-
-            if matched_key is not None and matched_key != identity_key:
-                mapping = persisted.pop(matched_key)
-                if matched_key in observed_mapping_keys:
-                    observed_mapping_keys.remove(matched_key)
-                    observed_mapping_keys.add(identity_key)
-                history = set(mapping.get("fingerprint_history", []))
-                history.add(matched_key)
-                mapping["fingerprint_history"] = sorted(history)
-                identity = mapping.setdefault("identity", {})
-                if isinstance(identity, dict):
-                    identity["identity_key"] = identity_key
-                persisted[identity_key] = mapping
-            else:
-                mapping = persisted.get(identity_key, {})
-                if (
-                    mapping
-                    and identity_key in observed_mapping_keys
-                    and not self._physical_mapping_name_matches_reservation(
-                        mapping, provisional, actual_slot_names
-                    )
-                ):
-                    target_mapping = persisted.pop(identity_key)
-                    target_slot = target_mapping.get("slot")
-                    preserved_key = f"observed.{self._entry_id}.slot{target_slot}"
-                    target_identity = target_mapping.setdefault("identity", {})
-                    if isinstance(target_identity, dict):
-                        target_identity["identity_key"] = preserved_key
-                        actual = target_mapping.get("last_observed_actual", {})
-                        actual_name = (
-                            actual.get("name_state")
-                            if isinstance(actual, dict)
-                            else None
-                        )
-                        if isinstance(actual_name, str) and actual_name:
-                            target_identity["summary"] = actual_name
-                            target_identity["slot_name"] = actual_name
-                    persisted[preserved_key] = target_mapping
-                    observed_mapping_keys.remove(identity_key)
-                    observed_mapping_keys.add(preserved_key)
-                    mapping = {}
-                if rematch.kind.value == "ambiguous":
-                    _LOGGER.warning(
-                        "Reservation %s has ambiguous persisted rematch candidates: %s",
-                        identity_key,
-                        rematch.ambiguous_keys,
-                    )
-
-            fingerprint_history: set[str] = set(mapping.get("fingerprint_history", []))
-            missing_count: int = mapping.get("missing_count", 0)
-
-            # Reservation is present in feed – reset any accumulated miss count.
-            if mapping and missing_count != 0:
-                mapping["missing_count"] = 0
-                missing_count = 0
-                _LOGGER.debug(
-                    "Reservation %s reappeared; missing_count reset to 0", identity_key
+                consumed_slots=consumed_observed_slots,
+                desired_start=buffered_start,
+                desired_end=buffered_end,
+                require_date_match=slot_name_counts.get(
+                    normalize_slot_name_for_fingerprint(slot_name), 0
                 )
-
-            slot_code = ""
-            if self.event_overrides is not None:
-                existing = self.event_overrides.get_slot_with_name(slot_name)
-                if existing and existing.get("slot_code"):
-                    slot_code = str(existing["slot_code"])
-            if not slot_code:
-                slot_code = self._generate_slot_code(start, end, event.description, uid)
+                > 1,
+                reserved_date_windows=slot_name_date_windows.get(
+                    normalize_slot_name_for_fingerprint(slot_name)
+                ),
+                ordered_date_windows=slot_name_ordered_windows.get(
+                    normalize_slot_name_for_fingerprint(slot_name)
+                ),
+                block_unknown_date_fallback=bool(
+                    active_windows
+                    and (buffered_start, buffered_end) not in active_windows
+                ),
+                expected_name_count=slot_name_counts.get(
+                    normalize_slot_name_for_fingerprint(slot_name), 1
+                ),
+            )
+            if matched_physical is not None and matched_physical.actual_code:
+                observed_code = matched_physical.actual_code
+                observed_start = matched_physical.actual_start
+                observed_end = matched_physical.actual_end
+                if observed_start is not None and self.code_buffer_before:
+                    observed_start = observed_start + timedelta(
+                        minutes=self.code_buffer_before
+                    )
+                if observed_end is not None and self.code_buffer_after:
+                    observed_end = observed_end - timedelta(
+                        minutes=self.code_buffer_after
+                    )
+                old_generated = (
+                    self._generate_slot_code(
+                        observed_start,
+                        observed_end,
+                        event.description,
+                        uid,
+                    )
+                    if observed_start is not None and observed_end is not None
+                    else None
+                )
+                if old_generated is None:
+                    slot_code = observed_code
+                    code_source = "manual_observed"
+                elif observed_code != old_generated:
+                    slot_code = observed_code
+                    code_source = "manual_observed"
+                elif not self.should_update_code:
+                    slot_code = observed_code
+                    code_source = "manual_observed"
 
             try:
                 res = _Reservation(
@@ -1407,8 +1581,15 @@ Please update Keymaster to at least v0.1.0-b0
                     slot_code=slot_code,
                     uid_aliases=uid_aliases,
                     booking_aliases=booking_aliases,
-                    fingerprint_history=fingerprint_history,
-                    missing_count=missing_count,
+                    fingerprint_history=set(),
+                    missing_count=0,
+                    code_source=code_source,
+                )
+                res.sensor_lookup_keys.update(
+                    {
+                        identity_key,
+                        *(uid_aliases or set()),
+                    }
                 )
                 reservations.append(res)
             except ValueError:
@@ -1418,14 +1599,6 @@ Please update Keymaster to at least v0.1.0-b0
                     start,
                     end,
                 )
-
-        # Build ghost reservations for occupied slots absent from this feed cycle.
-        if self.event_overrides is not None:
-            current_keys: set[str] = {r.identity_key for r in reservations}
-            ghost_list = self._build_ghost_reservations(
-                current_keys, persisted, prefix, observed_mapping_keys
-            )
-            reservations.extend(ghost_list)
 
         return reservations
 
@@ -1599,67 +1772,31 @@ Please update Keymaster to at least v0.1.0-b0
         res_by_key: dict[str, _Reservation],
         operation_results: list[OperationResult],
     ) -> None:
-        """Synchronize persisted mappings with confirmed reconciliation state.
-
-        The HA Store must be updated after each apply-plan pass so the next
-        refresh and future restarts retain the authoritative reservation-to-slot
-        mapping.  Raw PIN values are never written; only ``has_code`` and
-        reservation identity metadata are persisted.
-        """
+        """Synchronize cache-only alias and diagnostic metadata from a plan."""
         mappings: dict[str, Any] = self._slot_mappings.setdefault("mappings", {})
         now_str = dt.now().isoformat()
-
-        failed_set_slots = {
-            result.slot
-            for result in operation_results
-            if result.kind == "set" and result.failed
-        }
         confirmed_clear_slots = {
             result.slot
             for result in operation_results
             if result.kind == "clear" and result.confirmed
         }
-        unconfirmed_clear_slots = {
+        failed_set_slots = {
             result.slot
             for result in operation_results
-            if result.kind == "clear" and not result.confirmed
+            if result.kind == "set" and result.failed
         }
-
         for identity_key, mapping in list(mappings.items()):
-            slot = mapping.get("slot")
-            if slot in confirmed_clear_slots:
+            if mapping.get("slot") in confirmed_clear_slots:
                 mappings.pop(identity_key, None)
-            elif slot in unconfirmed_clear_slots:
-                mapping["status"] = SLOT_STATUS_PENDING_CLEAR
-                mapping["pending_clear_since"] = mapping.get(
-                    "pending_clear_since", now_str
-                )
-                if self.event_overrides is not None:
-                    operation_id = self.event_overrides.pending_clear_slots.get(slot)
-                    mapping["operation_id"] = operation_id
-                    mapping["operation_kind"] = OPERATION_KIND_CLEAR
 
         for identity_key, slot in plan.selected.items():
-            if slot in failed_set_slots:
-                continue
             if slot in confirmed_clear_slots:
+                continue
+            if slot in failed_set_slots:
                 continue
             res = res_by_key.get(identity_key)
             if res is None:
                 continue
-            if (
-                self.event_overrides is not None
-                and slot in self.event_overrides.pending_clear_slots
-            ):
-                continue
-
-            is_unconfirmed_set = any(
-                result.kind == OPERATION_KIND_SET
-                and result.slot == slot
-                and result.unconfirmed
-                for result in operation_results
-            )
-            existing_mapping = mappings.get(identity_key, {})
             actual = (
                 self.event_overrides.get_actual_state(slot)
                 if self.event_overrides is not None
@@ -1668,21 +1805,14 @@ Please update Keymaster to at least v0.1.0-b0
             for stale_key in [
                 key
                 for key, mapping in mappings.items()
-                if key != identity_key
-                and mapping.get("slot") == slot
-                and mapping.get("status")
-                in (SLOT_STATUS_OCCUPIED, SLOT_STATUS_PENDING_SET)
+                if key != identity_key and mapping.get("slot") == slot
             ]:
                 mappings.pop(stale_key, None)
             mappings[identity_key] = {
                 "slot": slot,
-                "status": (
-                    SLOT_STATUS_PENDING_SET
-                    if is_unconfirmed_set
-                    else SLOT_STATUS_OCCUPIED
-                ),
-                "operation_id": plan.plan_id if is_unconfirmed_set else None,
-                "operation_kind": OPERATION_KIND_SET if is_unconfirmed_set else None,
+                "status": "cache",
+                "operation_id": None,
+                "operation_kind": None,
                 "identity": {
                     "identity_key": identity_key,
                     "summary": res.summary,
@@ -1692,12 +1822,8 @@ Please update Keymaster to at least v0.1.0-b0
                     "uid_aliases": sorted(res.uid_aliases),
                     "booking_aliases": sorted(res.booking_aliases),
                 },
-                "missing_count": res.missing_count,
-                "pending_set_since": (
-                    existing_mapping.get("pending_set_since", now_str)
-                    if is_unconfirmed_set
-                    else None
-                ),
+                "missing_count": 0,
+                "pending_set_since": None,
                 "pending_clear_since": None,
                 "fingerprint_history": sorted(res.fingerprint_history),
                 "updated_at": now_str,
@@ -1725,7 +1851,9 @@ Please update Keymaster to at least v0.1.0-b0
                 "start_slot": self.start_slot,
                 "max_slots": self.max_events,
                 "updated_at": now_str,
-                "blocked_slots": self._slot_mappings.get("blocked_slots", {}),
+                "aliases": self._slot_mappings.get("aliases", {}),
+                "last_plan": plan.diagnostics,
+                "migration_notes": self._slot_mappings.get("migration_notes", []),
             }
         )
 
@@ -1736,9 +1864,8 @@ Please update Keymaster to at least v0.1.0-b0
         """Read Keymaster entity states and build ManagedSlot observations.
 
         Reads Keymaster text, switch, and datetime entities for every slot
-        in the managed range to determine the current physical state.
-        Persisted fence tokens from :attr:`event_overrides` override the
-        entity-derived classification for ``PENDING_CLEAR`` slots.  The
+        in the managed range to determine the current physical state. Store
+        cache contents are deliberately ignored for classification. The
         observed state is also written back to the
         :meth:`~.event_overrides.EventOverrides.update_actual_state`
         cache for diagnostics.
@@ -1749,23 +1876,6 @@ Please update Keymaster to at least v0.1.0-b0
         """
         if not self.lockname or not self.event_overrides:
             return []
-
-        persisted = self._slot_mappings.get("mappings", {})
-        pending_clear = self.event_overrides.pending_clear_slots
-
-        slot_to_persisted_key: dict[int, str] = {}
-        for key, mapping in persisted.items():
-            slot_num = mapping.get("slot")
-            if slot_num is None:
-                continue
-            current = slot_to_persisted_key.get(slot_num)
-            if current is None:
-                slot_to_persisted_key[slot_num] = key
-            elif mapping.get("status") in (
-                SLOT_STATUS_OCCUPIED,
-                SLOT_STATUS_PENDING_SET,
-            ):
-                slot_to_persisted_key[slot_num] = key
 
         slots: list[_ManagedSlot] = []
 
@@ -1797,21 +1907,17 @@ Please update Keymaster to at least v0.1.0-b0
 
             name_empty = _is_blank_keymaster_text(name_state.state)
             code_empty = _is_blank_keymaster_text(code_state.state)
-            physically_empty = name_empty and code_empty
             unreadable = is_unreadable_keymaster_text_state(
                 name_state.state
             ) or is_unreadable_keymaster_text_state(code_state.state)
 
-            if not physically_empty and unreadable:
+            if unreadable:
                 status = _SlotStatus.UNKNOWN
-                blocked_reason = (
-                    "pending_clear_unreadable" if i in pending_clear else None
-                )
                 ms = _ManagedSlot(
                     slot=i,
                     managed=True,
                     status=status,
-                    blocked_reason=blocked_reason,
+                    blocked_reason="unreadable",
                 )
                 slots.append(ms)
                 self.event_overrides.update_actual_state(
@@ -1867,50 +1973,9 @@ Please update Keymaster to at least v0.1.0-b0
                 if end_dt_state is not None:
                     actual_end = dt.parse_datetime(end_dt_state.state)
 
-            persisted_key = slot_to_persisted_key.get(i)
-            persisted_mapping = (
-                persisted.get(persisted_key) if persisted_key is not None else None
-            )
-            persisted_status = (
-                persisted_mapping.get("status")
-                if persisted_mapping is not None
-                else None
-            )
-            persisted_missing_raw = (
-                persisted_mapping.get("missing_count", 0)
-                if persisted_mapping is not None
-                else 0
-            )
-            persisted_missing_count = (
-                persisted_missing_raw if isinstance(persisted_missing_raw, int) else 0
-            )
-            if physically_empty and i in pending_clear:
-                self.event_overrides.release_pending_clear_slot(i)
-                for key in [
-                    key
-                    for key, mapping in persisted.items()
-                    if mapping.get("slot") == i
-                    and mapping.get("status") == SLOT_STATUS_PENDING_CLEAR
-                ]:
-                    persisted.pop(key, None)
-                pending_clear = self.event_overrides.pending_clear_slots
-                persisted_key = None
-                persisted_mapping = None
-                persisted_status = None
-                persisted_missing_count = 0
-
-            if i in pending_clear:
-                status = _SlotStatus.PENDING_CLEAR
-                blocked_reason = "pending_clear"
-            elif persisted_status == SLOT_STATUS_BLOCKED:
-                status = _SlotStatus.BLOCKED
-                blocked_reason = SLOT_STATUS_BLOCKED
-            elif has_code:
+            if has_code:
                 status = _SlotStatus.OCCUPIED
                 blocked_reason = None
-            elif persisted_status == SLOT_STATUS_PENDING_SET:
-                status = _SlotStatus.BLOCKED
-                blocked_reason = SLOT_STATUS_PENDING_SET
             elif name_value:
                 status = _SlotStatus.PHANTOM
                 blocked_reason = None
@@ -1923,20 +1988,15 @@ Please update Keymaster to at least v0.1.0-b0
                 managed=True,
                 status=status,
                 actual_name=name_value or None,
+                actual_code=code_value or None,
                 actual_code_present=has_code,
                 actual_start=actual_start,
                 actual_end=actual_end,
                 date_range_enabled=date_range_enabled,
                 enabled=enabled,
-                persisted_identity_key=persisted_key,
+                persisted_identity_key=None,
                 blocked_reason=blocked_reason,
-                preserve_unmatched=(
-                    status is _SlotStatus.OCCUPIED
-                    and persisted_status
-                    in (SLOT_STATUS_OCCUPIED, SLOT_STATUS_PENDING_SET)
-                    and (bool(name_value) or has_code)
-                    and persisted_missing_count < 3
-                ),
+                preserve_unmatched=False,
                 last_error=self.event_overrides.get_last_slot_error(i),
             )
             slots.append(ms)
@@ -1957,7 +2017,11 @@ Please update Keymaster to at least v0.1.0-b0
 
         return slots
 
-    def _apply_checkin_protection(self, reservations: list[_Reservation]) -> None:
+    def _apply_checkin_protection(
+        self,
+        reservations: list[_Reservation],
+        managed_slots: list[_ManagedSlot] | None = None,
+    ) -> None:
         """Mark active checked-in reservation as protected, if present.
 
         Reads :class:`~.sensors.checkinsensor.CheckinTrackingSensor` state
@@ -1989,14 +2053,316 @@ Please update Keymaster to at least v0.1.0-b0
         guest_name: str | None = attrs.get("guest_name")
         if not guest_name:
             return
+        tracked_start = RentalControlCoordinator._coerce_checkin_datetime(
+            attrs.get("start")
+        )
+        tracked_end = RentalControlCoordinator._coerce_checkin_datetime(
+            attrs.get("end")
+        )
 
-        for res in reservations:
-            if res.slot_name == guest_name:
-                if sensor_state == CHECKIN_STATE_CHECKED_IN:
-                    res.protected_active = True
-                elif sensor_state == CHECKIN_STATE_CHECKED_OUT:
-                    res.checked_out = True
-                break
+        name_matches = [res for res in reservations if res.slot_name == guest_name]
+        exact_matches = [
+            res
+            for res in name_matches
+            if tracked_start is not None
+            and tracked_end is not None
+            and res.start == tracked_start
+            and res.end == tracked_end
+        ]
+        matches = exact_matches
+        if tracked_start is None or tracked_end is None:
+            matches = name_matches if len(name_matches) == 1 else []
+        for res in matches[:1]:
+            if sensor_state == CHECKIN_STATE_CHECKED_IN:
+                res.protected_active = True
+            elif sensor_state == CHECKIN_STATE_CHECKED_OUT:
+                res.checked_out = True
+            return
+
+        if (
+            sensor_state == CHECKIN_STATE_CHECKED_IN
+            and tracked_start is not None
+            and tracked_end is not None
+            and managed_slots
+        ):
+            prefix = f"{self.event_prefix} " if self.event_prefix else ""
+            display_slot_name = _format_display_slot_name(
+                guest_name, prefix, self.trim_names, self.max_name_length
+            )
+            buffered_start_raw, buffered_end_raw = apply_buffer(
+                tracked_start,
+                tracked_end,
+                self.code_buffer_before,
+                self.code_buffer_after,
+                self,
+            )
+            buffered_start = (
+                buffered_start_raw
+                if isinstance(buffered_start_raw, datetime)
+                else tracked_start
+            )
+            buffered_end = (
+                buffered_end_raw
+                if isinstance(buffered_end_raw, datetime)
+                else tracked_end
+            )
+            matched_physical = self._find_observed_slot_by_name(
+                managed_slots,
+                guest_name,
+                display_slot_name,
+                desired_start=buffered_start,
+                desired_end=buffered_end,
+            )
+            same_name_slots = [
+                slot
+                for slot in managed_slots
+                if slot.managed
+                and slot.status is _SlotStatus.OCCUPIED
+                and self._physical_slot_name_matches_name(
+                    slot.actual_name, guest_name, display_slot_name
+                )
+            ]
+            if matched_physical is None:
+                return
+            if (
+                matched_physical.actual_start is not None
+                and matched_physical.actual_end is not None
+                and (
+                    matched_physical.actual_start != buffered_start
+                    or matched_physical.actual_end != buffered_end
+                )
+                and len(same_name_slots) != 1
+            ):
+                return
+            identity_key = make_reservation_fingerprint(
+                self._entry_id, guest_name, tracked_start, tracked_end
+            )
+            slot_code = matched_physical.actual_code or self._generate_slot_code(
+                tracked_start, tracked_end, None, None
+            )
+            protected = _Reservation(
+                identity_key=identity_key,
+                start=tracked_start,
+                end=tracked_end,
+                buffered_start=buffered_start,
+                buffered_end=buffered_end,
+                summary=str(attrs.get("summary") or guest_name),
+                slot_name=guest_name,
+                display_slot_name=display_slot_name,
+                slot_code=slot_code,
+                protected_active=True,
+                code_source=(
+                    "manual_observed"
+                    if matched_physical.actual_code is not None
+                    else "generated"
+                ),
+            )
+            protected.sensor_lookup_keys.add(identity_key)
+            reservations.append(protected)
+
+    @staticmethod
+    def _coerce_checkin_datetime(value: Any) -> datetime | None:
+        """Return a datetime from check-in sensor attributes."""
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            parsed = dt.parse_datetime(value)
+            return parsed if isinstance(parsed, datetime) else None
+        return None
+
+    def _coerce_event_datetime(self, value: date | datetime) -> datetime:
+        """Return a timezone-aware datetime for calendar date/datetime values."""
+        if isinstance(value, datetime):
+            return value
+        return datetime.combine(value, time.min, self.timezone)
+
+    def _combine_event_time(
+        self, value: date | datetime, selected_time: time
+    ) -> datetime:
+        """Return an event-date datetime using the selected local time."""
+        event_date = value.date() if isinstance(value, datetime) else value
+        return cast(
+            "datetime",
+            dt.as_utc(datetime.combine(event_date, selected_time, self.timezone)),
+        )
+
+    def _datetimes_match(self, left: datetime, right: datetime) -> bool:
+        """Return whether two datetimes represent the same instant."""
+        left_local = left.replace(tzinfo=self.timezone) if left.tzinfo is None else left
+        right_local = (
+            right.replace(tzinfo=self.timezone) if right.tzinfo is None else right
+        )
+        left_utc = cast("datetime", dt.as_utc(left_local))
+        right_utc = cast("datetime", dt.as_utc(right_local))
+        return left_utc == right_utc
+
+    def _physical_override_time(self, value: datetime, *, start: bool) -> time:
+        """Return the unbuffered local time represented by a physical slot time."""
+        local_value = (
+            value.replace(tzinfo=self.timezone)
+            if value.tzinfo is None
+            else value.astimezone(self.timezone)
+        )
+        if start and self.code_buffer_before:
+            local_value += timedelta(minutes=self.code_buffer_before)
+        if not start and self.code_buffer_after:
+            local_value -= timedelta(minutes=self.code_buffer_after)
+        return local_value.time()
+
+    def _buffer_aware_override_times(
+        self,
+        event_start: date | datetime,
+        event_end: date | datetime,
+        expected_checkin: time,
+        expected_checkout: time,
+        override: Mapping[str, Any],
+    ) -> tuple[time, time]:
+        """Return manual override times only when physical times truly differ.
+
+        Keymaster stores already-buffered datetimes.  A physical time that
+        matches the expected calendar/default window after applying buffers is
+        system-managed and must not freeze future Honor Event Times changes.
+        """
+        expected_start = self._combine_event_time(event_start, expected_checkin)
+        expected_end = self._combine_event_time(event_end, expected_checkout)
+        buffered_start_raw, buffered_end_raw = apply_buffer(
+            expected_start,
+            expected_end,
+            self.code_buffer_before,
+            self.code_buffer_after,
+            self,
+        )
+        buffered_start = (
+            buffered_start_raw
+            if isinstance(buffered_start_raw, datetime)
+            else expected_start
+        )
+        buffered_end = (
+            buffered_end_raw if isinstance(buffered_end_raw, datetime) else expected_end
+        )
+
+        checkin = expected_checkin
+        checkout = expected_checkout
+        override_start = override.get("start_time")
+        override_end = override.get("end_time")
+        if isinstance(override_start, datetime) and not self._datetimes_match(
+            override_start, buffered_start
+        ):
+            checkin = self._physical_override_time(override_start, start=True)
+        if isinstance(override_end, datetime) and not self._datetimes_match(
+            override_end, buffered_end
+        ):
+            checkout = self._physical_override_time(override_end, start=False)
+        return checkin, checkout
+
+    def _must_defer_for_checkin_restore(
+        self, reservations: list[_Reservation], managed_slots: list[_ManagedSlot]
+    ) -> bool:
+        """Return whether apply should wait for check-in sensor restore."""
+        domain_data: dict[str, Any] | None = self.hass.data.get(DOMAIN)
+        if domain_data is None or self._entry_id not in domain_data:
+            return False
+        if not self._checkin_restore_pending:
+            return False
+        entry_data: dict[str, Any] = domain_data.get(self._entry_id, {})
+        if entry_data.get(CHECKIN_SENSOR) is not None:
+            return False
+        return any(
+            slot.managed
+            and slot.status is _SlotStatus.OCCUPIED
+            and (
+                not any(
+                    self._physical_slot_name_matches_reservation(slot.actual_name, res)
+                    for res in reservations
+                )
+                or (
+                    (
+                        slot.actual_start is None
+                        or slot.actual_end is None
+                        or not any(
+                            slot.actual_start == res.buffered_start
+                            and slot.actual_end == res.buffered_end
+                            for res in reservations
+                            if self._physical_slot_name_matches_reservation(
+                                slot.actual_name, res
+                            )
+                        )
+                    )
+                    and any(
+                        self._physical_slot_name_matches_reservation(
+                            slot.actual_name, res
+                        )
+                        for res in reservations
+                    )
+                )
+            )
+            for slot in managed_slots
+        )
+
+    def _physical_slot_name_matches_name(
+        self, actual_name: str | None, slot_name: str, display_slot_name: str
+    ) -> bool:
+        """Return whether a physical display name matches a logical name."""
+        if not actual_name:
+            return False
+        prefix = f"{self.event_prefix} " if self.event_prefix else ""
+        actual_forms = {normalize_slot_name_for_fingerprint(actual_name)}
+        if prefix and actual_name.startswith(prefix):
+            actual_forms.add(
+                normalize_slot_name_for_fingerprint(actual_name[len(prefix) :])
+            )
+        desired_forms = {
+            normalize_slot_name_for_fingerprint(slot_name),
+            normalize_slot_name_for_fingerprint(display_slot_name),
+        }
+        return bool(actual_forms & desired_forms)
+
+    def _physical_slot_name_matches_reservation(
+        self, actual_name: str | None, reservation: _Reservation
+    ) -> bool:
+        """Return whether a physical display name matches a reservation name."""
+        return self._physical_slot_name_matches_name(
+            actual_name, reservation.slot_name, reservation.display_slot_name
+        )
+
+    def _active_checkin_windows_for_name(
+        self, slot_name: str
+    ) -> set[tuple[datetime, datetime]]:
+        """Return active check-in windows that physical slots must reserve."""
+        domain_data: dict[str, Any] | None = self.hass.data.get(DOMAIN)
+        entry_data: dict[str, Any] = (
+            domain_data.get(self._entry_id, {}) if domain_data is not None else {}
+        )
+        checkin_sensor = entry_data.get(CHECKIN_SENSOR)
+        if checkin_sensor is None or checkin_sensor.state != CHECKIN_STATE_CHECKED_IN:
+            return set()
+        attrs: dict[str, Any] = checkin_sensor.extra_state_attributes
+        if attrs.get("guest_name") != slot_name:
+            return set()
+        tracked_start = RentalControlCoordinator._coerce_checkin_datetime(
+            attrs.get("start")
+        )
+        tracked_end = RentalControlCoordinator._coerce_checkin_datetime(
+            attrs.get("end")
+        )
+        if tracked_start is None or tracked_end is None:
+            return set()
+        buffered_start_raw, buffered_end_raw = apply_buffer(
+            tracked_start,
+            tracked_end,
+            self.code_buffer_before,
+            self.code_buffer_after,
+            self,
+        )
+        buffered_start = (
+            buffered_start_raw
+            if isinstance(buffered_start_raw, datetime)
+            else tracked_start
+        )
+        buffered_end = (
+            buffered_end_raw if isinstance(buffered_end_raw, datetime) else tracked_end
+        )
+        return {(tracked_start, tracked_end), (buffered_start, buffered_end)}
 
     async def _async_fetch_calendar(self) -> list[CalendarEvent]:
         """Fetch iCalendar data from URL and parse into events."""
@@ -2116,22 +2482,14 @@ Please update Keymaster to at least v0.1.0-b0
 
         if self.event_overrides:
             try:
-                self.event_overrides.load_persisted_mappings(
-                    self._slot_mappings.get("mappings", {})
-                )
                 observed_slots = self._observe_managed_slots()
-                self._merge_observed_slots_into_mappings(observed_slots)
                 reservations = self._build_reservations(new_calendar, observed_slots)
-                self.event_overrides.load_persisted_mappings(
-                    self._slot_mappings.get("mappings", {})
-                )
-                managed_slots = self._observe_managed_slots()
-                self._apply_checkin_protection(reservations)
+                self._apply_checkin_protection(reservations, observed_slots)
 
                 plan_id = str(uuid.uuid4())
                 plan = compute_desired_plan(
                     reservations=reservations,
-                    managed_slots=managed_slots,
+                    managed_slots=observed_slots,
                     max_events=self.max_events,
                     plan_id=plan_id,
                     generated_at=dt.now(),
@@ -2147,9 +2505,17 @@ Please update Keymaster to at least v0.1.0-b0
                 res_by_key: dict[str, _Reservation] = {
                     r.identity_key: r for r in reservations
                 }
-                operation_results = await self.event_overrides.async_apply_plan(
-                    self, plan, res_by_key
-                )
+                if self._must_defer_for_checkin_restore(reservations, observed_slots):
+                    _LOGGER.warning(
+                        "Deferring reconciliation for %s until check-in state is "
+                        "available; same-name physical slot has missing date state",
+                        self._name,
+                    )
+                    operation_results = []
+                else:
+                    operation_results = await self.event_overrides.async_apply_plan(
+                        self, plan, res_by_key
+                    )
                 self._sync_slot_store_from_plan(plan, res_by_key, operation_results)
 
                 self._latest_plan = plan
@@ -2268,8 +2634,6 @@ Please update Keymaster to at least v0.1.0-b0
         self.ignore_non_reserved = bool(config.get(CONF_IGNORE_NON_RESERVED))
         self.verify_ssl = bool(config.get(CONF_VERIFY_SSL))
 
-        await self.async_request_refresh()
-
         buffer_changed = (
             self.code_buffer_before != previous_buffer_before
             or self.code_buffer_after != previous_buffer_after
@@ -2278,6 +2642,7 @@ Please update Keymaster to at least v0.1.0-b0
             await self._async_update_buffer_times(
                 previous_buffer_before, previous_buffer_after
             )
+        await self.async_request_refresh()
 
     async def _async_update_buffer_times(self, old_before: int, old_after: int) -> None:
         """Re-apply buffer to all assigned slots after config change.
@@ -2307,13 +2672,32 @@ Please update Keymaster to at least v0.1.0-b0
                 self.code_buffer_after,
                 self,
             )
+            start_entity = (
+                f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_start"
+            )
+            end_entity = f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_end"
+            self.event_overrides.suppress_state_changes(
+                slot,
+                {
+                    start_entity: (
+                        buffered_start.isoformat()
+                        if isinstance(buffered_start, datetime)
+                        else buffered_start
+                    ),
+                    end_entity: (
+                        buffered_end.isoformat()
+                        if isinstance(buffered_end, datetime)
+                        else buffered_end
+                    ),
+                },
+            )
             coro: list[Coroutine] = []
             coro = add_call(
                 self.hass,
                 coro,
                 DATETIME,
                 "set_value",
-                f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_end",
+                end_entity,
                 {"datetime": buffered_end},
             )
             coro = add_call(
@@ -2321,7 +2705,7 @@ Please update Keymaster to at least v0.1.0-b0
                 coro,
                 DATETIME,
                 "set_value",
-                f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_start",
+                start_entity,
                 {"datetime": buffered_start},
             )
             results = await asyncio.gather(*coro, return_exceptions=True)
@@ -2329,6 +2713,12 @@ Please update Keymaster to at least v0.1.0-b0
                 results,
                 f"Buffer time update slot {slot} ({self.lockname})",
                 _LOGGER,
+            )
+            override["start_time"] = (
+                buffered_start if isinstance(buffered_start, datetime) else start
+            )
+            override["end_time"] = (
+                buffered_end if isinstance(buffered_end, datetime) else end
             )
 
     async def update_event_overrides(
@@ -2430,42 +2820,47 @@ Please update Keymaster to at least v0.1.0-b0
                     description = str(raw_desc) if raw_desc else ""
                     desc_checkin = extract_checkin_time(description)
                     desc_checkout = extract_checkout_time(description)
+                    expected_checkin = (
+                        desc_checkin if desc_checkin is not None else self.checkin
+                    )
+                    expected_checkout = (
+                        desc_checkout if desc_checkout is not None else self.checkout
+                    )
 
                     if override:
-                        # Priority 3 fallback for missing description times
-                        start_tz = override["start_time"].astimezone(self.timezone)
-                        end_tz = override["end_time"].astimezone(self.timezone)
-                        checkin = (
-                            desc_checkin
-                            if desc_checkin is not None
-                            else start_tz.time()
+                        # Priority 3 fallback for genuine manual overrides.
+                        # Override timestamps are physical Keymaster dates,
+                        # which already include lock-code buffers.
+                        event_end_dt = (
+                            event["DTEND"].dt
+                            if "DTEND" in event
+                            else event["DTSTART"].dt
                         )
-                        checkout = (
-                            desc_checkout
-                            if desc_checkout is not None
-                            else end_tz.time()
+                        checkin, checkout = self._buffer_aware_override_times(
+                            event["DTSTART"].dt,
+                            event_end_dt,
+                            expected_checkin,
+                            expected_checkout,
+                            override,
                         )
+                        if desc_checkin is not None:
+                            checkin = desc_checkin
+                        if desc_checkout is not None:
+                            checkout = desc_checkout
                     else:
                         # Priority 4 fallback for missing description times
-                        checkin = (
-                            desc_checkin if desc_checkin is not None else self.checkin
-                        )
-                        checkout = (
-                            desc_checkout
-                            if desc_checkout is not None
-                            else self.checkout
-                        )
+                        checkin = expected_checkin
+                        checkout = expected_checkout
                 elif override:
                     # FR-005 (disabled) or FR-004 (all-day with override)
-                    # Get start & end overrides in the correct timezone
-                    # Overrides are stored in UTC since Keymaster's time
-                    # start and end configuration values are in UTC
-                    start_time: datetime = override["start_time"].astimezone(
-                        self.timezone
+                    # Override timestamps are sourced from Keymaster's
+                    # physical, already-buffered date range.
+                    checkin = self._physical_override_time(
+                        override["start_time"], start=True
                     )
-                    end_time: datetime = override["end_time"].astimezone(self.timezone)
-                    checkin = start_time.time()
-                    checkout = end_time.time()
+                    checkout = self._physical_override_time(
+                        override["end_time"], start=False
+                    )
                 else:
                     try:
                         # If the event has a time, use that, otherwise use the

@@ -45,6 +45,7 @@ from custom_components.rental_control.util import get_event_identities
 from custom_components.rental_control.util import get_event_names
 from custom_components.rental_control.util import get_slot_name
 from custom_components.rental_control.util import handle_state_change
+from custom_components.rental_control.util import is_cleared_keymaster_text_state
 from custom_components.rental_control.util import normalize_uid
 from custom_components.rental_control.util import trim_name
 
@@ -52,6 +53,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from homeassistant.core import HomeAssistant
+
+
+def test_keymaster_none_text_token_is_cleared() -> None:
+    """The literal None text token is treated as a cleared slot state."""
+    assert is_cleared_keymaster_text_state("None")
+    assert is_cleared_keymaster_text_state(" none ")
 
 
 # ---------------------------------------------------------------------------
@@ -2640,7 +2647,7 @@ class TestBufferInSetCode:
         ]
         assert len(start_calls) == 1
         sent = start_calls[0].kwargs["service_data"]["datetime"]
-        assert sent == datetime(2025, 1, 15, 15, 30, 0)
+        assert sent == datetime(2025, 1, 15, 15, 30, 0, tzinfo=dt_util.UTC)
 
     async def test_after_buffer_extends_end(self) -> None:
         """Verify date_range_end is 15 minutes later."""
@@ -2664,7 +2671,7 @@ class TestBufferInSetCode:
         ]
         assert len(end_calls) == 1
         sent = end_calls[0].kwargs["service_data"]["datetime"]
-        assert sent == datetime(2025, 1, 17, 11, 15, 0)
+        assert sent == datetime(2025, 1, 17, 11, 15, 0, tzinfo=dt_util.UTC)
 
     async def test_both_buffers_applied(self) -> None:
         """Verify both offsets applied simultaneously."""
@@ -2692,10 +2699,10 @@ class TestBufferInSetCode:
             if "date_range_end" in c.kwargs.get("target", {}).get("entity_id", "")
         ]
         assert start_calls[0].kwargs["service_data"]["datetime"] == (
-            datetime(2025, 1, 15, 15, 0, 0)
+            datetime(2025, 1, 15, 15, 0, 0, tzinfo=dt_util.UTC)
         )
         assert end_calls[0].kwargs["service_data"]["datetime"] == (
-            datetime(2025, 1, 17, 11, 30, 0)
+            datetime(2025, 1, 17, 11, 30, 0, tzinfo=dt_util.UTC)
         )
 
     async def test_zero_buffer_unchanged(self) -> None:
@@ -2709,8 +2716,8 @@ class TestBufferInSetCode:
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
 
-        start = datetime(2025, 1, 15, 16, 0, 0)
-        end = datetime(2025, 1, 17, 11, 0, 0)
+        start = datetime(2025, 1, 15, 16, 0, 0, tzinfo=dt_util.UTC)
+        end = datetime(2025, 1, 17, 11, 0, 0, tzinfo=dt_util.UTC)
         event = self._make_event(start=start, end=end)
         await async_fire_set_code(coordinator, event, 10)
 
@@ -2770,7 +2777,7 @@ class TestBufferInUpdateTimes:
             if "date_range_start" in c.kwargs.get("target", {}).get("entity_id", "")
         ]
         assert start_calls[0].kwargs["service_data"]["datetime"] == (
-            datetime(2025, 1, 15, 15, 30, 0)
+            datetime(2025, 1, 15, 15, 30, 0, tzinfo=dt_util.UTC)
         )
 
     async def test_after_buffer_extends_end(self) -> None:
@@ -2792,7 +2799,7 @@ class TestBufferInUpdateTimes:
             if "date_range_end" in c.kwargs.get("target", {}).get("entity_id", "")
         ]
         assert end_calls[0].kwargs["service_data"]["datetime"] == (
-            datetime(2025, 1, 17, 11, 15, 0)
+            datetime(2025, 1, 17, 11, 15, 0, tzinfo=dt_util.UTC)
         )
 
     async def test_zero_buffer_unchanged(self) -> None:
@@ -2804,8 +2811,8 @@ class TestBufferInUpdateTimes:
         coordinator.hass.services.async_call = AsyncMock()
         coordinator.event_overrides.verify_slot_ownership.return_value = True
 
-        start = datetime(2025, 1, 15, 16, 0, 0)
-        end = datetime(2025, 1, 17, 11, 0, 0)
+        start = datetime(2025, 1, 15, 16, 0, 0, tzinfo=dt_util.UTC)
+        end = datetime(2025, 1, 17, 11, 0, 0, tzinfo=dt_util.UTC)
         event = self._make_event(start=start, end=end)
         await async_fire_update_times(coordinator, event, 10)
 
@@ -3040,6 +3047,18 @@ class TestAsyncFireSetCodeOperationResult:
         assert result.failed is True
         assert result.error == "service unavailable"
 
+    async def test_invalid_datetime_payload_returns_failed_set(self) -> None:
+        """Invalid set-code dates fail as set operations."""
+        coordinator = self._make_coordinator()
+        event = self._make_event()
+        event.extra_state_attributes["start"] = object()
+
+        result = await async_fire_set_code(coordinator, event, 10)
+
+        assert result.failed is True
+        assert result.kind == "set"
+        coordinator.hass.services.async_call.assert_not_awaited()
+
     async def test_no_lockname_returns_unconfirmed(self) -> None:
         """Missing lockname returns an unconfirmed result."""
         coordinator = self._make_coordinator()
@@ -3059,8 +3078,8 @@ class TestAsyncFireUpdateTimesOperationResult:
         event = MagicMock()
         event.extra_state_attributes = {
             "slot_name": "Guest",
-            "start": "2025-01-15T16:00:00",
-            "end": "2025-01-17T11:00:00",
+            "start": datetime(2025, 1, 15, 16, tzinfo=dt_util.UTC),
+            "end": datetime(2025, 1, 17, 11, tzinfo=dt_util.UTC),
         }
         return event
 
@@ -3074,9 +3093,31 @@ class TestAsyncFireUpdateTimesOperationResult:
         coordinator.event_overrides.verify_slot_ownership.return_value = True
         return coordinator
 
+    @staticmethod
+    def _confirm_datetime_states(coordinator: MagicMock) -> None:
+        """Configure coordinator state reads to confirm updated datetimes."""
+        expected = {
+            "datetime.front_door_code_slot_10_date_range_start": (
+                "2025-01-15T16:00:00+00:00"
+            ),
+            "datetime.front_door_code_slot_10_date_range_end": (
+                "2025-01-17T11:00:00+00:00"
+            ),
+        }
+
+        def _get_state(entity_id: str) -> MagicMock | None:
+            """Return a matching state object for datetime confirmation."""
+            value = expected.get(entity_id)
+            if value is None:
+                return None
+            return MagicMock(state=value)
+
+        coordinator.hass.states.get.side_effect = _get_state
+
     async def test_confirmed_on_success(self) -> None:
         """Successful service calls return confirmed."""
         coordinator = self._make_coordinator()
+        self._confirm_datetime_states(coordinator)
 
         result = await async_fire_update_times(coordinator, self._make_event(), 10)
 
@@ -3085,6 +3126,50 @@ class TestAsyncFireUpdateTimesOperationResult:
             slot=10,
             confirmed=True,
         )
+
+    async def test_all_day_dates_are_confirmed_as_datetimes(self) -> None:
+        """All-day date values are coerced before update confirmation."""
+        coordinator = self._make_coordinator()
+        coordinator.timezone = dt_util.UTC
+        expected = {
+            "datetime.front_door_code_slot_10_date_range_start": (
+                "2025-01-15T00:00:00+00:00"
+            ),
+            "datetime.front_door_code_slot_10_date_range_end": (
+                "2025-01-17T00:00:00+00:00"
+            ),
+        }
+        coordinator.hass.states.get.side_effect = lambda entity_id: MagicMock(
+            state=expected[entity_id]
+        )
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "start": date(2025, 1, 15),
+            "end": date(2025, 1, 17),
+        }
+
+        result = await async_fire_update_times(coordinator, event, 10)
+
+        assert result.confirmed is True
+        calls = coordinator.hass.services.async_call.await_args_list
+        payloads = [call.kwargs["service_data"] for call in calls]
+        assert all(isinstance(payload["datetime"], datetime) for payload in payloads)
+
+    async def test_invalid_datetime_payload_fails_safely(self) -> None:
+        """Invalid update dates fail instead of using nondeterministic times."""
+        coordinator = self._make_coordinator()
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "start": object(),
+            "end": date(2025, 1, 17),
+        }
+
+        result = await async_fire_update_times(coordinator, event, 10)
+
+        assert result.failed is True
+        coordinator.hass.services.async_call.assert_not_awaited()
 
     async def test_failed_on_service_exception(self) -> None:
         """Gather failures are returned as failed."""

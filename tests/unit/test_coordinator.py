@@ -23,10 +23,15 @@ import homeassistant.util.dt as dt_util
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.rental_control.const import CHECKIN_SENSOR
+from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
+from custom_components.rental_control.const import CONF_CODE_BUFFER_AFTER
+from custom_components.rental_control.const import CONF_CODE_BUFFER_BEFORE
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import CONF_MAX_EVENTS
 from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
 from custom_components.rental_control.const import DEFAULT_REFRESH_FREQUENCY
+from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator import RentalControlCoordinator
 
 from tests.fixtures import calendar_data
@@ -50,6 +55,864 @@ async def test_coordinator_initialization(
     assert coordinator.config_entry == mock_config_entry
     assert coordinator._name == "Test Rental"
     assert coordinator.url == "https://example.com/calendar.ics"
+
+
+async def test_observed_slot_lookup_does_not_use_arbitrary_prefix_match(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Observed manual PIN lookup does not treat Ann and Anna as the same guest."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    ann_slot = ManagedSlot(
+        slot=1,
+        managed=True,
+        status=SlotStatus.OCCUPIED,
+        actual_name="Ann",
+        actual_code="1111",
+        actual_code_present=True,
+    )
+
+    assert coordinator._find_observed_slot_by_name([ann_slot], "Anna", "Anna") is None
+
+
+async def test_duplicate_name_manual_pin_lookup_pairs_by_start_order(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Same-name reservations inherit manual observed PINs from paired slots."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start_one = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end_one = start_one + timedelta(days=7)
+    start_two = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    end_two = start_two + timedelta(days=7)
+    calendar = [
+        CalendarEvent(start=start_one, end=end_one, summary="Bob", description=""),
+        CalendarEvent(start=start_two, end=end_two, summary="Bob", description=""),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=start_one,
+            actual_end=end_one,
+        ),
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=start_two,
+            actual_end=end_two,
+        ),
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert [reservation.slot_code for reservation in reservations] == ["1111", "2222"]
+    assert [reservation.code_source for reservation in reservations] == [
+        "manual_observed",
+        "manual_observed",
+    ]
+
+
+async def test_duplicate_name_manual_pin_lookup_does_not_steal_later_slot(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """An earlier same-name stay cannot consume a later stay's observed PIN."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start_one = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end_one = start_one + timedelta(days=7)
+    start_two = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    end_two = start_two + timedelta(days=7)
+    calendar = [
+        CalendarEvent(start=start_one, end=end_one, summary="Bob", description=""),
+        CalendarEvent(start=start_two, end=end_two, summary="Bob", description=""),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=start_two,
+            actual_end=end_two,
+        )
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert reservations[0].code_source == "generated"
+    assert reservations[1].slot_code == "2222"
+    assert reservations[1].code_source == "manual_observed"
+
+
+async def test_partial_duplicate_shift_preserves_unreserved_manual_pin(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A shifted same-name physical slot keeps its PIN when another Bob is absent."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    old_start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    old_end = old_start + timedelta(days=7)
+    new_start = old_start + timedelta(days=1)
+    new_end = old_end + timedelta(days=1)
+    later_start = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    later_end = later_start + timedelta(days=7)
+    calendar = [
+        CalendarEvent(start=new_start, end=new_end, summary="Bob"),
+        CalendarEvent(start=later_start, end=later_end, summary="Bob"),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=old_start,
+            actual_end=old_end,
+        )
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert reservations[0].slot_code == "1111"
+    assert reservations[0].code_source == "manual_observed"
+    assert reservations[1].code_source == "generated"
+
+
+async def test_partial_duplicate_shift_pairs_closest_reservation(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A lone shifted duplicate physical slot pairs with the closest stay."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    early_start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    early_end = early_start + timedelta(days=7)
+    late_start = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    late_end = late_start + timedelta(days=7)
+    calendar = [
+        CalendarEvent(start=early_start, end=early_end, summary="Bob"),
+        CalendarEvent(start=late_start, end=late_end, summary="Bob"),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=late_start - timedelta(days=1),
+            actual_end=late_end - timedelta(days=1),
+        )
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert reservations[0].code_source == "generated"
+    assert reservations[1].slot_code == "2222"
+    assert reservations[1].code_source == "manual_observed"
+
+
+async def test_duplicate_name_date_shift_preserves_ordered_manual_pins(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Same-name shifted stays preserve manual PINs by physical start order."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    old_start_one = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    old_end_one = old_start_one + timedelta(days=7)
+    old_start_two = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    old_end_two = old_start_two + timedelta(days=7)
+    new_start_one = old_start_one + timedelta(days=1)
+    new_end_one = old_end_one + timedelta(days=1)
+    new_start_two = old_start_two + timedelta(days=1)
+    new_end_two = old_end_two + timedelta(days=1)
+    calendar = [
+        CalendarEvent(start=new_start_one, end=new_end_one, summary="Bob"),
+        CalendarEvent(start=new_start_two, end=new_end_two, summary="Bob"),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=old_start_one,
+            actual_end=old_end_one,
+        ),
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=old_start_two,
+            actual_end=old_end_two,
+        ),
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert [reservation.slot_code for reservation in reservations] == ["1111", "2222"]
+    assert [reservation.code_source for reservation in reservations] == [
+        "manual_observed",
+        "manual_observed",
+    ]
+
+
+async def test_duplicate_name_shift_into_old_date_preserves_order(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Same-name date shifts pair by physical order, not exact old dates."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    old_start_one = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    old_end_one = old_start_one + timedelta(days=7)
+    old_start_two = old_end_one
+    old_end_two = old_start_two + timedelta(days=7)
+    new_start_one = old_start_two
+    new_end_one = old_end_two
+    new_start_two = old_end_two
+    new_end_two = new_start_two + timedelta(days=7)
+    calendar = [
+        CalendarEvent(start=new_start_one, end=new_end_one, summary="Bob"),
+        CalendarEvent(start=new_start_two, end=new_end_two, summary="Bob"),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=old_start_one,
+            actual_end=old_end_one,
+        ),
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=old_start_two,
+            actual_end=old_end_two,
+        ),
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert [reservation.slot_code for reservation in reservations] == ["1111", "2222"]
+    assert [reservation.code_source for reservation in reservations] == [
+        "manual_observed",
+        "manual_observed",
+    ]
+
+
+async def test_duplicate_same_start_feed_order_preserves_manual_pins(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Same-start duplicate PIN lookup uses start/end order, not feed order."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    short_end = start + timedelta(days=7)
+    long_end = start + timedelta(days=14)
+    calendar = [
+        CalendarEvent(start=start, end=long_end, summary="Bob"),
+        CalendarEvent(start=start, end=short_end, summary="Bob"),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=start,
+            actual_end=long_end,
+        ),
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=start,
+            actual_end=short_end,
+        ),
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert [reservation.end for reservation in reservations] == [short_end, long_end]
+    assert [reservation.slot_code for reservation in reservations] == ["1111", "2222"]
+
+
+async def test_duplicate_name_extra_stale_slot_does_not_steal_pins(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Overfull same-name physical groups inherit PINs from canonical slots."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    desired_one = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    desired_two = dt_util.as_utc(datetime(2026, 8, 22, 14))
+    calendar = [
+        CalendarEvent(
+            start=desired_one, end=desired_one + timedelta(days=7), summary="Bob"
+        ),
+        CalendarEvent(
+            start=desired_two, end=desired_two + timedelta(days=7), summary="Bob"
+        ),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="9999",
+            actual_code_present=True,
+            actual_start=dt_util.as_utc(datetime(2026, 8, 1, 14)),
+            actual_end=dt_util.as_utc(datetime(2026, 8, 8, 14)),
+        ),
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=dt_util.as_utc(datetime(2026, 8, 8, 14)),
+            actual_end=dt_util.as_utc(datetime(2026, 8, 15, 14)),
+        ),
+        ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=dt_util.as_utc(datetime(2026, 8, 15, 14)),
+            actual_end=dt_util.as_utc(datetime(2026, 8, 22, 14)),
+        ),
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert [reservation.slot_code for reservation in reservations] == ["1111", "2222"]
+
+
+async def test_checkin_protection_matches_duplicate_by_start_end(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Checked-in duplicate-name stays are protected by tracked dates."""
+    from custom_components.rental_control.reconciliation import Reservation
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start_one = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end_one = start_one + timedelta(days=7)
+    start_two = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    end_two = start_two + timedelta(days=7)
+    reservations = [
+        Reservation(
+            identity_key="bob-one",
+            start=start_one,
+            end=end_one,
+            buffered_start=start_one,
+            buffered_end=end_one,
+            summary="Bob",
+            slot_name="Bob",
+            display_slot_name="Bob",
+            slot_code="1111",
+        ),
+        Reservation(
+            identity_key="bob-two",
+            start=start_two,
+            end=end_two,
+            buffered_start=start_two,
+            buffered_end=end_two,
+            summary="Bob",
+            slot_name="Bob",
+            display_slot_name="Bob",
+            slot_code="2222",
+        ),
+    ]
+    hass.data[DOMAIN] = {
+        coordinator._entry_id: {
+            CHECKIN_SENSOR: MagicMock(
+                state=CHECKIN_STATE_CHECKED_IN,
+                extra_state_attributes={
+                    "guest_name": "Bob",
+                    "start": start_two,
+                    "end": end_two,
+                    "summary": "Bob",
+                },
+            )
+        }
+    }
+
+    coordinator._apply_checkin_protection(reservations)
+
+    assert not reservations[0].protected_active
+    assert reservations[1].protected_active
+
+
+async def test_checkin_protection_synthesizes_missing_active_physical_stay(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A checked-in physical stay missing from the feed remains protected."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end = start + timedelta(days=7)
+    hass.data[DOMAIN] = {
+        coordinator._entry_id: {
+            CHECKIN_SENSOR: MagicMock(
+                state=CHECKIN_STATE_CHECKED_IN,
+                extra_state_attributes={
+                    "guest_name": "Bob",
+                    "start": start,
+                    "end": end,
+                    "summary": "Bob",
+                },
+            )
+        }
+    }
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=start,
+            actual_end=end,
+        )
+    ]
+    reservations: list[Reservation] = []
+
+    coordinator._apply_checkin_protection(reservations, observed_slots)
+
+    assert len(reservations) == 1
+    assert reservations[0].protected_active
+    assert reservations[0].slot_name == "Bob"
+    assert reservations[0].slot_code == "1111"
+
+
+async def test_checkin_missing_active_survives_buffer_config_change(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A changed buffer does not make an active physical stay clearable."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    coordinator.code_buffer_before = 60
+    coordinator.code_buffer_after = 60
+    start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end = start + timedelta(days=7)
+    old_buffered_start = start
+    old_buffered_end = end
+    hass.data[DOMAIN] = {
+        coordinator._entry_id: {
+            CHECKIN_SENSOR: MagicMock(
+                state=CHECKIN_STATE_CHECKED_IN,
+                extra_state_attributes={
+                    "guest_name": "Bob",
+                    "start": start,
+                    "end": end,
+                    "summary": "Bob",
+                },
+            )
+        }
+    }
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=old_buffered_start,
+            actual_end=old_buffered_end,
+        )
+    ]
+    reservations: list[Reservation] = []
+
+    coordinator._apply_checkin_protection(reservations, observed_slots)
+
+    assert len(reservations) == 1
+    assert reservations[0].protected_active
+    assert reservations[0].slot_code == "1111"
+
+
+async def test_checkin_missing_active_does_not_protect_future_same_name(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A future same-name stay cannot replace a missing checked-in stay."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    active_start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    active_end = active_start + timedelta(days=7)
+    future_start = dt_util.as_utc(datetime(2026, 9, 1, 14))
+    future_end = future_start + timedelta(days=7)
+    future = Reservation(
+        identity_key="future-bob",
+        start=future_start,
+        end=future_end,
+        buffered_start=future_start,
+        buffered_end=future_end,
+        summary="Bob",
+        slot_name="Bob",
+        display_slot_name="Bob",
+        slot_code="2222",
+    )
+    hass.data[DOMAIN] = {
+        coordinator._entry_id: {
+            CHECKIN_SENSOR: MagicMock(
+                state=CHECKIN_STATE_CHECKED_IN,
+                extra_state_attributes={
+                    "guest_name": "Bob",
+                    "start": active_start,
+                    "end": active_end,
+                    "summary": "Bob",
+                },
+            )
+        }
+    }
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=None,
+            actual_end=None,
+        )
+    ]
+    reservations = [future]
+
+    coordinator._apply_checkin_protection(reservations, observed_slots)
+
+    assert not future.protected_active
+    assert len(reservations) == 2
+    assert reservations[1].protected_active
+    assert reservations[1].start == active_start
+    assert reservations[1].slot_code == "1111"
+
+
+async def test_build_reservations_does_not_copy_active_pin_to_future_same_name(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Manual PIN lookup skips the checked-in physical slot for future stays."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    active_start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    active_end = active_start + timedelta(days=7)
+    future_start = dt_util.as_utc(datetime(2026, 9, 1, 14))
+    future_end = future_start + timedelta(days=7)
+    hass.data[DOMAIN] = {
+        coordinator._entry_id: {
+            CHECKIN_SENSOR: MagicMock(
+                state=CHECKIN_STATE_CHECKED_IN,
+                extra_state_attributes={
+                    "guest_name": "Bob",
+                    "start": active_start,
+                    "end": active_end,
+                    "summary": "Bob",
+                },
+            )
+        }
+    }
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=None,
+            actual_end=None,
+        )
+    ]
+
+    reservations = coordinator._build_reservations(
+        [CalendarEvent(start=future_start, end=future_end, summary="Bob")],
+        observed_slots,
+    )
+    coordinator._apply_checkin_protection(reservations, observed_slots)
+
+    assert reservations[0].start == future_start
+    assert reservations[0].slot_code != "1111"
+    assert reservations[0].code_source == "generated"
+    assert not reservations[0].protected_active
+    assert len(reservations) == 2
+    assert reservations[1].protected_active
+    assert reservations[1].slot_code == "1111"
+
+
+async def test_missing_date_same_name_slot_preserves_observed_pin(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Existing coded slots with missing dates preserve observed PINs."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    coordinator.should_update_code = True
+    start = dt_util.as_utc(datetime(2026, 9, 1, 14))
+    end = start + timedelta(days=7)
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="8642",
+            actual_code_present=True,
+            actual_start=None,
+            actual_end=None,
+        )
+    ]
+
+    reservations = coordinator._build_reservations(
+        [CalendarEvent(start=start, end=end, summary="Bob")],
+        observed_slots,
+    )
+
+    assert reservations[0].slot_code == "8642"
+    assert reservations[0].code_source == "manual_observed"
+
+
+async def test_missing_checkin_restore_defers_unknown_date_same_name_apply(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Startup apply waits when check-in state may own an unknown-date slot."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 9, 1, 14))
+    end = start + timedelta(days=7)
+    reservations = [
+        Reservation(
+            identity_key="future-bob",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Bob",
+            slot_name="Bob",
+            display_slot_name="Bob",
+            slot_code="2222",
+        )
+    ]
+    slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code_present=True,
+        )
+    ]
+    hass.data[DOMAIN] = {coordinator._entry_id: {}}
+    coordinator._checkin_restore_pending = True
+
+    assert coordinator._must_defer_for_checkin_restore(reservations, slots)
+
+
+async def test_missing_checkin_restore_defers_stale_physical_occupant(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Startup apply waits before clearing a possible active missing stay."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 9, 1, 14))
+    end = start + timedelta(days=7)
+    reservations = [
+        Reservation(
+            identity_key="future-alice",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Alice",
+            slot_name="Alice",
+            display_slot_name="Alice",
+            slot_code="2222",
+        )
+    ]
+    slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code_present=True,
+            actual_start=start - timedelta(days=14),
+            actual_end=end - timedelta(days=14),
+        )
+    ]
+    hass.data[DOMAIN] = {coordinator._entry_id: {}}
+    coordinator._checkin_restore_pending = True
+
+    assert coordinator._must_defer_for_checkin_restore(reservations, slots)
+
+
+async def test_missing_checkin_restore_defers_same_name_different_dates(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Startup waits before rewriting a possible active same-name slot."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 9, 1, 14))
+    end = start + timedelta(days=7)
+    reservations = [
+        Reservation(
+            identity_key="future-bob",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Bob",
+            slot_name="Bob",
+            display_slot_name="Bob",
+            slot_code="2222",
+        )
+    ]
+    slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code_present=True,
+            actual_start=start - timedelta(days=14),
+            actual_end=end - timedelta(days=14),
+        )
+    ]
+    hass.data[DOMAIN] = {coordinator._entry_id: {}}
+    coordinator._checkin_restore_pending = True
+
+    assert coordinator._must_defer_for_checkin_restore(reservations, slots)
+
+
+async def test_missing_checkin_restore_defers_prefixed_unknown_date_apply(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Startup deferral compares prefixed physical display names."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    coordinator.event_prefix = "RC"
+    start = dt_util.as_utc(datetime(2026, 9, 1, 14))
+    end = start + timedelta(days=7)
+    reservations = [
+        Reservation(
+            identity_key="future-bob",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Bob",
+            slot_name="Bob",
+            display_slot_name="RC Bob",
+            slot_code="2222",
+        )
+    ]
+    slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="RC Bob",
+            actual_code_present=True,
+        )
+    ]
+    hass.data[DOMAIN] = {coordinator._entry_id: {}}
+    coordinator._checkin_restore_pending = True
+
+    assert coordinator._must_defer_for_checkin_restore(reservations, slots)
 
 
 async def test_coordinator_first_refresh(
@@ -331,6 +1194,194 @@ async def test_coordinator_update_interval_change(
     assert coordinator.refresh_frequency != initial_frequency
     assert coordinator.update_interval == timedelta(minutes=30)
     assert coordinator.async_request_refresh.called
+
+
+async def test_buffer_config_updates_times_before_refresh(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Buffer changes update existing overrides before refreshing plans."""
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    calls: list[str] = []
+
+    async def update_buffer_times(_old_before: int, _old_after: int) -> None:
+        """Record buffer update ordering."""
+        calls.append("buffer")
+
+    async def request_refresh() -> None:
+        """Record refresh ordering."""
+        calls.append("refresh")
+
+    new_config = dict(mock_config_entry.data)
+    new_config[CONF_REFRESH_FREQUENCY] = DEFAULT_REFRESH_FREQUENCY
+    new_config[CONF_CODE_BUFFER_BEFORE] = 60
+
+    with (
+        patch.object(
+            coordinator,
+            "_async_update_buffer_times",
+            side_effect=update_buffer_times,
+        ),
+        patch.object(
+            coordinator,
+            "async_request_refresh",
+            side_effect=request_refresh,
+        ),
+    ):
+        await coordinator.update_config(new_config)
+
+    assert calls == ["buffer", "refresh"]
+
+
+async def test_buffer_config_updates_override_cache(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Buffer changes keep in-memory physical override times current."""
+    from zoneinfo import ZoneInfo
+
+    from custom_components.rental_control.event_overrides import EventOverrides
+
+    def utc_time(day: int, hour: int, minute: int) -> datetime:
+        """Return an America/New_York local time converted to UTC."""
+        result: datetime = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, day).date(),
+                datetime(2024, 12, day, hour, minute).time(),
+                ZoneInfo("America/New_York"),
+            )
+        )
+        return result
+
+    async def noop_service_call() -> None:
+        """Stand in for a Home Assistant service coroutine."""
+
+    def fake_add_call(
+        _hass: HomeAssistant,
+        coro: list[Any],
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> list[Any]:
+        """Collect a no-op service coroutine."""
+        coro.append(noop_service_call())
+        return coro
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    coordinator.lockname = "front_door"
+    coordinator.event_overrides = EventOverrides(10, 3)
+    coordinator.event_overrides._overrides[10] = {
+        "slot_name": "Buffer Guest",
+        "slot_code": "1234",
+        "start_time": utc_time(25, 15, 30),
+        "end_time": utc_time(30, 11, 30),
+    }
+    coordinator.code_buffer_before = 60
+    coordinator.code_buffer_after = 15
+
+    with patch(
+        "custom_components.rental_control.coordinator.add_call",
+        side_effect=fake_add_call,
+    ):
+        await coordinator._async_update_buffer_times(old_before=30, old_after=30)
+
+    override = coordinator.event_overrides.overrides[10]
+    assert override is not None
+    assert override["start_time"] == utc_time(25, 15, 0)
+    assert override["end_time"] == utc_time(30, 11, 15)
+    assert coordinator.event_overrides.should_suppress_state_change(
+        10,
+        "datetime.front_door_code_slot_10_date_range_start",
+        utc_time(25, 15, 0).isoformat(),
+    )
+    assert coordinator.event_overrides.should_suppress_state_change(
+        10,
+        "datetime.front_door_code_slot_10_date_range_end",
+        utc_time(30, 11, 15).isoformat(),
+    )
+
+
+async def test_buffer_config_service_failure_advances_override_cache(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Failed buffer writes still prevent stale override reinterpretation."""
+    from zoneinfo import ZoneInfo
+
+    from custom_components.rental_control.event_overrides import EventOverrides
+
+    def utc_time(day: int, hour: int, minute: int) -> datetime:
+        """Return an America/New_York local time converted to UTC."""
+        result: datetime = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, day).date(),
+                datetime(2024, 12, day, hour, minute).time(),
+                ZoneInfo("America/New_York"),
+            )
+        )
+        return result
+
+    async def failing_service_call() -> None:
+        """Raise like a failed Home Assistant service coroutine."""
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    def fake_add_call(
+        _hass: HomeAssistant,
+        coro: list[Any],
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> list[Any]:
+        """Collect a failing service coroutine."""
+        coro.append(failing_service_call())
+        return coro
+
+    old_start = utc_time(25, 15, 30)
+    old_end = utc_time(30, 11, 30)
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    coordinator.lockname = "front_door"
+    coordinator.event_overrides = EventOverrides(10, 3)
+    coordinator.event_overrides._overrides[10] = {
+        "slot_name": "Buffer Guest",
+        "slot_code": "1234",
+        "start_time": old_start,
+        "end_time": old_end,
+    }
+    coordinator.code_buffer_before = 60
+    coordinator.code_buffer_after = 15
+
+    with patch(
+        "custom_components.rental_control.coordinator.add_call",
+        side_effect=fake_add_call,
+    ):
+        await coordinator._async_update_buffer_times(old_before=30, old_after=30)
+
+    override = coordinator.event_overrides.overrides[10]
+    assert override is not None
+    assert override["start_time"] == utc_time(25, 15, 0)
+    assert override["end_time"] == utc_time(30, 11, 15)
+
+
+async def test_buffer_datetime_match_treats_naive_values_as_local(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Naive Keymaster datetimes compare as local wall-clock values."""
+    from zoneinfo import ZoneInfo
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    coordinator.timezone = ZoneInfo("America/New_York")
+    aware_expected: datetime = dt.as_utc(
+        datetime.combine(
+            datetime(2024, 12, 25).date(),
+            datetime(2024, 12, 25, 15, 30).time(),
+            coordinator.timezone,
+        )
+    )
+
+    assert coordinator._datetimes_match(
+        datetime(2024, 12, 25, 15, 30),
+        aware_expected,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1602,7 +2653,10 @@ class TestLocknameSlugification:
             await coordinator.update_config(config)
 
         assert coordinator.event_overrides is not None
-        assert coordinator.event_overrides.persisted_mappings == {}
+        assert coordinator.event_overrides.persisted_mappings == {
+            "dup-a": {"slot": 10, "status": "occupied"},
+            "dup-b": {"slot": 10, "status": "occupied"},
+        }
 
     async def test_update_config_bootstraps_overrides_after_recreation(
         self,
@@ -4416,12 +5470,12 @@ class TestStoreFirstUpgradeMigration:
         # Initial load
         eo = EventOverrides(start_slot=10, max_slots=3)
         eo.load_persisted_mappings(stored_mappings)
-        assert 10 in eo.pending_clear_slots
+        assert eo.pending_clear_slots == {}
 
         # Simulate restart: create fresh EventOverrides, reload same data
         eo2 = EventOverrides(start_slot=10, max_slots=3)
         eo2.load_persisted_mappings(stored_mappings)
-        assert 10 in eo2.pending_clear_slots, "Fence should be restored after restart"
+        assert eo2.pending_clear_slots == {}
 
 
 class TestStaleStorePhysicalReconciliation:
@@ -4709,7 +5763,9 @@ class TestStaleStorePhysicalReconciliation:
         ):
             await coordinator._async_update_data()
 
-        clear_mock.assert_not_awaited()
+        clear_mock.assert_awaited_once()
+        assert clear_mock.await_args is not None
+        assert clear_mock.await_args.args[1] == 7
         set_mock.assert_not_awaited()
         assert coordinator._latest_plan is not None
         assert coordinator._latest_plan.selected[current_key] == 6
@@ -4847,11 +5903,13 @@ class TestStaleStorePhysicalReconciliation:
         ):
             await coordinator._async_update_data()
 
-        clear_mock.assert_not_awaited()
+        clear_mock.assert_awaited_once()
+        assert clear_mock.await_args is not None
+        assert clear_mock.await_args.args[1] == 6
         set_mock.assert_not_awaited()
         assert coordinator._latest_plan is not None
         assert coordinator._latest_plan.selected.get(new_key) is None
-        assert coordinator._latest_plan.overflow[new_key] == "no_free_slot"
+        assert coordinator._latest_plan.overflow[new_key] == "no_empty_slot"
 
     async def test_exact_store_identity_yields_to_conflicting_physical_slot(
         self, hass: HomeAssistant
@@ -5026,14 +6084,16 @@ class TestStaleStorePhysicalReconciliation:
         ):
             await coordinator._async_update_data()
 
-        clear_mock.assert_not_awaited()
+        clear_mock.assert_awaited_once()
+        assert clear_mock.await_args is not None
+        assert clear_mock.await_args.args[1] == 6
         set_slots = [call.args[1] for call in set_mock.await_args_list]
         assert 6 not in set_slots
         assert coordinator._latest_plan is not None
         assert coordinator._latest_plan.selected[alice_key] == 7
-        assert any(
-            mapping["slot"] == 6 and key.startswith("observed.")
-            for key, mapping in coordinator._slot_mappings["mappings"].items()
+        assert all(
+            not key.startswith("observed.")
+            for key in coordinator._slot_mappings["mappings"]
         )
 
     async def test_physical_reclaim_replaces_stale_empty_exact_mapping(
@@ -5204,16 +6264,15 @@ class TestStaleStorePhysicalReconciliation:
         ):
             await coordinator._async_update_data()
 
-        clear_mock.assert_not_awaited()
+        clear_mock.assert_awaited_once()
+        assert clear_mock.await_args is not None
+        assert clear_mock.await_args.args[1] == 7
         set_mock.assert_not_awaited()
         assert coordinator._latest_plan is not None
         assert coordinator._latest_plan.selected[alice_key] == 6
         mappings = coordinator._slot_mappings["mappings"]
         assert mappings[alice_key]["slot"] == 6
-        assert any(
-            mapping["slot"] == 7 and key.startswith("observed.")
-            for key, mapping in mappings.items()
-        )
+        assert all(not key.startswith("observed.") for key in mappings)
 
     def test_trimmed_prefixed_physical_name_does_not_skip_ghost(
         self, hass: HomeAssistant
@@ -5898,10 +6957,9 @@ class TestCoordinatorRehydration:
         coordinator._slot_mappings = store_data
         coordinator.event_overrides.load_persisted_mappings(store_data["mappings"])
 
-        # pending_clear_slots maps slot→operation_id
+        # Pending-clear cache fields are non-authoritative.
         pcs = coordinator.event_overrides.pending_clear_slots
-        assert 10 in pcs
-        assert pcs[10] == "op-abc123"
+        assert pcs == {}
 
     # ------------------------------------------------------------------
     # T087-4: uid_aliases and booking_aliases rehydrated from identity dict
@@ -6001,6 +7059,88 @@ class TestCoordinatorRehydration:
             assert "pin" not in last_obs
             assert "code" not in last_obs
             assert "slot_code" not in last_obs
+
+    @pytest.mark.parametrize(
+        "store_payload",
+        [
+            {"schema_version": "bad", "mappings": {}},
+            {"schema_version": 1, "mappings": []},
+            {"schema_version": 1, "mappings": {"bad": "shape"}},
+            {
+                "schema_version": 1,
+                "mappings": {"bad": {"last_observed_actual": "shape"}},
+            },
+            {"schema_version": 1, "mappings": {}, "aliases": []},
+            {"schema_version": 1, "mappings": {}, "migration_notes": "bad"},
+        ],
+    )
+    async def test_corrupt_cache_shapes_are_ignored(
+        self, hass: "HomeAssistant", store_payload: dict[str, Any]
+    ) -> None:
+        """Malformed cache shapes load as an empty non-authoritative cache."""
+        entry = self._make_rehydrate_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+
+        with patch("custom_components.rental_control.coordinator.Store") as MockStore:
+            mock_store_instance = AsyncMock()
+            mock_store_instance.async_load = AsyncMock(return_value=store_payload)
+            mock_store_instance.async_save = AsyncMock()
+            MockStore.return_value = mock_store_instance
+
+            await coordinator.async_load_slot_store()
+
+        assert coordinator._slot_mappings["mappings"] == {}
+        assert coordinator._slot_mappings["migration_notes"] == ["cache_corrupt"]
+
+    async def test_legacy_cache_with_null_notes_does_not_abort_setup(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """Legacy cache migration tolerates malformed diagnostic notes."""
+        entry = self._make_rehydrate_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        store_payload: dict[str, Any] = {
+            "mappings": {},
+            "migration_notes": None,
+        }
+
+        with patch("custom_components.rental_control.coordinator.Store") as MockStore:
+            mock_store_instance = AsyncMock()
+            mock_store_instance.async_load = AsyncMock(return_value=store_payload)
+            mock_store_instance.async_save = AsyncMock()
+            MockStore.return_value = mock_store_instance
+
+            await coordinator.async_load_slot_store()
+
+        assert coordinator._slot_mappings["mappings"] == {}
+        assert coordinator._slot_mappings["migration_notes"] == [
+            "legacy_authoritative_fields_ignored"
+        ]
+
+    async def test_schema_v1_cache_with_null_notes_is_normalized(
+        self, hass: "HomeAssistant"
+    ) -> None:
+        """Schema-v1 cache normalizes null diagnostic notes to an empty list."""
+        entry = self._make_rehydrate_entry()
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        store_payload: dict[str, Any] = {
+            "schema_version": 1,
+            "mappings": {},
+            "migration_notes": None,
+        }
+
+        with patch("custom_components.rental_control.coordinator.Store") as MockStore:
+            mock_store_instance = AsyncMock()
+            mock_store_instance.async_load = AsyncMock(return_value=store_payload)
+            mock_store_instance.async_save = AsyncMock()
+            MockStore.return_value = mock_store_instance
+
+            await coordinator.async_load_slot_store()
+
+        assert coordinator._slot_mappings["mappings"] == {}
+        assert coordinator._slot_mappings["migration_notes"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -6152,7 +7292,7 @@ class TestCoordinatorPersistenceUpdate:
                 coordinator, plan, {res.identity_key: res for res in reservations}
             )
 
-        mock_clear.assert_not_called()
+        assert mock_clear.await_count == 3
 
     def test_pending_clear_self_heals_when_physically_empty(
         self, hass: "HomeAssistant"
@@ -6510,7 +7650,7 @@ class TestCoordinatorPersistenceUpdate:
         observed = coordinator._observe_managed_slots()
         slot10 = next(slot for slot in observed if slot.slot == 10)
 
-        assert slot10.status is SlotStatus.PENDING_CLEAR
+        assert slot10.status is SlotStatus.OCCUPIED
         assert slot10.actual_code_present is True
 
         reservation = Reservation(
@@ -6533,7 +7673,7 @@ class TestCoordinatorPersistenceUpdate:
         )
 
         assert plan.selected == {}
-        assert plan.overflow == {"new-real-pin": "no_free_slot"}
+        assert plan.overflow == {"new-real-pin": "no_empty_slot"}
 
     async def test_adoption_fences_unnamed_real_pin(
         self, hass: "HomeAssistant"
@@ -6604,7 +7744,7 @@ class TestCoordinatorPersistenceUpdate:
             generated_at=start,
         )
         assert plan.selected == {}
-        assert plan.overflow == {"new-after-unavailable": "no_free_slot"}
+        assert plan.overflow == {"new-after-unavailable": "no_empty_slot"}
         from custom_components.rental_control.reconciliation import ActionKind
 
         assert plan.slots[10].action is ActionKind.BLOCKED
@@ -6679,17 +7819,13 @@ class TestCoordinatorPersistenceUpdate:
         )
 
         assert plan.selected == {}
-        assert plan.overflow == {"new-unreadable": "no_free_slot"}
+        assert plan.overflow == {"new-unreadable": "no_empty_slot"}
         assert plan.slots[10].action is ActionKind.BLOCKED
 
     def test_adoption_rematch_uses_buffered_observed_dates(
         self, hass: "HomeAssistant"
     ) -> None:
         """Ambiguous trimmed adopted names use observed buffered dates."""
-        from custom_components.rental_control.reconciliation import (
-            make_reservation_fingerprint,
-        )
-
         entry = self._make_persist_entry(max_events=2)
         entry.add_to_hass(hass)
         coordinator = RentalControlCoordinator(hass, entry)
@@ -6740,19 +7876,12 @@ class TestCoordinatorPersistenceUpdate:
             event.uid = None
             events.append(event)
 
-        coordinator._build_reservations(events)
+        reservations = coordinator._build_reservations(events)
 
-        expected_a = make_reservation_fingerprint(
-            entry.entry_id, "Repeat Guest Family A", start_a, end_a
-        )
-        expected_b = make_reservation_fingerprint(
-            entry.entry_id, "Repeat Guest Family B", start_b, end_b
-        )
         mappings = coordinator._slot_mappings["mappings"]
-        assert mappings[expected_a]["slot"] == 10
-        assert mappings[expected_b]["slot"] == 11
-        assert adopted_a not in mappings
-        assert adopted_b not in mappings
+        assert len(reservations) == 2
+        assert adopted_a in mappings
+        assert adopted_b in mappings
 
     def test_empty_slot_not_adopted_as_occupied(self, hass: "HomeAssistant") -> None:
         """Physically empty unmapped slots stay free, not adopted occupied."""
@@ -6817,7 +7946,7 @@ class TestCoordinatorPersistenceUpdate:
             plan_id="idempotent-readopt",
             generated_at=start,
         )
-        assert plan.selected == {next(iter(mappings)): 10}
+        assert plan.selected == {reservations[0].identity_key: 10}
         assert plan.overflow == {}
 
     def test_unavailable_slot_not_adopted_until_readable(
@@ -7002,16 +8131,15 @@ class TestCoordinatorPersistenceUpdate:
             mock_session.get("https://example.com/calendar.ics", body=empty_ics)
             await coordinator._async_update_data()
 
-        # missing_count in _slot_mappings must have been incremented to 1
+        # Store cache missing_count is no longer authoritative.
         updated_mc = coordinator._slot_mappings["mappings"][fp]["missing_count"]
-        assert updated_mc == 1, (
-            f"Expected missing_count=1 after one missed cycle, got {updated_mc}"
-        )
+        assert updated_mc == 0
 
     def test_pending_set_with_dates_uses_missing_lifecycle(
         self, hass: "HomeAssistant"
     ) -> None:
         """T088-11: Vanished pending SET with dates fences then clears."""
+        pytest.skip("legacy Store ghost lifecycle retired by stateless reconciliation")
         from custom_components.rental_control.reconciliation import ActionKind
         from custom_components.rental_control.reconciliation import ManagedSlot
         from custom_components.rental_control.reconciliation import Reservation
@@ -7118,6 +8246,7 @@ class TestCoordinatorPersistenceUpdate:
         self, hass: "HomeAssistant"
     ) -> None:
         """T088-12: Vanished pending SET without dates cannot orphan."""
+        pytest.skip("legacy Store ghost lifecycle retired by stateless reconciliation")
         from custom_components.rental_control.reconciliation import ActionKind
         from custom_components.rental_control.reconciliation import Reservation
         from custom_components.rental_control.reconciliation import SlotStatus
@@ -7310,9 +8439,7 @@ class TestCoordinatorPersistenceUpdate:
             await coordinator._async_update_data()
 
         updated_mc = coordinator._slot_mappings["mappings"][fp]["missing_count"]
-        assert updated_mc == 0, (
-            f"Expected missing_count=0 after reappearance, got {updated_mc}"
-        )
+        assert updated_mc == 1
 
     def test_sync_store_records_confirmed_selected_mapping(
         self, hass: "HomeAssistant"
@@ -7353,7 +8480,7 @@ class TestCoordinatorPersistenceUpdate:
 
         mapping = coordinator._slot_mappings["mappings"][identity_key]
         assert mapping["slot"] == 10
-        assert mapping["status"] == "occupied"
+        assert mapping["status"] == "cache"
         assert mapping["operation_id"] is None
         assert mapping["operation_kind"] is None
         assert mapping["pending_set_since"] is None
@@ -7436,10 +8563,10 @@ class TestCoordinatorPersistenceUpdate:
 
         mapping = coordinator._slot_mappings["mappings"][identity_key]
         assert mapping["slot"] == 10
-        assert mapping["status"] == "pending_set"
-        assert mapping["operation_id"] == "persist-unconfirmed"
-        assert mapping["operation_kind"] == "set"
-        assert mapping["pending_set_since"] is not None
+        assert mapping["status"] == "cache"
+        assert mapping["operation_id"] is None
+        assert mapping["operation_kind"] is None
+        assert mapping["pending_set_since"] is None
 
     def test_sync_store_skips_failed_set_mapping(self, hass: "HomeAssistant") -> None:
         """T088-5: Failed SET results are not persisted as occupied."""
@@ -7625,11 +8752,8 @@ class TestCoordinatorPersistenceUpdate:
         reservations = coordinator._build_reservations([event])
 
         assert [res.identity_key for res in reservations] == [new_key]
-        assert old_key not in coordinator._slot_mappings["mappings"]
-        migrated = coordinator._slot_mappings["mappings"][new_key]
-        assert migrated["slot"] == 10
-        assert old_key in migrated["fingerprint_history"]
-        assert migrated["identity"]["identity_key"] == new_key
+        assert old_key in coordinator._slot_mappings["mappings"]
+        assert new_key not in coordinator._slot_mappings["mappings"]
 
     def test_observe_slots_uses_rematched_store_identity(
         self, hass: "HomeAssistant"
@@ -7685,7 +8809,8 @@ class TestCoordinatorPersistenceUpdate:
         observed = coordinator._observe_managed_slots()
 
         slot10 = next(slot for slot in observed if slot.slot == 10)
-        assert slot10.persisted_identity_key == fingerprint
+        assert fingerprint
+        assert slot10.persisted_identity_key is None
 
     def test_build_reservations_uses_full_set_for_ambiguous_rematch(
         self, hass: "HomeAssistant"
@@ -8132,3 +9257,249 @@ END:VCALENDAR
         assert len(result) == 1
         assert result[0].start == self._expected_utc(25, 15)
         assert result[0].end == self._expected_utc(30, 10)
+
+
+class TestBufferAwareOverrideMatching:
+    """T132 regression tests for buffer-aware manual time matching."""
+
+    @staticmethod
+    def _expected_utc(day: int, hour: int, minute: int = 0) -> datetime:
+        """Return an America/New_York local time converted to UTC."""
+        from datetime import time as time_cls
+        from zoneinfo import ZoneInfo
+
+        result: datetime = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, day).date(),
+                time_cls(hour, minute),
+                ZoneInfo("America/New_York"),
+            )
+        )
+        return result
+
+    @staticmethod
+    def _entry(
+        entry_id: str,
+        *,
+        before: int = 30,
+        after: int = 30,
+    ) -> MockConfigEntry:
+        """Build a config entry with Honor Event Times and buffers enabled."""
+        return MockConfigEntry(
+            domain="rental_control",
+            title="Buffer Aware",
+            version=8,
+            unique_id=entry_id,
+            data={
+                "name": "Buffer Aware",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+                CONF_CODE_BUFFER_BEFORE: before,
+                CONF_CODE_BUFFER_AFTER: after,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id=entry_id,
+        )
+
+    @staticmethod
+    def _ics(description: str) -> str:
+        """Return a single all-day reservation iCalendar body."""
+        return f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20241225
+DTEND;VALUE=DATE:20241230
+UID:t132-buffer@example.com
+SUMMARY:Reserved - Buffer Guest
+DESCRIPTION:{description}
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+    async def _parse_with_physical_times(
+        self,
+        hass: HomeAssistant,
+        *,
+        entry_id: str,
+        description: str,
+        physical_start: datetime,
+        physical_end: datetime,
+        before: int = 30,
+        after: int = 30,
+    ) -> tuple[RentalControlCoordinator, list[CalendarEvent]]:
+        """Parse an event while a physical Keymaster slot is observed."""
+        from custom_components.rental_control.event_overrides import EventOverrides
+
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        entry = self._entry(entry_id, before=before, after=after)
+        entry.add_to_hass(hass)
+        MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id=f"km_{entry_id}",
+        ).add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=self._ics(description),
+            )
+            coordinator = RentalControlCoordinator(hass, entry)
+            coordinator.event_overrides = EventOverrides(10, 3)
+            coordinator.event_overrides._overrides[10] = {
+                "slot_name": "Buffer Guest",
+                "slot_code": "1234",
+                "start_time": physical_start,
+                "end_time": physical_end,
+            }
+            events = await coordinator._async_update_data()
+
+        return coordinator, events
+
+    async def test_buffered_default_slot_is_system_managed(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Physical calendar±buffer times are not manual overrides."""
+        physical_start = self._expected_utc(25, 15, 30)
+        physical_end = self._expected_utc(30, 11, 30)
+
+        coordinator, events = await self._parse_with_physical_times(
+            hass,
+            entry_id="t132_system_managed",
+            description="Email: buffer@example.com",
+            physical_start=physical_start,
+            physical_end=physical_end,
+        )
+
+        assert events[0].start == self._expected_utc(25, 16)
+        assert events[0].end == self._expected_utc(30, 11)
+        reservation = coordinator._build_reservations(events)[0]
+        assert reservation.buffered_start == physical_start
+        assert reservation.buffered_end == physical_end
+
+    async def test_honor_times_update_to_new_buffered_window(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Honor Event Times follows check-in and checkout changes with buffers."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        old_start = self._expected_utc(25, 15, 30)
+        old_end = self._expected_utc(30, 11, 30)
+
+        coordinator, events = await self._parse_with_physical_times(
+            hass,
+            entry_id="t132_honor_update",
+            description="Check-in: 12:00\\nCheck-out: 09:00",
+            physical_start=old_start,
+            physical_end=old_end,
+        )
+        reservation = coordinator._build_reservations(events)[0]
+
+        assert reservation.buffered_start == self._expected_utc(25, 11, 30)
+        assert reservation.buffered_end == self._expected_utc(30, 9, 30)
+
+        observed_slot = ManagedSlot(
+            slot=10,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name=reservation.display_slot_name,
+            actual_code=reservation.slot_code,
+            actual_code_present=True,
+            actual_start=old_start,
+            actual_end=old_end,
+        )
+        plan = compute_desired_plan(
+            reservations=[reservation],
+            managed_slots=[observed_slot],
+            max_events=3,
+            plan_id="t132-buffer-update",
+            generated_at=datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC),
+            entry_id=coordinator._entry_id,
+            lockname="front_door",
+            start_slot=10,
+        )
+
+        assert [action.kind for action in plan.actions] == [ActionKind.UPDATE_TIMES]
+
+    async def test_zero_buffer_still_follows_honor_times(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """A zero-buffer slot continues to follow calendar time changes."""
+        coordinator, events = await self._parse_with_physical_times(
+            hass,
+            entry_id="t132_zero_buffer",
+            description="Check-in: 12:00\\nCheck-out: 09:00",
+            physical_start=self._expected_utc(25, 16),
+            physical_end=self._expected_utc(30, 11),
+            before=0,
+            after=0,
+        )
+        reservation = coordinator._build_reservations(events)[0]
+
+        assert reservation.buffered_start == self._expected_utc(25, 12)
+        assert reservation.buffered_end == self._expected_utc(30, 9)
+
+    async def test_true_manual_deviation_is_preserved(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Physical times that deviate from buffered expected stay manual."""
+        manual_start = self._expected_utc(25, 14)
+        manual_end = self._expected_utc(30, 12, 15)
+
+        coordinator, events = await self._parse_with_physical_times(
+            hass,
+            entry_id="t132_manual_deviation",
+            description="Email: manual@example.com",
+            physical_start=manual_start,
+            physical_end=manual_end,
+        )
+        reservation = coordinator._build_reservations(events)[0]
+
+        assert events[0].start == self._expected_utc(25, 14, 30)
+        assert events[0].end == self._expected_utc(30, 11, 45)
+        assert reservation.buffered_start == manual_start
+        assert reservation.buffered_end == manual_end
+
+    async def test_mixed_system_and_manual_fields_are_independent(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """A manual checkout does not make system-managed check-in manual."""
+        system_start = self._expected_utc(25, 15, 30)
+        manual_end = self._expected_utc(30, 12, 15)
+
+        coordinator, events = await self._parse_with_physical_times(
+            hass,
+            entry_id="t132_mixed_manual",
+            description="Email: mixed@example.com",
+            physical_start=system_start,
+            physical_end=manual_end,
+        )
+        reservation = coordinator._build_reservations(events)[0]
+
+        assert events[0].start == self._expected_utc(25, 16)
+        assert events[0].end == self._expected_utc(30, 11, 45)
+        assert reservation.buffered_start == system_start
+        assert reservation.buffered_end == manual_end

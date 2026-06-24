@@ -53,6 +53,7 @@ from dataclasses import field
 from datetime import datetime
 from datetime import timezone
 from enum import Enum
+from functools import lru_cache
 import hashlib
 import logging
 import re
@@ -103,6 +104,15 @@ class SlotStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
+class ObservedSlotStatus(str, Enum):
+    """Stateless physical classification for an observed Keymaster slot."""
+
+    EMPTY = "empty"
+    OCCUPIED = "occupied"
+    PHANTOM = "phantom"
+    UNKNOWN = "unknown"
+
+
 class ActionKind(str, Enum):
     """Reconciliation action type for one managed Keymaster slot.
 
@@ -113,6 +123,15 @@ class ActionKind(str, Enum):
 
     NOOP = "noop"
     """Actual already matches desired; no Keymaster service call needed."""
+
+    ASSIGN = "assign"
+    """Stateless action: write a desired reservation to a confirmed-empty slot."""
+
+    UPDATE_IN_PLACE = "update_in_place"
+    """Stateless action: update an existing name-matched physical slot."""
+
+    RESET = "reset"
+    """Stateless action: clear a stale, duplicate, or phantom physical slot."""
 
     SET = "set"
     """Slot is confirmed free; write name, code, and date range."""
@@ -156,6 +175,12 @@ class SlotAction:
     slot: int
     identity_key: str | None = None
     reason: str | None = None
+    desired_id: str | None = None
+    matched_by: str | None = None
+    requires_confirmed_empty: bool = False
+    sequence: list[str] = field(default_factory=list)
+    preflight_read: bool = False
+    blocked_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -230,6 +255,8 @@ class Reservation:
     missing_count: int = 0
     desired_slot: int | None = None
     overflow_reason: str | None = None
+    sensor_lookup_keys: set[str] = field(default_factory=set)
+    code_source: str = "generated"
 
     def __post_init__(self) -> None:
         """Validate Reservation field invariants.
@@ -303,6 +330,7 @@ class ManagedSlot:
     managed: bool
     status: SlotStatus = SlotStatus.UNKNOWN
     actual_name: str | None = None
+    actual_code: str | None = field(default=None, repr=False)
     actual_code_present: bool | None = None
     actual_start: datetime | None = None
     actual_end: datetime | None = None
@@ -316,6 +344,138 @@ class ManagedSlot:
     last_operation_id: str | None = None
     dirty_during_operation: bool = False
     last_error: str | None = None
+
+
+def _keymaster_text_cleared(value: str | None) -> bool:
+    """Return whether a Keymaster text state represents a cleared value."""
+    if value is None:
+        return True
+    text = value.strip().casefold()
+    return text in {"", "unknown", "none"}
+
+
+def _keymaster_text_unreadable(value: str | None) -> bool:
+    """Return whether a Keymaster text state is unreadable."""
+    return value is not None and value.strip().casefold() == "unavailable"
+
+
+@dataclass(slots=True)
+class ObservedSlot:
+    """Physical Keymaster slot facts read during one stateless refresh."""
+
+    slot: int
+    managed: bool
+    raw_name: str | None = None
+    raw_pin: str | None = field(default=None, repr=False)
+    has_pin: bool | None = None
+    actual_start: datetime | None = None
+    actual_end: datetime | None = None
+    date_range_enabled: bool | None = None
+    enabled: bool | None = None
+    readable: bool = True
+    empty_confirmed: bool = False
+    classification: ObservedSlotStatus = ObservedSlotStatus.UNKNOWN
+    normalized_name_forms: set[str] = field(default_factory=set)
+    matched_desired_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Validate and derive normalized physical name forms."""
+        name_present = not _keymaster_text_cleared(self.raw_name)
+        if self.has_pin is None and self.raw_pin is not None:
+            self.has_pin = not _keymaster_text_cleared(self.raw_pin)
+        if self.raw_pin is None and self.has_pin is None:
+            self.readable = False
+            self.empty_confirmed = False
+        if _keymaster_text_unreadable(self.raw_name) or _keymaster_text_unreadable(
+            self.raw_pin
+        ):
+            self.readable = False
+            self.empty_confirmed = False
+        if name_present or self.has_pin:
+            self.empty_confirmed = False
+        if not self.managed:
+            self.classification = ObservedSlotStatus.UNKNOWN
+        elif not self.readable:
+            self.classification = ObservedSlotStatus.UNKNOWN
+            self.empty_confirmed = False
+        elif self.empty_confirmed and not name_present and not self.has_pin:
+            self.classification = ObservedSlotStatus.EMPTY
+        elif name_present and self.has_pin:
+            self.classification = ObservedSlotStatus.OCCUPIED
+        elif name_present or self.has_pin:
+            self.classification = ObservedSlotStatus.PHANTOM
+        else:
+            self.classification = ObservedSlotStatus.EMPTY
+            self.empty_confirmed = True
+        if name_present and self.raw_name:
+            self.normalized_name_forms.add(
+                normalize_slot_name_for_fingerprint(self.raw_name)
+            )
+
+
+@dataclass(slots=True)
+class DesiredReservation:
+    """Calendar reservation facts used by the stateless planner."""
+
+    desired_id: str
+    stable_slot_name: str
+    display_slot_name: str
+    start: datetime
+    end: datetime
+    buffered_start: datetime
+    buffered_end: datetime
+    slot_code: str = field(repr=False)
+    code_source: str = "generated"
+    event_uid: str | None = None
+    booking_aliases: set[str] = field(default_factory=set)
+    eligible: bool = True
+    protected_active: bool = False
+    checked_out: bool = False
+    selected_rank: int | None = None
+    matched_slot: int | None = None
+    assigned_slot: int | None = None
+    sensor_lookup_keys: set[str] = field(default_factory=set)
+    physical_time_override: tuple[datetime, datetime] | None = None
+    overflow_reason: str | None = None
+    normalized_name_forms: set[str] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        """Validate desired reservation invariants and name forms."""
+        if self.start >= self.end:
+            raise ValueError(
+                f"DesiredReservation start must be strictly before end: "
+                f"{self.start!r} >= {self.end!r}"
+            )
+        self.normalized_name_forms.update(
+            _desired_name_forms(self.stable_slot_name, self.display_slot_name)
+        )
+
+
+@dataclass(slots=True)
+class StatelessPlan:
+    """Refresh-local stateless physical slot reconciliation result."""
+
+    plan_id: str
+    generated_at: datetime
+    observed_slots: dict[int, ObservedSlot] = field(default_factory=dict)
+    desired_reservations: dict[str, DesiredReservation] = field(default_factory=dict)
+    selected: dict[str, int] = field(default_factory=dict)
+    overflow: dict[str, str] = field(default_factory=dict)
+    actions: list[SlotAction] = field(default_factory=list)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class CacheOnlyStoreRecord:
+    """Cache-only Store payload metadata; never authoritative for planning."""
+
+    schema_version: int
+    entry_id: str
+    lockname: str | None = None
+    updated_at: str | None = None
+    aliases: dict[str, Any] = field(default_factory=dict)
+    last_plan: dict[str, Any] = field(default_factory=dict)
+    migration_notes: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -583,6 +743,197 @@ def normalize_slot_name_for_fingerprint(slot_name: str) -> str:
         Casefold-normalized, stripped slot name.
     """
     return slot_name.strip().casefold()
+
+
+def _desired_name_forms(
+    slot_name: str, display_slot_name: str | None = None
+) -> set[str]:
+    """Return normalized stable/display forms for stateless name matching."""
+    forms = {normalize_slot_name_for_fingerprint(slot_name)}
+    if display_slot_name:
+        forms.add(normalize_slot_name_for_fingerprint(display_slot_name))
+    return {form for form in forms if form}
+
+
+def _slot_name_variants(name: str, *, prefix: str = "") -> set[str]:
+    """Return normalized physical name variants, including prefix-stripped form."""
+    stripped = name.strip()
+    variants = {normalize_slot_name_for_fingerprint(stripped)}
+    if prefix and stripped.startswith(prefix):
+        variants.add(normalize_slot_name_for_fingerprint(stripped[len(prefix) :]))
+    return {variant for variant in variants if variant}
+
+
+def _names_match(
+    physical_name: str | None,
+    stable_slot_name: str,
+    display_slot_name: str | None = None,
+    *,
+    prefix: str = "",
+) -> bool:
+    """Return whether a physical Keymaster name identifies a desired stay."""
+    if not physical_name:
+        return False
+    physical_forms = _slot_name_variants(physical_name, prefix=prefix)
+    desired_forms = _desired_name_forms(stable_slot_name, display_slot_name)
+    if physical_forms & desired_forms:
+        return True
+    # Trim-aware matching is handled by requiring callers to provide the exact
+    # display_slot_name that Rental Control would write to Keymaster.  Do not use
+    # generic prefix matching here: names like "Ann" and "Anna" are distinct
+    # stable identities even though one is a string prefix of the other.
+    return False
+
+
+def _reservation_name_key(reservation: Reservation) -> str:
+    """Return the stable name grouping key for a legacy Reservation."""
+    return normalize_slot_name_for_fingerprint(reservation.slot_name)
+
+
+def _desired_name_key(reservation: DesiredReservation) -> str:
+    """Return the stable name grouping key for a DesiredReservation."""
+    return normalize_slot_name_for_fingerprint(reservation.stable_slot_name)
+
+
+def _slot_times_match(
+    actual_start: datetime | None,
+    actual_end: datetime | None,
+    desired_start: datetime,
+    desired_end: datetime,
+) -> bool:
+    """Return whether observed Keymaster dates exactly match desired dates."""
+    return actual_start == desired_start and actual_end == desired_end
+
+
+def _datetime_distance(left: datetime | None, right: datetime) -> float:
+    """Return absolute seconds between two datetimes, or infinity if absent."""
+    if left is None:
+        return float("inf")
+    return abs((left - right).total_seconds())
+
+
+def _managed_slot_distance(slot: ManagedSlot, reservation: Reservation) -> float:
+    """Return date distance between a managed slot and desired reservation."""
+    return _datetime_distance(
+        slot.actual_start, reservation.buffered_start
+    ) + _datetime_distance(slot.actual_end, reservation.buffered_end)
+
+
+def _observed_slot_distance(slot: ObservedSlot, desired: DesiredReservation) -> float:
+    """Return date distance between an observed slot and desired reservation."""
+    return _datetime_distance(
+        slot.actual_start, desired.buffered_start
+    ) + _datetime_distance(slot.actual_end, desired.buffered_end)
+
+
+def _select_managed_subset(
+    slots: list[ManagedSlot], desired: list[Reservation]
+) -> list[ManagedSlot]:
+    """Return the minimum-distance ordered slot subset for reservations."""
+
+    @lru_cache(maxsize=None)
+    def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+        """Return best ordered subset cost and indices from this position."""
+        if desired_index == len(desired):
+            return 0.0, ()
+        if slot_index == len(slots):
+            return float("inf"), ()
+        skip_cost, skip_indices = _best(slot_index + 1, desired_index)
+        take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+        take_cost = (
+            _managed_slot_distance(slots[slot_index], desired[desired_index])
+            + take_rest_cost
+        )
+        if take_cost < skip_cost:
+            return take_cost, (slot_index, *take_indices)
+        return skip_cost, skip_indices
+
+    _, indices = _best(0, 0)
+    return [slots[index] for index in indices]
+
+
+def _select_observed_subset(
+    slots: list[ObservedSlot], desired: list[DesiredReservation]
+) -> list[ObservedSlot]:
+    """Return the minimum-distance ordered observed subset for reservations."""
+
+    @lru_cache(maxsize=None)
+    def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+        """Return best ordered subset cost and indices from this position."""
+        if desired_index == len(desired):
+            return 0.0, ()
+        if slot_index == len(slots):
+            return float("inf"), ()
+        skip_cost, skip_indices = _best(slot_index + 1, desired_index)
+        take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+        take_cost = (
+            _observed_slot_distance(slots[slot_index], desired[desired_index])
+            + take_rest_cost
+        )
+        if take_cost < skip_cost:
+            return take_cost, (slot_index, *take_indices)
+        return skip_cost, skip_indices
+
+    _, indices = _best(0, 0)
+    return [slots[index] for index in indices]
+
+
+def _pair_partial_managed(
+    slots: list[ManagedSlot], desired: list[Reservation]
+) -> list[tuple[ManagedSlot, Reservation]]:
+    """Pair fewer managed slots to the best ordered desired reservations."""
+
+    @lru_cache(maxsize=None)
+    def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+        """Return best desired indices for remaining managed slots."""
+        if slot_index == len(slots):
+            return 0.0, ()
+        if desired_index == len(desired):
+            return float("inf"), ()
+        skip_cost, skip_indices = _best(slot_index, desired_index + 1)
+        take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+        take_cost = (
+            _managed_slot_distance(slots[slot_index], desired[desired_index])
+            + take_rest_cost
+        )
+        if take_cost < skip_cost:
+            return take_cost, (desired_index, *take_indices)
+        return skip_cost, skip_indices
+
+    _, desired_indices = _best(0, 0)
+    return [
+        (slots[slot_index], desired[desired_index])
+        for slot_index, desired_index in enumerate(desired_indices)
+    ]
+
+
+def _pair_partial_observed(
+    slots: list[ObservedSlot], desired: list[DesiredReservation]
+) -> list[tuple[ObservedSlot, DesiredReservation]]:
+    """Pair fewer observed slots to the best ordered desired reservations."""
+
+    @lru_cache(maxsize=None)
+    def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+        """Return best desired indices for remaining observed slots."""
+        if slot_index == len(slots):
+            return 0.0, ()
+        if desired_index == len(desired):
+            return float("inf"), ()
+        skip_cost, skip_indices = _best(slot_index, desired_index + 1)
+        take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+        take_cost = (
+            _observed_slot_distance(slots[slot_index], desired[desired_index])
+            + take_rest_cost
+        )
+        if take_cost < skip_cost:
+            return take_cost, (desired_index, *take_indices)
+        return skip_cost, skip_indices
+
+    _, desired_indices = _best(0, 0)
+    return [
+        (slots[slot_index], desired[desired_index])
+        for slot_index, desired_index in enumerate(desired_indices)
+    ]
 
 
 def _dt_to_utc_iso(dt: datetime) -> str:
@@ -1691,48 +2042,12 @@ def compute_desired_plan(
     protected, selected_np, overflow_list, remaining_capacity = _select_candidates(
         eligible, max_events
     )
-    plan.protected = {r.identity_key for r in protected}
-
-    assigned: dict[int, str] = {}
-    free_slot_numbers: list[int] = sorted(
-        ms.slot for ms in managed_slots if ms.managed and ms.status is SlotStatus.FREE
+    selected_reservations = sorted(
+        [*protected, *selected_np],
+        key=lambda r: (0 if r.protected_active else 1, r.start, r.identity_key),
     )
-
-    def _try_assign(res: Reservation) -> bool:
-        """Try to assign *res* to its persisted slot or the lowest free slot."""
-        persisted = _find_persisted_slot_for_reservation(
-            managed_slots, res.identity_key
-        )
-        if (
-            persisted is not None
-            and _is_slot_assignable(persisted)
-            and persisted.slot not in assigned
-        ):
-            assigned[persisted.slot] = res.identity_key
-            if persisted.slot in free_slot_numbers:
-                free_slot_numbers.remove(persisted.slot)
-            return True
-        if free_slot_numbers:
-            assigned[free_slot_numbers.pop(0)] = res.identity_key
-            return True
-        return False
-
-    for res in protected:
-        if not _try_assign(res):
-            plan.diagnostics.setdefault("protected_capacity_violations", []).append(
-                res.identity_key
-            )
-
-    for res in selected_np:
-        if not _try_assign(res):
-            plan.overflow[res.identity_key] = "no_free_slot"
-            _LOGGER.warning(
-                "Overflow: reservation %s selected but no free managed slot available",
-                res.identity_key,
-            )
-
-    for slot_num, ikey in assigned.items():
-        plan.selected[ikey] = slot_num
+    plan.protected = {r.identity_key for r in protected}
+    res_by_key: dict[str, Reservation] = {r.identity_key: r for r in reservations}
 
     for rank_offset, res in enumerate(overflow_list):
         plan.overflow[res.identity_key] = "capacity"
@@ -1743,79 +2058,256 @@ def compute_desired_plan(
             "identity_key": res.identity_key,
         }
 
-    slot_to_identity: dict[int, str] = {v: k for k, v in plan.selected.items()}
-    res_by_key: dict[str, Reservation] = {r.identity_key: r for r in reservations}
+    managed_by_slot = {ms.slot: ms for ms in managed_slots if ms.managed}
+    occupied_slots = [
+        ms
+        for ms in managed_by_slot.values()
+        if ms.status in {SlotStatus.OCCUPIED, SlotStatus.PHANTOM}
+    ]
+    selected_by_name: dict[str, list[Reservation]] = {}
+    for res in selected_reservations:
+        selected_by_name.setdefault(_reservation_name_key(res), []).append(res)
+    for group in selected_by_name.values():
+        group.sort(key=lambda r: (r.start, r.end, r.identity_key))
 
-    # Detect duplicate persisted assignments: same identity key in multiple OCCUPIED
-    # managed slots.  The canonical slot is the lowest-numbered one.  All others are
-    # non-canonical and will be cleared.
-    _persisted_to_slots: dict[str, list[int]] = {}
-    for _ms in managed_slots:
-        if (
-            _ms.managed
-            and _ms.persisted_identity_key is not None
-            and _ms.status is SlotStatus.OCCUPIED
-        ):
-            _persisted_to_slots.setdefault(_ms.persisted_identity_key, []).append(
-                _ms.slot
-            )
-    _non_canonical_slots: set[int] = set()
-    for _dup_key, _dup_slots in _persisted_to_slots.items():
-        if len(_dup_slots) > 1:
-            _canonical = min(_dup_slots)
-            _non_canonical = [s for s in _dup_slots if s != _canonical]
-            _non_canonical_slots.update(_non_canonical)
-            _LOGGER.warning(
-                "Duplicate assignment: identity %s found in slots %s; "
-                "slot %d is canonical, slots %s will be cleared (duplicate collapse)",
-                _dup_key,
-                sorted(_dup_slots),
-                _canonical,
-                sorted(_non_canonical),
-            )
+    matched_slots: dict[int, str] = {}
+    matched_reservations: set[str] = set()
+    duplicate_slots: set[int] = set()
 
-    for ms in sorted(managed_slots, key=lambda m: m.slot):
-        if not ms.managed:
+    for desired_group in selected_by_name.values():
+        physical_group = [
+            ms
+            for ms in occupied_slots
+            if ms.slot not in matched_slots
+            and (
+                _names_match(
+                    ms.actual_name,
+                    desired_group[0].slot_name,
+                    desired_group[0].display_slot_name,
+                )
+                or (
+                    ms.persisted_identity_key
+                    in {desired.identity_key for desired in desired_group}
+                )
+            )
+        ]
+        if not physical_group:
             continue
-        desired_key = slot_to_identity.get(ms.slot)
-        if ms.slot in _non_canonical_slots:
-            action = ActionKind.CLEAR
-            pending_reason = None
+        physical_group.sort(
+            key=lambda ms: (
+                ms.actual_start or datetime.max.replace(tzinfo=timezone.utc),
+                ms.actual_end or datetime.max.replace(tzinfo=timezone.utc),
+                ms.slot,
+            )
+        )
+        extra_physical_group: list[ManagedSlot] = []
+        if len(desired_group) > 1 and len(physical_group) > len(desired_group):
+            canonical_physical = _select_managed_subset(physical_group, desired_group)
+            canonical_slots = {ms.slot for ms in canonical_physical}
+            extra_physical_group = [
+                ms for ms in physical_group if ms.slot not in canonical_slots
+            ]
+            physical_group = canonical_physical
+        pairs: list[tuple[ManagedSlot, Reservation]] = []
+        paired_slots: set[int] = set()
+        paired_reservations: set[str] = set()
+        complete_known_duplicate_group = (
+            len(desired_group) > 1
+            and len(physical_group) == len(desired_group)
+            and all(
+                ms.actual_start is not None and ms.actual_end is not None
+                for ms in physical_group
+            )
+        )
+        if complete_known_duplicate_group:
+            for ms, res in zip(physical_group, desired_group, strict=False):
+                pairs.append((ms, res))
+                paired_slots.add(ms.slot)
+                paired_reservations.add(res.identity_key)
         else:
-            action, pending_reason = _build_slot_action(ms, desired_key, res_by_key)
-        if (
-            action is ActionKind.RETRY_CLEAR
-            and ms.persisted_identity_key in plan.protected
-        ):
+            for res in desired_group:
+                exact_matches = [
+                    ms
+                    for ms in physical_group
+                    if ms.slot not in paired_slots
+                    and _slot_times_match(
+                        ms.actual_start,
+                        ms.actual_end,
+                        res.buffered_start,
+                        res.buffered_end,
+                    )
+                ]
+                if exact_matches:
+                    ms = exact_matches[0]
+                    pairs.append((ms, res))
+                    paired_slots.add(ms.slot)
+                    paired_reservations.add(res.identity_key)
+        remaining_physical = [
+            ms for ms in physical_group if ms.slot not in paired_slots
+        ]
+        remaining_desired = [
+            res for res in desired_group if res.identity_key not in paired_reservations
+        ]
+        if len(remaining_physical) > len(remaining_desired) and remaining_desired:
+            canonical_physical = _select_managed_subset(
+                remaining_physical, remaining_desired
+            )
+            canonical_slots = {ms.slot for ms in canonical_physical}
+            remaining_physical = [
+                *canonical_physical,
+                *[ms for ms in remaining_physical if ms.slot not in canonical_slots],
+            ]
+        if len(remaining_physical) < len(remaining_desired):
+            pairs.extend(_pair_partial_managed(remaining_physical, remaining_desired))
+        else:
+            pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
+
+        for ms, res in pairs:
+            matched_slots[ms.slot] = res.identity_key
+            matched_reservations.add(res.identity_key)
+            duplicate_slots.discard(ms.slot)
+            plan.diagnostics.setdefault("stable_name_matches", {})[ms.slot] = {
+                "identity_key": res.identity_key,
+                "slot_name": res.slot_name,
+            }
+        for extra_ms in [
+            *remaining_physical[len(remaining_desired) :],
+            *extra_physical_group,
+        ]:
+            duplicate_slots.add(extra_ms.slot)
+            _LOGGER.warning(
+                "Duplicate physical slot-name match for %s in slot %d; "
+                "non-canonical duplicate will reset",
+                desired_group[0].slot_name,
+                extra_ms.slot,
+            )
+
+    free_slot_numbers: list[int] = sorted(
+        ms.slot for ms in managed_by_slot.values() if ms.status is SlotStatus.FREE
+    )
+    occupied_matched_slots = set(matched_slots)
+    for res in selected_reservations:
+        if res.identity_key in matched_reservations:
+            slot = next(
+                (
+                    slot
+                    for slot, key in matched_slots.items()
+                    if key == res.identity_key
+                ),
+                None,
+            )
+            if slot is not None:
+                plan.selected[res.identity_key] = slot
+                continue
+        if free_slot_numbers:
+            slot = free_slot_numbers.pop(0)
+            plan.selected[res.identity_key] = slot
+            matched_slots[slot] = res.identity_key
+        else:
+            plan.overflow[res.identity_key] = "no_empty_slot"
+            _LOGGER.warning(
+                "Overflow: reservation %s selected but no confirmed-empty managed "
+                "slot is available",
+                res.identity_key,
+            )
+
+    slot_to_identity: dict[int, str] = {v: k for k, v in plan.selected.items()}
+
+    for ms in sorted(managed_by_slot.values(), key=lambda m: m.slot):
+        desired_key = slot_to_identity.get(ms.slot)
+        pending_reason: str | None = None
+        action = ActionKind.NOOP
+        reason: str | None = None
+
+        if ms.status is SlotStatus.PENDING_CLEAR:
+            if ms.persisted_identity_key in plan.protected:
+                action = ActionKind.BLOCKED
+                pending_reason = "protected_active_pending_clear"
+            else:
+                action = ActionKind.RETRY_CLEAR
+                pending_reason = ms.blocked_reason or "pending_clear"
+        elif ms.status is SlotStatus.UNKNOWN:
             action = ActionKind.BLOCKED
-            pending_reason = "protected_active_pending_clear"
+            pending_reason = ms.blocked_reason or "unreadable"
+        elif ms.status is SlotStatus.BLOCKED:
+            action = ActionKind.BLOCKED
+            pending_reason = ms.blocked_reason or "blocked"
+        elif ms.slot in duplicate_slots and ms.slot not in matched_slots:
+            action = ActionKind.CLEAR
+            reason = "duplicate_non_canonical"
+        elif desired_key is None:
+            if ms.status is SlotStatus.FREE:
+                action = ActionKind.NOOP
+            else:
+                action = ActionKind.CLEAR
+                reason = "phantom" if ms.status is SlotStatus.PHANTOM else "stale"
+        else:
+            desired_res = res_by_key.get(desired_key)
+            if ms.status is SlotStatus.FREE:
+                action = ActionKind.SET
+            elif ms.slot in occupied_matched_slots and desired_res is not None:
+                drift_fields = _compute_drift_fields(ms, desired_res)
+                code_drift = (
+                    ms.actual_code is not None
+                    and ms.actual_code != desired_res.slot_code
+                )
+                name_drift = (
+                    ms.actual_name is not None
+                    and ms.actual_name != desired_res.display_slot_name
+                )
+                non_date_drift = [
+                    field_name
+                    for field_name in drift_fields
+                    if field_name not in {"start", "end"}
+                ]
+                if code_drift or name_drift or non_date_drift:
+                    action = ActionKind.OVERWRITE_MANUAL_CHANGE
+                    fields = set(drift_fields)
+                    if code_drift:
+                        fields.add("code")
+                    if name_drift:
+                        fields.add("name")
+                    reason = "drifted fields: " + ", ".join(sorted(fields))
+                elif (ms.actual_start is not None or ms.actual_end is not None) and (
+                    ms.actual_start != desired_res.buffered_start
+                    or ms.actual_end != desired_res.buffered_end
+                ):
+                    action = ActionKind.UPDATE_TIMES
+                else:
+                    action = ActionKind.NOOP
+            else:
+                action = ActionKind.CLEAR
+                reason = "mis_assigned"
+
         ms.desired_identity_key = desired_key
         plan.slots[ms.slot] = PlannedSlot(
             slot=ms.slot,
             desired_identity_key=desired_key,
             actual_classification=ms.status.value,
             action=action,
-            pending_reason=pending_reason,
+            pending_reason=pending_reason or reason,
             retry_count=ms.retry_count,
             last_error=ms.last_error,
         )
         if action is not ActionKind.NOOP:
-            clear_reason: str | None = pending_reason
-            if action is ActionKind.CLEAR:
-                if ms.slot in _non_canonical_slots:
-                    clear_reason = "duplicate_non_canonical"
-                elif ms.status is SlotStatus.PHANTOM:
-                    clear_reason = "phantom"
-                elif ms.status is SlotStatus.OCCUPIED and desired_key is None:
-                    clear_reason = "stale"
-                elif ms.status is SlotStatus.OCCUPIED and desired_key is not None:
-                    clear_reason = "mis_assigned"
             plan.actions.append(
                 SlotAction(
                     kind=action,
                     slot=ms.slot,
                     identity_key=desired_key,
-                    reason=clear_reason,
+                    reason=reason or pending_reason,
+                    desired_id=desired_key,
+                    matched_by="name_exact"
+                    if ms.slot in occupied_matched_slots
+                    else "none",
+                    requires_confirmed_empty=action
+                    in {ActionKind.SET, ActionKind.OVERWRITE_MANUAL_CHANGE},
+                    preflight_read=action
+                    in {
+                        ActionKind.SET,
+                        ActionKind.CLEAR,
+                        ActionKind.OVERWRITE_MANUAL_CHANGE,
+                    },
                 )
             )
 
@@ -1828,4 +2320,265 @@ def compute_desired_plan(
         start_slot=start_slot,
     )
 
+    return plan
+
+
+def compute_stateless_plan(
+    observed_slots: list[ObservedSlot],
+    desired_reservations: list[DesiredReservation],
+    max_events: int,
+    plan_id: str,
+    generated_at: datetime,
+    *,
+    prefix: str = "",
+) -> StatelessPlan:
+    """Compute a pure stateless slot plan from physical slots and calendar stays."""
+    plan = StatelessPlan(plan_id=plan_id, generated_at=generated_at)
+    plan.observed_slots = {slot.slot: slot for slot in observed_slots if slot.managed}
+    plan.desired_reservations = {
+        desired.desired_id: desired for desired in desired_reservations
+    }
+
+    eligible = [
+        desired
+        for desired in desired_reservations
+        if desired.eligible and not desired.checked_out
+    ]
+    protected = sorted(
+        [desired for desired in eligible if desired.protected_active],
+        key=lambda desired: (desired.start, desired.desired_id),
+    )
+    non_protected = sorted(
+        [desired for desired in eligible if not desired.protected_active],
+        key=lambda desired: (desired.start, desired.desired_id),
+    )
+    selected = [*protected, *non_protected[: max(0, max_events - len(protected))]]
+    for rank, desired in enumerate(selected, start=1):
+        desired.selected_rank = rank
+    for desired in non_protected[max(0, max_events - len(protected)) :]:
+        desired.overflow_reason = "capacity"
+        plan.overflow[desired.desired_id] = "capacity"
+
+    selected_by_name: dict[str, list[DesiredReservation]] = {}
+    for desired in selected:
+        selected_by_name.setdefault(_desired_name_key(desired), []).append(desired)
+    for group in selected_by_name.values():
+        group.sort(key=lambda desired: (desired.start, desired.end, desired.desired_id))
+
+    slot_to_desired: dict[int, str] = {}
+    matched_desired: set[str] = set()
+    occupied = [
+        slot
+        for slot in plan.observed_slots.values()
+        if slot.classification
+        in {ObservedSlotStatus.OCCUPIED, ObservedSlotStatus.PHANTOM}
+        and slot.raw_name
+    ]
+    duplicate_slots: set[int] = set()
+
+    for group in selected_by_name.values():
+        physical_group = [
+            slot
+            for slot in occupied
+            if slot.slot not in slot_to_desired
+            and _names_match(
+                slot.raw_name,
+                group[0].stable_slot_name,
+                group[0].display_slot_name,
+                prefix=prefix,
+            )
+        ]
+        physical_group.sort(
+            key=lambda slot: (
+                slot.actual_start or datetime.max.replace(tzinfo=timezone.utc),
+                slot.actual_end or datetime.max.replace(tzinfo=timezone.utc),
+                slot.slot,
+            )
+        )
+        extra_physical_group: list[ObservedSlot] = []
+        if len(group) > 1 and len(physical_group) > len(group):
+            canonical_physical = _select_observed_subset(physical_group, group)
+            canonical_slots = {slot.slot for slot in canonical_physical}
+            extra_physical_group = [
+                slot for slot in physical_group if slot.slot not in canonical_slots
+            ]
+            physical_group = canonical_physical
+        pairs: list[tuple[ObservedSlot, DesiredReservation]] = []
+        paired_slots: set[int] = set()
+        paired_desired: set[str] = set()
+        complete_known_duplicate_group = (
+            len(group) > 1
+            and len(physical_group) == len(group)
+            and all(
+                slot.actual_start is not None and slot.actual_end is not None
+                for slot in physical_group
+            )
+        )
+        if complete_known_duplicate_group:
+            for slot, desired in zip(physical_group, group, strict=False):
+                pairs.append((slot, desired))
+                paired_slots.add(slot.slot)
+                paired_desired.add(desired.desired_id)
+        else:
+            for desired in group:
+                exact_matches = [
+                    slot
+                    for slot in physical_group
+                    if slot.slot not in paired_slots
+                    and _slot_times_match(
+                        slot.actual_start,
+                        slot.actual_end,
+                        desired.buffered_start,
+                        desired.buffered_end,
+                    )
+                ]
+                if exact_matches:
+                    slot = exact_matches[0]
+                    pairs.append((slot, desired))
+                    paired_slots.add(slot.slot)
+                    paired_desired.add(desired.desired_id)
+        remaining_physical = [
+            slot for slot in physical_group if slot.slot not in paired_slots
+        ]
+        remaining_desired = [
+            desired for desired in group if desired.desired_id not in paired_desired
+        ]
+        if len(remaining_physical) > len(remaining_desired) and remaining_desired:
+            canonical_physical = _select_observed_subset(
+                remaining_physical, remaining_desired
+            )
+            canonical_slots = {slot.slot for slot in canonical_physical}
+            remaining_physical = [
+                *canonical_physical,
+                *[
+                    slot
+                    for slot in remaining_physical
+                    if slot.slot not in canonical_slots
+                ],
+            ]
+        if len(remaining_physical) < len(remaining_desired):
+            pairs.extend(_pair_partial_observed(remaining_physical, remaining_desired))
+        else:
+            pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
+
+        for slot, desired in pairs:
+            slot.matched_desired_id = desired.desired_id
+            desired.matched_slot = slot.slot
+            desired.assigned_slot = slot.slot
+            slot_to_desired[slot.slot] = desired.desired_id
+            matched_desired.add(desired.desired_id)
+            plan.selected[desired.desired_id] = slot.slot
+        for extra_slot in [
+            *remaining_physical[len(remaining_desired) :],
+            *extra_physical_group,
+        ]:
+            duplicate_slots.add(extra_slot.slot)
+
+    free_slots = sorted(
+        slot.slot
+        for slot in plan.observed_slots.values()
+        if slot.classification is ObservedSlotStatus.EMPTY and slot.empty_confirmed
+    )
+    for desired in selected:
+        if desired.desired_id in matched_desired:
+            continue
+        if free_slots:
+            slot_number = free_slots.pop(0)
+            desired.assigned_slot = slot_number
+            slot_to_desired[slot_number] = desired.desired_id
+            plan.selected[desired.desired_id] = slot_number
+        else:
+            desired.overflow_reason = "no_empty_slot"
+            plan.overflow[desired.desired_id] = "no_empty_slot"
+
+    for slot in sorted(plan.observed_slots.values(), key=lambda item: item.slot):
+        desired_id = slot_to_desired.get(slot.slot)
+        action_desired = (
+            plan.desired_reservations.get(desired_id) if desired_id else None
+        )
+        if slot.classification is ObservedSlotStatus.UNKNOWN:
+            plan.actions.append(
+                SlotAction(
+                    kind=ActionKind.BLOCKED,
+                    slot=slot.slot,
+                    desired_id=desired_id,
+                    blocked_reason="unreadable",
+                    reason="unreadable",
+                )
+            )
+        elif slot.slot in duplicate_slots:
+            plan.actions.append(
+                SlotAction(
+                    kind=ActionKind.RESET,
+                    slot=slot.slot,
+                    reason="duplicate_non_canonical",
+                    preflight_read=True,
+                )
+            )
+        elif action_desired is None:
+            if slot.classification is not ObservedSlotStatus.EMPTY:
+                plan.actions.append(
+                    SlotAction(
+                        kind=ActionKind.RESET,
+                        slot=slot.slot,
+                        reason="stale",
+                        preflight_read=True,
+                    )
+                )
+        elif slot.classification is ObservedSlotStatus.EMPTY:
+            plan.actions.append(
+                SlotAction(
+                    kind=ActionKind.ASSIGN,
+                    slot=slot.slot,
+                    identity_key=action_desired.desired_id,
+                    desired_id=action_desired.desired_id,
+                    requires_confirmed_empty=True,
+                    preflight_read=True,
+                )
+            )
+        elif slot.raw_pin != action_desired.slot_code or (
+            slot.raw_name and slot.raw_name != action_desired.display_slot_name
+        ):
+            plan.actions.append(
+                SlotAction(
+                    kind=ActionKind.UPDATE_IN_PLACE,
+                    slot=slot.slot,
+                    identity_key=action_desired.desired_id,
+                    desired_id=action_desired.desired_id,
+                    matched_by="name_exact",
+                    requires_confirmed_empty=True,
+                    preflight_read=True,
+                    reason="replace_code_or_name",
+                )
+            )
+        elif (
+            slot.actual_start != action_desired.buffered_start
+            or slot.actual_end != action_desired.buffered_end
+        ):
+            plan.actions.append(
+                SlotAction(
+                    kind=ActionKind.UPDATE_TIMES,
+                    slot=slot.slot,
+                    identity_key=action_desired.desired_id,
+                    desired_id=action_desired.desired_id,
+                    matched_by="name_exact",
+                    reason="date_drift",
+                )
+            )
+
+    plan.diagnostics = {
+        "plan_id": plan_id,
+        "generated_at": generated_at.isoformat(),
+        "selected": dict(plan.selected),
+        "overflow": dict(plan.overflow),
+        "actions": [
+            {
+                "kind": action.kind.value,
+                "slot": action.slot,
+                "desired_id": action.desired_id,
+                "reason": action.reason or action.blocked_reason,
+            }
+            for action in plan.actions
+        ],
+    }
     return plan
