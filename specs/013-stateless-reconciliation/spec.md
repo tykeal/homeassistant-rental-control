@@ -207,6 +207,12 @@ contents.
    generation, check-in tracking sensors, and read-only event sensors are in
    use, **When** reconciliation runs, **Then** their existing observable
    behavior is preserved.
+6. **Given** Honor Event Times is on and non-zero lock-code buffers are
+   configured, **When** a PMS calendar event changes its check-in or checkout
+   time, **Then** a physical slot already matching the previously buffered
+   window is treated as system-managed and updated to the new calendar time
+   after applying the configured before/after buffer; only a physical time that
+   deviates from the buffered expected window is treated as a manual override.
 
 ---
 
@@ -325,6 +331,14 @@ refreshes converge to the desired state without using persisted data as truth.
   after buffers, Honor Event Times, deterministic code generation,
   should-update-code behavior, check-in tracking sensors, and read-only
   `event_N` sensors MUST be preserved.
+- **FR-022**: Manual time override detection MUST compare physical Keymaster
+  times against the expected calendar/default time after applying configured
+  lock-code before and after buffers. A physical slot time equal to the
+  buffered expected check-in or checkout time MUST be treated as
+  system-managed, not a manual/local override; with Honor Event Times enabled,
+  calendar check-in or checkout changes MUST update the slot to the newly
+  buffered time, while a true deviation from the buffered expected time MUST
+  remain a preserved manual override.
 - **FR-018**: The system MUST correct stale, phantom, duplicate, manually
   drifted, and physically empty managed-slot states during normal refresh
   cycles without requiring Home Assistant restart, integration reload, manual

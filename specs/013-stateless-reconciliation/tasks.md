@@ -274,6 +274,11 @@ tracking, and display attributes.
 - [X] T087 [US5] Add check-in tracking tests proving sensor attributes, active protection, checked-out release, and unlock validation use latest plan ownership rather than override maps in tests/unit/test_checkin_sensor.py
 - [X] T088 [US5] Add integration scenario preserving manual time-of-day overrides, manual door-code overrides, buffers, Honor PMS times, check-in tracking, and event_N sensors in tests/integration/test_refresh_cycle.py
 - [X] T089 [US5] Add integration scenario preserving check-in tracking through reconciliation changes in tests/integration/test_checkin_tracking.py
+- [X] T132 [US5] Add buffer-aware manual-override regression tests proving
+  Honor Event Times follows calendar check-in/check-out changes after applying
+  before/after buffers, buffer=0 still follows calendar time changes, and true
+  manual deviations from the buffered expected time remain preserved in
+  tests/unit/test_coordinator.py and tests/unit/test_slot_reconciliation.py
 
 ### Implementation for User Story 5
 
@@ -285,8 +290,8 @@ tracking, and display attributes.
 - [X] T095 [US5] Keep sensor platform setup and entity naming unchanged in custom_components/rental_control/sensor.py
 - [X] T096 [US5] Run US5 validation for tests/unit/test_coordinator.py, tests/unit/test_util.py, tests/unit/test_sensors.py, tests/unit/test_checkin_sensor.py, tests/integration/test_refresh_cycle.py, and tests/integration/test_checkin_tracking.py
 
-**Checkpoint**: US5 proves SC-008, SC-010, FR-014, FR-015, FR-017, and preserved
-sensor/check-in semantics.
+**Checkpoint**: US5 proves SC-008, SC-010, FR-014, FR-015, FR-017, FR-022, and
+preserved sensor/check-in semantics.
 
 ---
 
@@ -349,7 +354,7 @@ coverage and repository quality gates, and document final validation.
 
 ### Acceptance and Quality Gates
 
-- [X] T122 Verify every FR-001 through FR-021 has a unit or integration acceptance test task mapped in specs/013-stateless-reconciliation/tasks.md
+- [X] T122 Verify every FR-001 through FR-022 has a unit or integration acceptance test task mapped in specs/013-stateless-reconciliation/tasks.md
 - [X] T123 Verify every SC-001 through SC-011 has a unit or integration acceptance test task mapped in specs/013-stateless-reconciliation/tasks.md
 - [X] T124 Verify duplicate-avoidance must-pass scenarios cover length increase, length decrease, full date shift with code change, same-guest back-to-back rebooking, duplicate guest names, and duplicate names plus date shift in tests/unit/test_slot_reconciliation.py and tests/integration/test_refresh_cycle.py
 - [X] T125 Verify store-non-authoritative must-pass scenarios cover missing, deleted, stale, contradictory, corrupt, mid-run deletion, and save failure cases in tests/unit/test_coordinator.py and tests/integration/test_refresh_cycle.py
