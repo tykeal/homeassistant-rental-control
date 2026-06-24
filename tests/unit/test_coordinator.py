@@ -25,6 +25,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rental_control.const import CHECKIN_SENSOR
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
+from custom_components.rental_control.const import CONF_CODE_BUFFER_AFTER
 from custom_components.rental_control.const import CONF_CODE_BUFFER_BEFORE
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import CONF_MAX_EVENTS
@@ -9105,3 +9106,249 @@ END:VCALENDAR
         assert len(result) == 1
         assert result[0].start == self._expected_utc(25, 15)
         assert result[0].end == self._expected_utc(30, 10)
+
+
+class TestBufferAwareOverrideMatching:
+    """T132 regression tests for buffer-aware manual time matching."""
+
+    @staticmethod
+    def _expected_utc(day: int, hour: int, minute: int = 0) -> datetime:
+        """Return an America/New_York local time converted to UTC."""
+        from datetime import time as time_cls
+        from zoneinfo import ZoneInfo
+
+        result: datetime = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, day).date(),
+                time_cls(hour, minute),
+                ZoneInfo("America/New_York"),
+            )
+        )
+        return result
+
+    @staticmethod
+    def _entry(
+        entry_id: str,
+        *,
+        before: int = 30,
+        after: int = 30,
+    ) -> MockConfigEntry:
+        """Build a config entry with Honor Event Times and buffers enabled."""
+        return MockConfigEntry(
+            domain="rental_control",
+            title="Buffer Aware",
+            version=8,
+            unique_id=entry_id,
+            data={
+                "name": "Buffer Aware",
+                "url": "https://example.com/calendar.ics",
+                "timezone": "America/New_York",
+                "checkin": "16:00",
+                "checkout": "11:00",
+                "start_slot": 10,
+                "max_events": 3,
+                "days": 90,
+                "verify_ssl": True,
+                "ignore_non_reserved": False,
+                "honor_event_times": True,
+                CONF_CODE_BUFFER_BEFORE: before,
+                CONF_CODE_BUFFER_AFTER: after,
+                CONF_LOCK_ENTRY: "front_door",
+            },
+            entry_id=entry_id,
+        )
+
+    @staticmethod
+    def _ics(description: str) -> str:
+        """Return a single all-day reservation iCalendar body."""
+        return f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20241225
+DTEND;VALUE=DATE:20241230
+UID:t132-buffer@example.com
+SUMMARY:Reserved - Buffer Guest
+DESCRIPTION:{description}
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+"""
+
+    async def _parse_with_physical_times(
+        self,
+        hass: HomeAssistant,
+        *,
+        entry_id: str,
+        description: str,
+        physical_start: datetime,
+        physical_end: datetime,
+        before: int = 30,
+        after: int = 30,
+    ) -> tuple[RentalControlCoordinator, list[CalendarEvent]]:
+        """Parse an event while a physical Keymaster slot is observed."""
+        from custom_components.rental_control.event_overrides import EventOverrides
+
+        frozen_time = datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC)
+        entry = self._entry(entry_id, before=before, after=after)
+        entry.add_to_hass(hass)
+        MockConfigEntry(
+            domain="keymaster",
+            data={"lockname": "front_door"},
+            entry_id=f"km_{entry_id}",
+        ).add_to_hass(hass)
+
+        with (
+            aioresponses() as mock_session,
+            patch.object(dt_util, "now", return_value=frozen_time),
+            patch.object(dt_util, "start_of_local_day", return_value=frozen_time),
+        ):
+            mock_session.get(
+                "https://example.com/calendar.ics",
+                status=200,
+                body=self._ics(description),
+            )
+            coordinator = RentalControlCoordinator(hass, entry)
+            coordinator.event_overrides = EventOverrides(10, 3)
+            coordinator.event_overrides._overrides[10] = {
+                "slot_name": "Buffer Guest",
+                "slot_code": "1234",
+                "start_time": physical_start,
+                "end_time": physical_end,
+            }
+            events = await coordinator._async_update_data()
+
+        return coordinator, events
+
+    async def test_buffered_default_slot_is_system_managed(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Physical calendar±buffer times are not manual overrides."""
+        physical_start = self._expected_utc(25, 15, 30)
+        physical_end = self._expected_utc(30, 11, 30)
+
+        coordinator, events = await self._parse_with_physical_times(
+            hass,
+            entry_id="t132_system_managed",
+            description="Email: buffer@example.com",
+            physical_start=physical_start,
+            physical_end=physical_end,
+        )
+
+        assert events[0].start == self._expected_utc(25, 16)
+        assert events[0].end == self._expected_utc(30, 11)
+        reservation = coordinator._build_reservations(events)[0]
+        assert reservation.buffered_start == physical_start
+        assert reservation.buffered_end == physical_end
+
+    async def test_honor_times_update_to_new_buffered_window(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Honor Event Times follows check-in and checkout changes with buffers."""
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+
+        old_start = self._expected_utc(25, 15, 30)
+        old_end = self._expected_utc(30, 11, 30)
+
+        coordinator, events = await self._parse_with_physical_times(
+            hass,
+            entry_id="t132_honor_update",
+            description="Check-in: 12:00\\nCheck-out: 09:00",
+            physical_start=old_start,
+            physical_end=old_end,
+        )
+        reservation = coordinator._build_reservations(events)[0]
+
+        assert reservation.buffered_start == self._expected_utc(25, 11, 30)
+        assert reservation.buffered_end == self._expected_utc(30, 9, 30)
+
+        observed_slot = ManagedSlot(
+            slot=10,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name=reservation.display_slot_name,
+            actual_code=reservation.slot_code,
+            actual_code_present=True,
+            actual_start=old_start,
+            actual_end=old_end,
+        )
+        plan = compute_desired_plan(
+            reservations=[reservation],
+            managed_slots=[observed_slot],
+            max_events=3,
+            plan_id="t132-buffer-update",
+            generated_at=datetime(2024, 12, 20, 12, 0, 0, tzinfo=dt_util.UTC),
+            entry_id=coordinator._entry_id,
+            lockname="front_door",
+            start_slot=10,
+        )
+
+        assert [action.kind for action in plan.actions] == [ActionKind.UPDATE_TIMES]
+
+    async def test_zero_buffer_still_follows_honor_times(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """A zero-buffer slot continues to follow calendar time changes."""
+        coordinator, events = await self._parse_with_physical_times(
+            hass,
+            entry_id="t132_zero_buffer",
+            description="Check-in: 12:00\\nCheck-out: 09:00",
+            physical_start=self._expected_utc(25, 16),
+            physical_end=self._expected_utc(30, 11),
+            before=0,
+            after=0,
+        )
+        reservation = coordinator._build_reservations(events)[0]
+
+        assert reservation.buffered_start == self._expected_utc(25, 12)
+        assert reservation.buffered_end == self._expected_utc(30, 9)
+
+    async def test_true_manual_deviation_is_preserved(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Physical times that deviate from buffered expected stay manual."""
+        manual_start = self._expected_utc(25, 14)
+        manual_end = self._expected_utc(30, 12, 15)
+
+        coordinator, events = await self._parse_with_physical_times(
+            hass,
+            entry_id="t132_manual_deviation",
+            description="Email: manual@example.com",
+            physical_start=manual_start,
+            physical_end=manual_end,
+        )
+        reservation = coordinator._build_reservations(events)[0]
+
+        assert events[0].start == self._expected_utc(25, 14, 30)
+        assert events[0].end == self._expected_utc(30, 11, 45)
+        assert reservation.buffered_start == manual_start
+        assert reservation.buffered_end == manual_end
+
+    async def test_mixed_system_and_manual_fields_are_independent(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """A manual checkout does not make system-managed check-in manual."""
+        system_start = self._expected_utc(25, 15, 30)
+        manual_end = self._expected_utc(30, 12, 15)
+
+        coordinator, events = await self._parse_with_physical_times(
+            hass,
+            entry_id="t132_mixed_manual",
+            description="Email: mixed@example.com",
+            physical_start=system_start,
+            physical_end=manual_end,
+        )
+        reservation = coordinator._build_reservations(events)[0]
+
+        assert events[0].start == self._expected_utc(25, 16)
+        assert events[0].end == self._expected_utc(30, 11, 45)
+        assert reservation.buffered_start == system_start
+        assert reservation.buffered_end == manual_end

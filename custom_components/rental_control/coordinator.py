@@ -2177,6 +2177,82 @@ Please update Keymaster to at least v0.1.0-b0
             return value
         return datetime.combine(value, time.min, self.timezone)
 
+    def _combine_event_time(
+        self, value: date | datetime, selected_time: time
+    ) -> datetime:
+        """Return an event-date datetime using the selected local time."""
+        event_date = value.date() if isinstance(value, datetime) else value
+        return cast(
+            "datetime",
+            dt.as_utc(datetime.combine(event_date, selected_time, self.timezone)),
+        )
+
+    @staticmethod
+    def _datetimes_match(left: datetime, right: datetime) -> bool:
+        """Return whether two datetimes represent the same instant."""
+        left_utc = cast("datetime", dt.as_utc(left))
+        right_utc = cast("datetime", dt.as_utc(right))
+        return left_utc == right_utc
+
+    def _physical_override_time(self, value: datetime, *, start: bool) -> time:
+        """Return the unbuffered local time represented by a physical slot time."""
+        local_value = (
+            value.replace(tzinfo=self.timezone)
+            if value.tzinfo is None
+            else value.astimezone(self.timezone)
+        )
+        if start and self.code_buffer_before:
+            local_value += timedelta(minutes=self.code_buffer_before)
+        if not start and self.code_buffer_after:
+            local_value -= timedelta(minutes=self.code_buffer_after)
+        return local_value.time()
+
+    def _buffer_aware_override_times(
+        self,
+        event_start: date | datetime,
+        event_end: date | datetime,
+        expected_checkin: time,
+        expected_checkout: time,
+        override: Mapping[str, Any],
+    ) -> tuple[time, time]:
+        """Return manual override times only when physical times truly differ.
+
+        Keymaster stores already-buffered datetimes.  A physical time that
+        matches the expected calendar/default window after applying buffers is
+        system-managed and must not freeze future Honor Event Times changes.
+        """
+        expected_start = self._combine_event_time(event_start, expected_checkin)
+        expected_end = self._combine_event_time(event_end, expected_checkout)
+        buffered_start_raw, buffered_end_raw = apply_buffer(
+            expected_start,
+            expected_end,
+            self.code_buffer_before,
+            self.code_buffer_after,
+            self,
+        )
+        buffered_start = (
+            buffered_start_raw
+            if isinstance(buffered_start_raw, datetime)
+            else expected_start
+        )
+        buffered_end = (
+            buffered_end_raw if isinstance(buffered_end_raw, datetime) else expected_end
+        )
+
+        checkin = expected_checkin
+        checkout = expected_checkout
+        override_start = override.get("start_time")
+        override_end = override.get("end_time")
+        if isinstance(override_start, datetime) and not self._datetimes_match(
+            override_start, buffered_start
+        ):
+            checkin = self._physical_override_time(override_start, start=True)
+        if isinstance(override_end, datetime) and not self._datetimes_match(
+            override_end, buffered_end
+        ):
+            checkout = self._physical_override_time(override_end, start=False)
+        return checkin, checkout
+
     def _must_defer_for_checkin_restore(
         self, reservations: list[_Reservation], managed_slots: list[_ManagedSlot]
     ) -> bool:
@@ -2717,42 +2793,47 @@ Please update Keymaster to at least v0.1.0-b0
                     description = str(raw_desc) if raw_desc else ""
                     desc_checkin = extract_checkin_time(description)
                     desc_checkout = extract_checkout_time(description)
+                    expected_checkin = (
+                        desc_checkin if desc_checkin is not None else self.checkin
+                    )
+                    expected_checkout = (
+                        desc_checkout if desc_checkout is not None else self.checkout
+                    )
 
                     if override:
-                        # Priority 3 fallback for missing description times
-                        start_tz = override["start_time"].astimezone(self.timezone)
-                        end_tz = override["end_time"].astimezone(self.timezone)
-                        checkin = (
-                            desc_checkin
-                            if desc_checkin is not None
-                            else start_tz.time()
+                        # Priority 3 fallback for genuine manual overrides.
+                        # Override timestamps are physical Keymaster dates,
+                        # which already include lock-code buffers.
+                        event_end_dt = (
+                            event["DTEND"].dt
+                            if "DTEND" in event
+                            else event["DTSTART"].dt
                         )
-                        checkout = (
-                            desc_checkout
-                            if desc_checkout is not None
-                            else end_tz.time()
+                        checkin, checkout = self._buffer_aware_override_times(
+                            event["DTSTART"].dt,
+                            event_end_dt,
+                            expected_checkin,
+                            expected_checkout,
+                            override,
                         )
+                        if desc_checkin is not None:
+                            checkin = desc_checkin
+                        if desc_checkout is not None:
+                            checkout = desc_checkout
                     else:
                         # Priority 4 fallback for missing description times
-                        checkin = (
-                            desc_checkin if desc_checkin is not None else self.checkin
-                        )
-                        checkout = (
-                            desc_checkout
-                            if desc_checkout is not None
-                            else self.checkout
-                        )
+                        checkin = expected_checkin
+                        checkout = expected_checkout
                 elif override:
                     # FR-005 (disabled) or FR-004 (all-day with override)
-                    # Get start & end overrides in the correct timezone
-                    # Overrides are stored in UTC since Keymaster's time
-                    # start and end configuration values are in UTC
-                    start_time: datetime = override["start_time"].astimezone(
-                        self.timezone
+                    # Override timestamps are sourced from Keymaster's
+                    # physical, already-buffered date range.
+                    checkin = self._physical_override_time(
+                        override["start_time"], start=True
                     )
-                    end_time: datetime = override["end_time"].astimezone(self.timezone)
-                    checkin = start_time.time()
-                    checkout = end_time.time()
+                    checkout = self._physical_override_time(
+                        override["end_time"], start=False
+                    )
                 else:
                     try:
                         # If the event has a time, use that, otherwise use the
