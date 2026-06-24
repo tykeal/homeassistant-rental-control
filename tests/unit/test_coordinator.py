@@ -163,6 +163,45 @@ async def test_duplicate_name_manual_pin_lookup_does_not_steal_later_slot(
     assert reservations[1].code_source == "manual_observed"
 
 
+async def test_partial_duplicate_shift_preserves_unreserved_manual_pin(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A shifted same-name physical slot keeps its PIN when another Bob is absent."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    old_start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    old_end = old_start + timedelta(days=7)
+    new_start = old_start + timedelta(days=1)
+    new_end = old_end + timedelta(days=1)
+    later_start = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    later_end = later_start + timedelta(days=7)
+    calendar = [
+        CalendarEvent(start=new_start, end=new_end, summary="Bob"),
+        CalendarEvent(start=later_start, end=later_end, summary="Bob"),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=old_start,
+            actual_end=old_end,
+        )
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert reservations[0].slot_code == "1111"
+    assert reservations[0].code_source == "manual_observed"
+    assert reservations[1].code_source == "generated"
+
+
 async def test_duplicate_name_date_shift_preserves_ordered_manual_pins(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:

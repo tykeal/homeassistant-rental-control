@@ -1157,6 +1157,20 @@ Please update Keymaster to at least v0.1.0-b0
                         ):
                             consumed.add(slot.slot)
                             return slot
+                shifted_candidates = [
+                    slot
+                    for slot in candidates
+                    if slot.actual_start is not None
+                    and slot.actual_end is not None
+                    and (
+                        not reserved_date_windows
+                        or (slot.actual_start, slot.actual_end)
+                        not in reserved_date_windows
+                    )
+                ]
+                if len(shifted_candidates) == 1:
+                    consumed.add(shifted_candidates[0].slot)
+                    return shifted_candidates[0]
                 return None
             if any(
                 slot.actual_start is None or slot.actual_end is None
