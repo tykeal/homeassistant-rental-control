@@ -831,7 +831,7 @@ def _select_managed_subset(
 ) -> list[ManagedSlot]:
     """Return the minimum-distance ordered slot subset for reservations."""
 
-    @lru_cache
+    @lru_cache(maxsize=None)
     def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
         """Return best ordered subset cost and indices from this position."""
         if desired_index == len(desired):
@@ -857,7 +857,7 @@ def _select_observed_subset(
 ) -> list[ObservedSlot]:
     """Return the minimum-distance ordered observed subset for reservations."""
 
-    @lru_cache
+    @lru_cache(maxsize=None)
     def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
         """Return best ordered subset cost and indices from this position."""
         if desired_index == len(desired):
@@ -883,7 +883,7 @@ def _pair_partial_managed(
 ) -> list[tuple[ManagedSlot, Reservation]]:
     """Pair fewer managed slots to the best ordered desired reservations."""
 
-    @lru_cache
+    @lru_cache(maxsize=None)
     def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
         """Return best desired indices for remaining managed slots."""
         if slot_index == len(slots):
@@ -912,7 +912,7 @@ def _pair_partial_observed(
 ) -> list[tuple[ObservedSlot, DesiredReservation]]:
     """Pair fewer observed slots to the best ordered desired reservations."""
 
-    @lru_cache
+    @lru_cache(maxsize=None)
     def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
         """Return best desired indices for remaining observed slots."""
         if slot_index == len(slots):

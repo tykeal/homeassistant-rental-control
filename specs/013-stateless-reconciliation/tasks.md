@@ -20,7 +20,7 @@ Store fences, ghost reservations, adoption machinery, and per-event greedy
 allocation with one stateless per-refresh planner. `event_N` sensors remain
 read-only reflections of the latest calendar data and stateless plan.
 
-## Format: `- [X] T### [P?] [Story?] Description with file path`
+## Format: `- [ ] T### [P?] [Story?] Description with file path`
 
 - **[P]**: Can run in parallel (different files, no dependency on incomplete
   tasks)

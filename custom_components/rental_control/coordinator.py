@@ -1252,7 +1252,7 @@ Please update Keymaster to at least v0.1.0-b0
                 (slot.actual_end - window[1]).total_seconds()
             )
 
-        @lru_cache
+        @lru_cache(maxsize=None)
         def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
             """Return best ordered subset cost and indices from this position."""
             if desired_index == len(desired_windows):
@@ -1293,7 +1293,7 @@ Please update Keymaster to at least v0.1.0-b0
                 (slot.actual_end - window[1]).total_seconds()
             )
 
-        @lru_cache
+        @lru_cache(maxsize=None)
         def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
             """Return best desired-window indices for remaining physical slots."""
             if slot_index == len(dated_slots):
@@ -1397,10 +1397,9 @@ Please update Keymaster to at least v0.1.0-b0
         """Convert parsed CalendarEvent objects to Reservation objects.
 
         Produces one :class:`~.reconciliation.Reservation` per calendar
-        event that has a usable slot name.  The coordinator's current
-        persisted mappings (``_slot_mappings["mappings"]``) are consulted
-        to populate :attr:`~.reconciliation.Reservation.fingerprint_history`
-        and :attr:`~.reconciliation.Reservation.missing_count`.
+        event that has a usable slot name.  Persisted Store mappings are
+        deliberately not consulted as authority; reservation identity and
+        desired windows come from the current calendar cycle.
 
         Physical Keymaster observations are used only as current-cycle facts
         for stable-name matching and manual PIN preservation; missing feed
@@ -1415,7 +1414,7 @@ Please update Keymaster to at least v0.1.0-b0
 
         Returns:
             List of :class:`~.reconciliation.Reservation` objects ready
-            for the planner; includes ghost reservations for absent slots.
+            for the planner.
         """
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
         reservations: list[_Reservation] = []

@@ -260,6 +260,8 @@ async def _async_wait_for_expected_datetime(
     """Wait briefly for one datetime entity to match the expected value."""
     if _state_matches_expected_datetime(hass, entity_id, expected):
         return True
+    if _state_has_non_string_value(hass, entity_id):
+        return False
 
     matched = asyncio.Event()
 
@@ -276,6 +278,8 @@ async def _async_wait_for_expected_datetime(
     try:
         if _state_matches_expected_datetime(hass, entity_id, expected):
             return True
+        if _state_has_non_string_value(hass, entity_id):
+            return False
         try:
             async with asyncio.timeout(timeout):
                 await matched.wait()
