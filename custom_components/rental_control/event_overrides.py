@@ -168,6 +168,7 @@ class EventOverrides:
         self._start_slot: int = start_slot
         self._trim_names: bool = False
         self._max_name_length: int = 0
+        self._event_prefix: str = ""
         self._prefix_length: int = 0
 
         # Store-backed fields (T018)
@@ -237,6 +238,18 @@ class EventOverrides:
     def max_name_length(self, value: int) -> None:
         """Set the configured max name length."""
         self._max_name_length = value
+
+    @property
+    def event_prefix(self) -> str:
+        """Return the configured event prefix."""
+        return self._event_prefix
+
+    @event_prefix.setter
+    def event_prefix(self, value: str | None) -> None:
+        """Set the configured event prefix."""
+        self._event_prefix = value or ""
+        prefix = f"{self._event_prefix} " if self._event_prefix else ""
+        self._prefix_length = len(prefix)
 
     @property
     def prefix_length(self) -> int:
@@ -915,7 +928,28 @@ class EventOverrides:
         Read-only check — does not acquire the lock.
         """
         override = self._overrides.get(slot)
-        return override is not None and override["slot_name"] == expected_name
+        if override is None:
+            return False
+
+        stored_name = override["slot_name"]
+        if stored_name == expected_name:
+            return True
+
+        if not self._trim_names or self._max_name_length <= 0:
+            return False
+
+        if self._event_prefix:
+            stored_name = _strip_prefix(stored_name, self._event_prefix)
+
+        if stored_name == expected_name:
+            return True
+
+        guest_max = self._max_name_length - self._prefix_length
+        return len(expected_name) > len(stored_name) and _is_trimmed_match(
+            stored_name,
+            expected_name,
+            guest_max,
+        )
 
     def record_retry_failure(self, slot: int) -> bool:
         """Record failed lock command.

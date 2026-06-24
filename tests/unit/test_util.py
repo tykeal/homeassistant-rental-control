@@ -29,6 +29,7 @@ from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DEFAULT_PATH
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import NAME
+from custom_components.rental_control.event_overrides import EventOverrides
 from custom_components.rental_control.util import EventIdentity
 from custom_components.rental_control.util import OperationResult
 from custom_components.rental_control.util import add_call
@@ -1927,6 +1928,35 @@ class TestAsyncFireUpdateTimes:
 class TestPreExecutionVerification:
     """Tests for ownership verification before lock commands."""
 
+    @staticmethod
+    def _make_trimmed_event_overrides() -> EventOverrides:
+        """Build EventOverrides with a trimmed stored owner."""
+        event_overrides = EventOverrides(start_slot=10, max_slots=1)
+        event_overrides.trim_names = True
+        event_overrides.max_name_length = 16
+        event_overrides.event_prefix = "S5 -"
+        now = dt_util.now()
+        event_overrides.update(
+            10,
+            "1234",
+            "Nicole",
+            now,
+            now + timedelta(days=3),
+        )
+        return event_overrides
+
+    @staticmethod
+    def _make_long_name_event() -> MagicMock:
+        """Build a mock event with the production long-name reproduction."""
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Nicole Amidon (homeaway) - by Hostaway",
+            "slot_code": "1234",
+            "start": "2025-01-15T16:00:00",
+            "end": "2025-01-17T11:00:00",
+        }
+        return event
+
     async def test_set_code_aborts_on_ownership_mismatch(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -1995,6 +2025,73 @@ class TestPreExecutionVerification:
 
         coordinator.hass.services.async_call.assert_not_awaited()
         assert "ownership" in caplog.text.lower()
+
+    async def test_update_times_proceeds_for_trimmed_owner(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify trimmed ownership allows update_times to execute."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides = self._make_trimmed_event_overrides()
+        event = self._make_long_name_event()
+
+        with caplog.at_level(
+            logging.WARNING, logger="custom_components.rental_control.util"
+        ):
+            await async_fire_update_times(coordinator, event, 10)
+
+        coordinator.hass.services.async_call.assert_awaited()
+        assert "ownership verification failed" not in caplog.text
+
+    async def test_set_code_proceeds_for_trimmed_owner(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify trimmed ownership allows set_code to execute."""
+        coordinator = MagicMock()
+        coordinator.lockname = "front_door"
+        coordinator.event_prefix = "S5 -"
+        coordinator.trim_names = True
+        coordinator.max_name_length = 16
+        coordinator.code_buffer_before = 0
+        coordinator.code_buffer_after = 0
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides = self._make_trimmed_event_overrides()
+
+        with caplog.at_level(
+            logging.WARNING, logger="custom_components.rental_control.util"
+        ):
+            await async_fire_set_code(coordinator, self._make_long_name_event(), 10)
+
+        coordinator.hass.services.async_call.assert_awaited()
+        assert "ownership verification failed" not in caplog.text
+
+    async def test_clear_code_proceeds_for_trimmed_owner(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify trimmed ownership allows clear_code to execute."""
+        coordinator = MagicMock()
+        coordinator.name = "Test Rental"
+        coordinator.lockname = "front_door"
+        coordinator.hass.services.async_call = AsyncMock()
+        coordinator.event_overrides = self._make_trimmed_event_overrides()
+
+        with (
+            caplog.at_level(
+                logging.WARNING, logger="custom_components.rental_control.util"
+            ),
+            patch("custom_components.rental_control.util.asyncio.sleep"),
+        ):
+            await async_fire_clear_code(
+                coordinator,
+                10,
+                expected_name="Nicole Amidon (homeaway) - by Hostaway",
+            )
+
+        coordinator.hass.services.async_call.assert_awaited()
+        assert "ownership verification failed" not in caplog.text
 
     async def test_set_code_proceeds_when_ownership_matches(self) -> None:
         """Verify async_fire_set_code executes when ownership passes."""

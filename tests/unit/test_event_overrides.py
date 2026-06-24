@@ -399,6 +399,85 @@ class TestSlotLookups:
         assert eo.get_slot_key_by_name("Nobody") == 0
 
 
+class TestTrimAwareSlotOwnership:
+    """Tests for EventOverrides.verify_slot_ownership."""
+
+    @staticmethod
+    def _make_trimmed_ownership_eo(stored_name: str) -> EventOverrides:
+        """Build an EventOverrides using the production trim configuration."""
+        eo = EventOverrides(start_slot=34, max_slots=1)
+        eo.trim_names = True
+        eo.max_name_length = 16
+        eo.event_prefix = "S5 -"
+        now = dt_util.now()
+        eo.update(34, "1234", stored_name, now, now + timedelta(days=3))
+        return eo
+
+    def test_verify_slot_ownership_accepts_trimmed_name(self) -> None:
+        """Verify a prefix-stripped trimmed slot still owns the full name."""
+        eo = self._make_trimmed_ownership_eo("Nicole")
+
+        assert eo.verify_slot_ownership(
+            34,
+            "Nicole Amidon (homeaway) - by Hostaway",
+        )
+
+    def test_verify_slot_ownership_accepts_full_when_stored_full(self) -> None:
+        """Verify exact full-name ownership continues to pass."""
+        full_name = "Nicole Amidon (homeaway) - by Hostaway"
+        eo = self._make_trimmed_ownership_eo(full_name)
+
+        assert eo.verify_slot_ownership(34, full_name)
+
+    def test_verify_slot_ownership_rejects_different_name(self) -> None:
+        """Verify a different reservation name is still rejected."""
+        eo = self._make_trimmed_ownership_eo("Nicole")
+
+        assert not eo.verify_slot_ownership(
+            34,
+            "Sarah Miller (homeaway) - by Hostaway",
+        )
+
+    def test_verify_slot_ownership_rejects_shorter_expected_name(self) -> None:
+        """Verify a shorter expected name cannot claim a longer stored owner."""
+        eo = self._make_trimmed_ownership_eo("Nicole Amidon")
+
+        assert not eo.verify_slot_ownership(34, "Nicole")
+
+    def test_verify_slot_ownership_rejects_expected_prefix_text(self) -> None:
+        """Verify a raw reservation name starting with the prefix is distinct."""
+        eo = self._make_trimmed_ownership_eo("Nicole")
+
+        assert not eo.verify_slot_ownership(
+            34,
+            "S5 - Nicole Amidon (homeaway) - by Hostaway",
+        )
+
+    def test_verify_slot_ownership_exact_when_trim_disabled(self) -> None:
+        """Verify trim-disabled ownership still requires exact equality."""
+        eo = EventOverrides(start_slot=34, max_slots=1)
+        eo.trim_names = False
+        eo.max_name_length = 16
+        eo.event_prefix = "S5 -"
+        now = dt_util.now()
+        eo.update(34, "1234", "Nicole", now, now + timedelta(days=3))
+
+        assert eo.verify_slot_ownership(34, "Nicole")
+        assert not eo.verify_slot_ownership(
+            34,
+            "Nicole Amidon (homeaway) - by Hostaway",
+        )
+
+    def test_verify_slot_ownership_accepts_prefixed_trimmed_name(self) -> None:
+        """Verify a stored Keymaster display name can include the prefix."""
+        eo = self._make_trimmed_ownership_eo("S5 - Nicole")
+
+        assert eo.verify_slot_ownership(
+            34,
+            "Nicole Amidon (homeaway) - by Hostaway",
+        )
+
+
 # ---------------------------------------------------------------------------
 # get_slot_start_date / get_slot_start_time / get_slot_end_date / get_slot_end_time
 # ---------------------------------------------------------------------------
