@@ -314,6 +314,63 @@ async def test_duplicate_same_start_feed_order_preserves_manual_pins(
     assert [reservation.slot_code for reservation in reservations] == ["1111", "2222"]
 
 
+async def test_duplicate_name_extra_stale_slot_does_not_steal_pins(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Overfull same-name physical groups inherit PINs from canonical slots."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    desired_one = dt_util.as_utc(datetime(2026, 8, 15, 14))
+    desired_two = dt_util.as_utc(datetime(2026, 8, 22, 14))
+    calendar = [
+        CalendarEvent(
+            start=desired_one, end=desired_one + timedelta(days=7), summary="Bob"
+        ),
+        CalendarEvent(
+            start=desired_two, end=desired_two + timedelta(days=7), summary="Bob"
+        ),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="9999",
+            actual_code_present=True,
+            actual_start=dt_util.as_utc(datetime(2026, 8, 1, 14)),
+            actual_end=dt_util.as_utc(datetime(2026, 8, 8, 14)),
+        ),
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=dt_util.as_utc(datetime(2026, 8, 8, 14)),
+            actual_end=dt_util.as_utc(datetime(2026, 8, 15, 14)),
+        ),
+        ManagedSlot(
+            slot=3,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=dt_util.as_utc(datetime(2026, 8, 15, 14)),
+            actual_end=dt_util.as_utc(datetime(2026, 8, 22, 14)),
+        ),
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert [reservation.slot_code for reservation in reservations] == ["1111", "2222"]
+
+
 async def test_checkin_protection_matches_duplicate_by_start_end(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:

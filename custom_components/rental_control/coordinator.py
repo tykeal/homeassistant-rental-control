@@ -23,6 +23,7 @@ from datetime import datetime
 from datetime import time
 from datetime import timedelta
 from datetime import timezone
+from functools import lru_cache
 import logging
 import random
 import re
@@ -1110,6 +1111,7 @@ Please update Keymaster to at least v0.1.0-b0
         desired_end: datetime | None = None,
         require_date_match: bool = False,
         reserved_date_windows: set[tuple[datetime, datetime]] | None = None,
+        ordered_date_windows: list[tuple[datetime, datetime]] | None = None,
         block_unknown_date_fallback: bool = False,
         expected_name_count: int = 1,
     ) -> _ManagedSlot | None:
@@ -1120,6 +1122,7 @@ Please update Keymaster to at least v0.1.0-b0
             normalize_slot_name_for_fingerprint(display_slot_name),
         }
         consumed = consumed_slots if consumed_slots is not None else set()
+        all_candidates: list[_ManagedSlot] = []
         candidates: list[_ManagedSlot] = []
         matching_candidate_count = 0
         for slot in sorted(
@@ -1140,6 +1143,7 @@ Please update Keymaster to at least v0.1.0-b0
                 )
             if actual_forms & desired_forms:
                 matching_candidate_count += 1
+                all_candidates.append(slot)
                 if slot.slot in consumed:
                     continue
                 candidates.append(slot)
@@ -1156,8 +1160,24 @@ Please update Keymaster to at least v0.1.0-b0
                 return None
             if any(
                 slot.actual_start is None or slot.actual_end is None
-                for slot in candidates
+                for slot in all_candidates
             ):
+                return None
+            if ordered_date_windows and matching_candidate_count > expected_name_count:
+                canonical = self._select_ordered_physical_subset(
+                    all_candidates, ordered_date_windows
+                )
+                desired_window = (
+                    (desired_start, desired_end)
+                    if desired_start is not None and desired_end is not None
+                    else None
+                )
+                for slot, window in zip(canonical, ordered_date_windows, strict=False):
+                    if slot.slot not in consumed and (
+                        desired_window is None or window == desired_window
+                    ):
+                        consumed.add(slot.slot)
+                        return slot
                 return None
             if candidates:
                 consumed.add(candidates[0].slot)
@@ -1184,6 +1204,40 @@ Please update Keymaster to at least v0.1.0-b0
             consumed.add(fallback_candidates[0].slot)
             return fallback_candidates[0]
         return None
+
+    @staticmethod
+    def _select_ordered_physical_subset(
+        slots: list[_ManagedSlot], desired_windows: list[tuple[datetime, datetime]]
+    ) -> list[_ManagedSlot]:
+        """Return minimum-distance ordered physical subset for desired windows."""
+
+        def _distance(slot: _ManagedSlot, window: tuple[datetime, datetime]) -> float:
+            """Return absolute date distance for one physical/desired pair."""
+            assert slot.actual_start is not None
+            assert slot.actual_end is not None
+            return abs((slot.actual_start - window[0]).total_seconds()) + abs(
+                (slot.actual_end - window[1]).total_seconds()
+            )
+
+        @lru_cache
+        def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+            """Return best ordered subset cost and indices from this position."""
+            if desired_index == len(desired_windows):
+                return 0.0, ()
+            if slot_index == len(slots):
+                return float("inf"), ()
+            skip_cost, skip_indices = _best(slot_index + 1, desired_index)
+            take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+            take_cost = (
+                _distance(slots[slot_index], desired_windows[desired_index])
+                + take_rest_cost
+            )
+            if take_cost < skip_cost:
+                return take_cost, (slot_index, *take_indices)
+            return skip_cost, skip_indices
+
+        _, indices = _best(0, 0)
+        return [slots[index] for index in indices]
 
     @staticmethod
     def _remap_observed_mappings_to_physical_reservations(
@@ -1294,6 +1348,7 @@ Please update Keymaster to at least v0.1.0-b0
         consumed_observed_slots: set[int] = set()
         slot_name_counts: dict[str, int] = {}
         slot_name_date_windows: dict[str, set[tuple[datetime, datetime]]] = {}
+        slot_name_ordered_windows: dict[str, list[tuple[datetime, datetime]]] = {}
         ordered_calendar = sorted(
             calendar,
             key=lambda event: (
@@ -1331,6 +1386,9 @@ Please update Keymaster to at least v0.1.0-b0
                     else event_end
                 )
                 slot_name_date_windows.setdefault(key, set()).add(
+                    (buffered_start_dt, buffered_end_dt)
+                )
+                slot_name_ordered_windows.setdefault(key, []).append(
                     (buffered_start_dt, buffered_end_dt)
                 )
                 active_windows = self._active_checkin_windows_for_name(slot_name)
@@ -1389,6 +1447,9 @@ Please update Keymaster to at least v0.1.0-b0
                 slot_name_counts.get(normalize_slot_name_for_fingerprint(slot_name), 0)
                 > 1,
                 slot_name_date_windows.get(
+                    normalize_slot_name_for_fingerprint(slot_name)
+                ),
+                slot_name_ordered_windows.get(
                     normalize_slot_name_for_fingerprint(slot_name)
                 ),
                 bool(

@@ -53,6 +53,7 @@ from dataclasses import field
 from datetime import datetime
 from datetime import timezone
 from enum import Enum
+from functools import lru_cache
 import hashlib
 import logging
 import re
@@ -820,6 +821,58 @@ def _observed_slot_distance(slot: ObservedSlot, desired: DesiredReservation) -> 
     return _datetime_distance(
         slot.actual_start, desired.buffered_start
     ) + _datetime_distance(slot.actual_end, desired.buffered_end)
+
+
+def _select_managed_subset(
+    slots: list[ManagedSlot], desired: list[Reservation]
+) -> list[ManagedSlot]:
+    """Return the minimum-distance ordered slot subset for reservations."""
+
+    @lru_cache
+    def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+        """Return best ordered subset cost and indices from this position."""
+        if desired_index == len(desired):
+            return 0.0, ()
+        if slot_index == len(slots):
+            return float("inf"), ()
+        skip_cost, skip_indices = _best(slot_index + 1, desired_index)
+        take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+        take_cost = (
+            _managed_slot_distance(slots[slot_index], desired[desired_index])
+            + take_rest_cost
+        )
+        if take_cost < skip_cost:
+            return take_cost, (slot_index, *take_indices)
+        return skip_cost, skip_indices
+
+    _, indices = _best(0, 0)
+    return [slots[index] for index in indices]
+
+
+def _select_observed_subset(
+    slots: list[ObservedSlot], desired: list[DesiredReservation]
+) -> list[ObservedSlot]:
+    """Return the minimum-distance ordered observed subset for reservations."""
+
+    @lru_cache
+    def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
+        """Return best ordered subset cost and indices from this position."""
+        if desired_index == len(desired):
+            return 0.0, ()
+        if slot_index == len(slots):
+            return float("inf"), ()
+        skip_cost, skip_indices = _best(slot_index + 1, desired_index)
+        take_rest_cost, take_indices = _best(slot_index + 1, desired_index + 1)
+        take_cost = (
+            _observed_slot_distance(slots[slot_index], desired[desired_index])
+            + take_rest_cost
+        )
+        if take_cost < skip_cost:
+            return take_cost, (slot_index, *take_indices)
+        return skip_cost, skip_indices
+
+    _, indices = _best(0, 0)
+    return [slots[index] for index in indices]
 
 
 def _dt_to_utc_iso(dt: datetime) -> str:
@@ -2000,6 +2053,14 @@ def compute_desired_plan(
                 ambiguous_slots.add(ms.slot)
             plan.diagnostics.setdefault("ambiguous_name_groups", []).append(name_key)
             continue
+        extra_physical_group: list[ManagedSlot] = []
+        if len(desired_group) > 1 and len(physical_group) > len(desired_group):
+            canonical_physical = _select_managed_subset(physical_group, desired_group)
+            canonical_slots = {ms.slot for ms in canonical_physical}
+            extra_physical_group = [
+                ms for ms in physical_group if ms.slot not in canonical_slots
+            ]
+            physical_group = canonical_physical
         pairs: list[tuple[ManagedSlot, Reservation]] = []
         paired_slots: set[int] = set()
         paired_reservations: set[str] = set()
@@ -2041,14 +2102,14 @@ def compute_desired_plan(
             res for res in desired_group if res.identity_key not in paired_reservations
         ]
         if len(remaining_physical) > len(remaining_desired) and remaining_desired:
-            remaining_physical.sort(
-                key=lambda ms: (
-                    min(_managed_slot_distance(ms, res) for res in remaining_desired),
-                    ms.actual_start or datetime.max.replace(tzinfo=timezone.utc),
-                    ms.actual_end or datetime.max.replace(tzinfo=timezone.utc),
-                    ms.slot,
-                )
+            canonical_physical = _select_managed_subset(
+                remaining_physical, remaining_desired
             )
+            canonical_slots = {ms.slot for ms in canonical_physical}
+            remaining_physical = [
+                *canonical_physical,
+                *[ms for ms in remaining_physical if ms.slot not in canonical_slots],
+            ]
         pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
 
         for ms, res in pairs:
@@ -2060,7 +2121,10 @@ def compute_desired_plan(
                 "identity_key": res.identity_key,
                 "slot_name": res.slot_name,
             }
-        for extra_ms in remaining_physical[len(remaining_desired) :]:
+        for extra_ms in [
+            *remaining_physical[len(remaining_desired) :],
+            *extra_physical_group,
+        ]:
             duplicate_slots.add(extra_ms.slot)
             _LOGGER.warning(
                 "Duplicate physical slot-name match for %s in slot %d; "
@@ -2285,6 +2349,14 @@ def compute_stateless_plan(
                 slot.slot,
             )
         )
+        extra_physical_group: list[ObservedSlot] = []
+        if len(group) > 1 and len(physical_group) > len(group):
+            canonical_physical = _select_observed_subset(physical_group, group)
+            canonical_slots = {slot.slot for slot in canonical_physical}
+            extra_physical_group = [
+                slot for slot in physical_group if slot.slot not in canonical_slots
+            ]
+            physical_group = canonical_physical
         pairs: list[tuple[ObservedSlot, DesiredReservation]] = []
         paired_slots: set[int] = set()
         paired_desired: set[str] = set()
@@ -2326,17 +2398,18 @@ def compute_stateless_plan(
             desired for desired in group if desired.desired_id not in paired_desired
         ]
         if len(remaining_physical) > len(remaining_desired) and remaining_desired:
-            remaining_physical.sort(
-                key=lambda slot: (
-                    min(
-                        _observed_slot_distance(slot, desired)
-                        for desired in remaining_desired
-                    ),
-                    slot.actual_start or datetime.max.replace(tzinfo=timezone.utc),
-                    slot.actual_end or datetime.max.replace(tzinfo=timezone.utc),
-                    slot.slot,
-                )
+            canonical_physical = _select_observed_subset(
+                remaining_physical, remaining_desired
             )
+            canonical_slots = {slot.slot for slot in canonical_physical}
+            remaining_physical = [
+                *canonical_physical,
+                *[
+                    slot
+                    for slot in remaining_physical
+                    if slot.slot not in canonical_slots
+                ],
+            ]
         pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
 
         for slot, desired in pairs:
@@ -2346,7 +2419,10 @@ def compute_stateless_plan(
             slot_to_desired[slot.slot] = desired.desired_id
             matched_desired.add(desired.desired_id)
             plan.selected[desired.desired_id] = slot.slot
-        for extra_slot in remaining_physical[len(remaining_desired) :]:
+        for extra_slot in [
+            *remaining_physical[len(remaining_desired) :],
+            *extra_physical_group,
+        ]:
             duplicate_slots.add(extra_slot.slot)
 
     free_slots = sorted(
