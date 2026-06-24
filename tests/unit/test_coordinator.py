@@ -1300,10 +1300,10 @@ async def test_buffer_config_updates_override_cache(
     )
 
 
-async def test_buffer_config_service_failure_keeps_override_cache(
+async def test_buffer_config_service_failure_advances_override_cache(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
-    """Failed buffer writes do not advance in-memory override times."""
+    """Failed buffer writes still prevent stale override reinterpretation."""
     from zoneinfo import ZoneInfo
 
     from custom_components.rental_control.event_overrides import EventOverrides
@@ -1357,8 +1357,31 @@ async def test_buffer_config_service_failure_keeps_override_cache(
 
     override = coordinator.event_overrides.overrides[10]
     assert override is not None
-    assert override["start_time"] == old_start
-    assert override["end_time"] == old_end
+    assert override["start_time"] == utc_time(25, 15, 0)
+    assert override["end_time"] == utc_time(30, 11, 15)
+
+
+async def test_buffer_datetime_match_treats_naive_values_as_local(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Naive Keymaster datetimes compare as local wall-clock values."""
+    from zoneinfo import ZoneInfo
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    coordinator.timezone = ZoneInfo("America/New_York")
+    aware_expected: datetime = dt.as_utc(
+        datetime.combine(
+            datetime(2024, 12, 25).date(),
+            datetime(2024, 12, 25, 15, 30).time(),
+            coordinator.timezone,
+        )
+    )
+
+    assert coordinator._datetimes_match(
+        datetime(2024, 12, 25, 15, 30),
+        aware_expected,
+    )
 
 
 # ---------------------------------------------------------------------------

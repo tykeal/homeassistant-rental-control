@@ -2187,11 +2187,14 @@ Please update Keymaster to at least v0.1.0-b0
             dt.as_utc(datetime.combine(event_date, selected_time, self.timezone)),
         )
 
-    @staticmethod
-    def _datetimes_match(left: datetime, right: datetime) -> bool:
+    def _datetimes_match(self, left: datetime, right: datetime) -> bool:
         """Return whether two datetimes represent the same instant."""
-        left_utc = cast("datetime", dt.as_utc(left))
-        right_utc = cast("datetime", dt.as_utc(right))
+        left_local = left.replace(tzinfo=self.timezone) if left.tzinfo is None else left
+        right_local = (
+            right.replace(tzinfo=self.timezone) if right.tzinfo is None else right
+        )
+        left_utc = cast("datetime", dt.as_utc(left_local))
+        right_utc = cast("datetime", dt.as_utc(right_local))
         return left_utc == right_utc
 
     def _physical_override_time(self, value: datetime, *, start: bool) -> time:
@@ -2712,13 +2715,12 @@ Please update Keymaster to at least v0.1.0-b0
                 f"Buffer time update slot {slot} ({self.lockname})",
                 _LOGGER,
             )
-            if not any(isinstance(result, Exception) for result in results):
-                override["start_time"] = (
-                    buffered_start if isinstance(buffered_start, datetime) else start
-                )
-                override["end_time"] = (
-                    buffered_end if isinstance(buffered_end, datetime) else end
-                )
+            override["start_time"] = (
+                buffered_start if isinstance(buffered_start, datetime) else start
+            )
+            override["end_time"] = (
+                buffered_end if isinstance(buffered_end, datetime) else end
+            )
 
     async def update_event_overrides(
         self,
