@@ -210,7 +210,7 @@ jobs:
       - name: "Generate SBOM"
         id: sbom
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/python-sbom-action@ae4aca2ef28d7da4ec95049cc78be43e632d322a  # v0.1.0
+        uses: lfreleng-actions/python-sbom-action@60648e3351a48617d40f68ccb1f143e050f74c96  # v0.1.1
         with:
           include_dev: "false"
           sbom_format: "both"
