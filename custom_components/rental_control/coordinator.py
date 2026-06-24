@@ -2670,13 +2670,32 @@ Please update Keymaster to at least v0.1.0-b0
                 self.code_buffer_after,
                 self,
             )
+            start_entity = (
+                f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_start"
+            )
+            end_entity = f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_end"
+            self.event_overrides.suppress_state_changes(
+                slot,
+                {
+                    start_entity: (
+                        buffered_start.isoformat()
+                        if isinstance(buffered_start, datetime)
+                        else buffered_start
+                    ),
+                    end_entity: (
+                        buffered_end.isoformat()
+                        if isinstance(buffered_end, datetime)
+                        else buffered_end
+                    ),
+                },
+            )
             coro: list[Coroutine] = []
             coro = add_call(
                 self.hass,
                 coro,
                 DATETIME,
                 "set_value",
-                f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_end",
+                end_entity,
                 {"datetime": buffered_end},
             )
             coro = add_call(
@@ -2684,7 +2703,7 @@ Please update Keymaster to at least v0.1.0-b0
                 coro,
                 DATETIME,
                 "set_value",
-                f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_start",
+                start_entity,
                 {"datetime": buffered_start},
             )
             results = await asyncio.gather(*coro, return_exceptions=True)
