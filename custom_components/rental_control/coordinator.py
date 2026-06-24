@@ -1429,8 +1429,8 @@ Please update Keymaster to at least v0.1.0-b0
         ordered_calendar = sorted(
             calendar,
             key=lambda event: (
-                event.start.isoformat(),
-                event.end.isoformat(),
+                self._coerce_event_datetime(event.start),
+                self._coerce_event_datetime(event.end),
                 event.summary or "",
             ),
         )
