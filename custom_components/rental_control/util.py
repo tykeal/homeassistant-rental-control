@@ -578,6 +578,8 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
             coordinator.code_buffer_after,
             coordinator,
         )
+        buffered_start = _ensure_datetime(buffered_start, coordinator)
+        buffered_end = _ensure_datetime(buffered_end, coordinator)
 
         coro = add_call(
             coordinator.hass,
@@ -696,6 +698,8 @@ async def async_fire_update_times(coordinator, event, slot: int) -> OperationRes
         coordinator.code_buffer_after,
         coordinator,
     )
+    buffered_start = _ensure_datetime(buffered_start, coordinator)
+    buffered_end = _ensure_datetime(buffered_end, coordinator)
 
     coro = add_call(
         coordinator.hass,
@@ -727,10 +731,6 @@ async def async_fire_update_times(coordinator, event, slot: int) -> OperationRes
             failed=True,
             error=str(exc),
         )
-    if not isinstance(buffered_start, datetime) or not isinstance(
-        buffered_end, datetime
-    ):
-        return OperationResult(kind="update_times", slot=slot, unconfirmed=True)
     start_entity_id = f"datetime.{lockname}_code_slot_{slot}_date_range_start"
     end_entity_id = f"datetime.{lockname}_code_slot_{slot}_date_range_end"
     start_confirmed, end_confirmed = await asyncio.gather(
@@ -752,7 +752,7 @@ async def async_fire_update_times(coordinator, event, slot: int) -> OperationRes
     return OperationResult(kind="update_times", slot=slot, confirmed=True)
 
 
-def _ensure_datetime(value: date | datetime, rc) -> datetime:
+def _ensure_datetime(value: str | date | datetime, rc) -> datetime:
     """Coerce a bare ``date`` to a timezone-aware ``datetime``.
 
     ``CalendarEvent`` may carry ``date`` values for all-day
@@ -763,6 +763,17 @@ def _ensure_datetime(value: date | datetime, rc) -> datetime:
     """
     if isinstance(value, datetime):
         return value
+    if isinstance(value, str):
+        parsed = dt.parse_datetime(value)
+        if parsed is not None:
+            return cast("datetime", parsed)
+        parsed_date = dt.parse_date(value)
+        if parsed_date is not None:
+            value = cast("date", parsed_date)
+        else:
+            return cast("datetime", dt.now())
+    if not isinstance(value, date):
+        return cast("datetime", dt.now())
     tz = getattr(rc, "timezone", None)
     if not isinstance(tz, tzinfo):
         tz = dt.UTC

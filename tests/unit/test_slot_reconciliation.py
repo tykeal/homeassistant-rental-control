@@ -436,6 +436,47 @@ def test_stateless_duplicate_name_same_start_orders_by_end() -> None:
     assert plan.selected == {"bob-short": 2, "bob-long": 1}
 
 
+def test_stateless_extra_stale_same_name_does_not_steal_shifted_slot() -> None:
+    """Overfull same-name groups keep the closest physical continuity slot."""
+    desired = _make_desired_reservation(
+        desired_id="bob-new",
+        stable_slot_name="Bob",
+        display_slot_name="Bob",
+        start=_dt(2026, 8, 15),
+        end=_dt(2026, 8, 22),
+        slot_code="2222",
+    )
+    stale_slot = ObservedSlot(
+        slot=1,
+        managed=True,
+        raw_name="Bob",
+        raw_pin="1111",
+        actual_start=_dt(2026, 8, 1),
+        actual_end=_dt(2026, 8, 8),
+    )
+    continuity_slot = ObservedSlot(
+        slot=2,
+        managed=True,
+        raw_name="Bob",
+        raw_pin="2222",
+        actual_start=_dt(2026, 8, 8),
+        actual_end=_dt(2026, 8, 15),
+    )
+
+    plan = compute_stateless_plan(
+        [stale_slot, continuity_slot],
+        [desired],
+        max_events=1,
+        plan_id="stateless-extra-stale-same-name",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert plan.selected == {"bob-new": 2}
+    assert any(
+        action.kind is ActionKind.RESET and action.slot == 1 for action in plan.actions
+    )
+
+
 def test_stateless_prefix_equivalent_names_do_not_share_slot() -> None:
     """A physical slot already matched by one name group cannot be reused."""
     prefixed = _make_desired_reservation(
@@ -632,6 +673,52 @@ def test_duplicate_name_same_start_orders_by_end() -> None:
     )
 
     assert plan.selected == {"bob-short": 2, "bob-long": 1}
+
+
+def test_extra_stale_same_name_does_not_steal_shifted_slot() -> None:
+    """Legacy overfull same-name groups keep closest physical continuity."""
+    desired = Reservation(
+        identity_key="bob-new",
+        start=_dt(2026, 8, 15),
+        end=_dt(2026, 8, 22),
+        buffered_start=_dt(2026, 8, 15),
+        buffered_end=_dt(2026, 8, 22),
+        summary="Bob",
+        slot_name="Bob",
+        display_slot_name="Bob",
+        slot_code="2222",
+    )
+    stale_slot = ManagedSlot(
+        slot=1,
+        managed=True,
+        status=SlotStatus.OCCUPIED,
+        actual_name="Bob",
+        actual_code="1111",
+        actual_code_present=True,
+        actual_start=_dt(2026, 8, 1),
+        actual_end=_dt(2026, 8, 8),
+    )
+    continuity_slot = ManagedSlot(
+        slot=2,
+        managed=True,
+        status=SlotStatus.OCCUPIED,
+        actual_name="Bob",
+        actual_code="2222",
+        actual_code_present=True,
+        actual_start=_dt(2026, 8, 8),
+        actual_end=_dt(2026, 8, 15),
+    )
+
+    plan = compute_desired_plan(
+        [desired],
+        [stale_slot, continuity_slot],
+        max_events=1,
+        plan_id="legacy-extra-stale-same-name",
+        generated_at=_dt(2026, 6, 1),
+    )
+
+    assert plan.selected == {"bob-new": 2}
+    assert plan.slots[1].action is ActionKind.CLEAR
 
 
 def _make_desired_plan(

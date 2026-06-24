@@ -269,6 +269,51 @@ async def test_duplicate_name_shift_into_old_date_preserves_order(
     ]
 
 
+async def test_duplicate_same_start_feed_order_preserves_manual_pins(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Same-start duplicate PIN lookup uses start/end order, not feed order."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    short_end = start + timedelta(days=7)
+    long_end = start + timedelta(days=14)
+    calendar = [
+        CalendarEvent(start=start, end=long_end, summary="Bob"),
+        CalendarEvent(start=start, end=short_end, summary="Bob"),
+    ]
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="2222",
+            actual_code_present=True,
+            actual_start=start,
+            actual_end=long_end,
+        ),
+        ManagedSlot(
+            slot=2,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=start,
+            actual_end=short_end,
+        ),
+    ]
+
+    reservations = coordinator._build_reservations(calendar, observed_slots)
+
+    assert [reservation.end for reservation in reservations] == [short_end, long_end]
+    assert [reservation.slot_code for reservation in reservations] == ["1111", "2222"]
+
+
 async def test_checkin_protection_matches_duplicate_by_start_end(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:

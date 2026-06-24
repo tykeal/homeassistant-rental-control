@@ -3115,6 +3115,35 @@ class TestAsyncFireUpdateTimesOperationResult:
             confirmed=True,
         )
 
+    async def test_all_day_dates_are_confirmed_as_datetimes(self) -> None:
+        """All-day date values are coerced before update confirmation."""
+        coordinator = self._make_coordinator()
+        coordinator.timezone = dt_util.UTC
+        expected = {
+            "datetime.front_door_code_slot_10_date_range_start": (
+                "2025-01-15T00:00:00+00:00"
+            ),
+            "datetime.front_door_code_slot_10_date_range_end": (
+                "2025-01-17T00:00:00+00:00"
+            ),
+        }
+        coordinator.hass.states.get.side_effect = lambda entity_id: MagicMock(
+            state=expected[entity_id]
+        )
+        event = MagicMock()
+        event.extra_state_attributes = {
+            "slot_name": "Guest",
+            "start": date(2025, 1, 15),
+            "end": date(2025, 1, 17),
+        }
+
+        result = await async_fire_update_times(coordinator, event, 10)
+
+        assert result.confirmed is True
+        calls = coordinator.hass.services.async_call.await_args_list
+        payloads = [call.kwargs["service_data"] for call in calls]
+        assert all(isinstance(payload["datetime"], datetime) for payload in payloads)
+
     async def test_failed_on_service_exception(self) -> None:
         """Gather failures are returned as failed."""
         coordinator = self._make_coordinator()

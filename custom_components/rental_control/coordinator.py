@@ -1294,7 +1294,15 @@ Please update Keymaster to at least v0.1.0-b0
         consumed_observed_slots: set[int] = set()
         slot_name_counts: dict[str, int] = {}
         slot_name_date_windows: dict[str, set[tuple[datetime, datetime]]] = {}
-        for event in calendar:
+        ordered_calendar = sorted(
+            calendar,
+            key=lambda event: (
+                event.start.isoformat(),
+                event.end.isoformat(),
+                event.summary or "",
+            ),
+        )
+        for event in ordered_calendar:
             slot_name = get_slot_name(
                 event.summary,
                 event.description or "",
@@ -1329,7 +1337,7 @@ Please update Keymaster to at least v0.1.0-b0
                 if active_windows:
                     slot_name_date_windows.setdefault(key, set()).update(active_windows)
 
-        for event in calendar:
+        for event in ordered_calendar:
             slot_name = get_slot_name(
                 event.summary,
                 event.description or "",

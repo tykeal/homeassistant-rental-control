@@ -801,6 +801,27 @@ def _slot_times_match(
     return actual_start == desired_start and actual_end == desired_end
 
 
+def _datetime_distance(left: datetime | None, right: datetime) -> float:
+    """Return absolute seconds between two datetimes, or infinity if absent."""
+    if left is None:
+        return float("inf")
+    return abs((left - right).total_seconds())
+
+
+def _managed_slot_distance(slot: ManagedSlot, reservation: Reservation) -> float:
+    """Return date distance between a managed slot and desired reservation."""
+    return _datetime_distance(
+        slot.actual_start, reservation.buffered_start
+    ) + _datetime_distance(slot.actual_end, reservation.buffered_end)
+
+
+def _observed_slot_distance(slot: ObservedSlot, desired: DesiredReservation) -> float:
+    """Return date distance between an observed slot and desired reservation."""
+    return _datetime_distance(
+        slot.actual_start, desired.buffered_start
+    ) + _datetime_distance(slot.actual_end, desired.buffered_end)
+
+
 def _dt_to_utc_iso(dt: datetime) -> str:
     """Convert *dt* to a UTC ISO-8601 string for fingerprint computation.
 
@@ -2019,6 +2040,15 @@ def compute_desired_plan(
         remaining_desired = [
             res for res in desired_group if res.identity_key not in paired_reservations
         ]
+        if len(remaining_physical) > len(remaining_desired) and remaining_desired:
+            remaining_physical.sort(
+                key=lambda ms: (
+                    min(_managed_slot_distance(ms, res) for res in remaining_desired),
+                    ms.actual_start or datetime.max.replace(tzinfo=timezone.utc),
+                    ms.actual_end or datetime.max.replace(tzinfo=timezone.utc),
+                    ms.slot,
+                )
+            )
         pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
 
         for ms, res in pairs:
@@ -2295,6 +2325,18 @@ def compute_stateless_plan(
         remaining_desired = [
             desired for desired in group if desired.desired_id not in paired_desired
         ]
+        if len(remaining_physical) > len(remaining_desired) and remaining_desired:
+            remaining_physical.sort(
+                key=lambda slot: (
+                    min(
+                        _observed_slot_distance(slot, desired)
+                        for desired in remaining_desired
+                    ),
+                    slot.actual_start or datetime.max.replace(tzinfo=timezone.utc),
+                    slot.actual_end or datetime.max.replace(tzinfo=timezone.utc),
+                    slot.slot,
+                )
+            )
         pairs.extend(zip(remaining_physical, remaining_desired, strict=False))
 
         for slot, desired in pairs:
