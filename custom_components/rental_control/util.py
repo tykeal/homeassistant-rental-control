@@ -540,6 +540,27 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
         return OperationResult(kind="set", slot=slot, unconfirmed=True)
 
     try:
+        # Compute buffered validity window for Keymaster before mutating state.
+        before = getattr(coordinator, "code_buffer_before", 0)
+        after = getattr(coordinator, "code_buffer_after", 0)
+        buffered_start, buffered_end = apply_buffer(
+            event.extra_state_attributes["start"],
+            event.extra_state_attributes["end"],
+            before if isinstance(before, int) else 0,
+            after if isinstance(after, int) else 0,
+            coordinator,
+        )
+        buffered_start = _ensure_datetime(buffered_start, coordinator)
+        buffered_end = _ensure_datetime(buffered_end, coordinator)
+    except (TypeError, ValueError) as exc:
+        return OperationResult(
+            kind="set",
+            slot=slot,
+            failed=True,
+            error=str(exc),
+        )
+
+    try:
         # Disable the slot, this should help avoid notices from Keymaster
         # about pin changes
         coro = add_call(
@@ -569,25 +590,6 @@ async def async_fire_set_code(coordinator, event, slot: int) -> OperationResult:
             },
             blocking=True,
         )
-
-        try:
-            # Compute buffered validity window for Keymaster
-            buffered_start, buffered_end = apply_buffer(
-                event.extra_state_attributes["start"],
-                event.extra_state_attributes["end"],
-                coordinator.code_buffer_before,
-                coordinator.code_buffer_after,
-                coordinator,
-            )
-            buffered_start = _ensure_datetime(buffered_start, coordinator)
-            buffered_end = _ensure_datetime(buffered_end, coordinator)
-        except (TypeError, ValueError) as exc:
-            return OperationResult(
-                kind="set",
-                slot=slot,
-                failed=True,
-                error=str(exc),
-            )
 
         coro = add_call(
             coordinator.hass,

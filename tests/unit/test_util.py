@@ -3057,6 +3057,7 @@ class TestAsyncFireSetCodeOperationResult:
 
         assert result.failed is True
         assert result.kind == "set"
+        coordinator.hass.services.async_call.assert_not_awaited()
 
     async def test_no_lockname_returns_unconfirmed(self) -> None:
         """Missing lockname returns an unconfirmed result."""
