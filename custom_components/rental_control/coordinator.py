@@ -2505,7 +2505,7 @@ Please update Keymaster to at least v0.1.0-b0
                     r.identity_key: r for r in reservations
                 }
                 if self._must_defer_for_checkin_restore(reservations, observed_slots):
-                    _LOGGER.warning(
+                    _LOGGER.info(
                         "Deferring reconciliation for %s until check-in state is "
                         "available; same-name physical slot has missing date state",
                         self._name,
