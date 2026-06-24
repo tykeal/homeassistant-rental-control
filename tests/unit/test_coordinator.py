@@ -1233,6 +1233,63 @@ async def test_buffer_config_updates_times_before_refresh(
     assert calls == ["buffer", "refresh"]
 
 
+async def test_buffer_config_updates_override_cache(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Buffer changes keep in-memory physical override times current."""
+    from zoneinfo import ZoneInfo
+
+    from custom_components.rental_control.event_overrides import EventOverrides
+
+    def utc_time(day: int, hour: int, minute: int) -> datetime:
+        """Return an America/New_York local time converted to UTC."""
+        result: datetime = dt.as_utc(
+            datetime.combine(
+                datetime(2024, 12, day).date(),
+                datetime(2024, 12, day, hour, minute).time(),
+                ZoneInfo("America/New_York"),
+            )
+        )
+        return result
+
+    async def noop_service_call() -> None:
+        """Stand in for a Home Assistant service coroutine."""
+
+    def fake_add_call(
+        _hass: HomeAssistant,
+        coro: list[Any],
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> list[Any]:
+        """Collect a no-op service coroutine."""
+        coro.append(noop_service_call())
+        return coro
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    coordinator.lockname = "front_door"
+    coordinator.event_overrides = EventOverrides(10, 3)
+    coordinator.event_overrides._overrides[10] = {
+        "slot_name": "Buffer Guest",
+        "slot_code": "1234",
+        "start_time": utc_time(25, 15, 30),
+        "end_time": utc_time(30, 11, 30),
+    }
+    coordinator.code_buffer_before = 60
+    coordinator.code_buffer_after = 15
+
+    with patch(
+        "custom_components.rental_control.coordinator.add_call",
+        side_effect=fake_add_call,
+    ):
+        await coordinator._async_update_buffer_times(old_before=30, old_after=30)
+
+    override = coordinator.event_overrides.overrides[10]
+    assert override is not None
+    assert override["start_time"] == utc_time(25, 15, 0)
+    assert override["end_time"] == utc_time(30, 11, 15)
+
+
 # ---------------------------------------------------------------------------
 # Phase 7 – targeted coverage tests for coordinator.py
 # ---------------------------------------------------------------------------

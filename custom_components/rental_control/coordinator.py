@@ -2693,6 +2693,13 @@ Please update Keymaster to at least v0.1.0-b0
                 f"Buffer time update slot {slot} ({self.lockname})",
                 _LOGGER,
             )
+            if not any(isinstance(result, Exception) for result in results):
+                override["start_time"] = (
+                    buffered_start if isinstance(buffered_start, datetime) else start
+                )
+                override["end_time"] = (
+                    buffered_end if isinstance(buffered_end, datetime) else end
+                )
 
     async def update_event_overrides(
         self,
