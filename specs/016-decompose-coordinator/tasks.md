@@ -123,17 +123,17 @@ using the existing reconciliation package surface: `DesiredPlan`, `ManagedSlot`,
 **Purpose**: Establish behavior, import, call-site, and complexity baselines
 before any production code moves.
 
-- [ ] T001 Run `.specify/scripts/bash/check-prerequisites.sh --json` with `SPECIFY_FEATURE=016-decompose-coordinator` from the repository root and confirm `specs/016-decompose-coordinator/` reports `research.md`, `data-model.md`, and `quickstart.md`
-- [ ] T002 Inspect US1-US5, FR-001 through FR-020, edge cases, assumptions, and non-goals in `specs/016-decompose-coordinator/spec.md`
-- [ ] T003 Inspect the Project Structure, Concrete Decomposition Design, public compatibility boundary, parameter-reduction sections, FR-018 reconciliation integration, and `aislop` directive removal requirements in `specs/016-decompose-coordinator/plan.md`
-- [ ] T004 Inspect all research decisions, all data-model helper objects, and quickstart validation scenarios in `specs/016-decompose-coordinator/research.md`, `specs/016-decompose-coordinator/data-model.md`, and `specs/016-decompose-coordinator/quickstart.md`
-- [ ] T005 Inventory `__init__`, `_ical_parser`, `_build_reservations`, `_build_ghost_reservations`, `_observe_managed_slots`, `_find_observed_slot_by_name`, `_apply_checkin_protection`, `async_adopt_keymaster_slots`, `async_setup_keymaster_overrides`, `_sync_slot_store_from_plan`, `_async_update_data`, `update_config`, and `update_event_overrides` in `custom_components/rental_control/coordinator.py`
-- [ ] T006 Inventory the exact production caller imports in `custom_components/rental_control/__init__.py`, `custom_components/rental_control/calendar.py`, `custom_components/rental_control/switch.py`, `custom_components/rental_control/sensors/calsensor.py`, and `custom_components/rental_control/sensors/checkinsensor.py`; record that none may change
-- [ ] T007 Inventory the current `update_event_overrides` call forms in `custom_components/rental_control/util.py`, `custom_components/rental_control/coordinator.py`, and `tests/unit/test_coordinator.py`
-- [ ] T008 Inventory existing coordinator, buffer update, event override, diagnostics, reconciliation, refresh-cycle, calendar, sensor, switch, check-in, and slot concurrency coverage in the test files listed under Path Conventions
-- [ ] T009 Run unchanged baseline coordinator parity tests with `uv run pytest tests/unit/test_coordinator.py tests/unit/test_coordinator_buffer_update.py tests/unit/test_event_overrides.py tests/unit/test_keymaster_event_diagnostics.py tests/unit/test_slot_reconciliation.py tests/integration/test_refresh_cycle.py tests/integration/test_slot_concurrency.py -x -q` against the listed test files
-- [ ] T010 Run unchanged baseline production-consumer tests with `uv run pytest tests/unit/test_calendar.py tests/unit/test_sensors.py tests/unit/test_switch.py tests/integration/test_checkin_tracking.py -x -q` against the listed test files
-- [ ] T011 Record the current line, function-length, and parameter-count baseline for `custom_components/rental_control/coordinator.py`, including the separate `ai-slop/hallucinated-import` and `complexity/file-too-large complexity/function-too-long` `aislop` directives
+- [x] T001 Run `.specify/scripts/bash/check-prerequisites.sh --json` with `SPECIFY_FEATURE=016-decompose-coordinator` from the repository root and confirm `specs/016-decompose-coordinator/` reports `research.md`, `data-model.md`, and `quickstart.md`
+- [x] T002 Inspect US1-US5, FR-001 through FR-020, edge cases, assumptions, and non-goals in `specs/016-decompose-coordinator/spec.md`
+- [x] T003 Inspect the Project Structure, Concrete Decomposition Design, public compatibility boundary, parameter-reduction sections, FR-018 reconciliation integration, and `aislop` directive removal requirements in `specs/016-decompose-coordinator/plan.md`
+- [x] T004 Inspect all research decisions, all data-model helper objects, and quickstart validation scenarios in `specs/016-decompose-coordinator/research.md`, `specs/016-decompose-coordinator/data-model.md`, and `specs/016-decompose-coordinator/quickstart.md`
+- [x] T005 Inventory `__init__`, `_ical_parser`, `_build_reservations`, `_build_ghost_reservations`, `_observe_managed_slots`, `_find_observed_slot_by_name`, `_apply_checkin_protection`, `async_adopt_keymaster_slots`, `async_setup_keymaster_overrides`, `_sync_slot_store_from_plan`, `_async_update_data`, `update_config`, and `update_event_overrides` in `custom_components/rental_control/coordinator.py`
+- [x] T006 Inventory the exact production caller imports in `custom_components/rental_control/__init__.py`, `custom_components/rental_control/calendar.py`, `custom_components/rental_control/switch.py`, `custom_components/rental_control/sensors/calsensor.py`, and `custom_components/rental_control/sensors/checkinsensor.py`; record that none may change
+- [x] T007 Inventory the current `update_event_overrides` call forms in `custom_components/rental_control/util.py`, `custom_components/rental_control/coordinator.py`, and `tests/unit/test_coordinator.py`
+- [x] T008 Inventory existing coordinator, buffer update, event override, diagnostics, reconciliation, refresh-cycle, calendar, sensor, switch, check-in, and slot concurrency coverage in the test files listed under Path Conventions
+- [x] T009 Run unchanged baseline coordinator parity tests with `uv run pytest tests/unit/test_coordinator.py tests/unit/test_coordinator_buffer_update.py tests/unit/test_event_overrides.py tests/unit/test_keymaster_event_diagnostics.py tests/unit/test_slot_reconciliation.py tests/integration/test_refresh_cycle.py tests/integration/test_slot_concurrency.py -x -q` against the listed test files
+- [x] T010 Run unchanged baseline production-consumer tests with `uv run pytest tests/unit/test_calendar.py tests/unit/test_sensors.py tests/unit/test_switch.py tests/integration/test_checkin_tracking.py -x -q` against the listed test files
+- [x] T011 Record the current line, function-length, and parameter-count baseline for `custom_components/rental_control/coordinator.py`, including the separate `ai-slop/hallucinated-import` and `complexity/file-too-large complexity/function-too-long` `aislop` directives
 
 ---
 
@@ -148,18 +148,18 @@ coordinator code, or Keymaster service helpers.
 
 ### Foundational Tests
 
-- [ ] T012 [US4] Add internal helper package import and model construction tests for `CalendarParseContext`, `ReservationBuildContext`, `ObservedSlotQuery`, `EventOverrideUpdate`, `GhostReservationResult`, and query defaults in `tests/unit/test_coordinator_helper_models.py`
-- [ ] T013 [US4] Add bootstrap/adoption, `KeymasterSlotSnapshot`, `CheckinProtectionSnapshot`, `StoreSyncPlan`, diagnostics projection, and config snapshot construction tests in `tests/unit/test_coordinator_helper_models.py`
-- [ ] T014 [US4] Add tests proving model modules are side-effect-free and do not import Home Assistant, Store, coordinator, or Keymaster service modules in `tests/unit/test_coordinator_helper_models.py`
+- [x] T012 [US4] Add internal helper package import and model construction tests for `CalendarParseContext`, `ReservationBuildContext`, `ObservedSlotQuery`, `EventOverrideUpdate`, `GhostReservationResult`, and query defaults in `tests/unit/test_coordinator_helper_models.py`
+- [x] T013 [US4] Add bootstrap/adoption, `KeymasterSlotSnapshot`, `CheckinProtectionSnapshot`, `StoreSyncPlan`, diagnostics projection, and config snapshot construction tests in `tests/unit/test_coordinator_helper_models.py`
+- [x] T014 [US4] Add tests proving model modules are side-effect-free and do not import Home Assistant, Store, coordinator, or Keymaster service modules in `tests/unit/test_coordinator_helper_models.py`
 
 ### Foundational Implementation
 
-- [ ] T015 Create `custom_components/rental_control/coordinator_helpers/__init__.py` with SPDX headers, a module docstring, internal typed exports, and no public production caller dependency
-- [ ] T016 [US4] Create `custom_components/rental_control/coordinator_helpers/models.py` with `CalendarParseContext`, `ReservationBuildContext`, `ObservedSlotQuery`, `EventOverrideUpdate`, and `GhostReservationResult` dataclasses exactly covering the PLAN fields
-- [ ] T017 [US4] Add `KeymasterSlotSnapshot`, `BootstrapDecision`, and `AdoptionMappingDecision` to `custom_components/rental_control/coordinator_helpers/models.py` without raw PIN persistence fields
-- [ ] T018 [US4] Add `CheckinProtectionSnapshot`, check-in protection decision types, `StoreSyncPlan`, diagnostics projection types, and config snapshot types to `custom_components/rental_control/coordinator_helpers/models.py`
-- [ ] T019 [US4] Ensure `custom_components/rental_control/coordinator_helpers/models.py` uses only behavior-free imports plus existing reconciliation types and keeps every project-owned initializer at no more than six explicit parameters
-- [ ] T020 Run foundational validation with `uv run pytest tests/unit/test_coordinator_helper_models.py -q` against the new model tests
+- [x] T015 Create `custom_components/rental_control/coordinator_helpers/__init__.py` with SPDX headers, a module docstring, internal typed exports, and no public production caller dependency
+- [x] T016 [US4] Create `custom_components/rental_control/coordinator_helpers/models.py` with `CalendarParseContext`, `ReservationBuildContext`, `ObservedSlotQuery`, `EventOverrideUpdate`, and `GhostReservationResult` dataclasses exactly covering the PLAN fields
+- [x] T017 [US4] Add `KeymasterSlotSnapshot`, `BootstrapDecision`, and `AdoptionMappingDecision` to `custom_components/rental_control/coordinator_helpers/models.py` without raw PIN persistence fields
+- [x] T018 [US4] Add `CheckinProtectionSnapshot`, check-in protection decision types, `StoreSyncPlan`, diagnostics projection types, and config snapshot types to `custom_components/rental_control/coordinator_helpers/models.py`
+- [x] T019 [US4] Ensure `custom_components/rental_control/coordinator_helpers/models.py` uses only behavior-free imports plus existing reconciliation types and keeps every project-owned initializer at no more than six explicit parameters
+- [x] T020 Run foundational validation with `uv run pytest tests/unit/test_coordinator_helper_models.py -q` against the new model tests
 
 **Checkpoint**: The internal package exists, shared dataclasses are stable, and
 FR-013/FR-014 parameter bundles are available before modules import them.
@@ -177,16 +177,16 @@ UIDs, summaries, timezones, overrides, and logs to the current coordinator path.
 
 ### Tests for Calendar Parsing
 
-- [ ] T021 [US2] Add focused iCal filtering tests for RRULE logging, Smoobu Check-in/Check-out skips, stale events, far-future events, Blocked/Not available filtering, missing descriptions, and sorted output in `tests/unit/test_coordinator_parsing.py`
-- [ ] T022 [US2] Add Honor Event Times tests for explicit PMS datetime values, description check-in/check-out times, date-only defaults, disabled override fallback, and manual override fallback in `tests/unit/test_coordinator_parsing.py`
-- [ ] T023 [US2] Add timezone, UTF-8 BOM-adjacent parser input, UID normalization, event-prefix mutation, slot-name extraction, and buffer-aware physical override comparison tests in `tests/unit/test_coordinator_parsing.py`
+- [x] T021 [US2] Add focused iCal filtering tests for RRULE logging, Smoobu Check-in/Check-out skips, stale events, far-future events, Blocked/Not available filtering, missing descriptions, and sorted output in `tests/unit/test_coordinator_parsing.py`
+- [x] T022 [US2] Add Honor Event Times tests for explicit PMS datetime values, description check-in/check-out times, date-only defaults, disabled override fallback, and manual override fallback in `tests/unit/test_coordinator_parsing.py`
+- [x] T023 [US2] Add timezone, UTF-8 BOM-adjacent parser input, UID normalization, event-prefix mutation, slot-name extraction, and buffer-aware physical override comparison tests in `tests/unit/test_coordinator_parsing.py`
 
 ### Implementation for Calendar Parsing
 
-- [ ] T024 [US2] Implement `custom_components/rental_control/coordinator_helpers/calendar_parsing.py` with pure helpers for event filtering, slot-name extraction, override lookup application, event-time selection, timezone conversion, UID normalization, and final sorting
-- [ ] T025 [US2] Keep network fetch, timeout handling, response release, executor calls for `Calendar.from_ical` and `x_wr_timezone`, and `UpdateFailed` wrapping in `custom_components/rental_control/coordinator.py` while exposing only fetched calendar objects to parsing helpers
-- [ ] T026 [US2] Verify `custom_components/rental_control/coordinator_helpers/calendar_parsing.py` performs no network I/O, Home Assistant state reads, Store writes, refresh requests, or service calls
-- [ ] T027 Run calendar parsing validation with `uv run pytest tests/unit/test_coordinator_parsing.py tests/unit/test_coordinator.py -q` against the listed test files
+- [x] T024 [US2] Implement `custom_components/rental_control/coordinator_helpers/calendar_parsing.py` with pure helpers for event filtering, slot-name extraction, override lookup application, event-time selection, timezone conversion, UID normalization, and final sorting
+- [x] T025 [US2] Keep network fetch, timeout handling, response release, executor calls for `Calendar.from_ical` and `x_wr_timezone`, and `UpdateFailed` wrapping in `custom_components/rental_control/coordinator.py` while exposing only fetched calendar objects to parsing helpers
+- [x] T026 [US2] Verify `custom_components/rental_control/coordinator_helpers/calendar_parsing.py` performs no network I/O, Home Assistant state reads, Store writes, refresh requests, or service calls
+- [x] T027 Run calendar parsing validation with `uv run pytest tests/unit/test_coordinator_parsing.py tests/unit/test_coordinator.py -q` against the listed test files
 
 **Checkpoint**: Calendar parsing proves FR-001, FR-002, FR-004, FR-019, and the
 calendar portion of SC-style behavior parity without changing fetch boundaries.
@@ -204,17 +204,17 @@ Store mappings, config, generated codes, and active check-in windows.
 
 ### Tests for Reservations
 
-- [ ] T028 [US2] Add regular reservation tests for slot-name extraction, display-name formatting, trim/max-name handling, buffer windows, generated codes, invalid reservation skips, sensor lookup keys, and deterministic ordering in `tests/unit/test_coordinator_reservations.py`
-- [ ] T029 [US2] Add duplicate-name reservation tests for same starts, shifted dates, ordered date windows, manual observed PIN preservation, code source values, UID aliases, booking aliases, and fingerprint generation in `tests/unit/test_coordinator_reservations.py`
-- [ ] T030 [US2] Add ghost reservation tests for missing-count increments, pending-set to pending-clear transitions, status eligibility, physical-name mismatch fencing, invalid date skips, fingerprint history, synthetic identity fields, and raw-PIN redaction in `tests/unit/test_coordinator_reservations.py`
+- [x] T028 [US2] Add regular reservation tests for slot-name extraction, display-name formatting, trim/max-name handling, buffer windows, generated codes, invalid reservation skips, sensor lookup keys, and deterministic ordering in `tests/unit/test_coordinator_reservations.py`
+- [x] T029 [US2] Add duplicate-name reservation tests for same starts, shifted dates, ordered date windows, manual observed PIN preservation, code source values, UID aliases, booking aliases, and fingerprint generation in `tests/unit/test_coordinator_reservations.py`
+- [x] T030 [US2] Add ghost reservation tests for missing-count increments, pending-set to pending-clear transitions, status eligibility, physical-name mismatch fencing, invalid date skips, fingerprint history, synthetic identity fields, and raw-PIN redaction in `tests/unit/test_coordinator_reservations.py`
 
 ### Implementation for Reservations
 
-- [ ] T031 [US2] Implement regular reservation builders in `custom_components/rental_control/coordinator_helpers/reservations.py` using `ReservationBuildContext`, existing reconciliation helpers, generated-code callbacks, and observed-slot query factories
-- [ ] T032 [US2] Implement ghost reservation builders in `custom_components/rental_control/coordinator_helpers/reservations.py` returning `GhostReservationResult` so the coordinator shell applies live Store-cache mutations in the current order
-- [ ] T033 [US2] Preserve FR-018 reconciliation integration in `custom_components/rental_control/coordinator_helpers/reservations.py` by importing `Reservation`, `extract_booking_aliases`, `make_reservation_fingerprint`, and `normalize_slot_name_for_fingerprint` from the existing reconciliation package only
-- [ ] T034 [US2] Verify `custom_components/rental_control/coordinator_helpers/reservations.py` performs no Home Assistant state reads, Store saves, refresh requests, or Keymaster service calls
-- [ ] T035 Run reservation validation with `uv run pytest tests/unit/test_coordinator_reservations.py tests/unit/test_coordinator.py tests/unit/test_slot_reconciliation.py -q` against the listed test files
+- [x] T031 [US2] Implement regular reservation builders in `custom_components/rental_control/coordinator_helpers/reservations.py` using `ReservationBuildContext`, existing reconciliation helpers, generated-code callbacks, and observed-slot query factories
+- [x] T032 [US2] Implement ghost reservation builders in `custom_components/rental_control/coordinator_helpers/reservations.py` returning `GhostReservationResult` so the coordinator shell applies live Store-cache mutations in the current order
+- [x] T033 [US2] Preserve FR-018 reconciliation integration in `custom_components/rental_control/coordinator_helpers/reservations.py` by importing `Reservation`, `extract_booking_aliases`, `make_reservation_fingerprint`, and `normalize_slot_name_for_fingerprint` from the existing reconciliation package only
+- [x] T034 [US2] Verify `custom_components/rental_control/coordinator_helpers/reservations.py` performs no Home Assistant state reads, Store saves, refresh requests, or Keymaster service calls
+- [x] T035 Run reservation validation with `uv run pytest tests/unit/test_coordinator_reservations.py tests/unit/test_coordinator.py tests/unit/test_slot_reconciliation.py -q` against the listed test files
 
 **Checkpoint**: Reservation extraction proves FR-003, FR-005, FR-006, FR-018,
 FR-019, and behavior parity for regular and ghost reservations.
@@ -233,18 +233,18 @@ phantom slots, and actual-state diagnostics.
 
 ### Tests for Slot Matching and Observation
 
-- [ ] T036 [US3] Add `ObservedSlotQuery` matching tests for exact name, prefixed name, display name, consumed slots, exact date matches, required date matches, shifted-date fallback, unknown-date blocking, expected duplicate counts, and no arbitrary prefix matches in `tests/unit/test_coordinator_observation.py`
-- [ ] T037 [US3] Add ordered physical subset and partial pairing tests for duplicate names, duplicate physical names, start/end ordering, minimum-distance matching, and consumed-slot mutation only when a slot is returned in `tests/unit/test_coordinator_observation.py`
-- [ ] T038 [US3] Add Keymaster snapshot classification tests for missing entities, unreadable text states, blank text states, occupied slots, free slots, phantom/name-only slots, date-range parsing, enabled-state parsing, and last-error propagation in `tests/unit/test_coordinator_observation.py`
-- [ ] T039 [US3] Add actual-state diagnostics tests proving `EventOverrides.update_actual_state()` receives the same redacted fields and is called once per managed slot by the coordinator shell in `tests/unit/test_coordinator_observation.py`
+- [x] T036 [US3] Add `ObservedSlotQuery` matching tests for exact name, prefixed name, display name, consumed slots, exact date matches, required date matches, shifted-date fallback, unknown-date blocking, expected duplicate counts, and no arbitrary prefix matches in `tests/unit/test_coordinator_observation.py`
+- [x] T037 [US3] Add ordered physical subset and partial pairing tests for duplicate names, duplicate physical names, start/end ordering, minimum-distance matching, and consumed-slot mutation only when a slot is returned in `tests/unit/test_coordinator_observation.py`
+- [x] T038 [US3] Add Keymaster snapshot classification tests for missing entities, unreadable text states, blank text states, occupied slots, free slots, phantom/name-only slots, date-range parsing, enabled-state parsing, and last-error propagation in `tests/unit/test_coordinator_observation.py`
+- [x] T039 [US3] Add actual-state diagnostics tests proving `EventOverrides.update_actual_state()` receives the same redacted fields and is called once per managed slot by the coordinator shell in `tests/unit/test_coordinator_observation.py`
 
 ### Implementation for Slot Matching and Observation
 
-- [ ] T040 [P] [US3] Implement `custom_components/rental_control/coordinator_helpers/slot_matching.py` with `find_observed_slot()`, physical-name matching helpers, ordered subset selection, and partial pairing helpers driven by `ObservedSlotQuery`
-- [ ] T041 [P] [US3] Implement `custom_components/rental_control/coordinator_helpers/keymaster_observation.py` with pure `KeymasterSlotSnapshot` classification into `ManagedSlot` plus actual-state diagnostics
-- [ ] T042 [US3] Preserve prefix stripping and normalized-name behavior in `custom_components/rental_control/coordinator_helpers/slot_matching.py` by using `normalize_slot_name_for_fingerprint` from the reconciliation package root
-- [ ] T043 [US3] Keep Home Assistant `hass.states` reads and the ordered `EventOverrides.update_actual_state()` calls in `custom_components/rental_control/coordinator.py`, passing snapshots into `keymaster_observation.py`
-- [ ] T044 Run slot matching and observation validation with `uv run pytest tests/unit/test_coordinator_observation.py tests/unit/test_coordinator.py tests/integration/test_refresh_cycle.py -q` against the listed test files
+- [x] T040 [P] [US3] Implement `custom_components/rental_control/coordinator_helpers/slot_matching.py` with `find_observed_slot()`, physical-name matching helpers, ordered subset selection, and partial pairing helpers driven by `ObservedSlotQuery`
+- [x] T041 [P] [US3] Implement `custom_components/rental_control/coordinator_helpers/keymaster_observation.py` with pure `KeymasterSlotSnapshot` classification into `ManagedSlot` plus actual-state diagnostics
+- [x] T042 [US3] Preserve prefix stripping and normalized-name behavior in `custom_components/rental_control/coordinator_helpers/slot_matching.py` by using `normalize_slot_name_for_fingerprint` from the reconciliation package root
+- [x] T043 [US3] Keep Home Assistant `hass.states` reads and the ordered `EventOverrides.update_actual_state()` calls in `custom_components/rental_control/coordinator.py`, passing snapshots into `keymaster_observation.py`
+- [x] T044 Run slot matching and observation validation with `uv run pytest tests/unit/test_coordinator_observation.py tests/unit/test_coordinator.py tests/integration/test_refresh_cycle.py -q` against the listed test files
 
 **Checkpoint**: Slot matching and observation prove FR-003, FR-007, FR-013,
 FR-018, FR-019, and duplicate-name physical matching parity.
@@ -264,16 +264,16 @@ Store caches.
 
 ### Tests for Keymaster Bootstrap and Adoption
 
-- [ ] T045 [US3] Add bootstrap decision tests for readable slots, unreadable slots, blank slots, partially reset name-only/date-range-off slots, code-bearing unnamed slots, default date ranges, and override update payloads in `tests/unit/test_coordinator_bootstrap.py`
-- [ ] T046 [US3] Add adoption decision tests for empty Store, deleted Store, existing Store mappings, occupied slots, pending-clear slots, unreadable slots, placeholder names, metadata initialization, and raw-PIN redaction in `tests/unit/test_coordinator_bootstrap.py`
-- [ ] T047 [US3] Add coordinator-shell bootstrap tests proving `async_fire_clear_code`, `update_event_overrides(..., request_refresh=False)`, `EventOverrides.load_persisted_mappings()`, Store mutation, and save ordering match the current behavior in `tests/unit/test_coordinator_bootstrap.py`
+- [x] T045 [US3] Add bootstrap decision tests for readable slots, unreadable slots, blank slots, partially reset name-only/date-range-off slots, code-bearing unnamed slots, default date ranges, and override update payloads in `tests/unit/test_coordinator_bootstrap.py`
+- [x] T046 [US3] Add adoption decision tests for empty Store, deleted Store, existing Store mappings, occupied slots, pending-clear slots, unreadable slots, placeholder names, metadata initialization, and raw-PIN redaction in `tests/unit/test_coordinator_bootstrap.py`
+- [x] T047 [US3] Add coordinator-shell bootstrap tests proving `async_fire_clear_code`, `update_event_overrides(..., request_refresh=False)`, `EventOverrides.load_persisted_mappings()`, Store mutation, and save ordering match the current behavior in `tests/unit/test_coordinator_bootstrap.py`
 
 ### Implementation for Keymaster Bootstrap and Adoption
 
-- [ ] T048 [US3] Implement pure first-load bootstrap decision helpers in `custom_components/rental_control/coordinator_helpers/keymaster_bootstrap.py` for partially reset slots, placeholders, unreadable skips, default date windows, and `EventOverrideUpdate` payloads
-- [ ] T049 [US3] Implement pure adoption mapping helpers in `custom_components/rental_control/coordinator_helpers/keymaster_bootstrap.py` for empty/deleted Store recovery, occupied versus pending-clear mapping status, adopted identity keys, and schema metadata without raw PINs
-- [ ] T050 [US3] Keep `async_setup_keymaster_overrides()` and `async_adopt_keymaster_slots()` side effects in `custom_components/rental_control/coordinator.py`, applying `keymaster_bootstrap.py` decisions in the current order
-- [ ] T051 Run bootstrap and adoption validation with `uv run pytest tests/unit/test_coordinator_bootstrap.py tests/unit/test_coordinator.py tests/integration/test_refresh_cycle.py -q` against the listed test files
+- [x] T048 [US3] Implement pure first-load bootstrap decision helpers in `custom_components/rental_control/coordinator_helpers/keymaster_bootstrap.py` for partially reset slots, placeholders, unreadable skips, default date windows, and `EventOverrideUpdate` payloads
+- [x] T049 [US3] Implement pure adoption mapping helpers in `custom_components/rental_control/coordinator_helpers/keymaster_bootstrap.py` for empty/deleted Store recovery, occupied versus pending-clear mapping status, adopted identity keys, and schema metadata without raw PINs
+- [x] T050 [US3] Keep `async_setup_keymaster_overrides()` and `async_adopt_keymaster_slots()` side effects in `custom_components/rental_control/coordinator.py`, applying `keymaster_bootstrap.py` decisions in the current order
+- [x] T051 Run bootstrap and adoption validation with `uv run pytest tests/unit/test_coordinator_bootstrap.py tests/unit/test_coordinator.py tests/integration/test_refresh_cycle.py -q` against the listed test files
 
 **Checkpoint**: Keymaster bootstrap and adoption prove FR-001, FR-003, FR-008,
 FR-011, FR-012, FR-019, and access-safety parity.
@@ -291,16 +291,16 @@ mutation decisions and final reservations to the current coordinator method.
 
 ### Tests for Check-in Protection
 
-- [ ] T052 [US1] Add checked-in protection tests for duplicate-name exact start/end matching, unique-name fallback, protected-active flag mutation, same-name physical-slot safety, and generated versus manual observed code source in `tests/unit/test_coordinator_checkin_protection.py`
-- [ ] T053 [US1] Add checked-out protection tests for exact match marking, unique match marking, no false positives on future same-name reservations, and sensor lookup key preservation in `tests/unit/test_coordinator_checkin_protection.py`
-- [ ] T054 [US1] Add missing active physical stay synthesis and restore-deferral tests for missing dates, stale physical occupants, prefixed names, buffer config changes, and duplicate-name safety in `tests/unit/test_coordinator_checkin_protection.py`
+- [x] T052 [US1] Add checked-in protection tests for duplicate-name exact start/end matching, unique-name fallback, protected-active flag mutation, same-name physical-slot safety, and generated versus manual observed code source in `tests/unit/test_coordinator_checkin_protection.py`
+- [x] T053 [US1] Add checked-out protection tests for exact match marking, unique match marking, no false positives on future same-name reservations, and sensor lookup key preservation in `tests/unit/test_coordinator_checkin_protection.py`
+- [x] T054 [US1] Add missing active physical stay synthesis and restore-deferral tests for missing dates, stale physical occupants, prefixed names, buffer config changes, and duplicate-name safety in `tests/unit/test_coordinator_checkin_protection.py`
 
 ### Implementation for Check-in Protection
 
-- [ ] T055 [US1] Implement `custom_components/rental_control/coordinator_helpers/checkin_protection.py` with pure snapshot extraction inputs, active-window matching, checked-in decisions, checked-out decisions, and synthesized reservation decisions
-- [ ] T056 [US1] Keep `hass.data` check-in sensor lookup and live `Reservation` mutation or append ordering in `custom_components/rental_control/coordinator.py`, applying `checkin_protection.py` decisions exactly where `_apply_checkin_protection` runs today
-- [ ] T057 [US1] Preserve `_must_defer_for_checkin_restore()` behavior and any active-window helper compatibility in `custom_components/rental_control/coordinator.py` while moving pure decisions to `checkin_protection.py`
-- [ ] T058 Run check-in protection validation with `uv run pytest tests/unit/test_coordinator_checkin_protection.py tests/unit/test_coordinator.py tests/integration/test_checkin_tracking.py -q` against the listed test files
+- [x] T055 [US1] Implement `custom_components/rental_control/coordinator_helpers/checkin_protection.py` with pure snapshot extraction inputs, active-window matching, checked-in decisions, checked-out decisions, and synthesized reservation decisions
+- [x] T056 [US1] Keep `hass.data` check-in sensor lookup and live `Reservation` mutation or append ordering in `custom_components/rental_control/coordinator.py`, applying `checkin_protection.py` decisions exactly where `_apply_checkin_protection` runs today
+- [x] T057 [US1] Preserve `_must_defer_for_checkin_restore()` behavior and any active-window helper compatibility in `custom_components/rental_control/coordinator.py` while moving pure decisions to `checkin_protection.py`
+- [x] T058 Run check-in protection validation with `uv run pytest tests/unit/test_coordinator_checkin_protection.py tests/unit/test_coordinator.py tests/integration/test_checkin_tracking.py -q` against the listed test files
 
 **Checkpoint**: Check-in protection proves FR-001, FR-003, FR-009, FR-011,
 FR-012, FR-019, and checked-in/checked-out parity.
@@ -319,14 +319,14 @@ latest-plan metadata, stale physical-slot keys, and migration fields.
 
 ### Tests for Store Sync
 
-- [ ] T059 [US3] Add Store sync tests for confirmed-clear removals before upserts, stale same-physical-slot key removals, selected reservation upserts, alias/fingerprint retention, latest-plan metadata, and migration fields in `tests/unit/test_coordinator_store_sync.py`
-- [ ] T060 [US3] Add Store sync tests proving failed sets do not advance assignment metadata and Store remains cache-only when physical Keymaster state and calendar data disagree in `tests/unit/test_coordinator_store_sync.py`
+- [x] T059 [US3] Add Store sync tests for confirmed-clear removals before upserts, stale same-physical-slot key removals, selected reservation upserts, alias/fingerprint retention, latest-plan metadata, and migration fields in `tests/unit/test_coordinator_store_sync.py`
+- [x] T060 [US3] Add Store sync tests proving failed sets do not advance assignment metadata and Store remains cache-only when physical Keymaster state and calendar data disagree in `tests/unit/test_coordinator_store_sync.py`
 
 ### Implementation for Store Sync
 
-- [ ] T061 [US3] Implement `custom_components/rental_control/coordinator_helpers/store_sync.py` with pure `StoreSyncPlan` construction from `DesiredPlan`, `Reservation` lookup, operation results, existing mappings, and coordinator metadata
-- [ ] T062 [US3] Keep live `_slot_mappings` mutation, `EventOverrides.load_persisted_mappings()`, `async_save_slot_store()`, and save ordering in `custom_components/rental_control/coordinator.py`
-- [ ] T063 Run Store sync validation with `uv run pytest tests/unit/test_coordinator_store_sync.py tests/unit/test_coordinator.py tests/unit/test_event_overrides.py tests/integration/test_refresh_cycle.py -q` against the listed test files
+- [x] T061 [US3] Implement `custom_components/rental_control/coordinator_helpers/store_sync.py` with pure `StoreSyncPlan` construction from `DesiredPlan`, `Reservation` lookup, operation results, existing mappings, and coordinator metadata
+- [x] T062 [US3] Keep live `_slot_mappings` mutation, `EventOverrides.load_persisted_mappings()`, `async_save_slot_store()`, and save ordering in `custom_components/rental_control/coordinator.py`
+- [x] T063 Run Store sync validation with `uv run pytest tests/unit/test_coordinator_store_sync.py tests/unit/test_coordinator.py tests/unit/test_event_overrides.py tests/integration/test_refresh_cycle.py -q` against the listed test files
 
 **Checkpoint**: Store sync proves FR-001, FR-003, FR-008, FR-010, FR-018,
 FR-019, and cache-only Store semantics.
@@ -345,17 +345,17 @@ inputs.
 
 ### Tests for Diagnostics and Config
 
-- [ ] T064 [US1] Add diagnostics projection tests for `latest_overflow`, `latest_reconciliation_diagnostics`, actual-state snapshots, raw-code redaction, `keymaster_event_diagnostics` ordering, and check-in sensor `async_write_ha_state()` triggers in `tests/unit/test_coordinator_diagnostics.py`
-- [ ] T065 [US4] Add config update tests for in-place field updates, stale `EventOverrides` detection on lock/range/capacity changes, child-lock rediscovery, persisted mapping reload, buffer change detection, and final refresh request in `tests/unit/test_coordinator_config.py`
-- [ ] T066 [US4] Add buffer update payload tests for old-buffer reversal, new-buffer application, assigned-slot filtering, datetime service call arguments, exception handling, override-cache advancement, and gather-result logging in `tests/unit/test_coordinator_config.py`
+- [x] T064 [US1] Add diagnostics projection tests for `latest_overflow`, `latest_reconciliation_diagnostics`, actual-state snapshots, raw-code redaction, `keymaster_event_diagnostics` ordering, and check-in sensor `async_write_ha_state()` triggers in `tests/unit/test_coordinator_diagnostics.py`
+- [x] T065 [US4] Add config update tests for in-place field updates, stale `EventOverrides` detection on lock/range/capacity changes, child-lock rediscovery, persisted mapping reload, buffer change detection, and final refresh request in `tests/unit/test_coordinator_config.py`
+- [x] T066 [US4] Add buffer update payload tests for old-buffer reversal, new-buffer application, assigned-slot filtering, datetime service call arguments, exception handling, override-cache advancement, and gather-result logging in `tests/unit/test_coordinator_config.py`
 
 ### Implementation for Diagnostics and Config
 
-- [ ] T067 [P] [US1] Implement `custom_components/rental_control/coordinator_helpers/diagnostics.py` with pure latest-plan projection helpers, redacted keymaster-event record helpers, and diagnostics snapshot shape preservation
-- [ ] T068 [P] [US4] Implement `custom_components/rental_control/coordinator_helpers/config_update.py` with config snapshots, stale override decisions, child-lock reset decisions, and buffer update payload construction
-- [ ] T069 [US1] Keep diagnostics ring-buffer ownership, listener callback side effects, and check-in sensor state writes in `custom_components/rental_control/coordinator.py` while using `diagnostics.py` projections
-- [ ] T070 [US4] Keep `update_config()` shell side effects, `EventOverrides` recreation, `async_setup_keymaster_overrides()`, mapping reload, child-lock discovery, `_async_update_buffer_times()`, and `async_request_refresh()` ordering in `custom_components/rental_control/coordinator.py`
-- [ ] T071 Run diagnostics and config validation with `uv run pytest tests/unit/test_coordinator_diagnostics.py tests/unit/test_coordinator_config.py tests/unit/test_coordinator_buffer_update.py tests/unit/test_keymaster_event_diagnostics.py tests/unit/test_coordinator.py -q` against the listed test files
+- [x] T067 [P] [US1] Implement `custom_components/rental_control/coordinator_helpers/diagnostics.py` with pure latest-plan projection helpers, redacted keymaster-event record helpers, and diagnostics snapshot shape preservation
+- [x] T068 [P] [US4] Implement `custom_components/rental_control/coordinator_helpers/config_update.py` with config snapshots, stale override decisions, child-lock reset decisions, and buffer update payload construction
+- [x] T069 [US1] Keep diagnostics ring-buffer ownership, listener callback side effects, and check-in sensor state writes in `custom_components/rental_control/coordinator.py` while using `diagnostics.py` projections
+- [x] T070 [US4] Keep `update_config()` shell side effects, `EventOverrides` recreation, `async_setup_keymaster_overrides()`, mapping reload, child-lock discovery, `_async_update_buffer_times()`, and `async_request_refresh()` ordering in `custom_components/rental_control/coordinator.py`
+- [x] T071 Run diagnostics and config validation with `uv run pytest tests/unit/test_coordinator_diagnostics.py tests/unit/test_coordinator_config.py tests/unit/test_coordinator_buffer_update.py tests/unit/test_keymaster_event_diagnostics.py tests/unit/test_coordinator.py -q` against the listed test files
 
 **Checkpoint**: Diagnostics and config prove FR-001, FR-010, FR-011, FR-012,
 FR-019, and runtime-update parity.
@@ -374,30 +374,30 @@ caller imports from `coordinator_helpers/`.
 
 ### Tests for Shell Compatibility
 
-- [ ] T072 [US4] Add `_find_observed_slot_by_name` compatibility tests for the current three-argument call, direct `ObservedSlotQuery` input, and legacy keyword criteria including consumed slots, dates, date-window options, and expected-name count in `tests/unit/test_coordinator.py`
-- [ ] T073 [US4] Add `update_event_overrides` compatibility tests for direct `EventOverrideUpdate`, the current five-positional util.py call, the current five-positional plus `request_refresh=False` bootstrap call, current keyword tests, missing values, duplicate values, and unknown keyword rejection in `tests/unit/test_coordinator.py`
-- [ ] T074 [US4] Add public import tests proving `RentalControlCoordinator` imports from `custom_components.rental_control.coordinator` and production import sites in `__init__.py`, `calendar.py`, `switch.py`, `sensors/calsensor.py`, and `sensors/checkinsensor.py` require no edits in `tests/unit/test_coordinator_imports.py`
-- [ ] T075 [US4] Add FR-012 public member tests for `monitored_locknames`, `device_info`, `entry_id`, `unique_id`, `version`, `latest_plan`, diagnostics properties, Store methods, Keymaster methods, config fields, `event`, and `event_overrides` in `tests/unit/test_coordinator_imports.py`
-- [ ] T076 [US1] Add shell orchestration parity tests for `_async_update_data` order: fetch/cache fallback, miss tolerance, current-event selection, observation, reservation building, check-in protection, one `compute_desired_plan()` call, apply-plan, Store sync, latest-plan assignment, Store save, and child-lock rediscovery in `tests/unit/test_coordinator.py`
+- [x] T072 [US4] Add `_find_observed_slot_by_name` compatibility tests for the current three-argument call, direct `ObservedSlotQuery` input, and legacy keyword criteria including consumed slots, dates, date-window options, and expected-name count in `tests/unit/test_coordinator.py`
+- [x] T073 [US4] Add `update_event_overrides` compatibility tests for direct `EventOverrideUpdate`, the current five-positional util.py call, the current five-positional plus `request_refresh=False` bootstrap call, current keyword tests, missing values, duplicate values, and unknown keyword rejection in `tests/unit/test_coordinator.py`
+- [x] T074 [US4] Add public import tests proving `RentalControlCoordinator` imports from `custom_components.rental_control.coordinator` and production import sites in `__init__.py`, `calendar.py`, `switch.py`, `sensors/calsensor.py`, and `sensors/checkinsensor.py` require no edits in `tests/unit/test_coordinator_imports.py`
+- [x] T075 [US4] Add FR-012 public member tests for `monitored_locknames`, `device_info`, `entry_id`, `unique_id`, `version`, `latest_plan`, diagnostics properties, Store methods, Keymaster methods, config fields, `event`, and `event_overrides` in `tests/unit/test_coordinator_imports.py`
+- [x] T076 [US1] Add shell orchestration parity tests for `_async_update_data` order: fetch/cache fallback, miss tolerance, current-event selection, observation, reservation building, check-in protection, one `compute_desired_plan()` call, apply-plan, Store sync, latest-plan assignment, Store save, and child-lock rediscovery in `tests/unit/test_coordinator.py`
 
 ### Implementation for Shell Delegation
 
-- [ ] T077 [US4] Update `custom_components/rental_control/coordinator.py` imports to use `coordinator_helpers/` internally while keeping `RentalControlCoordinator` defined in the same file and avoiding any production caller import changes
-- [ ] T078 [US4] Refactor `RentalControlCoordinator.__init__` in `custom_components/rental_control/coordinator.py` to delegate repeated config parsing to `config_update.py` while preserving construction side effects, public attributes, `EventOverrides` setup, child-lock discovery, and `DataUpdateCoordinator` initialization order
-- [ ] T079 [US2] Replace `_ical_parser` in `custom_components/rental_control/coordinator.py` with a wrapper below 80 lines that builds `CalendarParseContext`, delegates to `calendar_parsing.py`, and preserves `_async_fetch_calendar` I/O/executor boundaries
-- [ ] T080 [US2] Replace `_build_reservations` and `_build_ghost_reservations` in `custom_components/rental_control/coordinator.py` with wrappers below 80 lines that build contexts, delegate to `reservations.py`, and apply `GhostReservationResult` mutations in the current order
-- [ ] T081 [US3] Replace `_observe_managed_slots` in `custom_components/rental_control/coordinator.py` with a wrapper below 80 lines that reads HA states, creates `KeymasterSlotSnapshot` values, delegates classification, and calls `EventOverrides.update_actual_state()` once per slot in current order
-- [ ] T082 [US3] Replace `_find_observed_slot_by_name` in `custom_components/rental_control/coordinator.py` with a no-more-than-six-parameter compatibility wrapper that normalizes `ObservedSlotQuery`, current three-argument calls, and legacy keyword criteria before delegating to `slot_matching.py`
-- [ ] T083 [US3] Replace `async_setup_keymaster_overrides` and `async_adopt_keymaster_slots` in `custom_components/rental_control/coordinator.py` with wrappers below 80 lines that apply `keymaster_bootstrap.py` decisions while retaining async service calls, Store mutation, mapping reload, and save ordering
-- [ ] T084 [US1] Replace `_apply_checkin_protection` and restore-deferral decision paths in `custom_components/rental_control/coordinator.py` with wrappers below 80 lines that apply `checkin_protection.py` decisions to live `Reservation` objects in the current sequence
-- [ ] T085 [US3] Replace `_sync_slot_store_from_plan` in `custom_components/rental_control/coordinator.py` with a wrapper below 80 lines that applies `store_sync.py` mutation plans and reloads `EventOverrides` mappings exactly as before
-- [ ] T086 [US1] Wire diagnostics projections and event-recording helpers from `diagnostics.py` into `custom_components/rental_control/coordinator.py` without changing `latest_overflow`, `latest_reconciliation_diagnostics`, `keymaster_event_diagnostics`, raw-code redaction, or check-in sensor write behavior
-- [ ] T087 [US4] Slim `update_config` and buffer-update paths in `custom_components/rental_control/coordinator.py` with `config_update.py` helpers while preserving stale override recreation, setup ordering, mapping reload, buffer service calls, child-lock discovery, and refresh request behavior
-- [ ] T088 [US4] Replace `update_event_overrides` in `custom_components/rental_control/coordinator.py` with `async def update_event_overrides(self, update=None, *values, request_refresh=True, **legacy)` or an equivalent no-more-than-six-parameter wrapper normalizing all accepted call forms to `EventOverrideUpdate`
-- [ ] T089 [US1] Slim `_async_update_data` in `custom_components/rental_control/coordinator.py` below 80 lines as the refresh-cycle orchestrator while preserving side-effect order and keeping HA I/O, Store writes, service calls, refresh scheduling, and latest-state assignment in the shell
-- [ ] T090 [US4] Verify every FR-012 member remains on `RentalControlCoordinator` in `custom_components/rental_control/coordinator.py` with behavior-compatible semantics and no move to `coordinator_helpers/` as a public contract
-- [ ] T091 [US4] Verify no production caller import changed in `custom_components/rental_control/__init__.py`, `custom_components/rental_control/calendar.py`, `custom_components/rental_control/switch.py`, `custom_components/rental_control/sensors/calsensor.py`, and `custom_components/rental_control/sensors/checkinsensor.py`; any diff in those import lines must be reverted
-- [ ] T092 Run shell compatibility validation with `uv run pytest tests/unit/test_coordinator.py tests/unit/test_coordinator_imports.py tests/unit/test_calendar.py tests/unit/test_sensors.py tests/unit/test_switch.py tests/integration/test_checkin_tracking.py -q` against the listed test files
+- [x] T077 [US4] Update `custom_components/rental_control/coordinator.py` imports to use `coordinator_helpers/` internally while keeping `RentalControlCoordinator` defined in the same file and avoiding any production caller import changes
+- [x] T078 [US4] Refactor `RentalControlCoordinator.__init__` in `custom_components/rental_control/coordinator.py` to delegate repeated config parsing to `config_update.py` while preserving construction side effects, public attributes, `EventOverrides` setup, child-lock discovery, and `DataUpdateCoordinator` initialization order
+- [x] T079 [US2] Replace `_ical_parser` in `custom_components/rental_control/coordinator.py` with a wrapper below 80 lines that builds `CalendarParseContext`, delegates to `calendar_parsing.py`, and preserves `_async_fetch_calendar` I/O/executor boundaries
+- [x] T080 [US2] Replace `_build_reservations` and `_build_ghost_reservations` in `custom_components/rental_control/coordinator.py` with wrappers below 80 lines that build contexts, delegate to `reservations.py`, and apply `GhostReservationResult` mutations in the current order
+- [x] T081 [US3] Replace `_observe_managed_slots` in `custom_components/rental_control/coordinator.py` with a wrapper below 80 lines that reads HA states, creates `KeymasterSlotSnapshot` values, delegates classification, and calls `EventOverrides.update_actual_state()` once per slot in current order
+- [x] T082 [US3] Replace `_find_observed_slot_by_name` in `custom_components/rental_control/coordinator.py` with a no-more-than-six-parameter compatibility wrapper that normalizes `ObservedSlotQuery`, current three-argument calls, and legacy keyword criteria before delegating to `slot_matching.py`
+- [x] T083 [US3] Replace `async_setup_keymaster_overrides` and `async_adopt_keymaster_slots` in `custom_components/rental_control/coordinator.py` with wrappers below 80 lines that apply `keymaster_bootstrap.py` decisions while retaining async service calls, Store mutation, mapping reload, and save ordering
+- [x] T084 [US1] Replace `_apply_checkin_protection` and restore-deferral decision paths in `custom_components/rental_control/coordinator.py` with wrappers below 80 lines that apply `checkin_protection.py` decisions to live `Reservation` objects in the current sequence
+- [x] T085 [US3] Replace `_sync_slot_store_from_plan` in `custom_components/rental_control/coordinator.py` with a wrapper below 80 lines that applies `store_sync.py` mutation plans and reloads `EventOverrides` mappings exactly as before
+- [x] T086 [US1] Wire diagnostics projections and event-recording helpers from `diagnostics.py` into `custom_components/rental_control/coordinator.py` without changing `latest_overflow`, `latest_reconciliation_diagnostics`, `keymaster_event_diagnostics`, raw-code redaction, or check-in sensor write behavior
+- [x] T087 [US4] Slim `update_config` and buffer-update paths in `custom_components/rental_control/coordinator.py` with `config_update.py` helpers while preserving stale override recreation, setup ordering, mapping reload, buffer service calls, child-lock discovery, and refresh request behavior
+- [x] T088 [US4] Replace `update_event_overrides` in `custom_components/rental_control/coordinator.py` with `async def update_event_overrides(self, update=None, *values, request_refresh=True, **legacy)` or an equivalent no-more-than-six-parameter wrapper normalizing all accepted call forms to `EventOverrideUpdate`
+- [x] T089 [US1] Slim `_async_update_data` in `custom_components/rental_control/coordinator.py` below 80 lines as the refresh-cycle orchestrator while preserving side-effect order and keeping HA I/O, Store writes, service calls, refresh scheduling, and latest-state assignment in the shell
+- [x] T090 [US4] Verify every FR-012 member remains on `RentalControlCoordinator` in `custom_components/rental_control/coordinator.py` with behavior-compatible semantics and no move to `coordinator_helpers/` as a public contract
+- [x] T091 [US4] Verify no production caller import changed in `custom_components/rental_control/__init__.py`, `custom_components/rental_control/calendar.py`, `custom_components/rental_control/switch.py`, `custom_components/rental_control/sensors/calsensor.py`, and `custom_components/rental_control/sensors/checkinsensor.py`; any diff in those import lines must be reverted
+- [x] T092 Run shell compatibility validation with `uv run pytest tests/unit/test_coordinator.py tests/unit/test_coordinator_imports.py tests/unit/test_calendar.py tests/unit/test_sensors.py tests/unit/test_switch.py tests/integration/test_checkin_tracking.py -q` against the listed test files
 
 **Checkpoint**: Shell delegation proves FR-001, FR-002, FR-003, FR-011,
 FR-012, FR-013, FR-014, FR-017, FR-018, FR-019, and public compatibility.
@@ -412,27 +412,27 @@ complexity suppression, and run final quality gates.
 
 ### Cleanup and Complexity Gates
 
-- [ ] T093 [US5] Remove temporary extraction shims from `custom_components/rental_control/coordinator.py` and `custom_components/rental_control/coordinator_helpers/*.py`, leaving only planned wrappers, FR-012 public members, and intentional helper exports
-- [ ] T094 [US5] Confirm no new calendar parsing rules, lock-code business rules, reconciliation behavior, sensors, automations, configuration options, diagnostics fields, Home Assistant refreshes, Store authority, state writes, blocking I/O, or user-visible delays were introduced in `custom_components/rental_control/coordinator.py` and `custom_components/rental_control/coordinator_helpers/*.py`
-- [ ] T095 [US5] Immediately before removing the complexity directive, measure `custom_components/rental_control/coordinator.py` and every `custom_components/rental_control/coordinator_helpers/*.py` file with `wc -l` or the quickstart Python snippet and confirm every file is below 400 lines
-- [ ] T096 [US5] Immediately before removing the complexity directive, run `uv run pre-commit run aislop` and confirm every in-scope function is below 80 lines, every project-owned parameter list is no more than six parameters, and no replacement complexity suppression is needed
-- [ ] T097 [US5] Remove only `# aislop-ignore-file complexity/file-too-large complexity/function-too-long -- Existing module size is outside this emergency fix scope.` from `custom_components/rental_control/coordinator.py` after T095 and T096 pass
-- [ ] T098 [US5] Verify `# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.` is still present in `custom_components/rental_control/coordinator.py` and the complexity/file-size/function-length directive is absent
-- [ ] T099 [US5] Verify every FR-001 through FR-020 and every success criterion or quickstart validation scenario has a test, implementation, or acceptance task mapped in `specs/016-decompose-coordinator/tasks.md`
+- [x] T093 [US5] Remove temporary extraction shims from `custom_components/rental_control/coordinator.py` and `custom_components/rental_control/coordinator_helpers/*.py`, leaving only planned wrappers, FR-012 public members, and intentional helper exports
+- [x] T094 [US5] Confirm no new calendar parsing rules, lock-code business rules, reconciliation behavior, sensors, automations, configuration options, diagnostics fields, Home Assistant refreshes, Store authority, state writes, blocking I/O, or user-visible delays were introduced in `custom_components/rental_control/coordinator.py` and `custom_components/rental_control/coordinator_helpers/*.py`
+- [x] T095 [US5] Immediately before removing the complexity directive, measure `custom_components/rental_control/coordinator.py` and every `custom_components/rental_control/coordinator_helpers/*.py` file with `wc -l` or the quickstart Python snippet and confirm every file is below 400 lines
+- [x] T096 [US5] Immediately before removing the complexity directive, run `uv run pre-commit run aislop` and confirm every in-scope function is below 80 lines, every project-owned parameter list is no more than six parameters, and no replacement complexity suppression is needed
+- [x] T097 [US5] Remove only `# aislop-ignore-file complexity/file-too-large complexity/function-too-long -- Existing module size is outside this emergency fix scope.` from `custom_components/rental_control/coordinator.py` after T095 and T096 pass
+- [x] T098 [US5] Verify `# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.` is still present in `custom_components/rental_control/coordinator.py` and the complexity/file-size/function-length directive is absent
+- [x] T099 [US5] Verify every FR-001 through FR-020 and every success criterion or quickstart validation scenario has a test, implementation, or acceptance task mapped in `specs/016-decompose-coordinator/tasks.md`
 
 ### Acceptance and Quality Gates
 
-- [ ] T100 Run unchanged existing coordinator parity tests with `uv run pytest tests/unit/test_coordinator.py tests/unit/test_coordinator_buffer_update.py tests/unit/test_event_overrides.py tests/unit/test_keymaster_event_diagnostics.py tests/unit/test_slot_reconciliation.py tests/integration/test_refresh_cycle.py tests/integration/test_slot_concurrency.py -x -q` against the listed test files
-- [ ] T101 Run production-consumer tests with `uv run pytest tests/unit/test_calendar.py tests/unit/test_sensors.py tests/unit/test_switch.py tests/integration/test_checkin_tracking.py -x -q` against the listed test files
-- [ ] T102 Run all new focused helper tests with `uv run pytest tests/unit/test_coordinator_helper_models.py tests/unit/test_coordinator_parsing.py tests/unit/test_coordinator_reservations.py tests/unit/test_coordinator_observation.py tests/unit/test_coordinator_bootstrap.py tests/unit/test_coordinator_checkin_protection.py tests/unit/test_coordinator_store_sync.py tests/unit/test_coordinator_config.py tests/unit/test_coordinator_diagnostics.py tests/unit/test_coordinator_imports.py -q` against the listed test files
-- [ ] T103 Verify `update_event_overrides` compatibility through tests and/or code review for direct `EventOverrideUpdate`, five positional util.py calls, five positional plus `request_refresh=False` bootstrap calls, and current keyword test calls in `tests/unit/test_coordinator.py`
-- [ ] T104 Verify `_find_observed_slot_by_name` compatibility through tests and/or code review for direct `ObservedSlotQuery`, the current three-argument test call, and legacy keyword criteria in `tests/unit/test_coordinator.py`
-- [ ] T105 Verify FR-018 reconciliation integration by confirming `custom_components/rental_control/coordinator.py` and `custom_components/rental_control/coordinator_helpers/*.py` continue using `DesiredPlan`, `ManagedSlot`, `Reservation`, `SlotStatus`, `compute_desired_plan`, `extract_booking_aliases`, `make_reservation_fingerprint`, and `normalize_slot_name_for_fingerprint` from `custom_components/rental_control/reconciliation/`
-- [ ] T106 Run full regression tests with `uv run pytest tests/ -x -q` against `tests/`
-- [ ] T107 Run linting with `uv run ruff check custom_components/ tests/` against `custom_components/` and `tests/`
-- [ ] T108 Run isolated complexity validation with `uv run pre-commit run aislop` against the staged implementation files
-- [ ] T109 Run full pre-commit validation with `uv run pre-commit run --all-files` against repository-tracked files, including reuse, yamllint, actionlint, aislop, ruff, ruff-format, mypy, interrogate, and gitlint hooks
-- [ ] T110 Review `specs/016-decompose-coordinator/quickstart.md` and confirm the implementation PR notes list unchanged parity commands, new focused helper commands, caller-import verification, both compatibility wrapper call-form gates, hot-path safeguards, file-size measurement before directive removal, final `aislop` results, and final validation results
+- [x] T100 Run unchanged existing coordinator parity tests with `uv run pytest tests/unit/test_coordinator.py tests/unit/test_coordinator_buffer_update.py tests/unit/test_event_overrides.py tests/unit/test_keymaster_event_diagnostics.py tests/unit/test_slot_reconciliation.py tests/integration/test_refresh_cycle.py tests/integration/test_slot_concurrency.py -x -q` against the listed test files
+- [x] T101 Run production-consumer tests with `uv run pytest tests/unit/test_calendar.py tests/unit/test_sensors.py tests/unit/test_switch.py tests/integration/test_checkin_tracking.py -x -q` against the listed test files
+- [x] T102 Run all new focused helper tests with `uv run pytest tests/unit/test_coordinator_helper_models.py tests/unit/test_coordinator_parsing.py tests/unit/test_coordinator_reservations.py tests/unit/test_coordinator_observation.py tests/unit/test_coordinator_bootstrap.py tests/unit/test_coordinator_checkin_protection.py tests/unit/test_coordinator_store_sync.py tests/unit/test_coordinator_config.py tests/unit/test_coordinator_diagnostics.py tests/unit/test_coordinator_imports.py -q` against the listed test files
+- [x] T103 Verify `update_event_overrides` compatibility through tests and/or code review for direct `EventOverrideUpdate`, five positional util.py calls, five positional plus `request_refresh=False` bootstrap calls, and current keyword test calls in `tests/unit/test_coordinator.py`
+- [x] T104 Verify `_find_observed_slot_by_name` compatibility through tests and/or code review for direct `ObservedSlotQuery`, the current three-argument test call, and legacy keyword criteria in `tests/unit/test_coordinator.py`
+- [x] T105 Verify FR-018 reconciliation integration by confirming `custom_components/rental_control/coordinator.py` and `custom_components/rental_control/coordinator_helpers/*.py` continue using `DesiredPlan`, `ManagedSlot`, `Reservation`, `SlotStatus`, `compute_desired_plan`, `extract_booking_aliases`, `make_reservation_fingerprint`, and `normalize_slot_name_for_fingerprint` from `custom_components/rental_control/reconciliation/`
+- [x] T106 Run full regression tests with `uv run pytest tests/ -x -q` against `tests/`
+- [x] T107 Run linting with `uv run ruff check custom_components/ tests/` against `custom_components/` and `tests/`
+- [x] T108 Run isolated complexity validation with `uv run pre-commit run aislop` against the staged implementation files
+- [x] T109 Run full pre-commit validation with `uv run pre-commit run --all-files` against repository-tracked files, including reuse, yamllint, actionlint, aislop, ruff, ruff-format, mypy, interrogate, and gitlint hooks
+- [x] T110 Review `specs/016-decompose-coordinator/quickstart.md` and confirm the implementation PR notes list unchanged parity commands, new focused helper commands, caller-import verification, both compatibility wrapper call-form gates, hot-path safeguards, file-size measurement before directive removal, final `aislop` results, and final validation results
 
 ---
 
