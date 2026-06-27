@@ -206,7 +206,8 @@ to pass unchanged.
    override setup logic.
 4. **Given** the complexity suppression is removed, **When** linting runs,
    **Then** the module keeps the legitimate Home Assistant runtime import
-   suppression and no longer needs the file-size or function-length suppression.
+   suppression and no longer needs the `complexity/file-too-large` or
+   `complexity/function-too-long` suppression.
 
 ---
 
@@ -214,8 +215,8 @@ to pass unchanged.
 
 - What happens when Home Assistant runtime imports appear unavailable to static
   analysis? The `# aislop-ignore-file ai-slop/hallucinated-import` directive
-  remains in `coordinator.py`; only the complexity/file-too-large and function-length
-  directive is removed.
+  remains in `coordinator.py`; only the separate temporary directive for
+  `complexity/file-too-large` and `complexity/function-too-long` is removed.
 - What happens when calendar data is temporarily unavailable, invalid, empty, or
   stale? Existing cache fallback, miss counter, warning, and UpdateFailed
   behavior remain unchanged.
