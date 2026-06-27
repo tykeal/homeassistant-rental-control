@@ -177,7 +177,7 @@ results.
 As a maintainer, I want the oversized coordinator split into focused,
 independently testable units, so future fixes can target parsing, reservation
 building, slot observation, override setup, check-in protection, and diagnostics
-without navigating one 2,948-line orchestration file.
+without navigating one roughly 2,950-line orchestration file.
 
 **Why this priority**: Issue #574 identifies `coordinator.py` as the largest and
 most central file in the integration. Its current complexity is hidden by a
@@ -378,8 +378,8 @@ to pass unchanged.
 - This specification covers issue #574's spec stage only; planning and
   implementation stages will decide exact module names, file layout, helper
   boundaries, request objects, and compatibility mechanics.
-- The live source at the time of this specification is a 2,948-line
-  `custom_components/rental_control/coordinator.py` with 12 functions over 80
+- The live source at the time of this specification is an approximately
+  2,950-line `custom_components/rental_control/coordinator.py` with 12 functions over 80
   lines and two project-owned parameter lists over 6 parameters.
 - The heavy functions identified for decomposition are `_build_reservations`,
   `_build_ghost_reservations`, `_ical_parser`, `_observe_managed_slots`,
