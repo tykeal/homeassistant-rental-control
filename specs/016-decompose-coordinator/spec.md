@@ -214,7 +214,7 @@ to pass unchanged.
 
 - What happens when Home Assistant runtime imports appear unavailable to static
   analysis? The `# aislop-ignore-file ai-slop/hallucinated-import` directive
-  remains in `coordinator.py`; only the complexity/file-size and function-length
+  remains in `coordinator.py`; only the complexity/file-too-large and function-length
   directive is removed.
 - What happens when calendar data is temporarily unavailable, invalid, empty, or
   stale? Existing cache fallback, miss counter, warning, and UpdateFailed
