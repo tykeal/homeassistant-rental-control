@@ -26,11 +26,10 @@ async def async_apply_plan(self, coordinator: Any, plan, res_by_key):
         for action in plan.actions:
             decision = classify_action(action, res_by_key)
             if decision["warning"]:
-                self._logger.warning(
-                    decision["warning"], action.slot
-                ) if "%d" in decision["warning"] else self._logger.warning(
-                    decision["warning"]
-                )
+                if "%d" in decision["warning"]:
+                    self._logger.warning(decision["warning"], action.slot)
+                else:
+                    self._logger.warning(decision["warning"])
             if decision["operation"] == "clear":
                 results.append(
                     await self._apply_clear(
@@ -96,12 +95,18 @@ async def _apply_clear(
             )
         mutation = decide_clear_result_mutation(result)
         if mutation["clear_slot"]:
+            self._logger.debug("Clear confirmed for slot %d; marking free", slot)
             self._pending_fences.pop(slot, None)
             self._pending_clear_slots.pop(slot, None)
             self._clear_assignment(slot)
             self._clear_slot_error(slot)
         elif mutation["record_error"]:
+            _log_clear_not_confirmed(self, slot, result)
             self._record_slot_error(slot, mutation["record_error"])
+        else:
+            self._logger.debug(
+                "Clear unconfirmed for slot %d; slot remains pending-clear", slot
+            )
         return result
 
 
@@ -134,10 +139,22 @@ async def _apply_set(self, coordinator: Any, slot: int, res, plan_id: str):
             return self._operation_result_type(kind="set", slot=slot, unconfirmed=True)
         self._pending_fences.pop(slot, None)
         if mutation["status"] == "confirmed":
+            self._logger.debug(
+                "Set confirmed for slot %d for reservation %s", slot, res.identity_key
+            )
             self._clear_slot_error(slot)
         elif mutation["revert"]:
+            self._logger.warning(
+                "Set failed for slot %d (error: %s); reverting pre-assignment",
+                slot,
+                result.error,
+            )
             self._clear_assignment(slot)
             self._record_slot_error(slot, mutation["record_error"])
+        else:
+            self._logger.debug(
+                "Set unconfirmed for slot %d; keeping tentative assignment", slot
+            )
     return result
 
 
@@ -192,4 +209,21 @@ async def _apply_overwrite_manual_change(
         slot,
         res,
         build_replacement_plan_id(slot, self._module.uuid.uuid4),
+    )
+
+
+def _log_clear_not_confirmed(self, slot: int, result) -> None:
+    """Log the original failed or lingering clear messages."""
+    if result.failed:
+        self._logger.warning(
+            "Clear failed for slot %d (error: %s); slot remains pending-clear",
+            slot,
+            result.error,
+        )
+        return
+    self._logger.warning(
+        "Clear not fully confirmed for slot %d (lingering_name=%s, lingering_pin=%s); slot remains pending-clear",
+        slot,
+        result.lingering_name,
+        result.lingering_pin,
     )
