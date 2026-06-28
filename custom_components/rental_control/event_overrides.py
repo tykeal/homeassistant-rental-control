@@ -16,102 +16,71 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
 from datetime import datetime
-from datetime import time
 import logging
-from time import monotonic
-from typing import TYPE_CHECKING
+import sys
 from typing import Any
 from typing import NamedTuple
 from typing import TypedDict
-import uuid
+from typing import cast
+import uuid  # noqa: F401 - accessed through self._module for patch compatibility
 
 from homeassistant.util import dt
 
-from .const import DEFAULT_MAX_RETRY_CYCLES
-from .reconciliation import ActionKind
-from .reconciliation import DesiredPlan
-from .reconciliation import Reservation
-from .reconciliation import SlotAction
-from .util import EventIdentity
+from .event_overrides_helpers import shell_apply as _shell_apply
+from .event_overrides_helpers import shell_cleanup as _shell_cleanup
+from .event_overrides_helpers import shell_compat as _shell_compat
+from .event_overrides_helpers import shell_slots as _shell_slots
+from .event_overrides_helpers.models import SlotReservationRequest
+from .event_overrides_helpers.models import SlotUpdateRequest
+from .event_overrides_helpers.trim import is_trimmed_match
+from .event_overrides_helpers.trim import strip_prefix
 from .util import OperationResult
-from .util import async_fire_clear_code
-from .util import async_fire_set_code
-from .util import async_fire_update_times
-from .util import get_event_identities
-from .util import is_cleared_keymaster_text_state
-from .util import is_unreadable_keymaster_text_state
-from .util import normalize_uid
-from .util import trim_name
-
-# aislop-ignore-file complexity/file-too-large complexity/function-too-long -- Existing module size is outside this emergency fix scope.
-
-if TYPE_CHECKING:
-    from homeassistant.components.calendar import CalendarEvent
+from .util import async_fire_clear_code  # noqa: F401 - accessed via self._module
+from .util import async_fire_set_code  # noqa: F401 - accessed via self._module
+from .util import async_fire_update_times  # noqa: F401 - accessed via self._module
+from .util import get_event_identities  # noqa: F401 - accessed via self._module
 
 _LOGGER = logging.getLogger(__name__)
-
-SLOT_MISS_THRESHOLD = 2
-SUPPRESSED_STATE_CHANGE_TTL = 5.0
+_PREFLIGHT_WARNINGS = {
+    "read_failed": "Skipping clear for slot %d because a fresh Keymaster read failed",
+    "non_string": "Skipping clear for slot %d because Keymaster text states are not concrete strings",
+    "unreadable": "Skipping clear for slot %d because a fresh Keymaster read is unreadable",
+    "name_changed": "Skipping clear for slot %d because physical name changed after planning",
+    "name_appeared": "Skipping clear for slot %d because physical name appeared after planning",
+    "pin_changed": "Skipping clear for slot %d because physical PIN presence changed after planning",
+}
 
 
 def _to_utc(value: datetime) -> datetime:
-    """Normalize a datetime to UTC for timezone-safe comparison.
-
-    Aware datetimes are converted via ``dt.as_utc``.  Naive datetimes
-    (missing ``tzinfo`` or returning ``None`` from ``utcoffset()``)
-    are assumed to represent Home Assistant's configured local timezone
-    before conversion.
-
-    ``dt.as_utc`` is intentionally **not** used for naive values because
-    it treats them as already-UTC, whereas values arriving here without
-    timezone info (e.g. from ``dt.parse_datetime`` on a tz-less string)
-    are more likely to be in the user's configured local timezone.
-    """
+    """Normalize a datetime to UTC for timezone-safe comparison."""
     if value.tzinfo is None or value.utcoffset() is None:
-        local: datetime = dt.as_local(value)
-        result: datetime = dt.as_utc(local)
-        return result
-    utc: datetime = dt.as_utc(value)
-    return utc
+        local: datetime = cast(datetime, dt.as_local(value))
+        return cast(datetime, dt.as_utc(local))
+    return cast(datetime, dt.as_utc(value))
 
 
 def _states_match(expected: str, actual: str) -> bool:
     """Compare raw HA state strings, normalizing datetimes when possible."""
     if expected == actual:
         return True
-
     expected_dt = dt.parse_datetime(expected)
     actual_dt = dt.parse_datetime(actual)
-    if expected_dt is not None and actual_dt is not None:
-        return _to_utc(expected_dt) == _to_utc(actual_dt)
-    return False
+    return (
+        expected_dt is not None
+        and actual_dt is not None
+        and _to_utc(expected_dt) == _to_utc(actual_dt)
+    )
 
 
 def _strip_prefix(slot_name: str, prefix: str) -> str:
-    """Remove a leading prefix and space from slot_name.
-
-    Uses ``str.removeprefix`` for deterministic matching that is safe
-    regardless of regex metacharacters in *prefix*.
-    """
-    candidate = prefix + " "
-    if slot_name.startswith(candidate):
-        return slot_name[len(candidate) :]
-    return slot_name
+    """Remove a leading prefix and space from ``slot_name``."""
+    return strip_prefix(slot_name, prefix)
 
 
 def _is_trimmed_match(name_a: str, name_b: str, guest_max: int) -> bool:
-    """Check if *name_a* and *name_b* are related by trim_name.
-
-    Returns True when trimming the longer name to *guest_max*
-    produces the shorter name, covering both word-boundary and
-    hard-truncated single-word cases.
-    """
-    if name_a == name_b or guest_max <= 0:
-        return False
-    shorter, longer = sorted((name_a, name_b), key=len)
-    return trim_name(longer, guest_max) == shorter
+    """Return whether one name is the trimmed form of the other."""
+    return is_trimmed_match(name_a, name_b, guest_max)
 
 
 class ReserveResult(NamedTuple):
@@ -135,14 +104,10 @@ class _SlotEvent:
     """Minimal event adapter for util slot-operation helpers."""
 
     def __init__(
-        self,
-        slot_name: str,
-        slot_code: str,
-        start: datetime,
-        end: datetime,
+        self, slot_name: str, slot_code: str, start: datetime, end: datetime
     ) -> None:
         """Populate the attributes expected by util service helpers."""
-        self.extra_state_attributes: dict[str, Any] = {
+        self.extra_state_attributes = {
             "slot_name": slot_name,
             "slot_code": slot_code,
             "start": start,
@@ -153,90 +118,132 @@ class _SlotEvent:
 class EventOverrides:
     """Event Overrides object and methods."""
 
+    _logger, _reserve_result = _LOGGER, ReserveResult
+    _operation_result_type, _preflight_warnings = OperationResult, _PREFLIGHT_WARNINGS
+    _states_match = staticmethod(_states_match)
+    _shell_to_utc = staticmethod(_to_utc)
+    _today_date = staticmethod(lambda: dt.start_of_local_day().date())
+    _module, _slot_event_cls = sys.modules[__name__], _SlotEvent
+    _reservation_request_type = SlotReservationRequest
+    _update_request_type = SlotUpdateRequest
+    suppress_state_changes = _shell_compat.suppress_state_changes
+    should_suppress_state_change = _shell_compat.should_suppress_state_change
+    get_last_slot_error = _shell_compat.get_last_slot_error
+    _record_slot_error = _shell_compat._record_slot_error
+    _clear_slot_error = _shell_compat._clear_slot_error
+    update_diagnostics_snapshot = _shell_compat.update_diagnostics_snapshot
+    load_persisted_mappings = _shell_compat.load_persisted_mappings
+    update_actual_state = _shell_compat.update_actual_state
+    get_actual_state = _shell_compat.get_actual_state
+    release_pending_clear_slot = _shell_compat.release_pending_clear_slot
+    _assign_next_slot = _shell_compat._assign_next_slot
+    __assign_next_slot = _shell_compat._assign_next_slot
+    _get_slots_with_values = _shell_compat._get_slots_with_values
+    __get_slots_with_values = _shell_compat._get_slots_with_values
+    _get_slots_without_values = _shell_compat._get_slots_without_values
+    __get_slots_without_values = _shell_compat._get_slots_without_values
+    _match_catalog = _shell_slots._match_catalog
+    _override_dict = _shell_compat._override_dict
+    _restore_slot_name = _shell_compat._restore_slot_name
+    _clear_assignment = _shell_compat._clear_assignment
+    _find_overlapping_slot = _shell_compat._find_overlapping_slot
+    async_reserve_or_get_slot = _shell_compat.async_reserve_or_get_slot
+    async_update = _shell_compat.async_update
+    verify_slot_ownership = _shell_compat.verify_slot_ownership
+    record_retry_failure = _shell_compat.record_retry_failure
+    record_retry_success = _shell_compat.record_retry_success
+    _slot_confirmed_empty = _shell_compat._slot_confirmed_empty
+    _fresh_slot_text_states = _shell_compat._fresh_slot_text_states
+    _preflight_clear_result = _shell_compat._preflight_clear_result
+    _slot_has_matching_event = _shell_slots._slot_has_matching_event
+    _event_has_other_uid_owner = _shell_slots._event_has_other_uid_owner
+    _slot_has_other_uid_owner = _shell_slots._slot_has_other_uid_owner
+    _get_same_start_uid_bypass_slot = _shell_slots._get_same_start_uid_bypass_slot
+    get_slot_name = _shell_slots.get_slot_name
+    get_slot_with_name = _shell_slots.get_slot_with_name
+    get_slot_key_by_name = _shell_slots.get_slot_key_by_name
+    get_slot_start_date = _shell_slots.get_slot_start_date
+    get_slot_start_time = _shell_slots.get_slot_start_time
+    get_slot_end_date = _shell_slots.get_slot_end_date
+    get_slot_end_time = _shell_slots.get_slot_end_time
+    async_apply_plan = _shell_apply.async_apply_plan
+    _apply_clear = _shell_apply._apply_clear
+    _apply_set = _shell_apply._apply_set
+    _apply_update_times = _shell_apply._apply_update_times
+    _apply_overwrite_manual_change = _shell_apply._apply_overwrite_manual_change
+    async_check_overrides = _shell_cleanup.async_check_overrides
+    update = _shell_slots.update
+
     def __init__(self, start_slot: int, max_slots: int) -> None:
         """Setup the overrides object."""
-
         self._escalated: dict[int, bool] = {}
-        self._lock: asyncio.Lock = asyncio.Lock()
-        self._max_slots: int = max_slots
+        self._lock = asyncio.Lock()
+        self._max_slots = max_slots
         self._next_slot: int | None = None
         self._overrides: dict[int, EventOverride | None] = {}
-        self._ready: bool = False
+        self._ready = False
         self._retry_counts: dict[int, int] = {}
         self._slot_miss_counts: dict[int, int] = {}
         self._slot_uids: dict[int, str | None] = {}
-        self._start_slot: int = start_slot
-        self._trim_names: bool = False
-        self._max_name_length: int = 0
-        self._event_prefix: str = ""
-        self._prefix_length: int = 0
-
-        # Store-backed fields (T018)
+        self._start_slot = start_slot
+        (
+            self._trim_names,
+            self._max_name_length,
+            self._event_prefix,
+            self._prefix_length,
+        ) = False, 0, "", 0
         self._persisted_mappings: dict[str, dict[str, Any]] = {}
         self._pending_clear_slots: dict[int, str] = {}
         self._pending_fences: dict[int, str] = {}
         self._actual_state_cache: dict[int, dict[str, Any]] = {}
-        self._reconciliation_active: bool = False
-
-        # Per-slot error tracking for diagnostics (T096)
+        self._reconciliation_active = False
         self._last_slot_errors: dict[int, str] = {}
-        # Coordinator-originated state feedback awaiting callback suppression
         self._suppressed_state_changes: dict[int, dict[str, tuple[str, float]]] = {}
-        # Latest diagnostics snapshot for HA diagnostics collection (T096)
         self._diagnostics_snapshot: dict[str, Any] = {}
 
     @property
     def max_slots(self) -> int:
-        """Return the max_slots known."""
+        """Return the configured slot count."""
         return self._max_slots
 
     @property
     def next_slot(self) -> int | None:
-        """Return the next available slot index for the greedy path.
-
-        .. deprecated::
-            This property is part of the retired greedy slot-assignment path.
-            The reconciliation coordinator (``compute_desired_plan`` /
-            ``async_apply_plan``) owns slot selection and does not consult
-            ``_next_slot``.  The property is retained as a backward-compatible
-            shim for tests that exercise :meth:`async_reserve_or_get_slot`
-            directly; production code must not read it.
-        """
+        """Return the next available greedy slot."""
         return self._next_slot
 
     @property
     def overrides(self) -> dict[int, EventOverride | None]:
-        """Return the overrides."""
+        """Return the override mapping."""
         return self._overrides
 
     @property
     def ready(self) -> bool:
-        """Return if the overrides are ready."""
+        """Return whether the override mapping is fully populated."""
         return self._ready
 
     @property
     def start_slot(self) -> int:
-        """Return the start_slot."""
+        """Return the first managed slot."""
         return self._start_slot
 
     @property
     def trim_names(self) -> bool:
-        """Return whether name trimming is enabled."""
+        """Return whether trimmed-name matching is enabled."""
         return self._trim_names
 
     @trim_names.setter
     def trim_names(self, value: bool) -> None:
-        """Set whether name trimming is enabled."""
+        """Set whether trimmed-name matching is enabled."""
         self._trim_names = value
 
     @property
     def max_name_length(self) -> int:
-        """Return the configured max name length."""
+        """Return the configured maximum slot-name length."""
         return self._max_name_length
 
     @max_name_length.setter
     def max_name_length(self, value: int) -> None:
-        """Set the configured max name length."""
+        """Set the configured maximum slot-name length."""
         self._max_name_length = value
 
     @property
@@ -247,1618 +254,23 @@ class EventOverrides:
     @event_prefix.setter
     def event_prefix(self, value: str | None) -> None:
         """Set the configured event prefix."""
-        self._event_prefix = value or ""
-        prefix = f"{self._event_prefix} " if self._event_prefix else ""
-        self._prefix_length = len(prefix)
+        self._event_prefix, self._prefix_length = (
+            value or "",
+            len(f"{value or ''} ") if value else 0,
+        )
 
     @property
     def prefix_length(self) -> int:
-        """Return the event prefix length including separator."""
+        """Return the prefix length including its separator."""
         return self._prefix_length
 
     @prefix_length.setter
     def prefix_length(self, value: int) -> None:
-        """Set the event prefix length including separator."""
+        """Set the cached prefix length."""
         self._prefix_length = value
 
-    @property
-    def persisted_mappings(self) -> dict[str, dict[str, Any]]:
-        """Return a read-only copy of the persisted slot mappings."""
-        return dict(self._persisted_mappings)
-
-    @property
-    def pending_clear_slots(self) -> dict[int, str]:
-        """Return a read-only copy of the pending-clear slot map."""
-        return dict(self._pending_clear_slots)
-
-    @property
-    def pending_fences(self) -> dict[int, str]:
-        """Return a read-only copy of pending operation fences."""
-        return dict(self._pending_fences)
-
-    @property
-    def reconciliation_active(self) -> bool:
-        """True while async_apply_plan is executing."""
-        return self._reconciliation_active
-
-    def suppress_state_changes(self, slot: int, changes: dict[str, Any]) -> None:
-        """Mark coordinator-originated state changes to ignore in callbacks."""
-        now = monotonic()
-        pending = self._suppressed_state_changes.setdefault(slot, {})
-        for entity_id, value in changes.items():
-            pending[entity_id] = (str(value), now)
-
-    def should_suppress_state_change(
-        self, slot: int, entity_id: str, state: str
-    ) -> bool:
-        """Return True when a callback is feedback from our own service call."""
-        pending = self._suppressed_state_changes.get(slot)
-        if not pending:
-            return False
-
-        now = monotonic()
-        for pending_entity_id, (_, created) in list(pending.items()):
-            if now - created > SUPPRESSED_STATE_CHANGE_TTL:
-                pending.pop(pending_entity_id, None)
-
-        expected = pending.get(entity_id)
-        if expected is None:
-            if not pending:
-                self._suppressed_state_changes.pop(slot, None)
-            return False
-
-        expected_state, _ = expected
-        if _states_match(expected_state, state):
-            pending.pop(entity_id, None)
-            if not pending:
-                self._suppressed_state_changes.pop(slot, None)
-            return True
-        return False
-
-    @property
-    def diagnostics_snapshot(self) -> dict[str, Any]:
-        """Return the latest diagnostics snapshot for HA diagnostics collection.
-
-        The snapshot is built after each :meth:`async_apply_plan` call and
-        captures matched slots, pending corrections, blocked clear reasons,
-        retry counts, and last errors.  Raw slot codes are never included.
-
-        Returns:
-            A shallow copy of the current diagnostics snapshot dict, or an
-            empty dict if no plan has been applied yet.
-        """
-        return dict(self._diagnostics_snapshot)
-
-    def get_last_slot_error(self, slot: int) -> str | None:
-        """Return the last error string for *slot*, or ``None`` if no error.
-
-        Args:
-            slot: Keymaster slot number.
-
-        Returns:
-            The last recorded error string for the slot, or ``None``.
-        """
-        return self._last_slot_errors.get(slot)
-
-    def _record_slot_error(self, slot: int, error: str) -> None:
-        """Record a failed operation error for *slot*.
-
-        Args:
-            slot: Keymaster slot number.
-            error: Human-readable error description.
-        """
-        self._last_slot_errors[slot] = error
-
-    def _clear_slot_error(self, slot: int) -> None:
-        """Clear the recorded error for *slot* on a successful operation.
-
-        Args:
-            slot: Keymaster slot number.
-        """
-        self._last_slot_errors.pop(slot, None)
-
-    def update_diagnostics_snapshot(self, plan: "DesiredPlan") -> None:
-        """Build and store a diagnostics snapshot from the completed plan.
-
-        Called after :meth:`async_apply_plan` completes.  Captures matched
-        slots (those with desired assignments), pending corrections (slots
-        with ``retry_clear`` or ``blocked`` actions), manual drift slots
-        (those with ``overwrite_manual_change`` actions), blocked clear
-        reasons, per-slot retry counts, and last errors.  Raw slot codes
-        are never included.
-
-        Args:
-            plan: The :class:`~.reconciliation.DesiredPlan` that was just applied.
-        """
-        matched: dict[int, dict[str, Any]] = {}
-        pending_corrections: dict[int, dict[str, Any]] = {}
-        manual_drift_slots: dict[int, dict[str, Any]] = {}
-
-        for slot_num, ps in plan.slots.items():
-            if ps.desired_identity_key is not None:
-                matched[slot_num] = {
-                    "identity_key": ps.desired_identity_key,
-                    "action": ps.action.value,
-                }
-            if ps.action.value in (
-                ActionKind.RETRY_CLEAR.value,
-                ActionKind.BLOCKED.value,
-            ):
-                pending_corrections[slot_num] = {
-                    "action": ps.action.value,
-                    "blocked_reason": ps.pending_reason,
-                    "retry_count": ps.retry_count,
-                }
-            if ps.action is ActionKind.OVERWRITE_MANUAL_CHANGE:
-                drift_fields: list[str] = []
-                if ps.pending_reason and ps.pending_reason.startswith(
-                    "drifted fields: "
-                ):
-                    drift_fields = [
-                        f.strip()
-                        for f in ps.pending_reason[len("drifted fields: ") :].split(",")
-                        if f.strip()
-                    ]
-                manual_drift_slots[slot_num] = {
-                    "action": ps.action.value,
-                    "identity_key": ps.desired_identity_key,
-                    "drift_fields": drift_fields,
-                }
-
-        self._diagnostics_snapshot = {
-            "plan_id": plan.plan_id,
-            "generated_at": plan.generated_at.isoformat(),
-            "matched_slots": matched,
-            "pending_corrections": pending_corrections,
-            "manual_drift_slots": manual_drift_slots,
-            "pending_clear_slots": sorted(self._pending_clear_slots.keys()),
-            "slot_retry_counts": {
-                slot: self._retry_counts.get(slot, 0)
-                for slot in range(self._start_slot, self._start_slot + self._max_slots)
-            },
-            "last_slot_errors": dict(self._last_slot_errors),
-        }
-
-    def load_persisted_mappings(self, mappings: dict[str, dict[str, Any]]) -> None:
-        """Load cache-only mappings without creating assignment fences."""
-        self._persisted_mappings = {k: dict(v) for k, v in mappings.items()}
-
-    def update_actual_state(self, slot: int, state: dict[str, Any]) -> None:
-        """Store the observed Keymaster state snapshot for a slot.
-
-        Args:
-            slot: Keymaster slot number.
-            state: Dict capturing the observed entity states for the slot.
-        """
-        self._actual_state_cache[slot] = state
-
-    def get_actual_state(self, slot: int) -> dict[str, Any] | None:
-        """Return the cached actual state for a slot, or None.
-
-        Args:
-            slot: Keymaster slot number.
-
-        Returns:
-            The cached state dict, or ``None`` if not yet observed.
-        """
-        return self._actual_state_cache.get(slot)
-
-    @staticmethod
-    def _slot_confirmed_empty(coordinator: Any, slot: int) -> bool:
-        """Return whether a fresh Keymaster read shows blank name and PIN."""
-        lockname = getattr(coordinator, "lockname", None)
-        hass = getattr(coordinator, "hass", None)
-        if not lockname or hass is None:
-            return False
-        name_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_name")
-        pin_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_pin")
-        if name_state is None or pin_state is None:
-            return False
-        return is_cleared_keymaster_text_state(
-            name_state.state
-        ) and is_cleared_keymaster_text_state(pin_state.state)
-
-    @staticmethod
-    def _fresh_slot_text_states(coordinator: Any, slot: int) -> tuple[Any, Any] | None:
-        """Return a fresh physical Keymaster name/PIN read for *slot*."""
-        lockname = getattr(coordinator, "lockname", None)
-        hass = getattr(coordinator, "hass", None)
-        if not lockname or hass is None:
-            return None
-        name_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_name")
-        pin_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_pin")
-        if name_state is None or pin_state is None:
-            return None
-        return name_state.state, pin_state.state
-
-    def _preflight_clear_result(
-        self,
-        coordinator: Any,
-        slot: int,
-        expected_name: str | None,
-    ) -> OperationResult | None:
-        """Abort stale clear actions when the physical slot changed after plan."""
-        fresh = self._fresh_slot_text_states(coordinator, slot)
-        if fresh is None:
-            _LOGGER.warning(
-                "Skipping clear for slot %d because a fresh Keymaster read failed",
-                slot,
-            )
-            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
-
-        fresh_name, fresh_pin = fresh
-        if not isinstance(fresh_name, (str, type(None))) or not isinstance(
-            fresh_pin, (str, type(None))
-        ):
-            _LOGGER.debug(
-                "Skipping clear preflight for slot %d because Keymaster text "
-                "states are not concrete strings",
-                slot,
-            )
-            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
-
-        if is_unreadable_keymaster_text_state(
-            fresh_name
-        ) or is_unreadable_keymaster_text_state(fresh_pin):
-            _LOGGER.warning(
-                "Skipping clear for slot %d because a fresh Keymaster read is unreadable",
-                slot,
-            )
-            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
-
-        fresh_empty = is_cleared_keymaster_text_state(
-            fresh_name
-        ) and is_cleared_keymaster_text_state(fresh_pin)
-        if fresh_empty:
-            self.release_pending_clear_slot(slot)
-            return OperationResult(kind="clear", slot=slot, confirmed=True)
-
-        actual = self._actual_state_cache.get(slot) or {}
-        planned_name = (
-            actual.get("name_state") if "name_state" in actual else expected_name
-        )
-        planned_has_code = actual.get("has_code")
-        fresh_name_text = "" if fresh_name is None else str(fresh_name)
-        fresh_has_code = not is_cleared_keymaster_text_state(fresh_pin)
-
-        if planned_name:
-            if not _states_match(str(planned_name), fresh_name_text):
-                _LOGGER.warning(
-                    "Skipping clear for slot %d because physical name changed "
-                    "after planning",
-                    slot,
-                )
-                return OperationResult(kind="clear", slot=slot, unconfirmed=True)
-        elif not is_cleared_keymaster_text_state(fresh_name):
-            _LOGGER.warning(
-                "Skipping clear for slot %d because physical name appeared "
-                "after planning",
-                slot,
-            )
-            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
-
-        if isinstance(planned_has_code, bool) and planned_has_code != fresh_has_code:
-            _LOGGER.warning(
-                "Skipping clear for slot %d because physical PIN presence changed "
-                "after planning",
-                slot,
-            )
-            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
-
-        return None
-
-    def release_pending_clear_slot(self, slot: int) -> None:
-        """Release a pending-clear fence after observing an empty slot.
-
-        Coordinator observations are the authoritative physical state for
-        persisted clear fences.  When both Keymaster name and PIN are
-        observed empty, stale pending-clear bookkeeping must not continue
-        to block future assignments.
-        """
-        self._pending_clear_slots.pop(slot, None)
-        self._pending_fences.pop(slot, None)
-        self._overrides[slot] = None
-        self._slot_uids.pop(slot, None)
-        self._slot_miss_counts.pop(slot, None)
-        self._clear_slot_error(slot)
-
-    def __assign_next_slot(self) -> None:
-        """Recompute ``_next_slot`` for the deprecated greedy path.
-
-        Called only from the greedy-path methods (:meth:`update`,
-        :meth:`async_update`, :meth:`async_reserve_or_get_slot`,
-        :meth:`async_check_overrides`) so that :attr:`next_slot` stays
-        accurate for callers that still use the legacy API.
-
-        Reconciliation methods (:meth:`_apply_clear`, :meth:`_apply_set`,
-        :meth:`_apply_overwrite_manual_change`) do *not* call this helper;
-        slot selection in the reconciliation path is determined by
-        ``compute_desired_plan``, not by ``_next_slot``.
-
-        .. deprecated::
-            Do not call from new code.  Will be removed when the greedy
-            path shims are retired.
-        """
-
-        _LOGGER.debug("In EventOverrides.assign_next_slot")
-
-        if len(self._overrides) != self.max_slots:
-            _LOGGER.debug("System starting up")
-            return
-
-        slots_with_values = self.__get_slots_with_values()
-        if len(slots_with_values) == self.max_slots:
-            _LOGGER.debug("Overrides at max")
-            self._next_slot = None
-            return
-
-        if len(slots_with_values):
-            max_slot = slots_with_values[-1]
-        else:
-            max_slot = self.start_slot - 1
-
-        avail_slots = self.__get_slots_without_values(max_slot)
-        if len(avail_slots):
-            _LOGGER.debug("Next slot is %s", avail_slots[0])
-            self._next_slot = avail_slots[0]
-            return
-
-        # Slots greater than our current max don't work, so find the first free
-        # slot
-        avail_slots = self.__get_slots_without_values()
-
-        if len(avail_slots):
-            _LOGGER.debug("Next slot is %s", avail_slots[0])
-            self._next_slot = avail_slots[0]
-            return
-
-        # We should never hit this directly, but if we do, set our next to None
-        self._next_slot = None
-
-    def __get_slots_with_values(self) -> list[int]:
-        """Get a sorted list of the keys that have values."""
-        return sorted(
-            k for k in self._overrides.keys() if self._overrides[k] is not None
-        )
-
-    def __get_slots_without_values(self, max_slot: int = 0) -> list[int]:
-        """
-        Get the sorted list of the keys that have no value greater than
-        max_slot.
-        """
-        return sorted(
-            k
-            for k in self._overrides.keys()
-            if self._overrides[k] is None and k > max_slot
-        )
-
-    def _find_overlapping_slot(
-        self,
-        slot_name: str,
-        start_time: datetime,
-        end_time: datetime,
-        uid: str | None = None,
-        exclude_slot: int | None = None,
-    ) -> int | None:
-        """Find existing slot matching by UID or overlapping time range.
-
-        Uses a three-phase search:
-
-        Phase 1 — UID positive match.  When both the incoming event and
-        a stored slot carry a non-None UID that is equal, the slot is
-        returned immediately (provided the name also matches).  This
-        ensures that a reservation whose dates shifted beyond the
-        original overlap window is still recognised as the same booking.
-
-        Phase 2 — Strict interval overlap with a UID-aware same-start
-        bypass. ``start_a < end_b AND start_b < end_a``. If both UIDs
-        are non-None and differ, different start times are rejected but
-        same-start candidates are reconsidered as possible date-change
-        updates. When multiple same-start candidates exist, the best
-        matching slot is chosen and any exact UID owner still wins.
-
-        Phase 3 — Trim-aware fallback for trimmed names.  After a
-        Home Assistant restart the override may contain a trimmed
-        display name read back from Keymaster.  If the incoming
-        *slot_name* is the trimmed form of the stored name (or
-        vice-versa) the slot is returned.  Uses the actual
-        ``trim_name`` function so both word-boundary and
-        hard-truncated single-word cases are handled correctly.
-        Phase 3a checks UID-positive matches without requiring
-        time overlap (mirroring Phase 1).  Phase 3b checks
-        overlap-based matches (mirroring Phase 2).
-
-        When *exclude_slot* is set that slot number is skipped entirely,
-        allowing ``async_update`` to avoid matching the slot it is about
-        to write to.
-        """
-        uid = normalize_uid(uid)
-
-        if uid is not None:
-            for slot in self.__get_slots_with_values():
-                if slot == exclude_slot:
-                    continue
-                stored_uid = normalize_uid(self._slot_uids.get(slot))
-                if stored_uid is not None and stored_uid == uid:
-                    override = self._overrides[slot]
-                    if override is not None and override["slot_name"] == slot_name:
-                        return slot
-
-        start_utc = _to_utc(start_time)
-        end_utc = _to_utc(end_time)
-        preferred_same_start_slot: int | None = None
-        if uid is not None:
-            preferred_same_start_slot = self._get_same_start_uid_bypass_slot(
-                EventIdentity(slot_name, start_time, end_time, uid),
-                exclude_slot=exclude_slot,
-            )
-        for slot in self.__get_slots_with_values():
-            if slot == exclude_slot:
-                continue
-            override = self._overrides[slot]
-            if override is None:
-                continue
-            if override["slot_name"] != slot_name:
-                continue
-            if not (
-                start_utc < _to_utc(override["end_time"])
-                and _to_utc(override["start_time"]) < end_utc
-            ):
-                continue
-            stored_uid = normalize_uid(self._slot_uids.get(slot))
-            if uid is not None:
-                if stored_uid is None:
-                    if self._slot_has_other_uid_owner(
-                        slot_name, uid, exclude_slot=slot
-                    ):
-                        continue
-                    if (
-                        preferred_same_start_slot is not None
-                        and preferred_same_start_slot != slot
-                    ):
-                        continue
-                elif uid != stored_uid:
-                    # Same-start bypass: if start times match, this is likely
-                    # the same reservation with a regenerated UID (date
-                    # extension/shortening) rather than a different booking.
-                    if _to_utc(start_time) != _to_utc(override["start_time"]):
-                        continue
-                    if self._slot_has_other_uid_owner(
-                        slot_name, uid, exclude_slot=slot
-                    ):
-                        continue
-                    if preferred_same_start_slot != slot:
-                        continue
-            return slot
-
-        if self._trim_names:
-            guest_max = self._max_name_length - self._prefix_length
-
-            # Phase 3a: UID-positive trim match (no overlap required),
-            # mirrors Phase 1 but tolerates trimmed names.
-            if uid is not None:
-                for slot in self.__get_slots_with_values():
-                    if slot == exclude_slot:
-                        continue
-                    stored_uid = normalize_uid(self._slot_uids.get(slot))
-                    if stored_uid is None or stored_uid != uid:
-                        continue
-                    override = self._overrides[slot]
-                    if override is None:
-                        continue
-                    stored = override["slot_name"]
-                    if stored == slot_name:
-                        continue  # already matched in Phase 1
-                    if not _is_trimmed_match(stored, slot_name, guest_max):
-                        continue
-                    if len(slot_name) > len(stored):
-                        override["slot_name"] = slot_name
-                    return slot
-
-            # Phase 3b: trim match with overlap (no UID required).
-            for slot in self.__get_slots_with_values():
-                if slot == exclude_slot:
-                    continue
-                override = self._overrides[slot]
-                if override is None:
-                    continue
-                stored = override["slot_name"]
-                if stored == slot_name:
-                    continue  # already checked in Phase 2
-                if not _is_trimmed_match(stored, slot_name, guest_max):
-                    continue
-                if not (
-                    start_utc < _to_utc(override["end_time"])
-                    and _to_utc(override["start_time"]) < end_utc
-                ):
-                    continue
-                stored_uid = normalize_uid(self._slot_uids.get(slot))
-                if uid is not None:
-                    if stored_uid is None:
-                        if self._slot_has_other_uid_owner(
-                            slot_name, uid, exclude_slot=slot
-                        ):
-                            continue
-                        if (
-                            preferred_same_start_slot is not None
-                            and preferred_same_start_slot != slot
-                        ):
-                            continue
-                    elif uid != stored_uid:
-                        if _to_utc(start_time) != _to_utc(override["start_time"]):
-                            continue
-                        if self._slot_has_other_uid_owner(
-                            slot_name, uid, exclude_slot=slot
-                        ):
-                            continue
-                        if preferred_same_start_slot != slot:
-                            continue
-                if len(slot_name) > len(stored):
-                    override["slot_name"] = slot_name
-                return slot
-
-        return None
-
-    async def async_reserve_or_get_slot(
-        self,
-        slot_name: str,
-        slot_code: str,
-        start_time: datetime,
-        end_time: datetime,
-        uid: str | None = None,
-        prefix: str | None = None,
-    ) -> ReserveResult:
-        """Atomically find existing slot or reserve next available (greedy path).
-
-        All work is performed under ``_lock`` so concurrent callers
-        are serialised.
-
-        .. deprecated::
-            This method is the retired greedy slot-assignment path.  The
-            reconciliation coordinator (``compute_desired_plan`` /
-            ``async_apply_plan``) is now the sole authority for slot
-            assignments and does not call this method.  The method is
-            retained as a backward-compatible shim for tests that exercise
-            the greedy path directly; it must not be called from production
-            coordinator or sensor code.
-        """
-        async with self._lock:
-            if prefix is None:
-                prefix = ""
-            if slot_name and prefix:
-                slot_name = _strip_prefix(slot_name, prefix)
-
-            existing = self._find_overlapping_slot(slot_name, start_time, end_time, uid)
-            if existing is not None:
-                self._slot_miss_counts.pop(existing, None)
-                if uid is not None:
-                    self._slot_uids[existing] = normalize_uid(uid)
-                override = self._overrides[existing]
-                start_utc = _to_utc(start_time)
-                end_utc = _to_utc(end_time)
-                if override is not None and (
-                    _to_utc(override["start_time"]) != start_utc
-                    or _to_utc(override["end_time"]) != end_utc
-                ):
-                    override["start_time"] = start_time
-                    override["end_time"] = end_time
-                    return ReserveResult(existing, False, True)
-                return ReserveResult(existing, False, False)
-
-            if self._next_slot is not None:
-                new_slot = self._next_slot
-                new_override: EventOverride = {
-                    "slot_name": slot_name,
-                    "slot_code": slot_code,
-                    "start_time": start_time,
-                    "end_time": end_time,
-                }
-                self._overrides[new_slot] = new_override
-                self._slot_miss_counts.pop(new_slot, None)
-                if uid is not None:
-                    self._slot_uids[new_slot] = normalize_uid(uid)
-                self.__assign_next_slot()
-                return ReserveResult(new_slot, True, False)
-
-            _LOGGER.warning(
-                "All %d override slots are occupied; "
-                "reservation '%s' could not be assigned a slot",
-                self._max_slots,
-                slot_name,
-            )
-            return ReserveResult(None, False, False)
-
-    async def async_update(
-        self,
-        slot: int,
-        slot_code: str,
-        slot_name: str,
-        start_time: datetime,
-        end_time: datetime,
-        prefix: str | None = None,
-    ) -> None:
-        """Update slot with dedup enforcement (FR-004).
-
-        All work is performed under ``_lock`` so concurrent callers
-        are serialised.
-        """
-        async with self._lock:
-            if prefix is None:
-                prefix = ""
-            if slot_name:
-                if prefix:
-                    slot_name = _strip_prefix(slot_name, prefix)
-
-                dup = self._find_overlapping_slot(
-                    slot_name,
-                    start_time,
-                    end_time,
-                    exclude_slot=slot,
-                )
-                if dup is not None:
-                    _LOGGER.warning(
-                        "Duplicate slot_name '%s' detected in slot %d "
-                        "while writing slot %d; redirecting write",
-                        slot_name,
-                        dup,
-                        slot,
-                    )
-                    slot = dup
-
-                override: EventOverride = {
-                    "slot_name": slot_name,
-                    "slot_code": slot_code,
-                    "start_time": start_time,
-                    "end_time": end_time,
-                }
-                self._overrides[slot] = override
-                self._slot_miss_counts.pop(slot, None)
-            else:
-                self._overrides[slot] = None
-                self._slot_uids.pop(slot, None)
-                self._slot_miss_counts.pop(slot, None)
-
-            self.__assign_next_slot()
-            if len(self._overrides) == self.max_slots:
-                self._ready = True
-
-    def verify_slot_ownership(self, slot: int, expected_name: str) -> bool:
-        """Check if slot is still assigned to expected_name.
-
-        Read-only check — does not acquire the lock.
-        """
-        override = self._overrides.get(slot)
-        if override is None:
-            return False
-
-        stored_name = override["slot_name"]
-        if stored_name == expected_name:
-            return True
-
-        if not self._trim_names or self._max_name_length <= 0:
-            return False
-
-        if self._event_prefix:
-            stored_name = _strip_prefix(stored_name, self._event_prefix)
-
-        if stored_name == expected_name:
-            return True
-
-        guest_max = self._max_name_length - self._prefix_length
-        return len(expected_name) > len(stored_name) and _is_trimmed_match(
-            stored_name,
-            expected_name,
-            guest_max,
-        )
-
-    def record_retry_failure(self, slot: int) -> bool:
-        """Record failed lock command.
-
-        Returns True if escalation threshold reached.
-        """
-        count = self._retry_counts.get(slot, 0) + 1
-        self._retry_counts[slot] = count
-        if count >= DEFAULT_MAX_RETRY_CYCLES and not self._escalated.get(slot, False):
-            self._escalated[slot] = True
-            return True
-        return False
-
-    def record_retry_success(self, slot: int) -> None:
-        """Reset failure tracking for slot."""
-        self._retry_counts[slot] = 0
-        self._escalated[slot] = False
-
-    async def async_apply_plan(
-        self,
-        coordinator: Any,
-        plan: DesiredPlan,
-        res_by_key: dict[str, Reservation],
-    ) -> list[OperationResult]:
-        """Apply a desired plan by executing slot actions."""
-        async with self._lock:
-            self._reconciliation_active = True
-
-        results: list[OperationResult] = []
-        try:
-            for action in plan.actions:
-                if action.kind in {ActionKind.NOOP, ActionKind.BLOCKED}:
-                    continue
-
-                slot = action.slot
-                identity_key = action.identity_key
-
-                if action.kind in {
-                    ActionKind.CLEAR,
-                    ActionKind.RETRY_CLEAR,
-                    ActionKind.RESET,
-                }:
-                    _clear_reason = action.reason
-                    clear_warning = None
-                    if _clear_reason is not None:
-                        clear_warning = {
-                            "duplicate_non_canonical": (
-                                "Duplicate collapse: clearing non-canonical slot %d "
-                                "(duplicate actual assignment)"
-                            ),
-                            "phantom": (
-                                "Phantom recovery: clearing slot %d "
-                                "(name-only state, no usable PIN)"
-                            ),
-                            "stale": (
-                                "Stale correction: clearing slot %d "
-                                "(expired or absent reservation)"
-                            ),
-                            "mis_assigned": (
-                                "Mis-assignment correction: clearing slot %d "
-                                "(wrong reservation in slot)"
-                            ),
-                        }.get(_clear_reason)
-                    if clear_warning is not None:
-                        _LOGGER.warning(
-                            clear_warning,
-                            slot,
-                        )
-                    result = await self._apply_clear(
-                        coordinator, slot, preflight_read=action.preflight_read
-                    )
-                elif action.kind in {ActionKind.SET, ActionKind.ASSIGN}:
-                    res = res_by_key.get(identity_key) if identity_key else None
-                    if res is None:
-                        _LOGGER.warning(
-                            "SET action for slot %d has no reservation; skipping", slot
-                        )
-                        continue
-                    result = await self._apply_set(coordinator, slot, res, plan.plan_id)
-                elif action.kind is ActionKind.UPDATE_TIMES:
-                    res = res_by_key.get(identity_key) if identity_key else None
-                    if res is None:
-                        _LOGGER.warning(
-                            "UPDATE_TIMES action for slot %d has no reservation; "
-                            "skipping",
-                            slot,
-                        )
-                        continue
-                    result = await self._apply_update_times(coordinator, slot, res)
-                elif action.kind in {
-                    ActionKind.OVERWRITE_MANUAL_CHANGE,
-                    ActionKind.UPDATE_IN_PLACE,
-                }:
-                    res = res_by_key.get(identity_key) if identity_key else None
-                    if res is None:
-                        _LOGGER.warning(
-                            "OVERWRITE_MANUAL_CHANGE action for slot %d has no "
-                            "reservation; skipping",
-                            slot,
-                        )
-                        continue
-                    result = await self._apply_overwrite_manual_change(
-                        coordinator, slot, res, action
-                    )
-                else:
-                    continue
-
-                results.append(result)
-        finally:
-            self.update_diagnostics_snapshot(plan)
-            async with self._lock:
-                self._reconciliation_active = False
-
-        return results
-
-    async def _apply_clear(
-        self,
-        coordinator: Any,
-        slot: int,
-        *,
-        preflight_read: bool = False,
-    ) -> OperationResult:
-        """Apply a CLEAR or RETRY_CLEAR action for one slot."""
-        operation_id = str(uuid.uuid4())
-        expected_name: str | None = None
-
-        async with self._lock:
-            self._pending_fences[slot] = operation_id
-            self._pending_clear_slots[slot] = operation_id
-            override = self._overrides.get(slot)
-            if override is not None:
-                expected_name = override.get("slot_name")
-
-        if preflight_read:
-            preflight_result = self._preflight_clear_result(
-                coordinator, slot, expected_name
-            )
-            if preflight_result is not None:
-                async with self._lock:
-                    self._pending_fences.pop(slot, None)
-                    self._pending_clear_slots.pop(slot, None)
-                return preflight_result
-
-        result = await async_fire_clear_code(
-            coordinator, slot, expected_name=expected_name
-        )
-
-        async with self._lock:
-            current_token = self._pending_fences.get(slot)
-            if current_token != operation_id:
-                _LOGGER.warning(
-                    "Stale clear token for slot %d "
-                    "(expected %s, got %s); discarding result",
-                    slot,
-                    operation_id,
-                    current_token,
-                )
-                return OperationResult(kind="clear", slot=slot, unconfirmed=True)
-
-            if result.confirmed:
-                _LOGGER.debug("Clear confirmed for slot %d; marking free", slot)
-                self._pending_fences.pop(slot, None)
-                self._pending_clear_slots.pop(slot, None)
-                self._overrides[slot] = None
-                self._slot_uids.pop(slot, None)
-                self._slot_miss_counts.pop(slot, None)
-                self._clear_slot_error(slot)
-                # NOTE: __assign_next_slot() is intentionally NOT called here.
-                # Slot selection in the reconciliation path is determined by
-                # compute_desired_plan(), not by the deprecated _next_slot field.
-            elif result.failed:
-                _LOGGER.warning(
-                    "Clear failed for slot %d (error: %s); slot remains pending-clear",
-                    slot,
-                    result.error,
-                )
-                self._record_slot_error(slot, result.error or "clear failed")
-            elif result.lingering_name or result.lingering_pin:
-                _LOGGER.warning(
-                    "Clear not fully confirmed for slot %d "
-                    "(lingering_name=%s, lingering_pin=%s); "
-                    "slot remains pending-clear",
-                    slot,
-                    result.lingering_name,
-                    result.lingering_pin,
-                )
-                self._record_slot_error(
-                    slot,
-                    f"lingering state after clear: "
-                    f"name={result.lingering_name} pin={result.lingering_pin}",
-                )
-            else:
-                _LOGGER.debug(
-                    "Clear unconfirmed for slot %d; slot remains pending-clear", slot
-                )
-
-        return result
-
-    async def _apply_set(
-        self,
-        coordinator: Any,
-        slot: int,
-        res: Reservation,
-        plan_id: str,
-    ) -> OperationResult:
-        """Apply a SET action for one slot."""
-        import hashlib as _hashlib
-
-        if not self._slot_confirmed_empty(coordinator, slot):
-            self._record_slot_error(slot, "slot not confirmed empty before set")
-            return OperationResult(
-                kind="set",
-                slot=slot,
-                unconfirmed=True,
-                error="slot not confirmed empty",
-            )
-
-        operation_id = (
-            f"{plan_id}-set-{slot}-"
-            f"{_hashlib.sha256(res.identity_key.encode()).hexdigest()[:8]}"
-        )
-
-        async with self._lock:
-            self._pending_fences[slot] = operation_id
-            self._overrides[slot] = {
-                "slot_name": res.slot_name,
-                "slot_code": res.slot_code,
-                "start_time": res.buffered_start,
-                "end_time": res.buffered_end,
-            }
-            self._slot_miss_counts.pop(slot, None)
-            self.suppress_state_changes(
-                slot,
-                {
-                    f"switch.{coordinator.lockname}_code_slot_"
-                    f"{slot}_use_date_range_limits": "on",
-                    f"text.{coordinator.lockname}_code_slot_{slot}_name": (
-                        res.display_slot_name
-                    ),
-                    f"text.{coordinator.lockname}_code_slot_{slot}_pin": res.slot_code,
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_start": res.buffered_start.isoformat(),
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_end": res.buffered_end.isoformat(),
-                },
-            )
-
-        event = _SlotEvent(
-            slot_name=res.slot_name,
-            slot_code=res.slot_code,
-            start=res.start,
-            end=res.end,
-        )
-        result = await async_fire_set_code(coordinator, event, slot)
-
-        async with self._lock:
-            current_token = self._pending_fences.get(slot)
-            if current_token != operation_id:
-                _LOGGER.warning("Stale set token for slot %d; discarding result", slot)
-                return OperationResult(kind="set", slot=slot, unconfirmed=True)
-
-            if result.confirmed:
-                _LOGGER.debug(
-                    "Set confirmed for slot %d for reservation %s",
-                    slot,
-                    res.identity_key,
-                )
-                self._pending_fences.pop(slot, None)
-                self._clear_slot_error(slot)
-                # NOTE: __assign_next_slot() is intentionally NOT called here.
-                # Slot selection in the reconciliation path is determined by
-                # compute_desired_plan(), not by the deprecated _next_slot field.
-            elif result.failed:
-                _LOGGER.warning(
-                    "Set failed for slot %d (error: %s); reverting pre-assignment",
-                    slot,
-                    result.error,
-                )
-                self._pending_fences.pop(slot, None)
-                self._overrides[slot] = None
-                self._slot_uids.pop(slot, None)
-                self._record_slot_error(slot, result.error or "set failed")
-                # NOTE: __assign_next_slot() is intentionally NOT called here.
-                # Slot selection in the reconciliation path is determined by
-                # compute_desired_plan(), not by the deprecated _next_slot field.
-            else:
-                _LOGGER.debug(
-                    "Set unconfirmed for slot %d; keeping tentative assignment", slot
-                )
-                self._pending_fences.pop(slot, None)
-
-        return result
-
-    async def _apply_update_times(
-        self,
-        coordinator: Any,
-        slot: int,
-        res: Reservation,
-    ) -> OperationResult:
-        """Apply an UPDATE_TIMES action for one slot."""
-        async with self._lock:
-            self.suppress_state_changes(
-                slot,
-                {
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_start": res.buffered_start.isoformat(),
-                    f"datetime.{coordinator.lockname}_code_slot_"
-                    f"{slot}_date_range_end": res.buffered_end.isoformat(),
-                },
-            )
-
-        event = _SlotEvent(
-            slot_name=res.slot_name,
-            slot_code=res.slot_code,
-            start=res.start,
-            end=res.end,
-        )
-        result = await async_fire_update_times(coordinator, event, slot)
-
-        if result.confirmed:
-            async with self._lock:
-                override = self._overrides.get(slot)
-                if override is not None:
-                    override["start_time"] = res.buffered_start
-                    override["end_time"] = res.buffered_end
-                    _LOGGER.debug(
-                        "update_times confirmed for slot %d; in-memory dates updated",
-                        slot,
-                    )
-
-        return result
-
-    async def _apply_overwrite_manual_change(
-        self,
-        coordinator: Any,
-        slot: int,
-        res: Reservation,
-        action: "SlotAction",
-    ) -> OperationResult:
-        """Apply an OVERWRITE_MANUAL_CHANGE action for one slot.
-
-        Logs a warning with all drift details — slot number, changed field
-        names, desired reservation identity, observed name and
-        classification from the actual-state cache — and then restores the
-        desired state via :func:`~.util.async_fire_set_code`.  Raw PIN
-        values are never written to logs; only code *presence* (boolean) is
-        reported.
-
-        Unmanaged slots never trigger this path because
-        :func:`~.reconciliation.compute_desired_plan` iterates only over
-        managed slots.
-
-        Args:
-            coordinator: The active coordinator instance.
-            slot: Keymaster slot number to overwrite.
-            res: Desired :class:`~.reconciliation.Reservation` for this slot.
-            action: The :class:`~.reconciliation.SlotAction` carrying the
-                ``OVERWRITE_MANUAL_CHANGE`` kind and drift reason string.
-
-        Returns:
-            An :class:`~.util.OperationResult` from the underlying
-            :func:`~.util.async_fire_set_code` call.
-        """
-        drift_fields: list[str] = []
-        if action.reason and action.reason.startswith("drifted fields: "):
-            drift_fields = [
-                f.strip()
-                for f in action.reason[len("drifted fields: ") :].split(",")
-                if f.strip()
-            ]
-
-        # Gather observed state for the log message.  The actual-state cache
-        # is populated by the coordinator before async_apply_plan is called.
-        # Raw PIN values are never stored in the cache; only has_code (bool).
-        actual = self._actual_state_cache.get(slot) or {}
-        observed_name: str = actual.get("name_state") or "(unknown)"
-        observed_classification: str = actual.get("classification") or "(unknown)"
-        observed_has_code: bool | None = actual.get("has_code")
-
-        _LOGGER.warning(
-            "Manual/external drift detected on managed slot %d "
-            "(reservation %s, desired name %r): "
-            "changed fields=%s, "
-            "observed name=%r, observed classification=%s, "
-            "observed has_code=%s; "
-            "restoring desired state.",
-            slot,
-            res.identity_key,
-            res.display_slot_name,
-            drift_fields,
-            observed_name,
-            observed_classification,
-            observed_has_code,
-        )
-
-        clear_result = await self._apply_clear(
-            coordinator, slot, preflight_read=action.preflight_read
-        )
-        if not clear_result.confirmed:
-            _LOGGER.warning(
-                "Skipping replacement set for slot %d because clear was not "
-                "physically confirmed",
-                slot,
-            )
-            return clear_result
-        return await self._apply_set(
-            coordinator,
-            slot,
-            res,
-            f"replace-{slot}-{uuid.uuid4()}",
-        )
-
-    def _slot_has_matching_event(
-        self,
-        slot: int,
-        events: list[EventIdentity],
-    ) -> bool:
-        """Check if an override slot matches any current calendar event.
-
-        Uses a three-phase search mirroring ``_find_overlapping_slot``:
-
-        Phase 1 — UID positive match.  If the stored slot UID equals an
-        event UID and the names match, the slot is considered matched
-        regardless of time overlap.
-
-        Phase 2 — name + strict interval overlap with the same-start
-        UID bypass and preferred-slot tie-breaking.
-
-        Phase 3 — trim-aware fallback for trimmed names with time
-        overlap, restoring the full name on match. The same-start UID
-        bypass and preferred-slot tie-breaking apply here too.
-        """
-        override = self._overrides[slot]
-        if override is None:
-            return False
-
-        slot_name = override["slot_name"]
-        slot_start = override["start_time"]
-        slot_end = override["end_time"]
-        stored_uid = normalize_uid(self._slot_uids.get(slot))
-
-        if stored_uid is not None:
-            for ev in events:
-                ev_uid = normalize_uid(ev.uid)
-                if ev_uid is not None and ev_uid == stored_uid and ev.name == slot_name:
-                    return True
-
-        slot_start_utc = _to_utc(slot_start)
-        slot_end_utc = _to_utc(slot_end)
-        for ev in events:
-            if ev.name != slot_name:
-                continue
-            if not (
-                slot_start_utc < _to_utc(ev.end) and _to_utc(ev.start) < slot_end_utc
-            ):
-                continue
-            ev_uid = normalize_uid(ev.uid)
-            if ev_uid is not None:
-                if stored_uid is None:
-                    if self._event_has_other_uid_owner(ev, exclude_slot=slot):
-                        continue
-                    preferred_slot = self._get_same_start_uid_bypass_slot(ev)
-                    if preferred_slot is not None and preferred_slot != slot:
-                        continue
-                elif stored_uid != ev_uid:
-                    # Same-start bypass: UID regenerated on date change.
-                    if _to_utc(ev.start) != _to_utc(slot_start):
-                        continue
-                    if self._event_has_other_uid_owner(ev, exclude_slot=slot):
-                        continue
-                    preferred_slot = self._get_same_start_uid_bypass_slot(ev)
-                    if preferred_slot != slot:
-                        continue
-            return True
-
-        if self._trim_names:
-            guest_max = self._max_name_length - self._prefix_length
-
-            # Phase 3a: UID-positive trim match (no overlap required),
-            # mirrors Phase 1 but tolerates trimmed names.
-            if stored_uid is not None:
-                for ev in events:
-                    ev_uid = normalize_uid(ev.uid)
-                    if ev_uid is None or ev_uid != stored_uid:
-                        continue
-                    if ev.name == slot_name:
-                        continue  # already matched in Phase 1
-                    if not _is_trimmed_match(slot_name, ev.name, guest_max):
-                        continue
-                    if len(ev.name) > len(slot_name):
-                        override["slot_name"] = ev.name
-                    return True
-
-            # Phase 3b: trim match with overlap (no UID required).
-            for ev in events:
-                if ev.name == slot_name:
-                    continue
-                if not _is_trimmed_match(slot_name, ev.name, guest_max):
-                    continue
-                if not (
-                    slot_start_utc < _to_utc(ev.end)
-                    and _to_utc(ev.start) < slot_end_utc
-                ):
-                    continue
-                ev_uid = normalize_uid(ev.uid)
-                if ev_uid is not None:
-                    if stored_uid is None:
-                        if self._event_has_other_uid_owner(ev, exclude_slot=slot):
-                            continue
-                        preferred_slot = self._get_same_start_uid_bypass_slot(ev)
-                        if preferred_slot is not None and preferred_slot != slot:
-                            continue
-                    elif stored_uid != ev_uid:
-                        if _to_utc(ev.start) != _to_utc(slot_start):
-                            continue
-                        if self._event_has_other_uid_owner(ev, exclude_slot=slot):
-                            continue
-                        preferred_slot = self._get_same_start_uid_bypass_slot(ev)
-                        if preferred_slot != slot:
-                            continue
-                if len(ev.name) > len(slot_name):
-                    override["slot_name"] = ev.name
-                return True
-
-        return False
-
-    def _event_has_other_uid_owner(
-        self,
-        event: EventIdentity,
-        exclude_slot: int,
-    ) -> bool:
-        """Return whether another slot claims *event* via an exact UID match."""
-        return self._slot_has_other_uid_owner(
-            event.name,
-            event.uid,
-            exclude_slot=exclude_slot,
-        )
-
-    def _slot_has_other_uid_owner(
-        self,
-        slot_name: str,
-        uid: str | None,
-        exclude_slot: int | None = None,
-    ) -> bool:
-        """Return whether another slot already owns *uid* for *slot_name*."""
-        uid = normalize_uid(uid)
-        if uid is None:
-            return False
-
-        guest_max = self._max_name_length - self._prefix_length
-        for candidate in self.__get_slots_with_values():
-            if candidate == exclude_slot:
-                continue
-            override = self._overrides[candidate]
-            if override is None:
-                continue
-
-            stored_uid = normalize_uid(self._slot_uids.get(candidate))
-            if stored_uid != uid:
-                continue
-
-            stored_name = override["slot_name"]
-            if stored_name == slot_name:
-                return True
-            if self._trim_names and _is_trimmed_match(
-                stored_name, slot_name, guest_max
-            ):
-                return True
-
-        return False
-
-    def _get_same_start_uid_bypass_slot(
-        self,
-        event: EventIdentity,
-        exclude_slot: int | None = None,
-    ) -> int | None:
-        """Return the preferred same-start fallback slot for *event*."""
-        event_start_utc = _to_utc(event.start)
-        event_end_utc = _to_utc(event.end)
-        guest_max = self._max_name_length - self._prefix_length
-
-        best_slot: int | None = None
-        best_distance: float | None = None
-        best_exact = False
-
-        for candidate in self.__get_slots_with_values():
-            if candidate == exclude_slot:
-                continue
-            override = self._overrides[candidate]
-            if override is None:
-                continue
-
-            stored_name = override["slot_name"]
-            exact_name = stored_name == event.name
-            if not exact_name:
-                if not self._trim_names or not _is_trimmed_match(
-                    stored_name, event.name, guest_max
-                ):
-                    continue
-
-            candidate_start_utc = _to_utc(override["start_time"])
-            candidate_end_utc = _to_utc(override["end_time"])
-            if not (
-                candidate_start_utc < event_end_utc
-                and event_start_utc < candidate_end_utc
-            ):
-                continue
-
-            if candidate_start_utc != event_start_utc:
-                continue
-
-            distance = abs((candidate_end_utc - event_end_utc).total_seconds())
-            if (
-                best_slot is None
-                or best_distance is None
-                or distance < best_distance
-                or (
-                    distance == best_distance
-                    and (
-                        (exact_name and not best_exact)
-                        or (exact_name == best_exact and candidate < best_slot)
-                    )
-                )
-            ):
-                best_slot = candidate
-                best_distance = distance
-                best_exact = exact_name
-
-        return best_slot
-
-    async def async_check_overrides(
-        self,
-        coordinator,
-        calendar: list[CalendarEvent] | None = None,
-    ) -> None:
-        """Check overrides and fire clear-code events for stale slots (greedy path).
-
-        When called from within _async_update_data, pass the fresh
-        calendar list directly because coordinator.data has not been
-        updated yet by the DUC framework.
-
-        .. deprecated::
-            This method implements the retired greedy cleanup policy.  Stale
-            slot detection and clearing is now handled entirely by the
-            reconciliation coordinator via ``compute_desired_plan`` /
-            ``async_apply_plan`` (``ActionKind.CLEAR`` / ``RETRY_CLEAR``).
-            The coordinator no longer calls this method.  The method is
-            retained as a backward-compatible shim; production code must
-            not invoke it.
-        """
-        _LOGGER.debug("In EventOverrides.async_check_overrides")
-
-        cal = calendar if calendar is not None else coordinator.data
-        if cal is None:
-            _LOGGER.debug("Calendar data not available, not checking override validity")
-            return
-
-        _LOGGER.debug(self._overrides)
-        # Only consider events within the sensor boundary so that
-        # slots tied to events beyond max_events get cleared.
-        sensor_cal = cal[: coordinator.max_events]
-        event_ids = get_event_identities(coordinator, calendar=sensor_cal)
-        _LOGGER.debug("event_identities = %s", event_ids)
-
-        async with self._lock:
-            assigned_slots = self.__get_slots_with_values()
-
-            if not len(assigned_slots):
-                _LOGGER.debug("No overrides to check")
-                return
-
-            cur_date_start = dt.start_of_local_day().date()
-
-            for slot in assigned_slots:
-                clear_code = False
-                start_date = self.get_slot_start_date(slot)
-
-                if not self._slot_has_matching_event(slot, event_ids):
-                    if start_date >= cur_date_start:
-                        count = self._slot_miss_counts.get(slot, 0) + 1
-                        self._slot_miss_counts[slot] = count
-                        _LOGGER.debug(
-                            "Slot %d miss count: %d/%d for %s",
-                            slot,
-                            count,
-                            SLOT_MISS_THRESHOLD,
-                            self.get_slot_name(slot),
-                        )
-                        if count >= SLOT_MISS_THRESHOLD:
-                            _LOGGER.debug(
-                                "%s not in current events after %d consecutive misses, "
-                                "clearing",
-                                self._overrides[slot],
-                                count,
-                            )
-                            clear_code = True
-                    else:
-                        _LOGGER.debug(
-                            "%s not in current events, clearing",
-                            self._overrides[slot],
-                        )
-                        clear_code = True
-                else:
-                    self._slot_miss_counts.pop(slot, None)
-
-                end_date = self.get_slot_end_date(slot)
-
-                if not len(cal):
-                    _LOGGER.debug("No events in calendar, clearing %s", slot)
-                    clear_code = True
-
-                if not clear_code and start_date > end_date:
-                    _LOGGER.debug(
-                        "%s start and end times do not make sense, clearing",
-                        slot,
-                    )
-                    clear_code = True
-
-                if not clear_code and end_date < cur_date_start:
-                    _LOGGER.debug("%s end is before today, clearing", slot)
-                    clear_code = True
-
-                if not clear_code:
-                    if coordinator.max_events <= len(cal):
-                        last_end = cal[coordinator.max_events - 1].end.date()
-                    else:
-                        last_end = cal[-1].end.date()
-
-                    if start_date > last_end:
-                        _LOGGER.debug(
-                            "%s start is after last event ends, clearing",
-                            slot,
-                        )
-                        clear_code = True
-
-                if clear_code:
-                    _LOGGER.debug("Firing clear code for slot %s", slot)
-                    try:
-                        result = await async_fire_clear_code(
-                            coordinator, slot, expected_name=self.get_slot_name(slot)
-                        )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        _LOGGER.exception(
-                            "Unexpected error firing clear code for slot %d; "
-                            "slot remains occupied to prevent "
-                            "double-assignment.",
-                            slot,
-                        )
-                        continue
-
-                    if not isinstance(result, OperationResult):
-                        result = OperationResult(
-                            kind="clear",
-                            slot=slot,
-                            unconfirmed=True,
-                        )
-                    if (
-                        not result.confirmed
-                        or result.failed
-                        or result.lingering_name
-                        or result.lingering_pin
-                    ):
-                        _LOGGER.warning(
-                            "Clear not confirmed for slot %d "
-                            "(failed=%s, unconfirmed=%s, "
-                            "lingering_name=%s, lingering_pin=%s); "
-                            "slot remains occupied.",
-                            slot,
-                            result.failed,
-                            result.unconfirmed,
-                            result.lingering_name,
-                            result.lingering_pin,
-                        )
-                        continue
-
-                    self._overrides[slot] = None
-                    self._slot_uids.pop(slot, None)
-                    self._slot_miss_counts.pop(slot, None)
-                    self.__assign_next_slot()
-
-    def get_slot_name(self, slot: int) -> str:
-        """Return the slot name."""
-        override = self._overrides[slot]
-
-        if override and "slot_name" in override:
-            return override["slot_name"]
-        else:
-            return ""
-
-    def get_slot_with_name(self, slot_name: str) -> EventOverride | None:
-        """
-        Find the override that has slot_name and return the data if
-        available.
-        """
-
-        slots_with_values = self.__get_slots_with_values()
-        for slot in slots_with_values:
-            override = self.overrides[slot]
-            if override and override["slot_name"] == slot_name:
-                return override
-
-        return None
-
-    def get_slot_key_by_name(self, slot_name: str) -> int:
-        """
-        Find the override that has slot_name and return the data if
-        available.
-
-        Returns 0 if no slot with name is found
-        """
-
-        slots_with_values = self.__get_slots_with_values()
-        for slot in slots_with_values:
-            override = self.overrides[slot]
-            if override and override["slot_name"] == slot_name:
-                return slot
-
-        return 0
-
-    def get_slot_start_date(self, slot: int) -> date:
-        """Return the start date of slot or today if no override."""
-
-        override = self._overrides[slot]
-        date_return: date = dt.start_of_local_day().date()
-
-        if override:
-            if "start_time" in override:
-                date_return = override["start_time"].date()
-        return date_return
-
-    def get_slot_start_time(self, slot: int) -> time:
-        """Return the start time of slot or the start of day if no override."""
-
-        override = self._overrides[slot]
-        time_return: time = time()
-
-        if override:
-            if "start_time" in override:
-                time_return = override["start_time"].time()
-        return time_return
-
-    def get_slot_end_date(self, slot: int) -> date:
-        """Return the end date of slot or today if no override."""
-
-        override = self._overrides[slot]
-        date_return: date = dt.start_of_local_day().date()
-
-        if override:
-            if "end_time" in override:
-                date_return = override["end_time"].date()
-        return date_return
-
-    def get_slot_end_time(self, slot: int) -> time:
-        """Return the end time of slot or the start of day if no override."""
-
-        override = self._overrides[slot]
-        time_return: time = time()
-
-        if override:
-            if "end_time" in override:
-                time_return = override["end_time"].time()
-        return time_return
-
-    def update(
-        self,
-        slot: int,
-        slot_code: str,
-        slot_name: str,
-        start_time: datetime,
-        end_time: datetime,
-        prefix: str | None = None,
-    ) -> None:
-        """Synchronously update overrides for a slot.
-
-        This method mutates internal state without acquiring
-        ``_lock``.  It is safe during bootstrap (before any async
-        listeners are registered) but **must** be replaced by
-        ``async_update()`` in post-bootstrap code paths once
-        callers are migrated (see Phase 3+).
-        """
-
-        _LOGGER.debug("In EventOverrides.update")
-
-        overrides = self._overrides.copy()
-
-        if prefix is None:
-            prefix = ""
-
-        if slot_name:
-            if prefix:
-                slot_name = _strip_prefix(slot_name, prefix)
-            override: EventOverride = {
-                "slot_name": slot_name,
-                "slot_code": slot_code,
-                "start_time": start_time,
-                "end_time": end_time,
-            }
-            overrides[slot] = override
-        else:
-            overrides[slot] = None
-
-        self._slot_miss_counts.pop(slot, None)
-        self._overrides = overrides
-        self.__assign_next_slot()
-        if len(overrides) == self.max_slots:
-            self._ready = True
-
-        _LOGGER.debug("overrides = %s", self.overrides)
-        _LOGGER.debug("ready = %s", self.ready)
-        _LOGGER.debug("next_slot = %s", self.next_slot)
+    persisted_mappings = property(lambda self: dict(self._persisted_mappings))
+    pending_clear_slots = property(lambda self: dict(self._pending_clear_slots))
+    pending_fences = property(lambda self: dict(self._pending_fences))
+    reconciliation_active = property(lambda self: self._reconciliation_active)
+    diagnostics_snapshot = property(lambda self: dict(self._diagnostics_snapshot))

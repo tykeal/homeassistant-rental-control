@@ -105,17 +105,17 @@ boundary.
 **Purpose**: Establish behavior, import, call-site, complexity, and hot-path
 baselines before moving any production code.
 
-- [ ] T001 Run `.specify/scripts/bash/check-prerequisites.sh --json` with `SPECIFY_FEATURE=017-decompose-event-overrides` from the repository root and confirm `specs/017-decompose-event-overrides/` reports `research.md`, `data-model.md`, and `quickstart.md`
-- [ ] T002 Inspect US1-US4, FR-001 through FR-023, constraints, security considerations, and SC-001 through SC-010 in `specs/017-decompose-event-overrides/spec.md`
-- [ ] T003 Inspect the Project Structure, Concrete Decomposition Design, shared matcher, plan application split, parameter-count strategy, and `aislop` directive removal sections in `specs/017-decompose-event-overrides/plan.md`
-- [ ] T004 Inspect all research decisions, helper entities, request objects, and quickstart parity commands in `specs/017-decompose-event-overrides/research.md`, `specs/017-decompose-event-overrides/data-model.md`, and `specs/017-decompose-event-overrides/quickstart.md`
-- [ ] T005 Inventory `_find_overlapping_slot`, `_slot_has_matching_event`, `_event_has_other_uid_owner`, `_slot_has_other_uid_owner`, `_get_same_start_uid_bypass_slot`, `async_check_overrides`, `async_apply_plan`, `_apply_clear`, `_apply_set`, `_apply_update_times`, `_apply_overwrite_manual_change`, `async_reserve_or_get_slot`, `async_update`, `verify_slot_ownership`, diagnostics methods, and `update` in `custom_components/rental_control/event_overrides.py`
-- [ ] T006 Inventory production caller imports and call styles in `custom_components/rental_control/coordinator.py`, `custom_components/rental_control/coordinator_helpers/coordinator_config_shell.py`, `custom_components/rental_control/coordinator_helpers/coordinator_setup_shell.py`, `custom_components/rental_control/coordinator_helpers/coordinator_refresh_shell.py`, and `custom_components/rental_control/util.py`, recording that no caller import or usage may change
-- [ ] T007 Inventory existing event override, slot concurrency, refresh-cycle, coordinator, sensor, utility, and diagnostics behavior coverage in `tests/unit/test_event_overrides.py`, `tests/unit/test_coordinator.py`, `tests/unit/test_sensors.py`, `tests/unit/test_util.py`, `tests/unit/test_keymaster_event_diagnostics.py`, `tests/integration/test_refresh_cycle.py`, and `tests/integration/test_slot_concurrency.py`
-- [ ] T008 Run unchanged baseline event-override parity tests with `uv run pytest tests/unit/test_event_overrides.py tests/integration/test_slot_concurrency.py -q` against the listed test files
-- [ ] T009 Run unchanged baseline caller coverage with `uv run pytest tests/unit/test_coordinator.py tests/unit/test_sensors.py tests/unit/test_util.py tests/unit/test_keymaster_event_diagnostics.py tests/integration/test_refresh_cycle.py -q` against the listed test files
-- [ ] T010 Record the current line, function-length, and parameter-count baseline for `custom_components/rental_control/event_overrides.py`, including the exact `# aislop-ignore-file complexity/file-too-large complexity/function-too-long` directive and that there is no hallucinated-import directive on this file
-- [ ] T011 Record the current Home Assistant state-read, Keymaster service-call, Store-neutral cache, and coordinator refresh boundaries in `custom_components/rental_control/event_overrides.py` so helper extraction can prove no new hot-path I/O or user-visible delays
+- [X] T001 Run `.specify/scripts/bash/check-prerequisites.sh --json` with `SPECIFY_FEATURE=017-decompose-event-overrides` from the repository root and confirm `specs/017-decompose-event-overrides/` reports `research.md`, `data-model.md`, and `quickstart.md`
+- [X] T002 Inspect US1-US4, FR-001 through FR-023, constraints, security considerations, and SC-001 through SC-010 in `specs/017-decompose-event-overrides/spec.md`
+- [X] T003 Inspect the Project Structure, Concrete Decomposition Design, shared matcher, plan application split, parameter-count strategy, and `aislop` directive removal sections in `specs/017-decompose-event-overrides/plan.md`
+- [X] T004 Inspect all research decisions, helper entities, request objects, and quickstart parity commands in `specs/017-decompose-event-overrides/research.md`, `specs/017-decompose-event-overrides/data-model.md`, and `specs/017-decompose-event-overrides/quickstart.md`
+- [X] T005 Inventory `_find_overlapping_slot`, `_slot_has_matching_event`, `_event_has_other_uid_owner`, `_slot_has_other_uid_owner`, `_get_same_start_uid_bypass_slot`, `async_check_overrides`, `async_apply_plan`, `_apply_clear`, `_apply_set`, `_apply_update_times`, `_apply_overwrite_manual_change`, `async_reserve_or_get_slot`, `async_update`, `verify_slot_ownership`, diagnostics methods, and `update` in `custom_components/rental_control/event_overrides.py`
+- [X] T006 Inventory production caller imports and call styles in `custom_components/rental_control/coordinator.py`, `custom_components/rental_control/coordinator_helpers/coordinator_config_shell.py`, `custom_components/rental_control/coordinator_helpers/coordinator_setup_shell.py`, `custom_components/rental_control/coordinator_helpers/coordinator_refresh_shell.py`, and `custom_components/rental_control/util.py`, recording that no caller import or usage may change
+- [X] T007 Inventory existing event override, slot concurrency, refresh-cycle, coordinator, sensor, utility, and diagnostics behavior coverage in `tests/unit/test_event_overrides.py`, `tests/unit/test_coordinator.py`, `tests/unit/test_sensors.py`, `tests/unit/test_util.py`, `tests/unit/test_keymaster_event_diagnostics.py`, `tests/integration/test_refresh_cycle.py`, and `tests/integration/test_slot_concurrency.py`
+- [X] T008 Run unchanged baseline event-override parity tests with `uv run pytest tests/unit/test_event_overrides.py tests/integration/test_slot_concurrency.py -q` against the listed test files
+- [X] T009 Run unchanged baseline caller coverage with `uv run pytest tests/unit/test_coordinator.py tests/unit/test_sensors.py tests/unit/test_util.py tests/unit/test_keymaster_event_diagnostics.py tests/integration/test_refresh_cycle.py -q` against the listed test files
+- [X] T010 Record the current line, function-length, and parameter-count baseline for `custom_components/rental_control/event_overrides.py`, including the exact `# aislop-ignore-file complexity/file-too-large complexity/function-too-long` directive and that there is no hallucinated-import directive on this file
+- [X] T011 Record the current Home Assistant state-read, Keymaster service-call, Store-neutral cache, and coordinator refresh boundaries in `custom_components/rental_control/event_overrides.py` so helper extraction can prove no new hot-path I/O or user-visible delays
 
 ---
 
@@ -131,19 +131,19 @@ service helpers.
 
 ### Foundational Tests
 
-- [ ] T012 [US4] Add internal helper package import and model construction tests for `OverrideSnapshot`, `TrimConfig`, `MatchCatalog`, `MatchRequest`, `MatchResult`, `MatchPhase`, `SlotUpdateRequest`, `SlotReservationRequest`, and `EvictionDecision` in `tests/unit/test_event_overrides_matcher.py`
-- [ ] T013 [US2] Add apply decision model construction tests for dispatch, clear, set, update, overwrite, suppression, and diagnostics value types in `tests/unit/test_event_overrides_apply.py`
-- [ ] T014 [US4] Add tests proving `custom_components/rental_control/event_overrides_helpers/models.py` is side-effect-free and does not import Home Assistant, Store, coordinator, or Keymaster service modules in `tests/unit/test_event_overrides_matcher.py`
+- [X] T012 [US4] Add internal helper package import and model construction tests for `OverrideSnapshot`, `TrimConfig`, `MatchCatalog`, `MatchRequest`, `MatchResult`, `MatchPhase`, `SlotUpdateRequest`, `SlotReservationRequest`, and `EvictionDecision` in `tests/unit/test_event_overrides_matcher.py`
+- [X] T013 [US2] Add apply decision model construction tests for dispatch, clear, set, update, overwrite, suppression, and diagnostics value types in `tests/unit/test_event_overrides_apply.py`
+- [X] T014 [US4] Add tests proving `custom_components/rental_control/event_overrides_helpers/models.py` is side-effect-free and does not import Home Assistant, Store, coordinator, or Keymaster service modules in `tests/unit/test_event_overrides_matcher.py`
 
 ### Foundational Implementation
 
-- [ ] T015 Create `custom_components/rental_control/event_overrides_helpers/__init__.py` with SPDX headers, a module docstring, internal typed exports, and no production caller dependency
-- [ ] T016 [US4] Create `custom_components/rental_control/event_overrides_helpers/models.py` with `OverrideSnapshot`, `TrimConfig`, `MatchCatalog`, `MatchRequest`, `MatchResult`, and `MatchPhase` covering the PLAN fields while keeping enum values internal
-- [ ] T017 [US3] Add `SlotUpdateRequest` and `SlotReservationRequest` to `custom_components/rental_control/event_overrides_helpers/models.py` with fields matching the real `async_update`, `update`, and `async_reserve_or_get_slot` call styles
-- [ ] T018 [US1] Add `EvictionDecision` and miss-count action value types to `custom_components/rental_control/event_overrides_helpers/models.py` for stale-slot cleanup parity
-- [ ] T019 [US2] Add plan-application and diagnostics decision value types to `custom_components/rental_control/event_overrides_helpers/models.py` without carrying raw PIN values into diagnostics fields
-- [ ] T020 [US4] Ensure every model and helper-owned dataclass initializer in `custom_components/rental_control/event_overrides_helpers/models.py` has no more than six explicit parameters unless an external framework signature requires otherwise
-- [ ] T021 Run foundational validation with `uv run pytest tests/unit/test_event_overrides_matcher.py tests/unit/test_event_overrides_apply.py -q` against the new model tests
+- [X] T015 Create `custom_components/rental_control/event_overrides_helpers/__init__.py` with SPDX headers, a module docstring, internal typed exports, and no production caller dependency
+- [X] T016 [US4] Create `custom_components/rental_control/event_overrides_helpers/models.py` with `OverrideSnapshot`, `TrimConfig`, `MatchCatalog`, `MatchRequest`, `MatchResult`, and `MatchPhase` covering the PLAN fields while keeping enum values internal
+- [X] T017 [US3] Add `SlotUpdateRequest` and `SlotReservationRequest` to `custom_components/rental_control/event_overrides_helpers/models.py` with fields matching the real `async_update`, `update`, and `async_reserve_or_get_slot` call styles
+- [X] T018 [US1] Add `EvictionDecision` and miss-count action value types to `custom_components/rental_control/event_overrides_helpers/models.py` for stale-slot cleanup parity
+- [X] T019 [US2] Add plan-application and diagnostics decision value types to `custom_components/rental_control/event_overrides_helpers/models.py` without carrying raw PIN values into diagnostics fields
+- [X] T020 [US4] Ensure every model and helper-owned dataclass initializer in `custom_components/rental_control/event_overrides_helpers/models.py` has no more than six explicit parameters unless an external framework signature requires otherwise
+- [X] T021 Run foundational validation with `uv run pytest tests/unit/test_event_overrides_matcher.py tests/unit/test_event_overrides_apply.py -q` against the new model tests
 
 **Checkpoint**: The internal package exists, shared dataclasses are stable,
 helper modules can import them, and FR-019/FR-021 parameter limits are accounted
@@ -168,18 +168,18 @@ shared phase implementation selects the checked slot for any current event.
 > **NOTE: Add focused parity tests first. Existing `tests/unit/test_event_overrides.py`
 > behavior assertions must remain unchanged.**
 
-- [ ] T022 [US1] Add matcher fixture builders that serialize current `EventOverrides` state into `OverrideSnapshot`, `TrimConfig`, and `MatchCatalog` inputs in `tests/unit/test_event_overrides_matcher.py`
-- [ ] T023 [US1] Add UID-positive exact-name matcher tests proving normalized non-empty UID plus exact slot name wins before overlap or trim fallback and does not require time overlap in `tests/unit/test_event_overrides_matcher.py`
-- [ ] T024 [US1] Add exact-name strict-overlap tests proving `start_a < end_b AND start_b < end_a`, non-overlap misses, `exclude_slot`, UID-owner exclusion, and preferred-slot tie-breaking in `tests/unit/test_event_overrides_matcher.py`
-- [ ] T025 [US1] Add same-start UID bypass tests proving PR #566 behavior for same UTC start acceptance, different-start rejection, exact UID owner precedence, preferred same-start slot selection, and duplicate-name disambiguation in `tests/unit/test_event_overrides_matcher.py`
-- [ ] T026 [US1] Add mirror-consistency tests proving `_find_overlapping_slot` and `_slot_has_matching_event` use equivalent UID-positive, name/overlap, PR #566 same-start bypass, #624/#625 trim-aware, and UID-owner exclusion semantics while preserving return-shape differences in `tests/unit/test_event_overrides_matcher.py`
+- [X] T022 [US1] Add matcher fixture builders that serialize current `EventOverrides` state into `OverrideSnapshot`, `TrimConfig`, and `MatchCatalog` inputs in `tests/unit/test_event_overrides_matcher.py`
+- [X] T023 [US1] Add UID-positive exact-name matcher tests proving normalized non-empty UID plus exact slot name wins before overlap or trim fallback and does not require time overlap in `tests/unit/test_event_overrides_matcher.py`
+- [X] T024 [US1] Add exact-name strict-overlap tests proving `start_a < end_b AND start_b < end_a`, non-overlap misses, `exclude_slot`, UID-owner exclusion, and preferred-slot tie-breaking in `tests/unit/test_event_overrides_matcher.py`
+- [X] T025 [US1] Add same-start UID bypass tests proving PR #566 behavior for same UTC start acceptance, different-start rejection, exact UID owner precedence, preferred same-start slot selection, and duplicate-name disambiguation in `tests/unit/test_event_overrides_matcher.py`
+- [X] T026 [US1] Add mirror-consistency tests proving `_find_overlapping_slot` and `_slot_has_matching_event` use equivalent UID-positive, name/overlap, PR #566 same-start bypass, #624/#625 trim-aware, and UID-owner exclusion semantics while preserving return-shape differences in `tests/unit/test_event_overrides_matcher.py`
 
 ### Implementation for Shared Matcher
 
-- [ ] T027 [US1] Implement `custom_components/rental_control/event_overrides_helpers/matcher.py` with `build_match_catalog()`, `find_uid_positive_exact_name()`, `find_exact_name_strict_overlap()`, `find_trim_aware_fallback()`, and a shared matcher dispatcher using `MatchCatalog` and `MatchRequest`
-- [ ] T028 [US1] Preserve UID normalization, occupied-slot ordering, `exclude_slot`, exact-name precedence, strict-overlap comparison, same-start preferred-slot selection, exact UID owner precedence, and restored-name reporting in `custom_components/rental_control/event_overrides_helpers/matcher.py`
-- [ ] T029 [US1] Verify `custom_components/rental_control/event_overrides_helpers/matcher.py` performs only in-memory matching and does not call Home Assistant APIs, Store APIs, Keymaster service helpers, `async_request_refresh()`, or mutate `EventOverrides` state directly
-- [ ] T030 [US1] Run matcher validation with `uv run pytest tests/unit/test_event_overrides_matcher.py tests/unit/test_event_overrides.py -q` against the listed test files
+- [X] T027 [US1] Implement `custom_components/rental_control/event_overrides_helpers/matcher.py` with `build_match_catalog()`, `find_uid_positive_exact_name()`, `find_exact_name_strict_overlap()`, `find_trim_aware_fallback()`, and a shared matcher dispatcher using `MatchCatalog` and `MatchRequest`
+- [X] T028 [US1] Preserve UID normalization, occupied-slot ordering, `exclude_slot`, exact-name precedence, strict-overlap comparison, same-start preferred-slot selection, exact UID owner precedence, and restored-name reporting in `custom_components/rental_control/event_overrides_helpers/matcher.py`
+- [X] T029 [US1] Verify `custom_components/rental_control/event_overrides_helpers/matcher.py` performs only in-memory matching and does not call Home Assistant APIs, Store APIs, Keymaster service helpers, `async_request_refresh()`, or mutate `EventOverrides` state directly
+- [X] T030 [US1] Run matcher validation with `uv run pytest tests/unit/test_event_overrides_matcher.py tests/unit/test_event_overrides.py -q` against the listed test files
 
 **Checkpoint**: Shared matcher helper behavior proves FR-003, FR-004, FR-005,
 FR-006, FR-007, FR-008, SC-002, and the matching portions of SC-005 without yet
@@ -200,18 +200,18 @@ resets, tolerance-threshold clears, and immediate stale clears.
 
 ### Tests for Trim, Bookkeeping, and Cleanup
 
-- [ ] T031 [US1] Add focused trim helper tests for `_strip_prefix`, `trim_name` delegation, #624/#625 guest maximum calculation, prefix-aware comparison, and restored-full-name decisions in `tests/unit/test_event_overrides_matcher.py`
-- [ ] T032 [US1] Add slot bookkeeping tests for sorted occupied slots, sorted free slots, retired greedy next-slot selection, UID owner lookup, same-start preferred-slot tie-breaking, and `exclude_slot` handling in `tests/unit/test_event_overrides_matcher.py`
-- [ ] T033 [US1] Add greedy cleanup helper tests for PR #552 matched-slot miss-count reset, future missing-slot increment, `SLOT_MISS_THRESHOLD` clear, empty-calendar clear, malformed-window clear, past clear, beyond-boundary clear, and conservative failed/unconfirmed clear preservation in `tests/unit/test_event_overrides_matcher.py`
+- [X] T031 [US1] Add focused trim helper tests for `_strip_prefix`, `trim_name` delegation, #624/#625 guest maximum calculation, prefix-aware comparison, and restored-full-name decisions in `tests/unit/test_event_overrides_matcher.py`
+- [X] T032 [US1] Add slot bookkeeping tests for sorted occupied slots, sorted free slots, retired greedy next-slot selection, UID owner lookup, same-start preferred-slot tie-breaking, and `exclude_slot` handling in `tests/unit/test_event_overrides_matcher.py`
+- [X] T033 [US1] Add greedy cleanup helper tests for PR #552 matched-slot miss-count reset, future missing-slot increment, `SLOT_MISS_THRESHOLD` clear, empty-calendar clear, malformed-window clear, past clear, beyond-boundary clear, and conservative failed/unconfirmed clear preservation in `tests/unit/test_event_overrides_matcher.py`
 
 ### Implementation for Trim, Bookkeeping, and Cleanup
 
-- [ ] T034 [US1] Implement `custom_components/rental_control/event_overrides_helpers/trim.py` with prefix stripping, `TrimConfig` construction, trim-name comparison via the existing `trim_name` behavior, and restored-full-name decisions
-- [ ] T035 [US1] Implement `custom_components/rental_control/event_overrides_helpers/slot_bookkeeping.py` with sorted occupied/free slot helpers, next-slot selection, UID-owner checks, and same-start preferred-slot selection used by matcher and shell wrappers
-- [ ] T036 [US1] Implement `custom_components/rental_control/event_overrides_helpers/greedy_cleanup.py` with pure `EvictionDecision` production for `async_check_overrides` miss-count resets, increments, threshold clears, immediate stale clears, and preserve decisions
-- [ ] T037 [US1] Wire `async_check_overrides` in `custom_components/rental_control/event_overrides.py` to apply `greedy_cleanup.py` decisions while retaining the lock boundary, `async_fire_clear_code`, failed/unconfirmed/lingering preservation, and `__assign_next_slot()` only for retired greedy clears
-- [ ] T038 [US1] Verify `trim.py`, `slot_bookkeeping.py`, and `greedy_cleanup.py` perform no Home Assistant state reads, Store writes, coordinator refresh requests, or Keymaster service calls
-- [ ] T039 [US1] Run cleanup validation with `uv run pytest tests/unit/test_event_overrides_matcher.py tests/unit/test_event_overrides.py -q` against the listed test files
+- [X] T034 [US1] Implement `custom_components/rental_control/event_overrides_helpers/trim.py` with prefix stripping, `TrimConfig` construction, trim-name comparison via the existing `trim_name` behavior, and restored-full-name decisions
+- [X] T035 [US1] Implement `custom_components/rental_control/event_overrides_helpers/slot_bookkeeping.py` with sorted occupied/free slot helpers, next-slot selection, UID-owner checks, and same-start preferred-slot selection used by matcher and shell wrappers
+- [X] T036 [US1] Implement `custom_components/rental_control/event_overrides_helpers/greedy_cleanup.py` with pure `EvictionDecision` production for `async_check_overrides` miss-count resets, increments, threshold clears, immediate stale clears, and preserve decisions
+- [X] T037 [US1] Wire `async_check_overrides` in `custom_components/rental_control/event_overrides.py` to apply `greedy_cleanup.py` decisions while retaining the lock boundary, `async_fire_clear_code`, failed/unconfirmed/lingering preservation, and `__assign_next_slot()` only for retired greedy clears
+- [X] T038 [US1] Verify `trim.py`, `slot_bookkeeping.py`, and `greedy_cleanup.py` perform no Home Assistant state reads, Store writes, coordinator refresh requests, or Keymaster service calls
+- [X] T039 [US1] Run cleanup validation with `uv run pytest tests/unit/test_event_overrides_matcher.py tests/unit/test_event_overrides.py -q` against the listed test files
 
 **Checkpoint**: Trim and cleanup prove FR-007, FR-009, FR-010, FR-022, SC-003,
 and the stale-slot portions of SC-005 while preserving the retired greedy shim.
@@ -230,22 +230,22 @@ retry/error state, cached overrides, and side-effect ordering.
 
 ### Tests for Plan Application
 
-- [ ] T040 [US2] Add dispatch tests for `NOOP`, `BLOCKED`, `CLEAR`, `RETRY_CLEAR`, `RESET`, `SET`, `ASSIGN`, `UPDATE_TIMES`, `OVERWRITE_MANUAL_CHANGE`, `UPDATE_IN_PLACE`, missing reservations, warning reasons, result ordering, and ignored unknown actions in `tests/unit/test_event_overrides_apply.py`
-- [ ] T041 [US2] Add clear preflight and clear-result tests for fresh state reads, unreadable state, changed physical state, confirmed-empty release, operation fences, pending-clear cleanup, failed clear errors, lingering name/PIN errors, stale tokens, and no retired-greedy next-slot update in `tests/unit/test_event_overrides_apply.py`
-- [ ] T042 [US2] Add set and assign tests for confirmed-empty checks before programming, no unsafe write on occupied physical state, tentative assignment timing, suppression payloads, stale-token handling, failure rollback, unconfirmed preservation, and no retired-greedy next-slot update in `tests/unit/test_event_overrides_apply.py`
-- [ ] T043 [US2] Add update-times tests for service-call arguments, suppression markers, confirmed cached buffered start/end updates, failed or unconfirmed result behavior, retry/error state, and operation-result parity in `tests/unit/test_event_overrides_apply.py`
-- [ ] T044 [US2] Add overwrite-manual-change and update-in-place tests for drift logging without raw PINs, clear-before-replace ordering, skipped replacement when clear is not confirmed, replacement set plan-id generation, and side-effect ordering in `tests/unit/test_event_overrides_apply.py`
-- [ ] T045 [US2] Add `async_apply_plan` lifecycle tests proving `reconciliation_active` becomes true before dispatch, diagnostics update in `finally`, false is set under the lock, and exceptions preserve current finalization behavior in `tests/unit/test_event_overrides_apply.py`
+- [X] T040 [US2] Add dispatch tests for `NOOP`, `BLOCKED`, `CLEAR`, `RETRY_CLEAR`, `RESET`, `SET`, `ASSIGN`, `UPDATE_TIMES`, `OVERWRITE_MANUAL_CHANGE`, `UPDATE_IN_PLACE`, missing reservations, warning reasons, result ordering, and ignored unknown actions in `tests/unit/test_event_overrides_apply.py`
+- [X] T041 [US2] Add clear preflight and clear-result tests for fresh state reads, unreadable state, changed physical state, confirmed-empty release, operation fences, pending-clear cleanup, failed clear errors, lingering name/PIN errors, stale tokens, and no retired-greedy next-slot update in `tests/unit/test_event_overrides_apply.py`
+- [X] T042 [US2] Add set and assign tests for confirmed-empty checks before programming, no unsafe write on occupied physical state, tentative assignment timing, suppression payloads, stale-token handling, failure rollback, unconfirmed preservation, and no retired-greedy next-slot update in `tests/unit/test_event_overrides_apply.py`
+- [X] T043 [US2] Add update-times tests for service-call arguments, suppression markers, confirmed cached buffered start/end updates, failed or unconfirmed result behavior, retry/error state, and operation-result parity in `tests/unit/test_event_overrides_apply.py`
+- [X] T044 [US2] Add overwrite-manual-change and update-in-place tests for drift logging without raw PINs, clear-before-replace ordering, skipped replacement when clear is not confirmed, replacement set plan-id generation, and side-effect ordering in `tests/unit/test_event_overrides_apply.py`
+- [X] T045 [US2] Add `async_apply_plan` lifecycle tests proving `reconciliation_active` becomes true before dispatch, diagnostics update in `finally`, false is set under the lock, and exceptions preserve current finalization behavior in `tests/unit/test_event_overrides_apply.py`
 
 ### Implementation for Plan Application
 
-- [ ] T046 [US2] Implement `custom_components/rental_control/event_overrides_helpers/apply_dispatch.py` with pure action classification, skip decisions, missing-reservation handling, clear warning reasons, and operation-result ordering decisions
-- [ ] T047 [US2] Implement `custom_components/rental_control/event_overrides_helpers/apply_clear.py` with clear preflight and clear-result decisions while leaving operation fences, fresh Home Assistant reads, Keymaster clear calls, and shell state mutation ordering in `event_overrides.py`
-- [ ] T048 [US2] Implement `custom_components/rental_control/event_overrides_helpers/apply_set.py` with deterministic set operation IDs, confirmed-empty set decisions, tentative override payloads, feedback suppression payloads, stale-token handling, failure rollback, and unconfirmed preservation decisions
-- [ ] T049 [US2] Implement `custom_components/rental_control/event_overrides_helpers/apply_update.py` with update-times suppression decisions, cached start/end updates, overwrite drift fields, clear-before-replace decisions, failed/unconfirmed short-circuiting, and replacement set plan-id decisions
-- [ ] T050 [US2] Wire `async_apply_plan`, `_apply_clear`, `_apply_set`, `_apply_update_times`, and `_apply_overwrite_manual_change` in `custom_components/rental_control/event_overrides.py` to the apply helpers while preserving clear preflight reads, confirmed-empty set checks, Keymaster service helper call order, pending fences, pending-clear state, suppression markers, retry/error state, cached overrides, and returned operation-result ordering byte-for-byte
-- [ ] T051 [US2] Verify `apply_dispatch.py`, `apply_clear.py`, `apply_set.py`, and `apply_update.py` do not call Home Assistant APIs, Store APIs, Keymaster service helpers, `async_request_refresh()`, or mutate `EventOverrides` state directly
-- [ ] T052 [US2] Run plan-application validation with `uv run pytest tests/unit/test_event_overrides_apply.py tests/unit/test_event_overrides.py tests/integration/test_refresh_cycle.py -q` against the listed test files
+- [X] T046 [US2] Implement `custom_components/rental_control/event_overrides_helpers/apply_dispatch.py` with pure action classification, skip decisions, missing-reservation handling, clear warning reasons, and operation-result ordering decisions
+- [X] T047 [US2] Implement `custom_components/rental_control/event_overrides_helpers/apply_clear.py` with clear preflight and clear-result decisions while leaving operation fences, fresh Home Assistant reads, Keymaster clear calls, and shell state mutation ordering in `event_overrides.py`
+- [X] T048 [US2] Implement `custom_components/rental_control/event_overrides_helpers/apply_set.py` with deterministic set operation IDs, confirmed-empty set decisions, tentative override payloads, feedback suppression payloads, stale-token handling, failure rollback, and unconfirmed preservation decisions
+- [X] T049 [US2] Implement `custom_components/rental_control/event_overrides_helpers/apply_update.py` with update-times suppression decisions, cached start/end updates, overwrite drift fields, clear-before-replace decisions, failed/unconfirmed short-circuiting, and replacement set plan-id decisions
+- [X] T050 [US2] Wire `async_apply_plan`, `_apply_clear`, `_apply_set`, `_apply_update_times`, and `_apply_overwrite_manual_change` in `custom_components/rental_control/event_overrides.py` to the apply helpers while preserving clear preflight reads, confirmed-empty set checks, Keymaster service helper call order, pending fences, pending-clear state, suppression markers, retry/error state, cached overrides, and returned operation-result ordering byte-for-byte
+- [X] T051 [US2] Verify `apply_dispatch.py`, `apply_clear.py`, `apply_set.py`, and `apply_update.py` do not call Home Assistant APIs, Store APIs, Keymaster service helpers, `async_request_refresh()`, or mutate `EventOverrides` state directly
+- [X] T052 [US2] Run plan-application validation with `uv run pytest tests/unit/test_event_overrides_apply.py tests/unit/test_event_overrides.py tests/integration/test_refresh_cycle.py -q` against the listed test files
 
 **Checkpoint**: Plan application proves FR-011, FR-012, FR-013, FR-014,
 FR-015, FR-016, FR-022, SC-004, and reconciliation-package integration without
@@ -265,14 +265,14 @@ after extraction.
 
 ### Tests for Diagnostics
 
-- [ ] T053 [US2] Add diagnostics projection tests for matched slots, pending corrections, manual drift slots, pending clear slots, slot retry counts, last slot errors, enum string values, sorting, and raw PIN redaction in `tests/unit/test_event_overrides_apply.py`
+- [X] T053 [US2] Add diagnostics projection tests for matched slots, pending corrections, manual drift slots, pending clear slots, slot retry counts, last slot errors, enum string values, sorting, and raw PIN redaction in `tests/unit/test_event_overrides_apply.py`
 
 ### Implementation for Diagnostics
 
-- [ ] T054 [US2] Implement `custom_components/rental_control/event_overrides_helpers/diagnostics.py` with pure diagnostics snapshot projection from `DesiredPlan`, retry/error state, pending clear state, and configured slot range
-- [ ] T055 [US2] Wire `update_diagnostics_snapshot` in `custom_components/rental_control/event_overrides.py` to `diagnostics.py` while storing the returned dict at the same point in `async_apply_plan`'s `finally` block
-- [ ] T056 [US2] Verify `custom_components/rental_control/event_overrides_helpers/diagnostics.py` never includes raw slot codes and performs no Home Assistant, Store, Keymaster, or coordinator refresh side effects
-- [ ] T057 [US2] Run diagnostics validation with `uv run pytest tests/unit/test_event_overrides_apply.py tests/unit/test_keymaster_event_diagnostics.py -q` against the listed test files
+- [X] T054 [US2] Implement `custom_components/rental_control/event_overrides_helpers/diagnostics.py` with pure diagnostics snapshot projection from `DesiredPlan`, retry/error state, pending clear state, and configured slot range
+- [X] T055 [US2] Wire `update_diagnostics_snapshot` in `custom_components/rental_control/event_overrides.py` to `diagnostics.py` while storing the returned dict at the same point in `async_apply_plan`'s `finally` block
+- [X] T056 [US2] Verify `custom_components/rental_control/event_overrides_helpers/diagnostics.py` never includes raw slot codes and performs no Home Assistant, Store, Keymaster, or coordinator refresh side effects
+- [X] T057 [US2] Run diagnostics validation with `uv run pytest tests/unit/test_event_overrides_apply.py tests/unit/test_keymaster_event_diagnostics.py -q` against the listed test files
 
 **Checkpoint**: Diagnostics extraction proves FR-001, FR-011, FR-014, FR-017,
 SC-004, and the raw-PIN security requirement.
@@ -291,17 +291,17 @@ wrappers delegate to the one shared matcher.
 
 ### Tests for Shell Delegation
 
-- [ ] T058 [US1] Add shell delegation tests proving `_find_overlapping_slot` and `_slot_has_matching_event` both build a shared `MatchCatalog`, call the same matcher phase implementation in opposite orientations, and apply restored full-name mutations only when the current engine would in `tests/unit/test_event_overrides_matcher.py`
-- [ ] T059 [US3] Add compatibility-surface tests proving `EventOverrides`, `EventOverride`, `ReserveResult`, all FR-017 members, and FR-018 private regression seams remain available from `custom_components.rental_control.event_overrides` in `tests/unit/test_event_overrides.py`
-- [ ] T060 [US3] Add production import-boundary tests proving coordinator setup/config helpers still use `from ..event_overrides import EventOverrides` and no production module imports from `event_overrides_helpers/` in `tests/unit/test_event_overrides.py`
+- [X] T058 [US1] Add shell delegation tests proving `_find_overlapping_slot` and `_slot_has_matching_event` both build a shared `MatchCatalog`, call the same matcher phase implementation in opposite orientations, and apply restored full-name mutations only when the current engine would in `tests/unit/test_event_overrides_matcher.py`
+- [X] T059 [US3] Add compatibility-surface tests proving `EventOverrides`, `EventOverride`, `ReserveResult`, all FR-017 members, and FR-018 private regression seams remain available from `custom_components.rental_control.event_overrides` in `tests/unit/test_event_overrides.py`
+- [X] T060 [US3] Add production import-boundary tests proving coordinator setup/config helpers still use `from ..event_overrides import EventOverrides` and no production module imports from `event_overrides_helpers/` in `tests/unit/test_event_overrides.py`
 
 ### Implementation for Shell Delegation
 
-- [ ] T061 [US1] Wire `_find_overlapping_slot` in `custom_components/rental_control/event_overrides.py` to build `MatchCatalog`, call the shared matcher, return the selected slot, and apply restored full-name mutation at the same point as today
-- [ ] T062 [US1] Wire `_slot_has_matching_event` in `custom_components/rental_control/event_overrides.py` to evaluate events through the same shared matcher and return true only when the shared result selects the checked slot
-- [ ] T063 [US3] Keep `EventOverrides`, `EventOverride`, `ReserveResult`, properties, date/time getters, `verify_slot_ownership`, retry helpers, suppression helpers, actual-state helpers, diagnostics helpers, `_apply_*` wrappers, and consumed private state reachable from `custom_components/rental_control/event_overrides.py`
-- [ ] T064 [US3] Verify reconciliation integration by confirming `custom_components/rental_control/event_overrides.py` and `event_overrides_helpers/*.py` continue consuming `ActionKind`, `DesiredPlan`, `Reservation`, and `SlotAction` from `custom_components/rental_control/reconciliation/` without caller-side behavior changes
-- [ ] T065 [US3] Run shell compatibility validation with `uv run pytest tests/unit/test_event_overrides_matcher.py tests/unit/test_event_overrides.py tests/unit/test_coordinator.py tests/unit/test_sensors.py tests/integration/test_refresh_cycle.py tests/integration/test_slot_concurrency.py -q` against the listed test files
+- [X] T061 [US1] Wire `_find_overlapping_slot` in `custom_components/rental_control/event_overrides.py` to build `MatchCatalog`, call the shared matcher, return the selected slot, and apply restored full-name mutation at the same point as today
+- [X] T062 [US1] Wire `_slot_has_matching_event` in `custom_components/rental_control/event_overrides.py` to evaluate events through the same shared matcher and return true only when the shared result selects the checked slot
+- [X] T063 [US3] Keep `EventOverrides`, `EventOverride`, `ReserveResult`, properties, date/time getters, `verify_slot_ownership`, retry helpers, suppression helpers, actual-state helpers, diagnostics helpers, `_apply_*` wrappers, and consumed private state reachable from `custom_components/rental_control/event_overrides.py`
+- [X] T064 [US3] Verify reconciliation integration by confirming `custom_components/rental_control/event_overrides.py` and `event_overrides_helpers/*.py` continue consuming `ActionKind`, `DesiredPlan`, `Reservation`, and `SlotAction` from `custom_components/rental_control/reconciliation/` without caller-side behavior changes
+- [X] T065 [US3] Run shell compatibility validation with `uv run pytest tests/unit/test_event_overrides_matcher.py tests/unit/test_event_overrides.py tests/unit/test_coordinator.py tests/unit/test_sensors.py tests/integration/test_refresh_cycle.py tests/integration/test_slot_concurrency.py -q` against the listed test files
 
 **Checkpoint**: Shell delegation proves FR-001, FR-002, FR-008, FR-015,
 FR-016, FR-017, FR-018, SC-001, SC-002, and SC-005 with the mirror wrappers
@@ -319,18 +319,18 @@ then verify production call sites and existing tests remain source-compatible.
 
 ### Tests for Wrapper Compatibility
 
-- [ ] T066 [US3] Add `async_reserve_or_get_slot` compatibility tests for `SlotReservationRequest`, all keyword fields, four positional values plus `uid=`, optional `prefix=`, unknown keyword rejection, and current `ReserveResult` semantics in `tests/unit/test_event_overrides.py`
-- [ ] T067 [US3] Add `async_update` compatibility tests for `SlotUpdateRequest`, coordinator's six-positional `(slot, code, name, start, end, prefix)` form, util's five-positional reset `(slot_num, "", "", start, start)` form, keyword forms, duplicate redirect with `exclude_slot`, prefix stripping, and unknown keyword rejection in `tests/unit/test_event_overrides.py`
-- [ ] T068 [US3] Add synchronous `update` compatibility tests for `SlotUpdateRequest`, five positional values, keyword fields, `prefix=` cases, copy-on-write behavior, empty-name clearing, next-slot reassignment, and unknown keyword rejection in `tests/unit/test_event_overrides.py`
+- [X] T066 [US3] Add `async_reserve_or_get_slot` compatibility tests for `SlotReservationRequest`, all keyword fields, four positional values plus `uid=`, optional `prefix=`, unknown keyword rejection, and current `ReserveResult` semantics in `tests/unit/test_event_overrides.py`
+- [X] T067 [US3] Add `async_update` compatibility tests for `SlotUpdateRequest`, coordinator's six-positional `(slot, code, name, start, end, prefix)` form, util's five-positional reset `(slot_num, "", "", start, start)` form, keyword forms, duplicate redirect with `exclude_slot`, prefix stripping, and unknown keyword rejection in `tests/unit/test_event_overrides.py`
+- [X] T068 [US3] Add synchronous `update` compatibility tests for `SlotUpdateRequest`, five positional values, keyword fields, `prefix=` cases, copy-on-write behavior, empty-name clearing, next-slot reassignment, and unknown keyword rejection in `tests/unit/test_event_overrides.py`
 
 ### Implementation for Wrapper Compatibility
 
-- [ ] T069 [US3] Implement request normalizers in `custom_components/rental_control/event_overrides_helpers/slot_bookkeeping.py` or `models.py` for `SlotReservationRequest` and `SlotUpdateRequest`, preserving accepted legacy positional and keyword forms while failing unknown keywords fast
-- [ ] T070 [US3] Change `async_reserve_or_get_slot` in `custom_components/rental_control/event_overrides.py` to a thin no-more-than-six-parameter compatibility wrapper accepting a request object or legacy call form while preserving lock acquisition, prefix stripping, matcher delegation, miss-count reset, UID recording, next-slot assignment, and `ReserveResult` behavior
-- [ ] T071 [US3] Change `async_update` in `custom_components/rental_control/event_overrides.py` to a thin no-more-than-six-parameter compatibility wrapper accepting `update=None, *values, **legacy`, including the coordinator six-positional form, util reset form, request object, and keyword forms while preserving duplicate redirect, prefix stripping, state mutation, miss-count reset, `__assign_next_slot()`, and readiness behavior
-- [ ] T072 [US3] Change synchronous `update` in `custom_components/rental_control/event_overrides.py` to a thin no-more-than-six-parameter compatibility wrapper accepting the request object, five positional form, keyword forms, and `prefix=` while preserving copy-on-write assignment and readiness behavior
-- [ ] T073 [US3] Verify no caller import or usage changes in `custom_components/rental_control/util.py` (`verify_slot_ownership` at clear/set/update-times helpers and reset `async_update`), `custom_components/rental_control/coordinator.py` (`async_update`), `custom_components/rental_control/coordinator_helpers/coordinator_refresh_shell.py` (`async_apply_plan`), setup/config shells (`EventOverrides` import), and existing tests
-- [ ] T074 [US3] Run wrapper and caller validation with `uv run pytest tests/unit/test_event_overrides.py tests/unit/test_util.py tests/unit/test_coordinator.py tests/unit/test_sensors.py tests/integration/test_refresh_cycle.py -q` against the listed test files
+- [X] T069 [US3] Implement request normalizers in `custom_components/rental_control/event_overrides_helpers/slot_bookkeeping.py` or `models.py` for `SlotReservationRequest` and `SlotUpdateRequest`, preserving accepted legacy positional and keyword forms while failing unknown keywords fast
+- [X] T070 [US3] Change `async_reserve_or_get_slot` in `custom_components/rental_control/event_overrides.py` to a thin no-more-than-six-parameter compatibility wrapper accepting a request object or legacy call form while preserving lock acquisition, prefix stripping, matcher delegation, miss-count reset, UID recording, next-slot assignment, and `ReserveResult` behavior
+- [X] T071 [US3] Change `async_update` in `custom_components/rental_control/event_overrides.py` to a thin no-more-than-six-parameter compatibility wrapper accepting `update=None, *values, **legacy`, including the coordinator six-positional form, util reset form, request object, and keyword forms while preserving duplicate redirect, prefix stripping, state mutation, miss-count reset, `__assign_next_slot()`, and readiness behavior
+- [X] T072 [US3] Change synchronous `update` in `custom_components/rental_control/event_overrides.py` to a thin no-more-than-six-parameter compatibility wrapper accepting the request object, five positional form, keyword forms, and `prefix=` while preserving copy-on-write assignment and readiness behavior
+- [X] T073 [US3] Verify no caller import or usage changes in `custom_components/rental_control/util.py` (`verify_slot_ownership` at clear/set/update-times helpers and reset `async_update`), `custom_components/rental_control/coordinator.py` (`async_update`), `custom_components/rental_control/coordinator_helpers/coordinator_refresh_shell.py` (`async_apply_plan`), setup/config shells (`EventOverrides` import), and existing tests
+- [X] T074 [US3] Run wrapper and caller validation with `uv run pytest tests/unit/test_event_overrides.py tests/unit/test_util.py tests/unit/test_coordinator.py tests/unit/test_sensors.py tests/integration/test_refresh_cycle.py -q` against the listed test files
 
 **Checkpoint**: Parameter reduction proves FR-017, FR-018, FR-019, FR-015,
 FR-016, SC-005, and SC-006 while preserving all real production and test call
@@ -349,15 +349,15 @@ removal and run `aislop` after removal without replacement complexity ignores.
 
 ### Tests and Cleanup for Maintainability
 
-- [ ] T075 [US4] Confirm final implementation diff is limited to `custom_components/rental_control/event_overrides.py`, `custom_components/rental_control/event_overrides_helpers/`, `tests/unit/test_event_overrides.py`, `tests/unit/test_event_overrides_matcher.py`, `tests/unit/test_event_overrides_apply.py`, and directly required existing caller test files
-- [ ] T076 [US4] Remove temporary extraction shims from `custom_components/rental_control/event_overrides.py` and `custom_components/rental_control/event_overrides_helpers/*.py`, leaving only planned public class members, private regression-seam wrappers, and internal helper exports
-- [ ] T077 [US4] Ensure every project-owned function in `custom_components/rental_control/event_overrides.py` and `custom_components/rental_control/event_overrides_helpers/*.py` is below 80 lines, splitting helper functions without changing behavior where needed
-- [ ] T078 [US4] Ensure every project-owned parameter list in `custom_components/rental_control/event_overrides.py` and `custom_components/rental_control/event_overrides_helpers/*.py` has no more than six parameters, with `async_reserve_or_get_slot`, `async_update`, and `update` covered by request wrappers
-- [ ] T079 [US4] Immediately before removing the complexity directive, measure `custom_components/rental_control/event_overrides.py` and every `custom_components/rental_control/event_overrides_helpers/*.py` file with `wc -l` and confirm each file is below 400 lines
-- [ ] T080 [US4] Run isolated complexity validation with `uv run pre-commit run aislop` against the staged event-override implementation files and confirm file-size, function-length, and parameter-count thresholds pass
-- [ ] T081 [US4] Remove the `# aislop-ignore-file complexity/file-too-large complexity/function-too-long` directive from `custom_components/rental_control/event_overrides.py` after T079 and T080 pass, and do not add any replacement complexity suppression or hallucinated-import directive
-- [ ] T082 [US4] Re-run `uv run pre-commit run aislop` after directive removal and confirm all in-scope event-override files still pass active thresholds
-- [ ] T083 [US4] Confirm no new matching semantics, reconciliation actions, services, sensors, configuration options, Store authority, Home Assistant state writes, coordinator refreshes, blocking I/O, or user-visible delays were introduced in `custom_components/rental_control/event_overrides.py` or `event_overrides_helpers/*.py`
+- [X] T075 [US4] Confirm final implementation diff is limited to `custom_components/rental_control/event_overrides.py`, `custom_components/rental_control/event_overrides_helpers/`, `tests/unit/test_event_overrides.py`, `tests/unit/test_event_overrides_matcher.py`, `tests/unit/test_event_overrides_apply.py`, and directly required existing caller test files
+- [X] T076 [US4] Remove temporary extraction shims from `custom_components/rental_control/event_overrides.py` and `custom_components/rental_control/event_overrides_helpers/*.py`, leaving only planned public class members, private regression-seam wrappers, and internal helper exports
+- [X] T077 [US4] Ensure every project-owned function in `custom_components/rental_control/event_overrides.py` and `custom_components/rental_control/event_overrides_helpers/*.py` is below 80 lines, splitting helper functions without changing behavior where needed
+- [X] T078 [US4] Ensure every project-owned parameter list in `custom_components/rental_control/event_overrides.py` and `custom_components/rental_control/event_overrides_helpers/*.py` has no more than six parameters, with `async_reserve_or_get_slot`, `async_update`, and `update` covered by request wrappers
+- [X] T079 [US4] Immediately before removing the complexity directive, measure `custom_components/rental_control/event_overrides.py` and every `custom_components/rental_control/event_overrides_helpers/*.py` file with `wc -l` and confirm each file is below 400 lines
+- [X] T080 [US4] Run isolated complexity validation with `uv run pre-commit run aislop` against the staged event-override implementation files and confirm file-size, function-length, and parameter-count thresholds pass
+- [X] T081 [US4] Remove the `# aislop-ignore-file complexity/file-too-large complexity/function-too-long` directive from `custom_components/rental_control/event_overrides.py` after T079 and T080 pass, and do not add any replacement complexity suppression or hallucinated-import directive
+- [X] T082 [US4] Re-run `uv run pre-commit run aislop` after directive removal and confirm all in-scope event-override files still pass active thresholds
+- [X] T083 [US4] Confirm no new matching semantics, reconciliation actions, services, sensors, configuration options, Store authority, Home Assistant state writes, coordinator refreshes, blocking I/O, or user-visible delays were introduced in `custom_components/rental_control/event_overrides.py` or `event_overrides_helpers/*.py`
 
 **Checkpoint**: Maintainability proves FR-020, FR-021, FR-022, FR-023, SC-007,
 SC-008, SC-009, and the implementation-stage complexity goals.
@@ -371,15 +371,15 @@ traceability, and docs-only stage boundaries.
 
 ### Acceptance and Quality Gates
 
-- [ ] T084 Run unchanged event-override parity tests with `uv run pytest tests/unit/test_event_overrides.py tests/integration/test_slot_concurrency.py -q` against the listed test files
-- [ ] T085 Run all new focused helper tests with `uv run pytest tests/unit/test_event_overrides_matcher.py tests/unit/test_event_overrides_apply.py -q` against the listed test files
-- [ ] T086 Run unchanged caller and integration coverage with `uv run pytest tests/unit/test_coordinator.py tests/unit/test_sensors.py tests/unit/test_util.py tests/unit/test_keymaster_event_diagnostics.py tests/integration/test_refresh_cycle.py -q` against the listed test files
-- [ ] T087 Run full regression tests with `uv run pytest tests/ -x -q` against `tests/`
-- [ ] T088 Run linting with `uv run ruff check custom_components/ tests/` against `custom_components/` and `tests/`
-- [ ] T089 Run full pre-commit validation with `uv run pre-commit run --all-files` against repository-tracked files, including reuse, yamllint, actionlint, aislop, ruff, ruff-format, mypy, interrogate, and gitlint hooks
-- [ ] T090 Verify every FR-001 through FR-023 has a test, implementation, or acceptance task mapped in `specs/017-decompose-event-overrides/tasks.md`
-- [ ] T091 Verify every SC-001 through SC-010 has a test, implementation, or acceptance task mapped in `specs/017-decompose-event-overrides/tasks.md`
-- [ ] T092 Review `specs/017-decompose-event-overrides/quickstart.md` and confirm the implementation PR notes list unchanged parity commands, new focused matcher/apply commands, mirror-consistency coverage, wrapper compatibility forms, caller-import verification, hot-path safeguards, file-size measurement before directive removal, final `aislop` results, and final validation results
+- [X] T084 Run unchanged event-override parity tests with `uv run pytest tests/unit/test_event_overrides.py tests/integration/test_slot_concurrency.py -q` against the listed test files
+- [X] T085 Run all new focused helper tests with `uv run pytest tests/unit/test_event_overrides_matcher.py tests/unit/test_event_overrides_apply.py -q` against the listed test files
+- [X] T086 Run unchanged caller and integration coverage with `uv run pytest tests/unit/test_coordinator.py tests/unit/test_sensors.py tests/unit/test_util.py tests/unit/test_keymaster_event_diagnostics.py tests/integration/test_refresh_cycle.py -q` against the listed test files
+- [X] T087 Run full regression tests with `uv run pytest tests/ -x -q` against `tests/`
+- [X] T088 Run linting with `uv run ruff check custom_components/ tests/` against `custom_components/` and `tests/`
+- [X] T089 Run full pre-commit validation with `uv run pre-commit run --all-files` against repository-tracked files, including reuse, yamllint, actionlint, aislop, ruff, ruff-format, mypy, interrogate, and gitlint hooks
+- [X] T090 Verify every FR-001 through FR-023 has a test, implementation, or acceptance task mapped in `specs/017-decompose-event-overrides/tasks.md`
+- [X] T091 Verify every SC-001 through SC-010 has a test, implementation, or acceptance task mapped in `specs/017-decompose-event-overrides/tasks.md`
+- [X] T092 Review `specs/017-decompose-event-overrides/quickstart.md` and confirm the implementation PR notes list unchanged parity commands, new focused matcher/apply commands, mirror-consistency coverage, wrapper compatibility forms, caller-import verification, hot-path safeguards, file-size measurement before directive removal, final `aislop` results, and final validation results
 
 ---
 

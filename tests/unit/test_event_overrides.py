@@ -9,6 +9,7 @@ from datetime import datetime
 from datetime import time
 from datetime import timedelta
 import logging
+from pathlib import Path
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -22,6 +23,12 @@ from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.event_overrides import EventOverride
 from custom_components.rental_control.event_overrides import EventOverrides
 from custom_components.rental_control.event_overrides import ReserveResult
+from custom_components.rental_control.event_overrides_helpers.models import (
+    SlotReservationRequest,
+)
+from custom_components.rental_control.event_overrides_helpers.models import (
+    SlotUpdateRequest,
+)
 from custom_components.rental_control.reconciliation import ActionKind
 from custom_components.rental_control.reconciliation import DesiredPlan
 from custom_components.rental_control.reconciliation import Reservation
@@ -467,6 +474,28 @@ class TestTrimAwareSlotOwnership:
             34,
             "Nicole Amidon (homeaway) - by Hostaway",
         )
+
+    def test_verify_slot_ownership_rejects_prefix_when_trim_disabled(self) -> None:
+        """Prefix stripping is gated behind trim-enabled ownership matching."""
+        eo = EventOverrides(start_slot=34, max_slots=1)
+        eo.trim_names = False
+        eo.max_name_length = 16
+        eo.event_prefix = "RC"
+        now = dt_util.now()
+        eo.update(34, "1234", "RC Alice", now, now + timedelta(days=3))
+
+        assert not eo.verify_slot_ownership(34, "Alice")
+
+    def test_verify_slot_ownership_accepts_prefix_when_trim_enabled(self) -> None:
+        """Trim-enabled ownership strips the configured display prefix."""
+        eo = EventOverrides(start_slot=34, max_slots=1)
+        eo.trim_names = True
+        eo.max_name_length = 16
+        eo.event_prefix = "RC"
+        now = dt_util.now()
+        eo.update(34, "1234", "RC Alice", now, now + timedelta(days=3))
+
+        assert eo.verify_slot_ownership(34, "Alice")
 
     def test_verify_slot_ownership_accepts_prefixed_trimmed_name(self) -> None:
         """Verify a stored Keymaster display name can include the prefix."""
@@ -3698,7 +3727,9 @@ class TestApplyPlanActions:
         assert results[0].confirmed is True
         assert observed == [True, True]
         assert eo.overrides[1] is not None
-        assert eo.overrides[1]["slot_name"] == "Guest"
+        override = eo.overrides[1]
+        assert override is not None
+        assert override["slot_name"] == "Guest"
         assert 1 not in eo.pending_fences
 
     async def test_set_action_passes_unbuffered_dates(self) -> None:
@@ -3937,7 +3968,9 @@ class TestApplyPlanActions:
 
         assert results[0].unconfirmed is True
         assert eo.overrides[1] is not None
-        assert eo.overrides[1]["slot_name"] == "Guest"
+        override = eo.overrides[1]
+        assert override is not None
+        assert override["slot_name"] == "Guest"
         mock_clear.assert_not_called()
 
     async def test_preflight_clear_accepts_prefixed_physical_name(self) -> None:
@@ -5164,6 +5197,33 @@ class TestManualDriftLogging:
         log_text = " ".join(r.message for r in caplog.records)
         assert "date_range_enabled" in log_text
 
+    async def test_overwrite_uses_shell_uuid_patch_point(self) -> None:
+        """Overwrite replacement IDs remain patchable via shell UUID."""
+        eo = EventOverrides(start_slot=5, max_slots=2)
+        res = self._make_res()
+        action = self._make_overwrite_action(drift_fields=["name"])
+        coordinator = MagicMock()
+        apply_clear = AsyncMock(
+            return_value=OperationResult(kind="clear", slot=5, confirmed=True)
+        )
+        apply_set = AsyncMock(
+            return_value=OperationResult(kind="set", slot=5, confirmed=True)
+        )
+
+        with (
+            patch.object(eo, "_apply_clear", apply_clear),
+            patch.object(eo, "_apply_set", apply_set),
+            patch(
+                "custom_components.rental_control.event_overrides.uuid.uuid4",
+                return_value="patched-token",
+            ),
+        ):
+            await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
+
+        apply_set.assert_awaited_once()
+        assert apply_set.await_args is not None
+        assert apply_set.await_args.args[3] == "replace-5-patched-token"
+
     async def test_raw_pin_never_in_log(self, caplog: pytest.LogCaptureFixture) -> None:
         """Raw PIN value must never appear in WARNING (or above) log records during overwrite.
 
@@ -6244,3 +6304,203 @@ class TestSlotNameTrimmingRegression:
         ]
         assert result.confirmed is True
         assert name_calls[-1]["service_data"]["value"] == "RC Alice"
+
+
+class TestRequestObjectCompatibility:
+    """T059-T068: request-object wrappers and compatibility surface tests."""
+
+    @pytest.mark.asyncio
+    async def test_async_reserve_accepts_request_object(
+        self, populated_eo: EventOverrides
+    ) -> None:
+        """async_reserve_or_get_slot accepts SlotReservationRequest directly."""
+        req = SlotReservationRequest(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2026, 1, 1),
+            end_time=_make_dt(2026, 1, 4),
+            uid="uid-1",
+        )
+
+        result = await populated_eo.async_reserve_or_get_slot(req)
+
+        assert result.is_new is True
+        assert result.slot is not None
+        assert populated_eo._slot_uids[result.slot] == "uid-1"
+
+    @pytest.mark.asyncio
+    async def test_async_reserve_rejects_unknown_keyword(
+        self, populated_eo: EventOverrides
+    ) -> None:
+        """Unknown greedy-reservation keywords still fail fast."""
+        with pytest.raises(TypeError):
+            await populated_eo.async_reserve_or_get_slot(
+                slot_name="Alice",
+                slot_code="1234",
+                start_time=_make_dt(2026, 1, 1),
+                end_time=_make_dt(2026, 1, 4),
+                unexpected=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_async_reserve_request_rejects_extras(
+        self, populated_eo: EventOverrides
+    ) -> None:
+        """Request-object greedy-reservation extras still fail fast."""
+        req = SlotReservationRequest(
+            slot_name="Alice",
+            slot_code="1234",
+            start_time=_make_dt(2026, 1, 1),
+            end_time=_make_dt(2026, 1, 4),
+        )
+
+        with pytest.raises(TypeError):
+            await populated_eo.async_reserve_or_get_slot(req, unexpected=True)
+
+    @pytest.mark.asyncio
+    async def test_async_update_accepts_request_object_and_redirects(self) -> None:
+        """async_update accepts SlotUpdateRequest and preserves dedup redirect."""
+        eo = EventOverrides(start_slot=1, max_slots=2)
+        now = dt_util.now()
+        eo.update(1, "", "", now, now)
+        eo.update(2, "2222", "Guest", _make_dt(2026, 1, 1), _make_dt(2026, 1, 5))
+
+        req = SlotUpdateRequest(
+            slot=1,
+            slot_code="9999",
+            slot_name="Guest",
+            start_time=_make_dt(2026, 1, 2),
+            end_time=_make_dt(2026, 1, 6),
+        )
+        await eo.async_update(req)
+
+        assert eo.overrides[1] is None
+        override = eo.overrides[2]
+        assert override is not None
+        assert override["slot_code"] == "9999"
+
+    @pytest.mark.asyncio
+    async def test_async_update_rejects_unknown_keyword(self) -> None:
+        """Unknown async_update keywords still fail fast."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        with pytest.raises(TypeError):
+            await eo.async_update(
+                slot=1,
+                slot_code="1234",
+                slot_name="Guest",
+                start_time=_make_dt(2026, 1, 1),
+                end_time=_make_dt(2026, 1, 4),
+                unexpected=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_async_update_request_rejects_extras(self) -> None:
+        """Request-object async_update extras still fail fast."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        req = SlotUpdateRequest(
+            slot=1,
+            slot_code="1234",
+            slot_name="Guest",
+            start_time=_make_dt(2026, 1, 1),
+            end_time=_make_dt(2026, 1, 4),
+        )
+
+        with pytest.raises(TypeError):
+            await eo.async_update(req, unexpected=True)
+
+    def test_update_accepts_request_object_and_prefix(self) -> None:
+        """Synchronous update accepts SlotUpdateRequest and strips prefixes."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        req = SlotUpdateRequest(
+            slot=1,
+            slot_code="1234",
+            slot_name="Rental Guest",
+            start_time=_make_dt(2026, 1, 1),
+            end_time=_make_dt(2026, 1, 4),
+            prefix="Rental",
+        )
+
+        eo.update(req)
+
+        override = eo.overrides[1]
+        assert override is not None
+        assert override["slot_name"] == "Guest"
+
+    def test_update_rejects_unknown_keyword(self) -> None:
+        """Unknown sync update keywords still fail fast."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        with pytest.raises(TypeError):
+            eo.update(
+                slot=1,
+                slot_code="1234",
+                slot_name="Guest",
+                start_time=_make_dt(2026, 1, 1),
+                end_time=_make_dt(2026, 1, 4),
+                unexpected=True,
+            )
+
+    def test_update_request_rejects_extras(self) -> None:
+        """Request-object sync update extras still fail fast."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        req = SlotUpdateRequest(
+            slot=1,
+            slot_code="1234",
+            slot_name="Guest",
+            start_time=_make_dt(2026, 1, 1),
+            end_time=_make_dt(2026, 1, 4),
+        )
+
+        with pytest.raises(TypeError):
+            eo.update(req, unexpected=True)
+
+    def test_public_surface_members_remain_available(self) -> None:
+        """EventOverrides shell still exports the expected public members."""
+        assert hasattr(_eo_module, "EventOverrides")
+        assert hasattr(_eo_module, "EventOverride")
+        assert hasattr(_eo_module, "ReserveResult")
+
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        for name in (
+            "async_apply_plan",
+            "async_check_overrides",
+            "async_reserve_or_get_slot",
+            "async_update",
+            "diagnostics_snapshot",
+            "get_last_slot_error",
+            "load_persisted_mappings",
+            "pending_clear_slots",
+            "pending_fences",
+            "record_retry_failure",
+            "record_retry_success",
+            "release_pending_clear_slot",
+            "should_suppress_state_change",
+            "suppress_state_changes",
+            "update",
+            "verify_slot_ownership",
+            "_apply_clear",
+            "_apply_overwrite_manual_change",
+            "_find_overlapping_slot",
+            "_slot_has_matching_event",
+        ):
+            assert hasattr(eo, name)
+
+    def test_production_modules_do_not_import_helper_package(self) -> None:
+        """Production callers keep the public shell import boundary."""
+        root = (
+            Path(__file__).resolve().parents[2] / "custom_components" / "rental_control"
+        )
+        setup_shell = root / "coordinator_helpers" / "coordinator_setup_shell.py"
+        config_shell = root / "coordinator_helpers" / "coordinator_config_shell.py"
+
+        assert "from ..event_overrides import EventOverrides" in setup_shell.read_text()
+        assert (
+            "from ..event_overrides import EventOverrides" in config_shell.read_text()
+        )
+
+        for path in root.rglob("*.py"):
+            if (
+                "event_overrides_helpers" in path.parts
+                or path.name == "event_overrides.py"
+            ):
+                continue
+            assert "event_overrides_helpers" not in path.read_text()
