@@ -243,10 +243,11 @@ to pass unchanged.
   matching a new event to a slot and checking whether a slot still has a matching
   event.
 - **FR-007**: Trim-aware fallback behavior from #624 and PR #625 MUST be
-  preserved exactly, including use of the configured `trim_name` behavior,
-  `trim_names`, `max_name_length`, `event_prefix`, and `prefix_length`; UID-positive
-  trim matching without overlap; trim matching with overlap; and restoration of
-  a longer full name only when the current engine would restore it.
+  preserved exactly, including use of the `trim_name` utility together with
+  configured `trim_names`, `max_name_length`, `event_prefix`, and
+  `prefix_length`; UID-positive trim matching without overlap; trim matching
+  with overlap; and restoration of a longer full name only when the current
+  engine would restore it.
 - **FR-008**: The mirror relationship between `_find_overlapping_slot` and
   `_slot_has_matching_event` MUST be preserved so both paths make equivalent
   decisions for UID-positive matches, name/overlap matches, same-start bypass,
