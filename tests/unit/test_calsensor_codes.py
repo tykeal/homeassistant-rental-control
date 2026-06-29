@@ -9,12 +9,22 @@ from datetime import datetime
 from datetime import timezone
 import random
 
+import pytest
+
 from custom_components.rental_control.sensors.calsensor_helpers.codes import (
     generate_door_code,
 )
 from custom_components.rental_control.sensors.calsensor_helpers.models import (
     DoorCodeRequest,
 )
+
+
+@pytest.fixture(autouse=True)
+def restore_random_state():
+    """Restore global RNG state after each generated-code parity test."""
+    state = random.getstate()
+    yield
+    random.setstate(state)
 
 
 def _request(
