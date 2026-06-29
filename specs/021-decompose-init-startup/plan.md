@@ -133,8 +133,9 @@ tests/
     └── test_refresh_cycle.py           # Existing startup/reconciliation coverage
 ```
 
-**Structure Decision**: Keep `__init__.py` as a module, not a package. Home
-Assistant imports the integration package directly for `async_setup_entry`,
+**Structure Decision**: Keep the integration package entry file in
+`__init__.py` rather than moving lifecycle functions to a different module.
+Home Assistant imports the package directly for `async_setup_entry`,
 `async_unload_entry`, `async_migrate_entry`, and update-listener behavior.
 Visible tests import `async_arm_startup_readability_refresh` from
 `custom_components.rental_control` and patch
