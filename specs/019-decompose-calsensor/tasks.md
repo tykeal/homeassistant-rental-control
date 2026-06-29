@@ -108,7 +108,7 @@ baselines before moving any production code.
 - [ ] T007 Inventory direct imports, private method calls, calsensor module patches, read-only slot assertions, and the sole `_async_handle_slot_assignment` caller in `tests/unit/test_sensors.py`
 - [ ] T008 Run unchanged baseline calsensor unit tests with `uv run pytest tests/unit/test_sensors.py -q` against `tests/unit/test_sensors.py`
 - [ ] T009 Run unchanged baseline integration callers with `uv run pytest tests/integration/test_refresh_cycle.py tests/integration/test_checkin_tracking.py -q` against the listed integration files
-- [ ] T010 Record the current line, function-length, and parameter-count baseline for `custom_components/rental_control/sensors/calsensor.py`, confirming the 537-line file, 147-line `_handle_coordinator_update`, eight-parameter `_async_handle_slot_assignment`, and absence of a calsensor `aislop-ignore-file` directive
+- [ ] T010 Record the current line, function-length, and parameter-count baseline for `custom_components/rental_control/sensors/calsensor.py`, confirming the 537-line file, 147-line `_handle_coordinator_update`, seven-keyword-only-parameter `_async_handle_slot_assignment` plus `self`, and absence of a calsensor `aislop-ignore-file` directive
 
 ---
 
