@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 from typing import Any
 
@@ -19,6 +20,23 @@ from .models import ReservationBuildContext
 from .models import _format_display_slot_name
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _coerce_persisted_datetime(value: Any) -> datetime | None:
+    """Return a valid persisted datetime, or None for corrupt values."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        parsed = _dt.parse_datetime(value)
+        return parsed if isinstance(parsed, datetime) else None
+    return None
+
+
+def _persisted_string_set(value: Any) -> set[str]:
+    """Return persisted string aliases while ignoring corrupt values."""
+    if not isinstance(value, (list, set, tuple)):
+        return set()
+    return {item for item in value if isinstance(item, str)}
 
 
 def build_ghost_reservations(
@@ -54,7 +72,10 @@ def _build_one_ghost(
     if status not in (SLOT_STATUS_OCCUPIED, SLOT_STATUS_PENDING_SET):
         return None
 
-    new_mc = mapping.get("missing_count", 0) + 1
+    missing_count = mapping.get("missing_count", 0)
+    if not isinstance(missing_count, int):
+        missing_count = 0
+    new_mc = missing_count + 1
     mapping["missing_count"] = new_mc
 
     if status == SLOT_STATUS_PENDING_SET and new_mc >= 3:
@@ -83,8 +104,15 @@ def _ghost_from_mapping(
 ) -> _Reservation | None:
     """Return a ghost reservation from a persisted mapping, or None when fenced."""
     identity = mapping.get("identity", {})
-    slot_name: str = identity.get("slot_name", "")
+    if not isinstance(identity, dict):
+        identity = {}
+    slot_name_raw = identity.get("slot_name", "")
+    slot_name = slot_name_raw if isinstance(slot_name_raw, str) else ""
+    summary_raw = identity.get("summary", "")
+    summary = summary_raw if isinstance(summary_raw, str) else ""
     last_actual = mapping.get("last_observed_actual", {})
+    if not isinstance(last_actual, dict):
+        last_actual = {}
     actual_name = last_actual.get("name_state")
     if _ghost_physical_name_mismatch(
         actual_name, slot_name, prefix, observed_mapping_keys, key, ctx
@@ -110,10 +138,12 @@ def _ghost_from_mapping(
         )
         return None
 
-    start_dt = (
-        _dt.parse_datetime(start_raw) if isinstance(start_raw, str) else start_raw
-    )
-    end_dt = _dt.parse_datetime(end_raw) if isinstance(end_raw, str) else end_raw
+    start_dt = _coerce_persisted_datetime(start_raw)
+    end_dt = _coerce_persisted_datetime(end_raw)
+    if start_dt is not None and start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=ctx.timezone)
+    if end_dt is not None and end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=ctx.timezone)
     if start_dt is None or end_dt is None or start_dt >= end_dt:
         _LOGGER.debug(
             "Ghost reservation %s: invalid dates (start=%s end=%s); "
@@ -132,15 +162,17 @@ def _ghost_from_mapping(
             end=end_dt,
             buffered_start=start_dt,
             buffered_end=end_dt,
-            summary=identity.get("summary", ""),
+            summary=summary,
             slot_name=slot_name,
             display_slot_name=_format_display_slot_name(
                 slot_name, prefix, ctx.trim_names, ctx.max_name_length
             ),
             slot_code="",
-            uid_aliases=set(identity.get("uid_aliases", [])),
-            booking_aliases=set(identity.get("booking_aliases", [])),
-            fingerprint_history=set(mapping.get("fingerprint_history", [])),
+            uid_aliases=_persisted_string_set(identity.get("uid_aliases", [])),
+            booking_aliases=_persisted_string_set(identity.get("booking_aliases", [])),
+            fingerprint_history=_persisted_string_set(
+                mapping.get("fingerprint_history", [])
+            ),
             missing_count=new_mc,
         )
     except ValueError:
