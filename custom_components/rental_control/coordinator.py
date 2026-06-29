@@ -69,9 +69,12 @@ def add_call(
     service: str,
     target: str,
     data: dict[str, Any],
-) -> Any:
+) -> list[Any]:
     """Delegate service-call collection through util at runtime."""
-    return _util_module().add_call(hass, coro, domain, service, target, data)
+    return cast(
+        "list[Any]",
+        _util_module().add_call(hass, coro, domain, service, target, data),
+    )
 
 
 async def async_fire_clear_code(

@@ -114,7 +114,7 @@ async def async_fire_set_code(
 
 
 async def _confirm_set_result(
-    coordinator, slot: int, lockname: str, slot_name: str, deps
+    coordinator, slot: int, lockname: str, slot_name: str, deps: KeymasterServiceDeps
 ) -> OperationResult:
     """Confirm a set-code operation by reading the expected name."""
     name_entity = f"{TEXT}.{lockname}_code_slot_{slot}_name"
@@ -133,7 +133,7 @@ async def _confirm_set_result(
 
 
 async def async_fire_clear_code(
-    coordinator, slot: int, expected_name: str | None, deps
+    coordinator, slot: int, expected_name: str | None, deps: KeymasterServiceDeps
 ) -> OperationResult:
     """Fire a clear_code signal."""
     deps.logger.debug(

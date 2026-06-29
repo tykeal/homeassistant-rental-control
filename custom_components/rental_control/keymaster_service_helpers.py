@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Coroutine
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ from .helpers import OperationResult
 class KeymasterServiceDeps:
     """Runtime dependencies supplied by the util compatibility shell."""
 
-    sleep: Callable[..., Any]
+    sleep: Callable[..., Awaitable[Any]]
     track_state_change: Callable[..., Callable[[], None]]
     confirmation_timeout: float
     create_notification: Callable[..., None]

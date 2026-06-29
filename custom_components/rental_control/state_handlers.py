@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -26,7 +27,7 @@ from .const import DOMAIN
 class StateHandlerDeps:
     """Runtime dependencies supplied by the util compatibility shell."""
 
-    sleep: Callable[..., Any]
+    sleep: Callable[..., Awaitable[Any]]
     logger: logging.Logger
     normalize_keymaster_text_state: Callable[[Any], str | None]
     trim_name: Callable[[str, int], str]
