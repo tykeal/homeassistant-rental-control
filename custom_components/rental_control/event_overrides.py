@@ -13,6 +13,9 @@
 ##############################################################################
 """Rental Control EventOverrides."""
 
+# aislop-ignore-file ai-slop/unused-import -- Keymaster fire helpers and uuid are
+# retained re-exports accessed via self._module for test monkeypatch compatibility.
+
 from __future__ import annotations
 
 import asyncio
