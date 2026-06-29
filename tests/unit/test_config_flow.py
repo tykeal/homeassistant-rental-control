@@ -1663,3 +1663,60 @@ async def test_config_flow_max_name_length_min_validation(
     invalid = {**base_data, CONF_MAX_NAME_LENGTH: MIN_NAME_LENGTH - 1}
     with pytest.raises(vol.Invalid):
         schema(invalid)
+
+
+async def test_config_flow_decomposition_import_surface(hass: HomeAssistant) -> None:
+    """Test decomposed config-flow compatibility surface remains importable."""
+    from custom_components.rental_control import config_flow
+
+    assert config_flow.RentalControlFlowHandler.VERSION == 10
+    assert hasattr(config_flow.RentalControlFlowHandler, "async_step_user")
+    assert hasattr(config_flow.RentalControlFlowHandler, "async_get_options_flow")
+    assert hasattr(config_flow.RentalControlOptionsFlow, "async_step_init")
+    for name in (
+        "gen_uuid",
+        "_normalize_lock_entry",
+        "_get_schema",
+        "_show_config_form",
+        "_start_config_flow",
+    ):
+        assert hasattr(config_flow, name)
+
+
+async def test_config_flow_decomposition_direct_helpers(hass: HomeAssistant) -> None:
+    """Test direct helper seams remain callable from config_flow."""
+    from custom_components.rental_control import config_flow
+    from custom_components.rental_control.config_flow_helpers.models import (
+        ConfigFormContext,
+    )
+
+    class FlowStub:
+        """Stub flow for direct form rendering."""
+
+        def __init__(self, flow_hass: HomeAssistant) -> None:
+            """Initialize the stub."""
+            self.hass = flow_hass
+
+        def async_show_form(self, **kwargs):
+            """Return rendered form kwargs."""
+            return kwargs
+
+    schema = config_flow._get_schema(
+        hass, {}, config_flow.RentalControlFlowHandler.DEFAULTS
+    )
+    result = config_flow._show_config_form(
+        FlowStub(hass),
+        ConfigFormContext(
+            step_id="user",
+            user_input={},
+            errors={},
+            description_placeholders={},
+            defaults=config_flow.RentalControlFlowHandler.DEFAULTS,
+            entry_id=None,
+        ),
+    )
+
+    assert config_flow._normalize_lock_entry(None) == "(none)"
+    assert CONF_NAME in {str(key.schema) for key in schema.schema}
+    assert result["step_id"] == "user"
+    assert result["errors"] == {}
