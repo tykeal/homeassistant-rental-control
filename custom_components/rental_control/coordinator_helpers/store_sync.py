@@ -196,6 +196,8 @@ def normalize_loaded_store(
     schema_version = raw.get("schema_version", 0)
     if not isinstance(schema_version, int):
         return None
+    if schema_version > STORE_SCHEMA_VERSION:
+        return None
     if schema_version < 1:
         raw = migrate_to_v1(raw, defaults)
     mappings = raw.get("mappings", {})

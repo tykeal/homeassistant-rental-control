@@ -41,6 +41,49 @@ def test_normalize_loaded_store_rejects_non_dict() -> None:
     assert result is None
 
 
+def test_normalize_loaded_store_rejects_future_schema() -> None:
+    """Store payloads from newer schemas normalize to None."""
+    result = store_sync.normalize_loaded_store(
+        {
+            "schema_version": STORE_SCHEMA_VERSION + 1,
+            "mappings": {},
+            "aliases": {},
+            "migration_notes": [],
+        },
+        ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00"),
+    )
+
+    assert result is None
+
+
+def test_normalize_loaded_store_accepts_current_schema() -> None:
+    """Current schema payloads continue to normalize."""
+    result = store_sync.normalize_loaded_store(
+        {
+            "schema_version": STORE_SCHEMA_VERSION,
+            "mappings": {},
+            "aliases": {},
+            "migration_notes": [],
+        },
+        ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00"),
+    )
+
+    assert result is not None
+    assert result["schema_version"] == STORE_SCHEMA_VERSION
+
+
+def test_normalize_loaded_store_still_migrates_legacy_schema() -> None:
+    """Legacy schema payloads continue to migrate to version 1."""
+    result = store_sync.normalize_loaded_store(
+        {"schema_version": 0, "mappings": {"k": {"slot": 5}}},
+        ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00"),
+    )
+
+    assert result is not None
+    assert result["schema_version"] == 1
+    assert result["mappings"] == {"k": {"slot": 5}}
+
+
 def test_build_store_sync_plan_empty() -> None:
     """An empty plan produces an empty mutation plan."""
     plan = DesiredPlan(
