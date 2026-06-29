@@ -4,11 +4,44 @@
 
 from __future__ import annotations
 
+from datetime import date
 from datetime import datetime
 from datetime import time
 from datetime import timezone
 
+from icalendar import Calendar
+from icalendar import Event
+
 from custom_components.rental_control.coordinator_helpers import calendar_parsing
+from custom_components.rental_control.coordinator_helpers.models import (
+    CalendarParseContext,
+)
+
+
+def _parse_ctx(
+    *,
+    event_prefix: str | None = None,
+    ignore_non_reserved: bool = False,
+    honor_event_times: bool = False,
+) -> CalendarParseContext:
+    """Return a minimal calendar parse context for tests."""
+    return CalendarParseContext(
+        timezone=timezone.utc,
+        checkin=time(16, 0),
+        checkout=time(10, 0),
+        event_prefix=event_prefix,
+        ignore_non_reserved=ignore_non_reserved,
+        honor_event_times=honor_event_times,
+        code_buffer_before=0,
+        code_buffer_after=0,
+    )
+
+
+def _calendar_with_event(event: Event) -> Calendar:
+    """Return a calendar containing one VEVENT."""
+    calendar = Calendar()
+    calendar.add_component(event)
+    return calendar
 
 
 def test_datetimes_match_true_for_equal_instants() -> None:
@@ -32,3 +65,37 @@ def test_combine_event_time_returns_datetime() -> None:
     assert isinstance(result, datetime)
     assert result.hour == 11
     assert result.minute == 30
+
+
+def test_parse_calendar_tolerates_missing_summary() -> None:
+    """A VEVENT without SUMMARY is handled as an empty-summary event."""
+    event = Event()
+    event.add("dtstart", date(2026, 6, 15))
+    event.add("dtend", date(2026, 6, 16))
+
+    events = calendar_parsing.parse_calendar(
+        _calendar_with_event(event),
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 30, tzinfo=timezone.utc),
+        _parse_ctx(),
+    )
+
+    assert len(events) == 1
+    assert events[0].summary == ""
+
+
+def test_parse_calendar_prefixes_missing_summary_without_trailing_space() -> None:
+    """A missing-summary VEVENT with a prefix has no trailing space."""
+    event = Event()
+    event.add("dtstart", date(2026, 6, 15))
+    event.add("dtend", date(2026, 6, 16))
+
+    events = calendar_parsing.parse_calendar(
+        _calendar_with_event(event),
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 30, tzinfo=timezone.utc),
+        _parse_ctx(event_prefix="RC"),
+    )
+
+    assert len(events) == 1
+    assert events[0].summary == "RC"
