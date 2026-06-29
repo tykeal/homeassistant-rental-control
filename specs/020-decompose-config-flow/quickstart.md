@@ -37,7 +37,7 @@ rg "def _get_schema|def _show_config_form|async def _start_config_flow|aislop-ig
   custom_components/rental_control/config_flow.py -n
 ```
 
-Expected planning facts are a 549-line file, long `_get_schema` and
+Expected planning facts are a 550-line file, long `_get_schema` and
 `_start_config_flow`, seven-parameter `_show_config_form`, and only the existing
 `ai-slop/hallucinated-import` directive.
 

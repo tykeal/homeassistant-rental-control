@@ -14,7 +14,7 @@ SPDX-License-Identifier: Apache-2.0
 ## Summary
 
 Decompose `custom_components/rental_control/config_flow.py` without changing
-Home Assistant-visible behavior. The current 549-line module is the
+Home Assistant-visible behavior. The current 550-line module is the
 compatibility shell for initial setup, options editing, config-entry versioning,
 schema construction, URL and input validation, lock-manager conversion,
 code-generator conversion, duplicate detection, and form rendering.
@@ -56,7 +56,7 @@ implementation must preserve flow registration, step IDs `user` and `init`,
 `VERSION = 10`, `async_get_options_flow`, schema keys/defaults/selectors,
 validation error keys, duplicate handling, URL fetch behavior, entry data,
 options data loading, import seams, and the `config_flow.gen_uuid` patch seam.
-**Scale/Scope**: One 549-line module becomes a small Home Assistant shell plus a
+**Scale/Scope**: One 550-line module becomes a small Home Assistant shell plus a
 helper package. Current measured debt is file size, `_get_schema` at 151 lines,
 `_start_config_flow` at 147 lines, and `_show_config_form` with seven parameters.
 Implementation target: every config-flow-related file below 400 lines, every
@@ -174,7 +174,7 @@ not import `gen_uuid` directly or cache it in a default argument.
 The implementation must start from live `origin/main`, not the issue summary
 alone. Current source facts captured during planning:
 
-- `config_flow.py` is 549 lines.
+- `config_flow.py` is 550 lines.
 - The only current Aislop directive is
   `# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.`
 - `_get_schema` is 151 lines and owns defaults merging, lock-entry display
