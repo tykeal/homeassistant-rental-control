@@ -7,3 +7,8 @@ version: 1
 
 # aislop 0.10.x supports precise false-positive handling via inline
 # `aislop-ignore-*` directives in source. Keep project-local config here.
+
+# Fail the CI quality gate if the project score drops below a perfect 100.
+# The whole tree is at 100/100; this prevents silent regressions.
+ci:
+  failBelow: 100

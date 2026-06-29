@@ -33,7 +33,6 @@ if TYPE_CHECKING:
 
     from .models import CalendarParseContext
 
-# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
 
 import logging
 
