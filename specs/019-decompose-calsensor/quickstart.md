@@ -32,10 +32,12 @@ uv run pytest \
   -q
 ```
 
-Confirm production import remains limited to `sensor.py`:
+Confirm production import remains limited to `sensor.py`, and the direct test
+import still exists:
 
 ```bash
-rg "RentalControlCalSensor" custom_components tests/unit/test_sensors.py
+rg "from \\.sensors\\.calsensor import RentalControlCalSensor" custom_components
+rg "from .*calsensor import RentalControlCalSensor" tests/unit/test_sensors.py
 ```
 
 ## 2. Add helper modules and keep wrappers first
