@@ -5,12 +5,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import logging
-import random
-import re
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import cast
 
 from homeassistant.core import HomeAssistant
 from homeassistant.core import callback
@@ -20,11 +18,18 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from ..const import ICON
 from ..const import NAME
-from ..const import SECONDS_PER_HOUR
-from ..const import SECONDS_PER_MINUTE
 from ..reconciliation import make_reservation_fingerprint
 from ..util import gen_uuid
 from ..util import get_slot_name
+from .calsensor_helpers import attributes
+from .calsensor_helpers import codes
+from .calsensor_helpers import descriptions
+from .calsensor_helpers import slots
+from .calsensor_helpers import state as render_state
+from .calsensor_helpers.models import CalendarSensorRenderResult
+from .calsensor_helpers.models import DoorCodeRequest
+from .calsensor_helpers.models import SlotAssignmentContext
+from .calsensor_helpers.models import SlotReadContext
 
 if TYPE_CHECKING:
     from ..coordinator import RentalControlCoordinator
@@ -40,6 +45,8 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
     May have a name like 'sensor.mycalander_event_0' for the first
     upcoming event.
     """
+
+    _KNOWN_FIELDS = descriptions.KNOWN_FIELDS
 
     def __init__(
         self,
@@ -58,29 +65,15 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         """
         super().__init__(coordinator)
         del sensor_name
-        if coordinator.event_prefix:
-            summary = f"{coordinator.event_prefix} No reservation"
-        else:
-            summary = "No reservation"
+        summary = attributes.build_no_reservation_summary(coordinator.event_prefix)
         self._attr_has_entity_name = True
         self._attr_name = f"{NAME} Event {event_number}"
         self._code_generator = coordinator.code_generator
         self._code_length = coordinator.code_length
         self._entity_category = EntityCategory.DIAGNOSTIC
-        self._event_attributes: dict[str, Any] = {
-            "summary": summary,
-            "description": None,
-            "location": None,
-            "start": None,
-            "end": None,
-            "uid": None,
-            "eta_days": None,
-            "eta_hours": None,
-            "eta_minutes": None,
-            "slot_name": None,
-            "slot_code": None,
-            "slot_number": None,
-        }
+        self._event_attributes: dict[str, Any] = (
+            attributes.build_no_reservation_attributes(coordinator.event_prefix)
+        )
         self._parsed_attributes: dict[str, str] = {}
         self._event_number = event_number
         self._hass = hass
@@ -99,228 +92,60 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         if self.coordinator.last_update_success and self.coordinator.data is not None:
             self._handle_coordinator_update()
 
+    def _description(self) -> str | None:
+        """Return the current event description attribute."""
+        return cast(str | None, self._event_attributes["description"])
+
     def _extract_email(self) -> str | None:
         """Extract guest email from a description"""
-        if self._event_attributes["description"] is None:
-            return None
-        p = re.compile(r"""Email:\s+(\S+@\S+)""")
-        ret = p.findall(self._event_attributes["description"])
-        if ret:
-            return str(ret[0])
-        else:
-            return None
+        return descriptions.extract_email(self._description())
 
     def _extract_last_four(self) -> str | None:
         """Extract the last 4 digits from a description."""
-        if self._event_attributes["description"] is None:
-            return None
-
-        # Match "Last 4 Digits: NNNN" with optional parens
-        p = re.compile(r"""\(?Last 4 Digits\)?:\s+(\d{4})(?!\d)""")
-        ret = p.findall(self._event_attributes["description"])
-        if ret:
-            return str(ret[0])
-
-        # Match "Phone (last 4): NNNN" variant
-        p2 = re.compile(r"""Phone\s*\(last\s*4\):\s*(\d{4})(?!\d)""", re.I)
-        ret = p2.findall(self._event_attributes["description"])
-        if ret:
-            return str(ret[0])
-
-        if "Phone" in self._event_attributes["description"]:
-            phone = self._extract_phone_number()
-            if phone:
-                phone = phone.replace(" ", "")
-                if len(phone) >= 4:
-                    return str(phone)[-4:]
-
-        return None
+        return descriptions.extract_last_four(
+            self._description(),
+            self._extract_phone_number,
+        )
 
     def _extract_num_guests(self) -> str | None:
         """Extract the number of guests from a description."""
-        if self._event_attributes["description"] is None:
-            return None
-        p = re.compile(r"""Guests:\s+(\d+)$""", re.M)
-        ret = p.findall(self._event_attributes["description"])
-        if ret:
-            return str(ret[0])
-        elif "Adults" in self._event_attributes["description"]:
-            guests = 0
-            p = re.compile(r"""Adults:\s+(\d+)$""", re.M)
-            ret = p.findall(self._event_attributes["description"])
-            if ret:
-                guests = int(ret[0])
-
-            p = re.compile(r"""Children:\s+(\d+)$""", re.M)
-            ret = p.findall(self._event_attributes["description"])
-            if ret:
-                guests += int(ret[0])
-
-            if guests > 0:
-                return str(guests)
-
-        return None
+        return descriptions.extract_num_guests(self._description())
 
     def _extract_phone_number(self) -> str | None:
         """Extract guest phone number from a description"""
-        if self._event_attributes["description"] is None:
-            return None
-        p = re.compile(r"""Phone(?: Number)?:\s+(\+?[\d\. \-\(\)]{9,})""")
-        ret = p.findall(self._event_attributes["description"])
-        if ret:
-            return str(ret[0]).strip()
-        else:
-            return None
+        return descriptions.extract_phone_number(self._description())
 
     def _extract_url(self) -> str | None:
         """Extract reservation URL."""
-        if self._event_attributes["description"] is None:
-            return None
-        p = re.compile(r"""(https?://.*$)""", re.M)
-        ret = p.findall(self._event_attributes["description"])
-        if ret:
-            return str(ret[0])
-        else:
-            return None
+        return descriptions.extract_url(self._description())
 
     def _extract_booking_id(self) -> str | None:
         """Extract booking ID from a description."""
-        if self._event_attributes["description"] is None:
-            return None
-        p = re.compile(r"""Booking ID:\s*(.+)$""", re.M)
-        ret = p.findall(self._event_attributes["description"])
-        if ret:
-            for match in ret:
-                booking_id = str(match).strip()
-                if booking_id:
-                    return booking_id
-        return None
-
-    # Field labels already handled by dedicated extractors.
-    _KNOWN_FIELDS: frozenset[str] = frozenset(
-        {
-            "email",
-            "last 4 digits",
-            "phone",
-            "phone number",
-            "phone (last 4)",
-            "guests",
-            "adults",
-            "children",
-            "booking id",
-        }
-    )
+        return descriptions.extract_booking_id(self._description())
 
     def _extract_dynamic_attributes(self) -> dict[str, str]:
-        """Extract unrecognised 'Field: Value' lines from description.
-
-        Parses each line for a ``<field>: <value>`` pattern and returns
-        a dict keyed by the slugified field name.  Lines whose field
-        label matches a dedicated extractor, or that look like URLs,
-        are skipped.
-        """
-        desc = self._event_attributes.get("description")
-        if not desc:
-            return {}
-
-        result: dict[str, str] = {}
-        line_re = re.compile(r"^([^:\n]+?):\s+(.+)$", re.MULTILINE)
-
-        for match in line_re.finditer(desc):
-            field = match.group(1).strip()
-            value = match.group(2).strip()
-
-            # Skip fields handled by dedicated extractors
-            if field.lower() in self._KNOWN_FIELDS:
-                continue
-
-            # Skip bare URLs that happen to contain ':'
-            if field.lower().startswith("http"):
-                continue
-
-            # Slugify: lowercase, replace non-alnum with underscore
-            key = re.sub(r"[^a-z0-9]+", "_", field.lower()).strip("_")
-            if key and value:
-                result[key] = value
-
-        return result
+        """Extract unrecognised 'Field: Value' lines from description."""
+        return descriptions.extract_dynamic_attributes(self._description())
 
     def _generate_door_code(self) -> str:
         """Generate a door code based upon the selected type."""
-
-        generator = self._code_generator
-        code_length = self._code_length
-
-        # If there is no event description force date_based generation
-        # This is because VRBO does not appear to provide any descriptions in
-        # their calendar entries!
-        # This also gets around Unavailable and Blocked entries that do not
-        # have a description either
-        #
-        # For static_random: only force date_based when BOTH uid and
-        # description are None (UID alone can seed the generator).
-        if self._event_attributes["description"] is None:
-            if (
-                generator != "static_random"
-                or self._event_attributes.get("uid") is None
-            ):
-                generator = "date_based"
-
-        # AirBnB provides the last 4 digits of the guest's registered phone
-        #
-        # VRBO does not appear to provide any phone numbers
-        #
-        # Guesty provides last 4 + either a full number or all but last digit
-        # for VRBO listings and doesn't appear to provide anything for AirBnB
-        # listings, or if it does provide them, my example Guesty calendar doesn't
-        # have any new enough to have the data
-        #
-        # TripAdvisor does not appear to provide any phone number data
-
-        ret = None
-
-        # Last 4 is only valid for code lengths of 4
-        if generator == "last_four" and code_length == 4:
-            ret = self._extract_last_four()
-        elif generator == "static_random":
-            # Prefer UID (immutable per RFC 5545) over description (mutable).
-            # Only seed when we have a non-empty value; otherwise fall
-            # through to the date_based generator below.
-            uid = self._event_attributes.get("uid")
-            description = self._event_attributes["description"]
-            seed = uid if uid else description
-            if seed:
-                random.seed(seed)
-                max_range = int("9999".rjust(code_length, "9"))
-                ret = str(random.randrange(1, max_range, code_length)).zfill(
-                    code_length
-                )
-
-        if ret is None:
-            # Generate code based on checkin/out days
-            #
-            # This generator will have a side effect of changing the code
-            # if the start or end dates shift!
-            #
-            # This is the default and fall back generator if no other
-            # generator produced a code
-            start_day = self._event_attributes["start"].strftime("%d")
-            start_month = self._event_attributes["start"].strftime("%m")
-            start_year = self._event_attributes["start"].strftime("%Y")
-            end_day = self._event_attributes["end"].strftime("%d")
-            end_month = self._event_attributes["end"].strftime("%m")
-            end_year = self._event_attributes["end"].strftime("%Y")
-            # This should be longer than anybody ever needs
-            code = f"{start_day}{end_day}{start_month}{end_month}{start_year}{end_year}"
-            # use a zfill in case the code really wasn't long enough for some
-            # weird reason
-            ret = (
-                code[:code_length]
-                if len(code) > code_length
-                else code.zfill(code_length)
-            )
-
-        return ret
+        last_four = None
+        if (
+            self._code_generator == "last_four"
+            and self._code_length == 4
+            and self._event_attributes["description"] is not None
+        ):
+            last_four = self._extract_last_four()
+        request = DoorCodeRequest(
+            generator=self._code_generator,
+            code_length=self._code_length,
+            start=self._event_attributes["start"],
+            end=self._event_attributes["end"],
+            uid=self._event_attributes.get("uid"),
+            description=self._event_attributes["description"],
+            last_four=last_four,
+        )
+        return codes.generate_door_code(request)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -360,158 +185,122 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             "Running RentalControlCalSensor coordinator update for %s",
             self.name,
         )
-
-        # Not yet successful, skip processing
         if not self.coordinator.last_update_success:
             self.async_write_ha_state()
             return
 
+        self._refresh_code_settings()
+        event = render_state.select_event(self.coordinator.data, self._event_number)
+        if event is None:
+            self._handle_no_reservation_update()
+        else:
+            self._handle_event_update(event)
+        self.async_write_ha_state()
+
+    def _refresh_code_settings(self) -> None:
+        """Refresh generated-code settings from the coordinator."""
         self._code_generator = self.coordinator.code_generator
         self._code_length = self.coordinator.code_length
-        event_list = self.coordinator.data
-        if event_list and (self._event_number < len(event_list)):
-            event = event_list[self._event_number]
-            name = event.summary
-            start = event.start
 
-            _LOGGER.debug(
-                "Adding event %s - Start %s - End %s - as event %s to calendar %s",
-                event.summary,
-                event.start,
-                event.end,
-                str(self._event_number),
-                self.name,
-            )
+    def _handle_no_reservation_update(self) -> None:
+        """Apply the legacy no-reservation render result."""
+        _LOGGER.debug(
+            "No events available for sensor %s, removing from calendar %s",
+            str(self._event_number),
+            self.name,
+        )
+        self._apply_render_result(
+            render_state.render_no_reservation(self.coordinator.event_prefix)
+        )
 
-            self._event_attributes["summary"] = event.summary
-            self._event_attributes["start"] = event.start
-            self._event_attributes["end"] = event.end
-            self._event_attributes["location"] = event.location
-            self._event_attributes["description"] = event.description
-            uid = getattr(event, "uid", None)
-            if isinstance(uid, str):
-                uid = uid.strip() or None
-            self._event_attributes["uid"] = uid
-            td = start - datetime.now(start.tzinfo)
-            eta_days = None
-            eta_hours = None
-            eta_minutes = None
-            if td.total_seconds() >= 0:
-                eta_days = td.days
-                eta_hours = round(td.total_seconds() // SECONDS_PER_HOUR)
-                eta_minutes = round(td.total_seconds() // SECONDS_PER_MINUTE)
+    def _handle_event_update(self, event: Any) -> None:
+        """Apply the render result for a selected calendar event."""
+        _LOGGER.debug(
+            "Adding event %s - Start %s - End %s - as event %s to calendar %s",
+            event.summary,
+            event.start,
+            event.end,
+            str(self._event_number),
+            self.name,
+        )
+        event_attributes = self._build_event_attributes(event)
+        self._event_attributes.update(event_attributes)
+        if self._event_attributes["slot_code"] is None:
+            self._event_attributes["slot_code"] = self._generate_door_code()
+        result = render_state.render_event_result(
+            event,
+            self._event_attributes,
+            self._build_parsed_attributes(),
+        )
+        self._apply_render_result(result)
 
-            self._event_attributes["eta_days"] = eta_days
-            self._event_attributes["eta_hours"] = eta_hours
-            self._event_attributes["eta_minutes"] = eta_minutes
-            self._state = f"{name} - {start.day} {start.strftime('%B %Y')}"
-            self._state += f" {start.strftime('%H:%M')}"
-            slot_name = get_slot_name(
-                self._event_attributes["summary"],
-                self._event_attributes["description"],
-                self.coordinator.event_prefix or "",
-            )
-            self._event_attributes["slot_name"] = slot_name
+    def _build_event_attributes(self, event: Any) -> dict[str, Any]:
+        """Build event attributes for the selected calendar event."""
+        eta = attributes.calculate_eta(event.start)
+        slot = slots.read_slot(self._slot_read_context(event), self.coordinator)
+        return attributes.build_event_attributes(event, eta, slot)
 
-            # Read slot assignment and code from coordinator reconciliation
-            # state.  The coordinator owns all slot mutations; the sensor is
-            # purely read-only.  Fall back to a locally generated code when
-            # reconciliation has not yet produced a result (e.g. no lock
-            # configured, or first refresh before reconciliation ran).
-            slot_number: int | None = None
-            slot_code: str | None = None
-            if self.coordinator.event_overrides is not None and slot_name is not None:
-                identity_key = make_reservation_fingerprint(
-                    self.coordinator.entry_id,
-                    slot_name,
-                    event.start,
-                    event.end,
-                )
-                slot_number = self.coordinator.get_slot_assignment(identity_key)
-                slot_code = self.coordinator.get_slot_code(identity_key)
+    def _slot_read_context(self, event: Any) -> SlotReadContext:
+        """Build a read-only slot lookup context with patchable callables."""
+        return SlotReadContext(
+            entry_id=self.coordinator.entry_id,
+            summary=event.summary,
+            description=event.description,
+            event_prefix=self.coordinator.event_prefix or "",
+            start=event.start,
+            end=event.end,
+            event_overrides_present=self.coordinator.event_overrides is not None,
+            get_slot_name=get_slot_name,
+            make_reservation_fingerprint=make_reservation_fingerprint,
+        )
 
-            if slot_code is None:
-                slot_code = self._generate_door_code()
+    def _build_parsed_attributes(self) -> dict[str, str]:
+        """Build parsed attributes using the retained private wrappers."""
+        parsed_attributes: dict[str, str] = {}
+        self._add_optional_attr(
+            parsed_attributes, "last_four", self._extract_last_four()
+        )
+        self._add_optional_attr(
+            parsed_attributes,
+            "number_of_guests",
+            self._extract_num_guests(),
+        )
+        self._add_optional_attr(parsed_attributes, "guest_email", self._extract_email())
+        self._add_optional_attr(
+            parsed_attributes,
+            "phone_number",
+            self._extract_phone_number(),
+        )
+        self._add_optional_attr(
+            parsed_attributes, "reservation_url", self._extract_url()
+        )
+        self._add_optional_attr(
+            parsed_attributes, "booking_id", self._extract_booking_id()
+        )
+        for key, value in self._extract_dynamic_attributes().items():
+            if key not in parsed_attributes:
+                parsed_attributes[key] = value
+        return parsed_attributes
 
-            self._event_attributes["slot_number"] = slot_number
-            self._event_attributes["slot_code"] = slot_code
+    @staticmethod
+    def _add_optional_attr(
+        parsed_attributes: dict[str, str],
+        key: str,
+        value: str | None,
+    ) -> None:
+        """Add a parsed attribute when its legacy extractor returned a value."""
+        if value is not None:
+            parsed_attributes[key] = value
 
-            # attributes parsed from description
-            parsed_attributes = {}
-
-            last_four = self._extract_last_four()
-            if last_four is not None:
-                parsed_attributes["last_four"] = last_four
-
-            num_guests = self._extract_num_guests()
-            if num_guests is not None:
-                parsed_attributes["number_of_guests"] = num_guests
-
-            guest_email = self._extract_email()
-            if guest_email is not None:
-                parsed_attributes["guest_email"] = guest_email
-
-            phone_number = self._extract_phone_number()
-            if phone_number is not None:
-                parsed_attributes["phone_number"] = phone_number
-
-            reservation_url = self._extract_url()
-            if reservation_url is not None:
-                parsed_attributes["reservation_url"] = reservation_url
-
-            booking_id = self._extract_booking_id()
-            if booking_id is not None:
-                parsed_attributes["booking_id"] = booking_id
-
-            # Capture any remaining "Field: Value" lines not already
-            # handled by the dedicated extractors above.
-            dynamic = self._extract_dynamic_attributes()
-            for key, value in dynamic.items():
-                if key not in parsed_attributes:
-                    parsed_attributes[key] = value
-
-            self._parsed_attributes = parsed_attributes
-
-        else:
-            # No reservations
-            _LOGGER.debug(
-                "No events available for sensor %s, removing from calendar %s",
-                str(self._event_number),
-                self.name,
-            )
-            if self.coordinator.event_prefix:
-                summary = f"{self.coordinator.event_prefix} No reservation"
-            else:
-                summary = "No reservation"
-            self._event_attributes = {
-                "summary": summary,
-                "description": None,
-                "location": None,
-                "start": None,
-                "end": None,
-                "uid": None,
-                "eta_days": None,
-                "eta_hours": None,
-                "eta_minutes": None,
-                "slot_name": None,
-                "slot_code": None,
-                "slot_number": None,
-            }
-            self._parsed_attributes = {}
-            self._state = summary
-
-        self.async_write_ha_state()
+    def _apply_render_result(self, result: CalendarSensorRenderResult) -> None:
+        """Assign a render result to the entity's mutable state."""
+        self._event_attributes = result.event_attributes
+        self._parsed_attributes = result.parsed_attributes
+        self._state = result.state
 
     async def _async_handle_slot_assignment(
         self,
-        *,
-        slot_name: str,
-        slot_code: str,
-        start_time: datetime,
-        end_time: datetime,
-        uid: str | None,
-        prefix: str,
-        eta_days: int | None,
+        context: SlotAssignmentContext,
     ) -> None:
         """No-op backward-compatible shim; slot assignment is owned by the coordinator.
 
@@ -534,3 +323,4 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             retired.  This shim will be removed in a future release once
             all external references are eliminated.
         """
+        del context

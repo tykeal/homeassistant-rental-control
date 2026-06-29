@@ -22,6 +22,9 @@ from custom_components.rental_control.const import NAME
 from custom_components.rental_control.sensor import async_setup_entry
 from custom_components.rental_control.sensor import async_setup_platform
 from custom_components.rental_control.sensors.calsensor import RentalControlCalSensor
+from custom_components.rental_control.sensors.calsensor_helpers.models import (
+    SlotAssignmentContext,
+)
 from custom_components.rental_control.sensors.checkinsensor import CheckinTrackingSensor
 from custom_components.rental_control.util import gen_uuid
 
@@ -1609,13 +1612,15 @@ class TestSensorReadOnly:
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
 
         await sensor._async_handle_slot_assignment(
-            slot_name="test",
-            slot_code="1234",
-            start_time=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
-            end_time=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
-            uid=None,
-            prefix="",
-            eta_days=5,
+            SlotAssignmentContext(
+                slot_name="test",
+                slot_code="1234",
+                start_time=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
+                end_time=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
+                uid=None,
+                prefix="",
+                eta_days=5,
+            )
         )
         coordinator.event_overrides.async_reserve_or_get_slot.assert_not_called()
 
