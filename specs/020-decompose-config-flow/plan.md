@@ -40,10 +40,10 @@ dev/test dependency `homeassistant>=2026.6.0` per `pyproject.toml`;
 **Storage**: Home Assistant config-entry data only; this refactor adds no
 persistent storage and preserves existing setup/options entry data keys
 **Testing**: `uv run pytest tests/unit/test_config_flow.py`; broader caller smoke
-coverage through `uv run pytest tests/integration/test_full_setup.py
- tests/integration/test_refresh_cycle.py`; ruff via `uv run ruff check
- custom_components/ tests/`; pre-commit hooks for reuse, ruff, mypy,
-interrogate, yamllint, actionlint, and gitlint
+coverage through
+`uv run pytest tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py`;
+ruff via `uv run ruff check custom_components/ tests/`; pre-commit hooks for
+reuse, ruff, mypy, interrogate, yamllint, actionlint, and gitlint
 **Target Platform**: Home Assistant custom integration on the HA asyncio event
 loop for Linux, HA OS, Docker, and HACS-managed installs
 **Project Type**: Single Home Assistant custom integration
