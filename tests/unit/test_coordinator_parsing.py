@@ -7,11 +7,13 @@ from __future__ import annotations
 from datetime import date
 from datetime import datetime
 from datetime import time
+from datetime import timedelta
 from datetime import timezone
 
 from icalendar import Calendar
 from icalendar import Event
 
+from custom_components.rental_control.const import EVENT_AGE_THRESHOLD_DAYS
 from custom_components.rental_control.coordinator_helpers import calendar_parsing
 from custom_components.rental_control.coordinator_helpers.models import (
     CalendarParseContext,
@@ -127,3 +129,55 @@ def test_parse_calendar_preserves_missing_dtend_zero_length() -> None:
 
     assert len(events) == 1
     assert events[0].end == events[0].start
+
+
+def test_vevent_filter_handles_timed_stale_events() -> None:
+    """Timed stale events are filtered using their calendar date."""
+    from_date = datetime(2026, 6, 30, tzinfo=timezone.utc)
+    event = Event()
+    event.add("summary", "Alice")
+    event.add("dtstart", from_date - timedelta(days=EVENT_AGE_THRESHOLD_DAYS + 2))
+    event.add("dtend", from_date - timedelta(days=EVENT_AGE_THRESHOLD_DAYS + 1))
+
+    assert calendar_parsing._vevent_filtered(
+        event, from_date, datetime(2026, 7, 30, tzinfo=timezone.utc), _parse_ctx()
+    )
+
+
+def test_vevent_filter_handles_timed_future_events() -> None:
+    """Timed future events are filtered using their calendar date."""
+    to_date = datetime(2026, 6, 30, tzinfo=timezone.utc)
+    event = Event()
+    event.add("summary", "Alice")
+    event.add("dtstart", to_date + timedelta(days=1))
+    event.add("dtend", to_date + timedelta(days=2))
+
+    assert calendar_parsing._vevent_filtered(
+        event, datetime(2026, 6, 1, tzinfo=timezone.utc), to_date, _parse_ctx()
+    )
+
+
+def test_vevent_filter_keeps_all_day_boundaries() -> None:
+    """All-day stale and future filtering still uses date values."""
+    stale = Event()
+    stale.add("summary", "Alice")
+    stale.add("dtstart", date(2026, 5, 29))
+    stale.add("dtend", date(2026, 5, 30))
+
+    future = Event()
+    future.add("summary", "Bob")
+    future.add("dtstart", date(2026, 7, 1))
+    future.add("dtend", date(2026, 7, 2))
+
+    assert calendar_parsing._vevent_filtered(
+        stale,
+        datetime(2026, 6, 30, tzinfo=timezone.utc),
+        datetime(2026, 7, 30, tzinfo=timezone.utc),
+        _parse_ctx(),
+    )
+    assert calendar_parsing._vevent_filtered(
+        future,
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 30, tzinfo=timezone.utc),
+        _parse_ctx(),
+    )

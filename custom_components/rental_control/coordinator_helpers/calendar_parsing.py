@@ -44,6 +44,12 @@ def _event_summary(event: Any) -> str:
     return str(event["SUMMARY"]) if "SUMMARY" in event else ""
 
 
+def _event_date(value: Any) -> Any:
+    """Return a comparable date from a VEVENT DTSTART/DTEND value."""
+    event_value = value.dt
+    return event_value.date() if isinstance(event_value, datetime) else event_value
+
+
 def combine_event_time(value: Any, selected_time: time, timezone: tzinfo) -> datetime:
     """Return an event-date datetime using the selected local time."""
     event_date = value.date() if isinstance(value, datetime) else value
@@ -171,14 +177,14 @@ def _vevent_filtered(
         _LOGGER.debug("Smoobu extra event, ignoring")
         return True
     try:
-        if "DTEND" in event and event["DTEND"].dt < from_date.date() - timedelta(
-            days=EVENT_AGE_THRESHOLD_DAYS
-        ):
+        if "DTEND" in event and _event_date(
+            event["DTEND"]
+        ) < from_date.date() - timedelta(days=EVENT_AGE_THRESHOLD_DAYS):
             return True
     except (AttributeError, TypeError):  # fmt: skip
         pass
     try:
-        if "DTSTART" in event and event["DTSTART"].dt > to_date.date():
+        if "DTSTART" in event and _event_date(event["DTSTART"]) > to_date.date():
             return True
     except (AttributeError, TypeError):  # fmt: skip
         pass
