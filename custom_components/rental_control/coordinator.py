@@ -55,21 +55,28 @@ from .reconciliation import compute_desired_plan as compute_desired_plan  # noqa
 _LOGGER = logging.getLogger(__name__)
 
 
-def _util_module():
+def _util_module() -> Any:
     """Return the util module for runtime patch-sensitive delegation."""
     from . import util
 
     return util
 
 
-def add_call(hass, coro, domain, service, target, data):
+def add_call(
+    hass: Any,
+    coro: list[Any],
+    domain: str,
+    service: str,
+    target: str,
+    data: dict[str, Any],
+) -> Any:
     """Delegate service-call collection through util at runtime."""
     return _util_module().add_call(hass, coro, domain, service, target, data)
 
 
 async def async_fire_clear_code(
-    coordinator, slot: int, expected_name: str | None = None
-):
+    coordinator: Any, slot: int, expected_name: str | None = None
+) -> Any:
     """Delegate clear-code calls through util at runtime."""
     return await _util_module().async_fire_clear_code(coordinator, slot, expected_name)
 
