@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timezone
 
+from custom_components.rental_control.const import STORE_SCHEMA_VERSION
 from custom_components.rental_control.coordinator_helpers import store_sync
 from custom_components.rental_control.coordinator_helpers.models import StoreSyncPlan
 from custom_components.rental_control.reconciliation import DesiredPlan
@@ -56,3 +57,37 @@ def test_build_store_sync_plan_empty() -> None:
     assert isinstance(result, StoreSyncPlan)
     assert result.remove_identity_keys == []
     assert result.upsert_mappings == {}
+
+
+def test_build_save_payload_preserves_blocked_slots() -> None:
+    """Blocked slot metadata is included in the save payload."""
+    payload = store_sync.build_save_payload(
+        {"mappings": {}, "blocked_slots": {"slot-1": {"reason": "owner"}}},
+        ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00"),
+    )
+
+    assert payload["blocked_slots"] == {"slot-1": {"reason": "owner"}}
+
+
+def test_loaded_store_save_round_trip_preserves_blocked_slots() -> None:
+    """Loaded blocked slot metadata survives a normalize-to-save cycle."""
+    raw = {
+        "schema_version": STORE_SCHEMA_VERSION,
+        "entry_id": "entry-1",
+        "lockname": "lock",
+        "mappings": {},
+        "aliases": {},
+        "migration_notes": [],
+        "blocked_slots": {"slot-2": {"reason": "maintenance"}},
+    }
+
+    normalized = store_sync.normalize_loaded_store(
+        raw, ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00")
+    )
+    assert normalized is not None
+
+    payload = store_sync.build_save_payload(
+        normalized, ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00")
+    )
+
+    assert payload["blocked_slots"] == {"slot-2": {"reason": "maintenance"}}

@@ -262,6 +262,7 @@ def build_save_payload(
         "updated_at": now_str,
         "mappings": mappings,
         "aliases": current_store.get("aliases", {}),
+        "blocked_slots": current_store.get("blocked_slots", {}),
         "last_plan": current_store.get("last_plan", {}),
         "migration_notes": current_store.get("migration_notes", []),
     }
