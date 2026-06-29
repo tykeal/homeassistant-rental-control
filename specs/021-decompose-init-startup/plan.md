@@ -14,8 +14,9 @@ SPDX-License-Identifier: Apache-2.0
 ## Summary
 
 Decompose `custom_components/rental_control/__init__.py` without changing
-Home Assistant-visible behavior. The current 449-line package entry module owns
-setup, unload, update-listener orchestration, normal Keymaster state listeners,
+Home Assistant-visible behavior. The current over-threshold package entry
+module owns setup, unload, update-listener orchestration, normal Keymaster
+state listeners,
 package-level re-exports from #572, and the startup Keymaster readability
 watcher. The remaining complexity offender is
 `async_arm_startup_readability_refresh`, a 143-line one-shot watcher arming
@@ -63,9 +64,9 @@ ordering, startup unreadability capture, direct package import of
 `async_start_listener`, package-level migration and listener re-exports from
 #572, exact debounce delay, watchdog interval, one-shot guarantee, cancellation
 order, refresh error handling, and no Aislop suppression directives.
-**Scale/Scope**: One 449-line entry module becomes a focused Home Assistant
-shell plus one startup-readability helper module. Current measured debt is file
-size and `async_arm_startup_readability_refresh` at 143 lines. Implementation
+**Scale/Scope**: One over-threshold entry module becomes a focused Home
+Assistant shell plus one startup-readability helper module. Current measured
+debt is file size and `async_arm_startup_readability_refresh` at 143 lines. Implementation
 target: every init/startup-readability file below 400 lines, every project-owned
 function below 80 lines, and every project-owned parameter list no more than six
 parameters.
@@ -175,7 +176,7 @@ to `custom_components.rental_control.async_start_listener`.
 The implementation must start from live `origin/main`, not the issue summary
 alone. Current source facts captured during planning:
 
-- `__init__.py` is 449 lines.
+- `__init__.py` is above the active 400-line threshold.
 - `async_setup_entry` calls `_needs_startup_readability_refresh` around current
   line 97 and calls `async_arm_startup_readability_refresh` around line 113.
 - The startup-readability concern includes

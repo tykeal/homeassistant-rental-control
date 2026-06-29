@@ -38,7 +38,7 @@ rg "def _managed_slot_readability_entity_ids|def _is_readable_keymaster_state|de
   custom_components/rental_control/__init__.py -n
 ```
 
-Expected planning facts are a 449-line `__init__.py`, a 143-line
+Expected planning facts are an over-threshold `__init__.py`, a 143-line
 `async_arm_startup_readability_refresh`, four startup-readability helpers, and
 no Aislop directive in the file.
 
