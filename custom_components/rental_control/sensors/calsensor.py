@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import cast
 
 from homeassistant.core import HomeAssistant
 from homeassistant.core import callback
@@ -91,12 +92,9 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         if self.coordinator.last_update_success and self.coordinator.data is not None:
             self._handle_coordinator_update()
 
-    def _description(self) -> Any:
+    def _description(self) -> str | None:
         """Return the current event description attribute."""
-        description = self._event_attributes["description"]
-        if description is None:
-            return None
-        return description
+        return cast(str | None, self._event_attributes["description"])
 
     def _extract_email(self) -> str | None:
         """Extract guest email from a description"""

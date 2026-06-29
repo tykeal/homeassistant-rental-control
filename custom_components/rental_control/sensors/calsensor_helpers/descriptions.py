@@ -83,9 +83,11 @@ def extract_last_four(
     if ret:
         return str(ret[0])
     if "Phone" in description:
-        phone = phone_extractor() if phone_extractor is not None else None
-        if phone_extractor is None:
-            phone = extract_phone_number(description)
+        phone = (
+            phone_extractor()
+            if phone_extractor is not None
+            else extract_phone_number(description)
+        )
         if phone:
             phone = phone.replace(" ", "")
             if len(phone) >= 4:
