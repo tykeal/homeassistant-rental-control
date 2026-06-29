@@ -33,10 +33,11 @@ the module-level `gen_uuid` monkeypatch seam.
 ## Technical Context
 
 **Language/Version**: Python >=3.14.2
-**Primary Dependencies**: Home Assistant runtime >=2026.4.0 per `hacs.json`;
-dev/test dependency `homeassistant>=2026.6.0` per `pyproject.toml`;
-`pytest-homeassistant-custom-component`, `aioresponses`, `icalendar>=7.0.0`,
-`x-wr-timezone>=2.0.0`, and `voluptuous`
+**Primary Dependencies**: Home Assistant runtime >=2026.4.0 per `hacs.json`,
+including runtime-provided config-flow, selector, and voluptuous validation
+APIs; dev/test dependency `homeassistant>=2026.6.0` per `pyproject.toml`;
+test tooling `pytest-homeassistant-custom-component` and `aioresponses`;
+declared libraries `icalendar>=7.0.0` and `x-wr-timezone>=2.0.0`
 **Storage**: Home Assistant config-entry data only; this refactor adds no
 persistent storage and preserves existing setup/options entry data keys
 **Testing**: `uv run pytest tests/unit/test_config_flow.py`; broader caller smoke
