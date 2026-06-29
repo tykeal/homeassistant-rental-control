@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import logging
 from typing import Any
 
@@ -161,7 +162,7 @@ async def _async_wait_for_expected_name(
 
 
 async def _async_wait_for_expected_datetime(
-    hass: HomeAssistant, entity_id: str, expected: Any, timeout: float
+    hass: HomeAssistant, entity_id: str, expected: datetime, timeout: float
 ) -> bool:
     """Wait briefly for one datetime entity to match the expected value."""
     return await _keymaster_services._async_wait_for_expected_datetime(
@@ -182,7 +183,7 @@ def _state_has_non_string_value(hass: HomeAssistant, entity_id: str) -> bool:
 
 
 def _state_matches_expected_datetime(
-    hass: HomeAssistant, entity_id: str, expected: Any
+    hass: HomeAssistant, entity_id: str, expected: datetime
 ) -> bool:
     """Return whether the entity state matches the expected datetime."""
     return _keymaster_services._state_matches_expected_datetime(
