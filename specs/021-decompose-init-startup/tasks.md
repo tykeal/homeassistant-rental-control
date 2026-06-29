@@ -77,15 +77,15 @@ count. There is no existing Aislop directive to retain for this scope.
 **Purpose**: Establish behavior, source, compatibility, and complexity baselines
 before moving any production code.
 
-- [ ] T001 Run `.specify/scripts/bash/check-prerequisites.sh --json` with `SPECIFY_FEATURE=021-decompose-init-startup` from the repository root and confirm `specs/021-decompose-init-startup/` reports `research.md`, `data-model.md`, and `quickstart.md`
-- [ ] T002 Inspect US1-US4, FR-001 through FR-016, edge cases, assumptions, non-goals, security considerations, and SC-001 through SC-008 in `specs/021-decompose-init-startup/spec.md`
-- [ ] T003 Inspect the Project Structure, Concrete Decomposition Design, public compatibility boundary, watcher object decomposition, one-shot cleanup invariants, compatibility wiring, and Aislop handling in `specs/021-decompose-init-startup/plan.md`
-- [ ] T004 Inspect all research decisions, all data-model entities, and quickstart parity steps in `specs/021-decompose-init-startup/research.md`, `specs/021-decompose-init-startup/data-model.md`, and `specs/021-decompose-init-startup/quickstart.md`
-- [ ] T005 Inventory `async_setup_entry`, `async_unload_entry`, `update_listener`, `_managed_slot_readability_entity_ids`, `_is_readable_keymaster_state`, `_all_managed_slots_readable`, `_needs_startup_readability_refresh`, `async_arm_startup_readability_refresh`, and `async_start_listener` in `custom_components/rental_control/__init__.py`
-- [ ] T006 Inventory visible imports, direct `async_arm_startup_readability_refresh` calls, `custom_components.rental_control.async_start_listener` patches, update-listener tests, and #572 migration/listener re-export tests in `tests/unit/test_init.py`
-- [ ] T007 Run unchanged baseline init parity tests with `uv run pytest tests/unit/test_init.py -q` against `tests/unit/test_init.py`
-- [ ] T008 Run unchanged integration caller smoke tests with `uv run pytest tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -q` against the listed integration files
-- [ ] T009 Record the current line, function-length, parameter-count, import, patch-seam, and directive baseline for `custom_components/rental_control/__init__.py`, confirming the 449-line file, the 143-line `async_arm_startup_readability_refresh`, four module-level readability helpers, four arming parameters, and no `aislop-ignore` directive
+- [x] T001 Run `.specify/scripts/bash/check-prerequisites.sh --json` with `SPECIFY_FEATURE=021-decompose-init-startup` from the repository root and confirm `specs/021-decompose-init-startup/` reports `research.md`, `data-model.md`, and `quickstart.md`
+- [x] T002 Inspect US1-US4, FR-001 through FR-016, edge cases, assumptions, non-goals, security considerations, and SC-001 through SC-008 in `specs/021-decompose-init-startup/spec.md`
+- [x] T003 Inspect the Project Structure, Concrete Decomposition Design, public compatibility boundary, watcher object decomposition, one-shot cleanup invariants, compatibility wiring, and Aislop handling in `specs/021-decompose-init-startup/plan.md`
+- [x] T004 Inspect all research decisions, all data-model entities, and quickstart parity steps in `specs/021-decompose-init-startup/research.md`, `specs/021-decompose-init-startup/data-model.md`, and `specs/021-decompose-init-startup/quickstart.md`
+- [x] T005 Inventory `async_setup_entry`, `async_unload_entry`, `update_listener`, `_managed_slot_readability_entity_ids`, `_is_readable_keymaster_state`, `_all_managed_slots_readable`, `_needs_startup_readability_refresh`, `async_arm_startup_readability_refresh`, and `async_start_listener` in `custom_components/rental_control/__init__.py`
+- [x] T006 Inventory visible imports, direct `async_arm_startup_readability_refresh` calls, `custom_components.rental_control.async_start_listener` patches, update-listener tests, and #572 migration/listener re-export tests in `tests/unit/test_init.py`
+- [x] T007 Run unchanged baseline init parity tests with `uv run pytest tests/unit/test_init.py -q` against `tests/unit/test_init.py`
+- [x] T008 Run unchanged integration caller smoke tests with `uv run pytest tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -q` against the listed integration files
+- [x] T009 Record the current line, function-length, parameter-count, import, patch-seam, and directive baseline for `custom_components/rental_control/__init__.py`, confirming the 449-line file, the 143-line `async_arm_startup_readability_refresh`, four module-level readability helpers, four arming parameters, and no `aislop-ignore` directive
 
 ---
 
@@ -100,20 +100,20 @@ that lockless entries, managed entity IDs, missing states, unavailable states,
 
 ### Tests for Helper Extraction
 
-- [ ] T010 [P] [US1] Add helper parity tests for no lock name, managed text/switch entity IDs, configured slot ranges, missing state, `STATE_UNAVAILABLE`, `STATE_UNKNOWN`, and normal readable states in `tests/unit/test_startup_readability.py`
-- [ ] T011 [P] [US1] Add startup unreadability decision tests for all-readable, partially unreadable, no-entity, and lockless cases in `tests/unit/test_startup_readability.py`
-- [ ] T012 [US2] Add setup-order regression coverage or assertions proving startup unreadability is captured before first refresh and arming runs after first refresh in `tests/unit/test_init.py`
+- [x] T010 [P] [US1] Add helper parity tests for no lock name, managed text/switch entity IDs, configured slot ranges, missing state, `STATE_UNAVAILABLE`, `STATE_UNKNOWN`, and normal readable states in `tests/unit/test_startup_readability.py`
+- [x] T011 [P] [US1] Add startup unreadability decision tests for all-readable, partially unreadable, no-entity, and lockless cases in `tests/unit/test_startup_readability.py`
+- [x] T012 [US2] Add setup-order regression coverage or assertions proving startup unreadability is captured before first refresh and arming runs after first refresh in `tests/unit/test_init.py`
 
 ### Implementation for Helper Extraction
 
-- [ ] T013 [US4] Create `custom_components/rental_control/startup_readability.py` with project SPDX headers, a module docstring, type hints, Home Assistant imports, project constants, and no import from `custom_components.rental_control.__init__`
-- [ ] T014 [US1] Move `_STARTUP_READABILITY_REFRESH_DELAY` and `_STARTUP_READABILITY_WATCHDOG` unchanged into `custom_components/rental_control/startup_readability.py`
-- [ ] T015 [US1] Move `_managed_slot_readability_entity_ids` unchanged into `custom_components/rental_control/startup_readability.py`, preserving no-lock behavior and exact `text.<lock>_code_slot_<slot>_{name,pin}` and `switch.<lock>_code_slot_<slot>_enabled` entity IDs
-- [ ] T016 [US1] Move `_is_readable_keymaster_state` unchanged into `custom_components/rental_control/startup_readability.py`, preserving `None` and `STATE_UNAVAILABLE` as unreadable and `STATE_UNKNOWN` as readable
-- [ ] T017 [US1] Move `_all_managed_slots_readable` unchanged into `custom_components/rental_control/startup_readability.py`, preserving Home Assistant state lookup semantics for every watched entity ID
-- [ ] T018 [US2] Move `_needs_startup_readability_refresh` into `custom_components/rental_control/startup_readability.py` and preserve the `(needs_refresh, entity_ids)` tuple consumed by `async_setup_entry`
-- [ ] T019 [US4] Remove startup-readability helper bodies and unused readability imports from `custom_components/rental_control/__init__.py` only after `startup_readability.py` owns the equivalent helpers
-- [ ] T020 [US1] Run helper parity checks with `uv run pytest tests/unit/test_startup_readability.py tests/unit/test_init.py::test_healthy_startup_does_not_arm_watcher -q` against the listed test files
+- [x] T013 [US4] Create `custom_components/rental_control/startup_readability.py` with project SPDX headers, a module docstring, type hints, Home Assistant imports, project constants, and no import from `custom_components.rental_control.__init__`
+- [x] T014 [US1] Move `_STARTUP_READABILITY_REFRESH_DELAY` and `_STARTUP_READABILITY_WATCHDOG` unchanged into `custom_components/rental_control/startup_readability.py`
+- [x] T015 [US1] Move `_managed_slot_readability_entity_ids` unchanged into `custom_components/rental_control/startup_readability.py`, preserving no-lock behavior and exact `text.<lock>_code_slot_<slot>_{name,pin}` and `switch.<lock>_code_slot_<slot>_enabled` entity IDs
+- [x] T016 [US1] Move `_is_readable_keymaster_state` unchanged into `custom_components/rental_control/startup_readability.py`, preserving `None` and `STATE_UNAVAILABLE` as unreadable and `STATE_UNKNOWN` as readable
+- [x] T017 [US1] Move `_all_managed_slots_readable` unchanged into `custom_components/rental_control/startup_readability.py`, preserving Home Assistant state lookup semantics for every watched entity ID
+- [x] T018 [US2] Move `_needs_startup_readability_refresh` into `custom_components/rental_control/startup_readability.py` and preserve the `(needs_refresh, entity_ids)` tuple consumed by `async_setup_entry`
+- [x] T019 [US4] Remove startup-readability helper bodies and unused readability imports from `custom_components/rental_control/__init__.py` only after `startup_readability.py` owns the equivalent helpers
+- [x] T020 [US1] Run helper parity checks with `uv run pytest tests/unit/test_startup_readability.py tests/unit/test_init.py::test_healthy_startup_does_not_arm_watcher -q` against the listed test files
 
 **Checkpoint**: Helper extraction proves FR-001, FR-002, FR-004, FR-005,
 FR-016, SC-001, SC-002, and SC-007 while the arming behavior is still
@@ -134,22 +134,22 @@ match the current implementation.
 
 ### Tests for Watcher Lifecycle
 
-- [ ] T021 [US1] Add focused direct-call tests for `startup_slots_unreadable=True` scheduling the delayed one-shot refresh when watched entities are already readable in `tests/unit/test_startup_readability.py`
-- [ ] T022 [US1] Add readable-transition tests proving unreadable-to-readable changes schedule debounce, readable-to-readable changes do not reschedule, and rapid readable storms collapse to one refresh in `tests/unit/test_startup_readability.py`
-- [ ] T023 [US1] Add cleanup tests proving unload cancels state tracking, debounce timer, watchdog timer, pending refresh task, and cleanup references in `tests/unit/test_startup_readability.py`
-- [ ] T024 [US1] Add watchdog expiry tests proving expiration logs non-fatally and removes the startup watcher from `UNSUB_LISTENERS` in `tests/unit/test_startup_readability.py`
-- [ ] T025 [US1] Add refresh safety tests proving missing entry data skips refresh and coordinator refresh exceptions are logged without propagation in `tests/unit/test_startup_readability.py`
+- [x] T021 [US1] Add focused direct-call tests for `startup_slots_unreadable=True` scheduling the delayed one-shot refresh when watched entities are already readable in `tests/unit/test_startup_readability.py`
+- [x] T022 [US1] Add readable-transition tests proving unreadable-to-readable changes schedule debounce, readable-to-readable changes do not reschedule, and rapid readable storms collapse to one refresh in `tests/unit/test_startup_readability.py`
+- [x] T023 [US1] Add cleanup tests proving unload cancels state tracking, debounce timer, watchdog timer, pending refresh task, and cleanup references in `tests/unit/test_startup_readability.py`
+- [x] T024 [US1] Add watchdog expiry tests proving expiration logs non-fatally and removes the startup watcher from `UNSUB_LISTENERS` in `tests/unit/test_startup_readability.py`
+- [x] T025 [US1] Add refresh safety tests proving missing entry data skips refresh and coordinator refresh exceptions are logged without propagation in `tests/unit/test_startup_readability.py`
 
 ### Implementation for Watcher Lifecycle
 
-- [ ] T026 [US1] Add private `_StartupReadabilityWatcher` or equivalent lifecycle owner in `custom_components/rental_control/startup_readability.py` with fields for `hass`, `config_entry`, `coordinator`, `entity_ids`, `done`, `unsub_state`, `unsub_timer`, `unsub_watchdog`, and `refresh_task`
-- [ ] T027 [US1] Implement watcher `arm()` in `custom_components/rental_control/startup_readability.py`, subscribing state changes, starting the watchdog, appending `remove_self` to `UNSUB_LISTENERS`, scheduling initial debounce when already readable, and logging the same armed message
-- [ ] T028 [US1] Implement watcher cleanup methods in `custom_components/rental_control/startup_readability.py`, preserving listener-reference removal, debounce/watchdog/state cancellation order, unload self-removal, pending refresh-task cancellation, and safe missing-entry handling
-- [ ] T029 [US1] Implement watcher refresh methods in `custom_components/rental_control/startup_readability.py`, preserving `async_refresh_once`, `refresh_if_readable`, task name `rental_control startup readability refresh <entry_id>`, done-callback cleanup, missing-entry skip, and logged refresh exceptions
-- [ ] T030 [US1] Implement watcher transition and expiry methods in `custom_components/rental_control/startup_readability.py`, preserving readable new-state filtering, readable old-state storm filtering, debounce replacement, all-entity recheck, and watchdog expiration cleanup
-- [ ] T031 [US4] Reduce `async_arm_startup_readability_refresh` in `custom_components/rental_control/startup_readability.py` to a thin `@callback` orchestrator below 80 lines that computes need, returns on no-op, instantiates the watcher, and calls `arm()`
-- [ ] T032 [US1] Remove the nested `_remove_listener_reference`, `_cancel_watchers`, `_remove_self`, `_refresh_done`, `_async_refresh_once`, `_refresh_if_readable`, `_schedule_refresh`, and `_expire` closures from the arming implementation in `custom_components/rental_control/startup_readability.py`
-- [ ] T033 [US1] Run watcher lifecycle checks with `uv run pytest tests/unit/test_startup_readability.py tests/unit/test_init.py::test_startup_readability_watcher_unloads_cleanly tests/unit/test_init.py::test_startup_readability_watcher_handles_missed_transition -q` against the listed test files
+- [x] T026 [US1] Add private `_StartupReadabilityWatcher` or equivalent lifecycle owner in `custom_components/rental_control/startup_readability.py` with fields for `hass`, `config_entry`, `coordinator`, `entity_ids`, `done`, `unsub_state`, `unsub_timer`, `unsub_watchdog`, and `refresh_task`
+- [x] T027 [US1] Implement watcher `arm()` in `custom_components/rental_control/startup_readability.py`, subscribing state changes, starting the watchdog, appending `remove_self` to `UNSUB_LISTENERS`, scheduling initial debounce when already readable, and logging the same armed message
+- [x] T028 [US1] Implement watcher cleanup methods in `custom_components/rental_control/startup_readability.py`, preserving listener-reference removal, debounce/watchdog/state cancellation order, unload self-removal, pending refresh-task cancellation, and safe missing-entry handling
+- [x] T029 [US1] Implement watcher refresh methods in `custom_components/rental_control/startup_readability.py`, preserving `async_refresh_once`, `refresh_if_readable`, task name `rental_control startup readability refresh <entry_id>`, done-callback cleanup, missing-entry skip, and logged refresh exceptions
+- [x] T030 [US1] Implement watcher transition and expiry methods in `custom_components/rental_control/startup_readability.py`, preserving readable new-state filtering, readable old-state storm filtering, debounce replacement, all-entity recheck, and watchdog expiration cleanup
+- [x] T031 [US4] Reduce `async_arm_startup_readability_refresh` in `custom_components/rental_control/startup_readability.py` to a thin `@callback` orchestrator below 80 lines that computes need, returns on no-op, instantiates the watcher, and calls `arm()`
+- [x] T032 [US1] Remove the nested `_remove_listener_reference`, `_cancel_watchers`, `_remove_self`, `_refresh_done`, `_async_refresh_once`, `_refresh_if_readable`, `_schedule_refresh`, and `_expire` closures from the arming implementation in `custom_components/rental_control/startup_readability.py`
+- [x] T033 [US1] Run watcher lifecycle checks with `uv run pytest tests/unit/test_startup_readability.py tests/unit/test_init.py::test_startup_readability_watcher_unloads_cleanly tests/unit/test_init.py::test_startup_readability_watcher_handles_missed_transition -q` against the listed test files
 
 **Checkpoint**: Watcher decomposition proves FR-006 through FR-010, FR-014,
 FR-015, SC-001, SC-002, SC-005, SC-006, and SC-007 without changing startup
@@ -169,20 +169,20 @@ are unchanged.
 
 ### Tests for Entry Shell Contract
 
-- [ ] T034 [US2] Add or preserve tests proving `async_setup_entry` stores the coordinator, performs first refresh, arms startup readability, starts normal listeners, forwards platforms, registers the keymaster listener, adds the update listener, and cleans generated files in `tests/unit/test_init.py`
-- [ ] T035 [US2] Add or preserve tests proving `async_unload_entry` unloads platforms, deletes generated files, reloads package platforms, calls and clears `UNSUB_LISTENERS`, removes domain data, dismisses notification, and returns the same result in `tests/unit/test_init.py`
-- [ ] T036 [US2] Add or preserve tests proving `update_listener` handles present data, missing entry data before mutation, missing domain data, and entry disappearance after coordinator update in `tests/unit/test_init.py`
+- [x] T034 [US2] Add or preserve tests proving `async_setup_entry` stores the coordinator, performs first refresh, arms startup readability, starts normal listeners, forwards platforms, registers the keymaster listener, adds the update listener, and cleans generated files in `tests/unit/test_init.py`
+- [x] T035 [US2] Add or preserve tests proving `async_unload_entry` unloads platforms, deletes generated files, reloads package platforms, calls and clears `UNSUB_LISTENERS`, removes domain data, dismisses notification, and returns the same result in `tests/unit/test_init.py`
+- [x] T036 [US2] Add or preserve tests proving `update_listener` handles present data, missing entry data before mutation, missing domain data, and entry disappearance after coordinator update in `tests/unit/test_init.py`
 
 ### Implementation for Entry Shell Contract
 
-- [ ] T037 [US2] Import `_needs_startup_readability_refresh` from `custom_components/rental_control/startup_readability.py` into `custom_components/rental_control/__init__.py` for the existing pre-first-refresh startup unreadability capture
-- [ ] T038 [US3] Import and re-export `async_arm_startup_readability_refresh` from `custom_components/rental_control/startup_readability.py` in `custom_components/rental_control/__init__.py` so `from custom_components.rental_control import async_arm_startup_readability_refresh` remains valid
-- [ ] T039 [US2] Keep `async_setup_entry` in `custom_components/rental_control/__init__.py` calling the package-level `async_arm_startup_readability_refresh` after first refresh and before `async_start_listener`, using the captured startup unreadability value
-- [ ] T040 [US2] Keep `async_unload_entry` unchanged in `custom_components/rental_control/__init__.py` except for imports affected by the startup-readability move
-- [ ] T041 [US3] Keep `update_listener` in `custom_components/rental_control/__init__.py` resolving the package-level `async_start_listener` at runtime so `custom_components.rental_control.async_start_listener` patches remain effective
-- [ ] T042 [US3] Keep `async_start_listener` defined in `custom_components/rental_control/__init__.py` and do not move normal Keymaster state-change tracking into `custom_components/rental_control/startup_readability.py`
-- [ ] T043 [US3] Preserve #572 package re-exports for `async_migrate_entry` and `async_register_keymaster_listener` in `custom_components/rental_control/__init__.py`
-- [ ] T044 [US2] Run entry shell checks with `uv run pytest tests/unit/test_init.py -q` against `tests/unit/test_init.py`
+- [x] T037 [US2] Import `_needs_startup_readability_refresh` from `custom_components/rental_control/startup_readability.py` into `custom_components/rental_control/__init__.py` for the existing pre-first-refresh startup unreadability capture
+- [x] T038 [US3] Import and re-export `async_arm_startup_readability_refresh` from `custom_components/rental_control/startup_readability.py` in `custom_components/rental_control/__init__.py` so `from custom_components.rental_control import async_arm_startup_readability_refresh` remains valid
+- [x] T039 [US2] Keep `async_setup_entry` in `custom_components/rental_control/__init__.py` calling the package-level `async_arm_startup_readability_refresh` after first refresh and before `async_start_listener`, using the captured startup unreadability value
+- [x] T040 [US2] Keep `async_unload_entry` unchanged in `custom_components/rental_control/__init__.py` except for imports affected by the startup-readability move
+- [x] T041 [US3] Keep `update_listener` in `custom_components/rental_control/__init__.py` resolving the package-level `async_start_listener` at runtime so `custom_components.rental_control.async_start_listener` patches remain effective
+- [x] T042 [US3] Keep `async_start_listener` defined in `custom_components/rental_control/__init__.py` and do not move normal Keymaster state-change tracking into `custom_components/rental_control/startup_readability.py`
+- [x] T043 [US3] Preserve #572 package re-exports for `async_migrate_entry` and `async_register_keymaster_listener` in `custom_components/rental_control/__init__.py`
+- [x] T044 [US2] Run entry shell checks with `uv run pytest tests/unit/test_init.py -q` against `tests/unit/test_init.py`
 
 **Checkpoint**: Entry shell wiring proves FR-001 through FR-004, FR-011,
 FR-012, FR-013, SC-001, SC-003, and SC-004 with Home Assistant entry behavior
@@ -200,17 +200,17 @@ including direct package imports and package-path monkeypatches.
 
 ### Tests for Compatibility Seams
 
-- [ ] T045 [US3] Add package import-surface tests proving `async_setup_entry`, `async_unload_entry`, `update_listener`, `async_start_listener`, `async_migrate_entry`, `async_register_keymaster_listener`, and `async_arm_startup_readability_refresh` remain importable from `custom_components.rental_control` in `tests/unit/test_init.py`
-- [ ] T046 [US3] Add direct-call compatibility tests proving package-imported `async_arm_startup_readability_refresh` accepts `hass`, `config_entry`, `coordinator`, and keyword-only `startup_slots_unreadable` with current behavior in `tests/unit/test_init.py`
-- [ ] T047 [US3] Add patch-seam tests proving patches to `custom_components.rental_control.async_start_listener` still affect `update_listener` listener restart behavior in `tests/unit/test_init.py`
-- [ ] T048 [US3] Add #572 compatibility tests or assertions proving package imports of `async_migrate_entry` and `async_register_keymaster_listener` remain available after startup-readability extraction in `tests/unit/test_init.py`
+- [x] T045 [US3] Add package import-surface tests proving `async_setup_entry`, `async_unload_entry`, `update_listener`, `async_start_listener`, `async_migrate_entry`, `async_register_keymaster_listener`, and `async_arm_startup_readability_refresh` remain importable from `custom_components.rental_control` in `tests/unit/test_init.py`
+- [x] T046 [US3] Add direct-call compatibility tests proving package-imported `async_arm_startup_readability_refresh` accepts `hass`, `config_entry`, `coordinator`, and keyword-only `startup_slots_unreadable` with current behavior in `tests/unit/test_init.py`
+- [x] T047 [US3] Add patch-seam tests proving patches to `custom_components.rental_control.async_start_listener` still affect `update_listener` listener restart behavior in `tests/unit/test_init.py`
+- [x] T048 [US3] Add #572 compatibility tests or assertions proving package imports of `async_migrate_entry` and `async_register_keymaster_listener` remain available after startup-readability extraction in `tests/unit/test_init.py`
 
 ### Implementation Verification
 
-- [ ] T049 [US3] Verify no production caller in `custom_components/rental_control/**/*.py` imports `async_arm_startup_readability_refresh` through a helper-only path when the package path should remain the public compatibility surface
-- [ ] T050 [US3] Verify `custom_components/rental_control/startup_readability.py` imports Home Assistant event helpers, project constants, coordinator types, and `get_entry_data` directly without importing from `custom_components/rental_control/__init__.py`
-- [ ] T051 [US3] Verify `custom_components/rental_control/__init__.py` does not cache or wrap `async_start_listener` in a helper alias that would bypass package-path patches during `update_listener`
-- [ ] T052 [US3] Run import and patch-seam validation with `uv run pytest tests/unit/test_init.py tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -q` against the listed files
+- [x] T049 [US3] Verify no production caller in `custom_components/rental_control/**/*.py` imports `async_arm_startup_readability_refresh` through a helper-only path when the package path should remain the public compatibility surface
+- [x] T050 [US3] Verify `custom_components/rental_control/startup_readability.py` imports Home Assistant event helpers, project constants, coordinator types, and `get_entry_data` directly without importing from `custom_components/rental_control/__init__.py`
+- [x] T051 [US3] Verify `custom_components/rental_control/__init__.py` does not cache or wrap `async_start_listener` in a helper alias that would bypass package-path patches during `update_listener`
+- [x] T052 [US3] Run import and patch-seam validation with `uv run pytest tests/unit/test_init.py tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -q` against the listed files
 
 **Checkpoint**: Compatibility verification proves FR-003, FR-011 through FR-013,
 SC-003, and SC-004 before maintainability cleanup.
@@ -227,13 +227,13 @@ wiring and run existing complexity tooling with no Aislop directive added.
 
 ### Cleanup and Complexity Gates
 
-- [ ] T053 [US4] Confirm final implementation diff is limited to `custom_components/rental_control/__init__.py`, `custom_components/rental_control/startup_readability.py`, and directly required startup-readability tests under `tests/unit/` or `tests/integration/`
-- [ ] T054 [US4] Confirm no new configuration options, services, entities, diagnostics fields, storage schema, listener semantics, startup refresh semantics, lock-code business rules, Home Assistant state writes, config-entry writes, Keymaster service calls, blocking I/O, async tasks beyond the existing one-shot task, or user-visible delays were introduced in startup-readability files
-- [ ] T055 [US4] Measure `custom_components/rental_control/__init__.py` and `custom_components/rental_control/startup_readability.py` with `wc -l` and confirm both files are below 400 lines
-- [ ] T056 [US4] Ensure every project-owned function in `custom_components/rental_control/__init__.py` and `custom_components/rental_control/startup_readability.py` is below 80 lines, including `async_arm_startup_readability_refresh` and every watcher method
-- [ ] T057 [US4] Ensure every project-owned parameter list in `custom_components/rental_control/__init__.py` and `custom_components/rental_control/startup_readability.py` has no more than six parameters unless an external Home Assistant framework signature requires otherwise
-- [ ] T058 [US4] Verify no `aislop-ignore`, `aislop-ignore-file`, or equivalent complexity suppression exists in `custom_components/rental_control/__init__.py` or `custom_components/rental_control/startup_readability.py`
-- [ ] T059 [US4] Run isolated complexity validation with `uv run pre-commit run aislop --all-files` and confirm file-size, function-length, and parameter-count thresholds pass for the init startup-readability decomposition
+- [x] T053 [US4] Confirm final implementation diff is limited to `custom_components/rental_control/__init__.py`, `custom_components/rental_control/startup_readability.py`, and directly required startup-readability tests under `tests/unit/` or `tests/integration/`
+- [x] T054 [US4] Confirm no new configuration options, services, entities, diagnostics fields, storage schema, listener semantics, startup refresh semantics, lock-code business rules, Home Assistant state writes, config-entry writes, Keymaster service calls, blocking I/O, async tasks beyond the existing one-shot task, or user-visible delays were introduced in startup-readability files
+- [x] T055 [US4] Measure `custom_components/rental_control/__init__.py` and `custom_components/rental_control/startup_readability.py` with `wc -l` and confirm both files are below 400 lines
+- [x] T056 [US4] Ensure every project-owned function in `custom_components/rental_control/__init__.py` and `custom_components/rental_control/startup_readability.py` is below 80 lines, including `async_arm_startup_readability_refresh` and every watcher method
+- [x] T057 [US4] Ensure every project-owned parameter list in `custom_components/rental_control/__init__.py` and `custom_components/rental_control/startup_readability.py` has no more than six parameters unless an external Home Assistant framework signature requires otherwise
+- [x] T058 [US4] Verify no `aislop-ignore`, `aislop-ignore-file`, or equivalent complexity suppression exists in `custom_components/rental_control/__init__.py` or `custom_components/rental_control/startup_readability.py`
+- [x] T059 [US4] Run isolated complexity validation with `uv run pre-commit run aislop --all-files` and confirm file-size, function-length, and parameter-count thresholds pass for the init startup-readability decomposition
 
 **Checkpoint**: Maintainability proves FR-014, FR-015, SC-005, and SC-006 with
 findings resolved rather than suppressed.
@@ -247,15 +247,15 @@ traceability, and implementation notes before the runtime refactor is complete.
 
 ### Acceptance and Quality Gates
 
-- [ ] T060 Run unchanged init parity tests with `uv run pytest tests/unit/test_init.py -x -q` against `tests/unit/test_init.py`
-- [ ] T061 Run focused helper tests with `uv run pytest tests/unit/test_startup_readability.py -q` against `tests/unit/test_startup_readability.py` if the implementation added that file
-- [ ] T062 Run integration caller parity tests with `uv run pytest tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -x -q` against the listed integration files
-- [ ] T063 Run full regression tests with `uv run pytest tests/ -x -q` against `tests/`
-- [ ] T064 Run linting with `uv run ruff check custom_components/ tests/` against `custom_components/` and `tests/`
-- [ ] T065 Run full pre-commit validation with `uv run pre-commit run --all-files` against repository-tracked files, including reuse, yamllint, actionlint, aislop, ruff, ruff-format, mypy, interrogate, and gitlint hooks
-- [ ] T066 Verify every FR-001 through FR-016 has a test, implementation, or acceptance task mapped in `specs/021-decompose-init-startup/tasks.md`
-- [ ] T067 Verify every SC-001 through SC-008 has a test, implementation, or acceptance task mapped in `specs/021-decompose-init-startup/tasks.md`
-- [ ] T068 Review `specs/021-decompose-init-startup/quickstart.md` and confirm the implementation PR notes list unchanged parity commands, focused helper commands if added, import and patch-seam results, file-size and function-length measurements, final `aislop` results, full `pytest tests/ -x -q`, ruff, and pre-commit results
+- [x] T060 Run unchanged init parity tests with `uv run pytest tests/unit/test_init.py -x -q` against `tests/unit/test_init.py`
+- [x] T061 Run focused helper tests with `uv run pytest tests/unit/test_startup_readability.py -q` against `tests/unit/test_startup_readability.py` if the implementation added that file
+- [x] T062 Run integration caller parity tests with `uv run pytest tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -x -q` against the listed integration files
+- [x] T063 Run full regression tests with `uv run pytest tests/ -x -q` against `tests/`
+- [x] T064 Run linting with `uv run ruff check custom_components/ tests/` against `custom_components/` and `tests/`
+- [x] T065 Run full pre-commit validation with `uv run pre-commit run --all-files` against repository-tracked files, including reuse, yamllint, actionlint, aislop, ruff, ruff-format, mypy, interrogate, and gitlint hooks
+- [x] T066 Verify every FR-001 through FR-016 has a test, implementation, or acceptance task mapped in `specs/021-decompose-init-startup/tasks.md`
+- [x] T067 Verify every SC-001 through SC-008 has a test, implementation, or acceptance task mapped in `specs/021-decompose-init-startup/tasks.md`
+- [x] T068 Review `specs/021-decompose-init-startup/quickstart.md` and confirm the implementation PR notes list unchanged parity commands, focused helper commands if added, import and patch-seam results, file-size and function-length measurements, final `aislop` results, full `pytest tests/ -x -q`, ruff, and pre-commit results
 
 ---
 

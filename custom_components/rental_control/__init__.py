@@ -26,15 +26,8 @@ from homeassistant.components.switch import DOMAIN as SWITCH
 from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
-from homeassistant.const import STATE_UNAVAILABLE
-from homeassistant.core import CALLBACK_TYPE
-from homeassistant.core import Event
-from homeassistant.core import EventStateChangedData
 from homeassistant.core import HomeAssistant
-from homeassistant.core import State
-from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import CONF_CREATION_DATETIME
@@ -49,14 +42,18 @@ from .listeners import (
     async_register_keymaster_listener as async_register_keymaster_listener,
 )
 from .migrations import async_migrate_entry as async_migrate_entry
+from .startup_readability import (
+    _needs_startup_readability_refresh as _needs_startup_readability_refresh,
+)
+from .startup_readability import (
+    async_arm_startup_readability_refresh as async_arm_startup_readability_refresh,
+)
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
 from .util import get_entry_data
 from .util import handle_state_change
 
 _LOGGER = logging.getLogger(__name__)
-_STARTUP_READABILITY_REFRESH_DELAY = 1.5
-_STARTUP_READABILITY_WATCHDOG = 10 * 60
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -223,200 +220,6 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
         async_register_keymaster_listener(hass, config_entry)
     else:
         _LOGGER.debug("Skipping re-adding listeners")
-
-
-def _managed_slot_readability_entity_ids(
-    coordinator: RentalControlCoordinator,
-) -> list[str]:
-    """Return the managed Keymaster entities needed to observe slot state."""
-    if not coordinator.lockname:
-        return []
-
-    entities: list[str] = []
-    for slot in range(
-        coordinator.start_slot, coordinator.start_slot + coordinator.max_events
-    ):
-        entities.extend(
-            (
-                f"{TEXT}.{coordinator.lockname}_code_slot_{slot}_name",
-                f"{TEXT}.{coordinator.lockname}_code_slot_{slot}_pin",
-                f"{SWITCH}.{coordinator.lockname}_code_slot_{slot}_enabled",
-            )
-        )
-    return entities
-
-
-def _is_readable_keymaster_state(state: State | None) -> bool:
-    """Return whether a watched Keymaster entity can be read."""
-    return state is not None and state.state != STATE_UNAVAILABLE
-
-
-def _all_managed_slots_readable(
-    hass: HomeAssistant,
-    entity_ids: list[str],
-) -> bool:
-    """Return whether all watched managed-slot entities are readable."""
-    return all(
-        _is_readable_keymaster_state(hass.states.get(entity_id))
-        for entity_id in entity_ids
-    )
-
-
-def _needs_startup_readability_refresh(
-    hass: HomeAssistant,
-    coordinator: RentalControlCoordinator,
-) -> tuple[bool, list[str]]:
-    """Return whether startup saw unreadable managed Keymaster entities."""
-    entity_ids = _managed_slot_readability_entity_ids(coordinator)
-    if not entity_ids:
-        return False, entity_ids
-    return not _all_managed_slots_readable(hass, entity_ids), entity_ids
-
-
-@callback
-def async_arm_startup_readability_refresh(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    coordinator: RentalControlCoordinator,
-    *,
-    startup_slots_unreadable: bool = False,
-) -> None:
-    """Arm a one-shot refresh when startup Keymaster slots become readable."""
-    needs_refresh, entity_ids = _needs_startup_readability_refresh(hass, coordinator)
-    if not needs_refresh and not startup_slots_unreadable:
-        return
-
-    done = False
-    unsub_state: CALLBACK_TYPE | None = None
-    unsub_timer: CALLBACK_TYPE | None = None
-    unsub_watchdog: CALLBACK_TYPE | None = None
-    refresh_task = None
-
-    @callback
-    def _remove_listener_reference() -> None:
-        """Remove this watcher from entry listener cleanup."""
-        entry_data = get_entry_data(hass, config_entry.entry_id)
-        if entry_data is None:
-            return
-        listeners = entry_data.get(UNSUB_LISTENERS, [])
-        if _remove_self in listeners:
-            listeners.remove(_remove_self)
-
-    @callback
-    def _cancel_watchers() -> None:
-        """Unsubscribe state tracking, debounce timer, and watchdog."""
-        nonlocal unsub_state, unsub_timer, unsub_watchdog
-
-        if unsub_timer is not None:
-            unsub_timer()
-            unsub_timer = None
-        if unsub_watchdog is not None:
-            unsub_watchdog()
-            unsub_watchdog = None
-        if unsub_state is not None:
-            unsub_state()
-            unsub_state = None
-
-    @callback
-    def _remove_self() -> None:
-        """Unsubscribe the startup readability watcher and pending work."""
-        nonlocal done, refresh_task
-
-        done = True
-        _cancel_watchers()
-        if refresh_task is not None and not refresh_task.done():
-            refresh_task.cancel()
-        refresh_task = None
-        _remove_listener_reference()
-
-    @callback
-    def _refresh_done(_task) -> None:
-        """Drop unload cleanup after the one-shot refresh task finishes."""
-        nonlocal refresh_task
-
-        refresh_task = None
-        _remove_listener_reference()
-
-    async def _async_refresh_once() -> None:
-        """Run the one-shot readability refresh."""
-        if get_entry_data(hass, config_entry.entry_id) is None:
-            return
-        try:
-            await coordinator.async_refresh()
-        except Exception:
-            _LOGGER.exception(
-                "Startup readability refresh failed for %s",
-                config_entry.entry_id,
-            )
-
-    @callback
-    def _refresh_if_readable(_now) -> None:
-        """Refresh once the watched startup entities have settled."""
-        nonlocal done, refresh_task, unsub_timer
-
-        unsub_timer = None
-        if done:
-            return
-        if not _all_managed_slots_readable(hass, entity_ids):
-            return
-
-        done = True
-        _cancel_watchers()
-        refresh_task = config_entry.async_create_task(
-            hass,
-            _async_refresh_once(),
-            name=f"{DOMAIN} startup readability refresh {config_entry.entry_id}",
-        )
-        refresh_task.add_done_callback(_refresh_done)
-
-    @callback
-    def _schedule_refresh(
-        event: Event[EventStateChangedData],
-    ) -> None:
-        """Debounce readable state-change storms into one refresh."""
-        nonlocal unsub_timer
-
-        if done:
-            return
-
-        old_state = event.data.get("old_state")
-        new_state = event.data.get("new_state")
-        if not _is_readable_keymaster_state(new_state):
-            return
-        if old_state is not None and _is_readable_keymaster_state(old_state):
-            return
-
-        if unsub_timer is not None:
-            unsub_timer()
-        unsub_timer = async_call_later(
-            hass,
-            _STARTUP_READABILITY_REFRESH_DELAY,
-            _refresh_if_readable,
-        )
-
-    @callback
-    def _expire(_now) -> None:
-        """Give up if Keymaster entities never become readable."""
-        _LOGGER.debug(
-            "Startup readability watcher expired for %s before slots settled",
-            config_entry.entry_id,
-        )
-        _remove_self()
-
-    unsub_state = async_track_state_change_event(hass, entity_ids, _schedule_refresh)
-    unsub_watchdog = async_call_later(hass, _STARTUP_READABILITY_WATCHDOG, _expire)
-    hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(_remove_self)
-    if _all_managed_slots_readable(hass, entity_ids):
-        unsub_timer = async_call_later(
-            hass,
-            _STARTUP_READABILITY_REFRESH_DELAY,
-            _refresh_if_readable,
-        )
-    _LOGGER.debug(
-        "Armed startup readability refresh for %s watching %d entities",
-        config_entry.entry_id,
-        len(entity_ids),
-    )
 
 
 async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
