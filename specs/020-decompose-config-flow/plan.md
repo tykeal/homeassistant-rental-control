@@ -58,8 +58,8 @@ implementation must preserve flow registration, step IDs `user` and `init`,
 validation error keys, duplicate handling, URL fetch behavior, entry data,
 options data loading, import seams, and the `config_flow.gen_uuid` patch seam.
 **Scale/Scope**: One 550-line module becomes a small Home Assistant shell plus a
-helper package. Current measured debt is file size, `_get_schema` at 151 lines,
-`_start_config_flow` at 147 lines, and `_show_config_form` with seven parameters.
+helper package. Current measured debt is file size, `_get_schema` at 153 lines,
+`_start_config_flow` at 148 lines, and `_show_config_form` with seven parameters.
 Implementation target: every config-flow-related file below 400 lines, every
 project-owned function below 80 lines, and every project-owned parameter list no
 more than six parameters. Keep the existing
@@ -178,9 +178,9 @@ alone. Current source facts captured during planning:
 - `config_flow.py` is 550 lines.
 - The only current Aislop directive is
   `# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.`
-- `_get_schema` is 151 lines and owns defaults merging, lock-entry display
+- `_get_schema` is 153 lines and owns defaults merging, lock-entry display
   conversion, base setup fields, selector construction, and options-only fields.
-- `_start_config_flow` is 147 lines and owns lock-entry normalization, duplicate
+- `_start_config_flow` is 148 lines and owns lock-entry normalization, duplicate
   detection, URL validation/fetch, scalar validation, code-generator conversion,
   trim-name validation, successful lock conversion, creation timestamp insertion,
   generated-flag insertion, entry creation, and form re-rendering.

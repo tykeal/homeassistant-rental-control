@@ -57,7 +57,7 @@ and calling the module global at runtime preserves the current seam.
 
 ## Decision: Extract `_get_schema` into per-concern schema builders
 
-**Rationale**: `_get_schema` is 151 lines because it handles defaults,
+**Rationale**: `_get_schema` is 153 lines because it handles defaults,
 lock-manager display conversion, base fields, selectors, code fields, trim-name
 fields, and options-only fields in one function. Splitting these into focused
 builders keeps each field group declarative, makes selector/default parity easier
@@ -74,7 +74,7 @@ to test, and resolves the function-length finding without changing the returned
 
 ## Decision: Extract validation while preserving mutation timing
 
-**Rationale**: `_start_config_flow` is 147 lines and combines orchestration with
+**Rationale**: `_start_config_flow` is 148 lines and combines orchestration with
 validation details. The implementation can split URL checks, time checks, numeric
 bounds, code-length rules, trim-name rules, generator conversion, and successful
 lock conversion into small helpers. The step helper remains responsible for
