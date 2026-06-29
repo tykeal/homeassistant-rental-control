@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timezone
 
+from custom_components.rental_control.const import STORE_SCHEMA_VERSION
 from custom_components.rental_control.coordinator_helpers import store_sync
 from custom_components.rental_control.coordinator_helpers.models import StoreSyncPlan
 from custom_components.rental_control.reconciliation import DesiredPlan
@@ -40,6 +41,49 @@ def test_normalize_loaded_store_rejects_non_dict() -> None:
     assert result is None
 
 
+def test_normalize_loaded_store_rejects_future_schema() -> None:
+    """Store payloads from newer schemas normalize to None."""
+    result = store_sync.normalize_loaded_store(
+        {
+            "schema_version": STORE_SCHEMA_VERSION + 1,
+            "mappings": {},
+            "aliases": {},
+            "migration_notes": [],
+        },
+        ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00"),
+    )
+
+    assert result is None
+
+
+def test_normalize_loaded_store_accepts_current_schema() -> None:
+    """Current schema payloads continue to normalize."""
+    result = store_sync.normalize_loaded_store(
+        {
+            "schema_version": STORE_SCHEMA_VERSION,
+            "mappings": {},
+            "aliases": {},
+            "migration_notes": [],
+        },
+        ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00"),
+    )
+
+    assert result is not None
+    assert result["schema_version"] == STORE_SCHEMA_VERSION
+
+
+def test_normalize_loaded_store_still_migrates_legacy_schema() -> None:
+    """Legacy schema payloads continue to migrate to version 1."""
+    result = store_sync.normalize_loaded_store(
+        {"schema_version": 0, "mappings": {"k": {"slot": 5}}},
+        ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00"),
+    )
+
+    assert result is not None
+    assert result["schema_version"] == 1
+    assert result["mappings"] == {"k": {"slot": 5}}
+
+
 def test_build_store_sync_plan_empty() -> None:
     """An empty plan produces an empty mutation plan."""
     plan = DesiredPlan(
@@ -56,3 +100,37 @@ def test_build_store_sync_plan_empty() -> None:
     assert isinstance(result, StoreSyncPlan)
     assert result.remove_identity_keys == []
     assert result.upsert_mappings == {}
+
+
+def test_build_save_payload_preserves_blocked_slots() -> None:
+    """Blocked slot metadata is included in the save payload."""
+    payload = store_sync.build_save_payload(
+        {"mappings": {}, "blocked_slots": {"slot-1": {"reason": "owner"}}},
+        ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00"),
+    )
+
+    assert payload["blocked_slots"] == {"slot-1": {"reason": "owner"}}
+
+
+def test_loaded_store_save_round_trip_preserves_blocked_slots() -> None:
+    """Loaded blocked slot metadata survives a normalize-to-save cycle."""
+    raw = {
+        "schema_version": STORE_SCHEMA_VERSION,
+        "entry_id": "entry-1",
+        "lockname": "lock",
+        "mappings": {},
+        "aliases": {},
+        "migration_notes": [],
+        "blocked_slots": {"slot-2": {"reason": "maintenance"}},
+    }
+
+    normalized = store_sync.normalize_loaded_store(
+        raw, ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00")
+    )
+    assert normalized is not None
+
+    payload = store_sync.build_save_payload(
+        normalized, ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00")
+    )
+
+    assert payload["blocked_slots"] == {"slot-2": {"reason": "maintenance"}}

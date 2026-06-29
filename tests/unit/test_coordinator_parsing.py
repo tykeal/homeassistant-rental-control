@@ -4,11 +4,46 @@
 
 from __future__ import annotations
 
+from datetime import date
 from datetime import datetime
 from datetime import time
+from datetime import timedelta
 from datetime import timezone
 
+from icalendar import Calendar
+from icalendar import Event
+
+from custom_components.rental_control.const import EVENT_AGE_THRESHOLD_DAYS
 from custom_components.rental_control.coordinator_helpers import calendar_parsing
+from custom_components.rental_control.coordinator_helpers.models import (
+    CalendarParseContext,
+)
+
+
+def _parse_ctx(
+    *,
+    event_prefix: str | None = None,
+    ignore_non_reserved: bool = False,
+    honor_event_times: bool = False,
+) -> CalendarParseContext:
+    """Return a minimal calendar parse context for tests."""
+    return CalendarParseContext(
+        timezone=timezone.utc,
+        checkin=time(16, 0),
+        checkout=time(10, 0),
+        event_prefix=event_prefix,
+        ignore_non_reserved=ignore_non_reserved,
+        honor_event_times=honor_event_times,
+        code_buffer_before=0,
+        code_buffer_after=0,
+    )
+
+
+def _calendar_with_event(event: Event) -> Calendar:
+    """Return a calendar containing one VEVENT."""
+    calendar = Calendar()
+    calendar.add_component(event)
+    return calendar
 
 
 def test_datetimes_match_true_for_equal_instants() -> None:
@@ -32,3 +67,117 @@ def test_combine_event_time_returns_datetime() -> None:
     assert isinstance(result, datetime)
     assert result.hour == 11
     assert result.minute == 30
+
+
+def test_parse_calendar_tolerates_missing_summary() -> None:
+    """A VEVENT without SUMMARY is handled as an empty-summary event."""
+    event = Event()
+    event.add("dtstart", date(2026, 6, 15))
+    event.add("dtend", date(2026, 6, 16))
+
+    events = calendar_parsing.parse_calendar(
+        _calendar_with_event(event),
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 30, tzinfo=timezone.utc),
+        _parse_ctx(),
+    )
+
+    assert len(events) == 1
+    assert events[0].summary == ""
+
+
+def test_parse_calendar_prefixes_missing_summary_without_trailing_space() -> None:
+    """A missing-summary VEVENT with a prefix has no trailing space."""
+    event = Event()
+    event.add("dtstart", date(2026, 6, 15))
+    event.add("dtend", date(2026, 6, 16))
+
+    events = calendar_parsing.parse_calendar(
+        _calendar_with_event(event),
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 30, tzinfo=timezone.utc),
+        _parse_ctx(event_prefix="RC"),
+    )
+
+    assert len(events) == 1
+    assert events[0].summary == "RC"
+
+
+def test_select_event_times_defaults_without_dtend() -> None:
+    """A timed VEVENT without DTEND uses configured default times."""
+    event = Event()
+    event.add("dtstart", datetime(2026, 6, 15, 12, tzinfo=timezone.utc))
+
+    assert calendar_parsing._select_event_times(event, None, _parse_ctx()) == (
+        time(16, 0),
+        time(10, 0),
+    )
+
+
+def test_parse_calendar_preserves_missing_dtend_zero_length() -> None:
+    """A timed VEVENT without DTEND keeps the existing zero-length stay."""
+    event = Event()
+    event.add("summary", "Alice")
+    event.add("dtstart", datetime(2026, 6, 15, 12, tzinfo=timezone.utc))
+
+    events = calendar_parsing.parse_calendar(
+        _calendar_with_event(event),
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 30, tzinfo=timezone.utc),
+        _parse_ctx(),
+    )
+
+    assert len(events) == 1
+    assert events[0].end == events[0].start
+
+
+def test_vevent_filter_handles_timed_stale_events() -> None:
+    """Timed stale events are filtered using their calendar date."""
+    from_date = datetime(2026, 6, 30, tzinfo=timezone.utc)
+    event = Event()
+    event.add("summary", "Alice")
+    event.add("dtstart", from_date - timedelta(days=EVENT_AGE_THRESHOLD_DAYS + 2))
+    event.add("dtend", from_date - timedelta(days=EVENT_AGE_THRESHOLD_DAYS + 1))
+
+    assert calendar_parsing._vevent_filtered(
+        event, from_date, datetime(2026, 7, 30, tzinfo=timezone.utc), _parse_ctx()
+    )
+
+
+def test_vevent_filter_handles_timed_future_events() -> None:
+    """Timed future events are filtered using their calendar date."""
+    to_date = datetime(2026, 6, 30, tzinfo=timezone.utc)
+    event = Event()
+    event.add("summary", "Alice")
+    event.add("dtstart", to_date + timedelta(days=1))
+    event.add("dtend", to_date + timedelta(days=2))
+
+    assert calendar_parsing._vevent_filtered(
+        event, datetime(2026, 6, 1, tzinfo=timezone.utc), to_date, _parse_ctx()
+    )
+
+
+def test_vevent_filter_keeps_all_day_boundaries() -> None:
+    """All-day stale and future filtering still uses date values."""
+    stale = Event()
+    stale.add("summary", "Alice")
+    stale.add("dtstart", date(2026, 5, 29))
+    stale.add("dtend", date(2026, 5, 30))
+
+    future = Event()
+    future.add("summary", "Bob")
+    future.add("dtstart", date(2026, 7, 1))
+    future.add("dtend", date(2026, 7, 2))
+
+    assert calendar_parsing._vevent_filtered(
+        stale,
+        datetime(2026, 6, 30, tzinfo=timezone.utc),
+        datetime(2026, 7, 30, tzinfo=timezone.utc),
+        _parse_ctx(),
+    )
+    assert calendar_parsing._vevent_filtered(
+        future,
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 30, tzinfo=timezone.utc),
+        _parse_ctx(),
+    )

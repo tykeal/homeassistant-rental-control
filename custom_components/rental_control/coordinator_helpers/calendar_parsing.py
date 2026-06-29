@@ -39,6 +39,17 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 
+def _event_summary(event: Any) -> str:
+    """Return the VEVENT summary, or empty string when missing."""
+    return str(event["SUMMARY"]) if "SUMMARY" in event else ""
+
+
+def _event_date(value: Any) -> Any:
+    """Return a comparable date from a VEVENT DTSTART/DTEND value."""
+    event_value = value.dt
+    return event_value.date() if isinstance(event_value, datetime) else event_value
+
+
 def combine_event_time(value: Any, selected_time: time, timezone: tzinfo) -> datetime:
     """Return an event-date datetime using the selected local time."""
     event_date = value.date() if isinstance(value, datetime) else value
@@ -158,26 +169,27 @@ def _vevent_filtered(
     event: Any, from_date: datetime, to_date: datetime, ctx: Any
 ) -> bool:
     """Return whether an event should be skipped before time selection."""
+    summary = _event_summary(event)
     if "RRULE" in event:
-        _LOGGER.error("RRULE in event: %s", str(event["SUMMARY"]))
+        _LOGGER.error("RRULE in event: %s", summary)
         return True
-    if "Check-in" in event["SUMMARY"] or "Check-out" in event["SUMMARY"]:
+    if "Check-in" in summary or "Check-out" in summary:
         _LOGGER.debug("Smoobu extra event, ignoring")
         return True
     try:
-        if "DTEND" in event and event["DTEND"].dt < from_date.date() - timedelta(
-            days=EVENT_AGE_THRESHOLD_DAYS
-        ):
+        if "DTEND" in event and _event_date(
+            event["DTEND"]
+        ) < from_date.date() - timedelta(days=EVENT_AGE_THRESHOLD_DAYS):
             return True
     except (AttributeError, TypeError):  # fmt: skip
         pass
     try:
-        if "DTSTART" in event and event["DTSTART"].dt > to_date.date():
+        if "DTSTART" in event and _event_date(event["DTSTART"]) > to_date.date():
             return True
     except (AttributeError, TypeError):  # fmt: skip
         pass
     if ctx.ignore_non_reserved and any(
-        x in event["SUMMARY"] for x in ["Blocked", "Not available"]
+        x in summary for x in ["Blocked", "Not available"]
     ):
         return True
     return False
@@ -190,10 +202,11 @@ def _parse_vevent(
     if _vevent_filtered(event, from_date, to_date, ctx):
         return None
 
+    summary = _event_summary(event)
     if "DESCRIPTION" in event:
-        slot_name = get_slot_name(event["SUMMARY"], event["DESCRIPTION"], "")
+        slot_name = get_slot_name(summary, event["DESCRIPTION"], "")
     else:
-        slot_name = get_slot_name(event["SUMMARY"], "", "")
+        slot_name = get_slot_name(summary, "", "")
 
     override = None
     if slot_name and ctx.override_lookup is not None:
@@ -213,7 +226,7 @@ def _parse_vevent(
     end = dtend
 
     if ctx.event_prefix:
-        event["SUMMARY"] = ctx.event_prefix + " " + event["SUMMARY"]
+        event["SUMMARY"] = f"{ctx.event_prefix} {_event_summary(event)}".strip()
 
     return _build_calendar_event(start, end, from_date, event, ctx)
 
@@ -248,7 +261,7 @@ def _select_event_times(
         return checkin, checkout
     try:
         return event["DTSTART"].dt.time(), event["DTEND"].dt.time()
-    except AttributeError:
+    except (AttributeError, KeyError):  # fmt: skip
         return ctx.checkin, ctx.checkout
 
 
@@ -303,7 +316,7 @@ def _build_calendar_event(
         description=description,
         end=end.astimezone(ctx.timezone),
         location=event.get("LOCATION"),
-        summary=event.get("SUMMARY", "Unknown"),
+        summary=_event_summary(event),
         start=start.astimezone(ctx.timezone),
         uid=normalize_uid(str(raw_uid) if raw_uid is not None else None),
     )

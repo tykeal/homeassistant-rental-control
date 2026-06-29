@@ -376,15 +376,17 @@ class TestGetSlotNameFallback:
         result = get_slot_name("Rental Plain Name", "", "Rental")
         assert result == "Plain Name"
 
-    def test_prefix_not_matching_summary_raises(self) -> None:
-        """Verify prefix that does not match summary raises IndexError.
+    def test_prefix_not_matching_summary_returns_summary(self) -> None:
+        """Verify a mismatched prefix falls back to the original summary."""
+        assert get_slot_name("Some Event", "", "RC") == "Some Event"
 
-        This documents a known deficiency in get_slot_name: when a
-        non-empty prefix is supplied but does not appear in the summary,
-        the regex returns an empty list and accessing index 0 crashes.
-        """
-        with pytest.raises(IndexError):
-            get_slot_name("Guest Q", "", "Vacation")
+    def test_matching_prefix_still_strips_prefix(self) -> None:
+        """Verify a matching prefix is still stripped from the slot name."""
+        assert get_slot_name("RC Alice", "", "RC") == "Alice"
+
+    def test_regex_prefix_is_matched_literally(self) -> None:
+        """Verify regex metacharacters in prefixes are treated literally."""
+        assert get_slot_name("RC+ Alice", "", "RC+") == "Alice"
 
 
 # ---------------------------------------------------------------------------

@@ -196,6 +196,8 @@ def normalize_loaded_store(
     schema_version = raw.get("schema_version", 0)
     if not isinstance(schema_version, int):
         return None
+    if schema_version > STORE_SCHEMA_VERSION:
+        return None
     if schema_version < 1:
         raw = migrate_to_v1(raw, defaults)
     mappings = raw.get("mappings", {})
@@ -262,6 +264,7 @@ def build_save_payload(
         "updated_at": now_str,
         "mappings": mappings,
         "aliases": current_store.get("aliases", {}),
+        "blocked_slots": current_store.get("blocked_slots", {}),
         "last_plan": current_store.get("last_plan", {}),
         "migration_notes": current_store.get("migration_notes", []),
     }
