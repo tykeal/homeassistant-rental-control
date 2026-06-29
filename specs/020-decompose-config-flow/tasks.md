@@ -88,15 +88,15 @@ directive must remain in `config_flow.py`.
 **Purpose**: Establish behavior, import, patch-site, caller, and complexity
 baselines before moving any production code.
 
-- [ ] T001 Run `.specify/scripts/bash/check-prerequisites.sh --json` with `SPECIFY_FEATURE=020-decompose-config-flow` from the repository root and confirm `specs/020-decompose-config-flow/` reports `research.md`, `data-model.md`, and `quickstart.md`
-- [ ] T002 Inspect US1-US4, FR-001 through FR-014, edge cases, assumptions, non-goals, security considerations, and SC-001 through SC-009 in `specs/020-decompose-config-flow/spec.md`
-- [ ] T003 Inspect the Project Structure, Concrete Decomposition Design, compatibility boundary, ground-truth call and patch analysis, helper split, `_show_config_form` reduction, and Aislop directive handling in `specs/020-decompose-config-flow/plan.md`
-- [ ] T004 Inspect all research decisions, all data-model helper entities, and quickstart parity steps in `specs/020-decompose-config-flow/research.md`, `specs/020-decompose-config-flow/data-model.md`, and `specs/020-decompose-config-flow/quickstart.md`
-- [ ] T005 Inventory `RentalControlFlowHandler`, `RentalControlOptionsFlow`, `async_step_user`, `async_step_init`, `async_get_options_flow`, `_get_unique_id`, `_normalize_lock_entry`, `_get_schema`, `_show_config_form`, and `_start_config_flow` in `custom_components/rental_control/config_flow.py`
-- [ ] T006 Inventory visible config-flow imports, `custom_components.rental_control.config_flow.gen_uuid` patches, `_normalize_lock_entry` direct calls, Home Assistant flow-manager calls, and `RentalControlFlowHandler.VERSION == 10` assertions in `tests/unit/test_config_flow.py`
-- [ ] T007 Run unchanged baseline config-flow unit tests with `uv run pytest tests/unit/test_config_flow.py -q` against `tests/unit/test_config_flow.py`
-- [ ] T008 Run unchanged integration caller smoke tests with `uv run pytest tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -q` against the listed integration files
-- [ ] T009 Record the current line, function-length, parameter-count, call-site, and directive baseline for `custom_components/rental_control/config_flow.py`, confirming the oversized file, long `_get_schema`, long `_start_config_flow`, seven-parameter `_show_config_form`, call sites around the current error and initial-form paths, presence of the hallucinated-import directive, and absence of any config-flow complexity directive
+- [x] T001 Run `.specify/scripts/bash/check-prerequisites.sh --json` with `SPECIFY_FEATURE=020-decompose-config-flow` from the repository root and confirm `specs/020-decompose-config-flow/` reports `research.md`, `data-model.md`, and `quickstart.md`
+- [x] T002 Inspect US1-US4, FR-001 through FR-014, edge cases, assumptions, non-goals, security considerations, and SC-001 through SC-009 in `specs/020-decompose-config-flow/spec.md`
+- [x] T003 Inspect the Project Structure, Concrete Decomposition Design, compatibility boundary, ground-truth call and patch analysis, helper split, `_show_config_form` reduction, and Aislop directive handling in `specs/020-decompose-config-flow/plan.md`
+- [x] T004 Inspect all research decisions, all data-model helper entities, and quickstart parity steps in `specs/020-decompose-config-flow/research.md`, `specs/020-decompose-config-flow/data-model.md`, and `specs/020-decompose-config-flow/quickstart.md`
+- [x] T005 Inventory `RentalControlFlowHandler`, `RentalControlOptionsFlow`, `async_step_user`, `async_step_init`, `async_get_options_flow`, `_get_unique_id`, `_normalize_lock_entry`, `_get_schema`, `_show_config_form`, and `_start_config_flow` in `custom_components/rental_control/config_flow.py`
+- [x] T006 Inventory visible config-flow imports, `custom_components.rental_control.config_flow.gen_uuid` patches, `_normalize_lock_entry` direct calls, Home Assistant flow-manager calls, and `RentalControlFlowHandler.VERSION == 10` assertions in `tests/unit/test_config_flow.py`
+- [x] T007 Run unchanged baseline config-flow unit tests with `uv run pytest tests/unit/test_config_flow.py -q` against `tests/unit/test_config_flow.py`
+- [x] T008 Run unchanged integration caller smoke tests with `uv run pytest tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -q` against the listed integration files
+- [x] T009 Record the current line, function-length, parameter-count, call-site, and directive baseline for `custom_components/rental_control/config_flow.py`, confirming the oversized file, long `_get_schema`, long `_start_config_flow`, seven-parameter `_show_config_form`, call sites around the current error and initial-form paths, presence of the hallucinated-import directive, and absence of any config-flow complexity directive
 
 ---
 
@@ -113,15 +113,15 @@ used by the current flow.
 
 ### Tests for Helper Models
 
-- [ ] T010 [US4] Add `ConfigFormContext`, schema-build context, URL validation result, flow validation result, and transition request construction tests in `tests/unit/test_config_flow_schemas.py`
-- [ ] T011 [US1] Add model tests proving error dictionaries, description placeholders, submitted `user_input`, defaults, and `entry_id` are preserved for both config and options form renders in `tests/unit/test_config_flow_schemas.py`
+- [x] T010 [US4] Add `ConfigFormContext`, schema-build context, URL validation result, flow validation result, and transition request construction tests in `tests/unit/test_config_flow_schemas.py`
+- [x] T011 [US1] Add model tests proving error dictionaries, description placeholders, submitted `user_input`, defaults, and `entry_id` are preserved for both config and options form renders in `tests/unit/test_config_flow_schemas.py`
 
 ### Implementation for Helper Models
 
-- [ ] T012 [US4] Create `custom_components/rental_control/config_flow_helpers/__init__.py` with SPDX headers, a module docstring, and internal helper-package exports as needed
-- [ ] T013 [US4] Create `custom_components/rental_control/config_flow_helpers/models.py` with SPDX headers, a module docstring, type hints, `ConfigFormContext`, schema-build context, URL validation result, flow validation result, and transition request dataclasses or equivalent typed containers
-- [ ] T014 [US4] Ensure `custom_components/rental_control/config_flow_helpers/models.py` imports no runtime objects from `custom_components/rental_control/config_flow.py` and remains below 400 lines with no project-owned function over 80 lines or parameter list over six parameters
-- [ ] T015 [US4] Run model validation with `uv run pytest tests/unit/test_config_flow_schemas.py -q` against `tests/unit/test_config_flow_schemas.py`
+- [x] T012 [US4] Create `custom_components/rental_control/config_flow_helpers/__init__.py` with SPDX headers, a module docstring, and internal helper-package exports as needed
+- [x] T013 [US4] Create `custom_components/rental_control/config_flow_helpers/models.py` with SPDX headers, a module docstring, type hints, `ConfigFormContext`, schema-build context, URL validation result, flow validation result, and transition request dataclasses or equivalent typed containers
+- [x] T014 [US4] Ensure `custom_components/rental_control/config_flow_helpers/models.py` imports no runtime objects from `custom_components/rental_control/config_flow.py` and remains below 400 lines with no project-owned function over 80 lines or parameter list over six parameters
+- [x] T015 [US4] Run model validation with `uv run pytest tests/unit/test_config_flow_schemas.py -q` against `tests/unit/test_config_flow_schemas.py`
 
 **Checkpoint**: Helper models prove the data ownership needed for FR-009,
 FR-011, SC-006, and SC-007 before extraction begins.
@@ -140,17 +140,17 @@ fields, and `ALLOW_EXTRA` behavior.
 
 ### Tests for Schema Builders
 
-- [ ] T016 [P] [US1] Add initial config-flow schema parity tests for required fields, optional fields, default values, timezone choices, code-generator descriptions, lock selector contents, and `ALLOW_EXTRA` in `tests/unit/test_config_flow_schemas.py`
-- [ ] T017 [P] [US2] Add options-flow schema parity tests for defaults loaded from config-entry data, options-only diagnostics and code-buffer fields, `(none)` lock defaults, stored lock entity display conversion, and entered-value precedence in `tests/unit/test_config_flow_schemas.py`
-- [ ] T018 [US1] Add `_get_schema` compatibility tests proving `custom_components.rental_control.config_flow._get_schema` remains importable and returns equivalent schemas for config and options contexts in `tests/unit/test_config_flow_schemas.py`
+- [x] T016 [P] [US1] Add initial config-flow schema parity tests for required fields, optional fields, default values, timezone choices, code-generator descriptions, lock selector contents, and `ALLOW_EXTRA` in `tests/unit/test_config_flow_schemas.py`
+- [x] T017 [P] [US2] Add options-flow schema parity tests for defaults loaded from config-entry data, options-only diagnostics and code-buffer fields, `(none)` lock defaults, stored lock entity display conversion, and entered-value precedence in `tests/unit/test_config_flow_schemas.py`
+- [x] T018 [US1] Add `_get_schema` compatibility tests proving `custom_components.rental_control.config_flow._get_schema` remains importable and returns equivalent schemas for config and options contexts in `tests/unit/test_config_flow_schemas.py`
 
 ### Implementation for Schema Builders
 
-- [ ] T019 [US4] Create `custom_components/rental_control/config_flow_helpers/schemas.py` with SPDX headers, a module docstring, and focused builders for defaults normalization, default lookup, identity/URL fields, refresh/timezone/prefix/time fields, day and lock fields, slot/code/generator fields, behavior toggles, trim-name fields, and options-only fields
-- [ ] T020 [US1] Move `_available_lock_managers`, `_code_generators`, `_generator_convert` display conversion, and `_lock_entry_convert` display conversion behavior into schema helpers or shared validation helpers without changing selector order, labels, defaults, or returned values in `custom_components/rental_control/config_flow_helpers/schemas.py`
-- [ ] T021 [US1] Update `custom_components/rental_control/config_flow.py` so `_get_schema` remains importable as a thin wrapper over `custom_components/rental_control/config_flow_helpers/schemas.py` with the current `hass`, `user_input`, `default_dict`, and `entry_id` call semantics
-- [ ] T022 [US2] Preserve options-only extension behavior for `CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS`, `CONF_CODE_BUFFER_BEFORE`, and `CONF_CODE_BUFFER_AFTER` when `entry_id` is not `None` in `custom_components/rental_control/config_flow_helpers/schemas.py`
-- [ ] T023 [US1] Run schema validation with `uv run pytest tests/unit/test_config_flow.py tests/unit/test_config_flow_schemas.py -q` against the listed test files
+- [x] T019 [US4] Create `custom_components/rental_control/config_flow_helpers/schemas.py` with SPDX headers, a module docstring, and focused builders for defaults normalization, default lookup, identity/URL fields, refresh/timezone/prefix/time fields, day and lock fields, slot/code/generator fields, behavior toggles, trim-name fields, and options-only fields
+- [x] T020 [US1] Move `_available_lock_managers`, `_code_generators`, `_generator_convert` display conversion, and `_lock_entry_convert` display conversion behavior into schema helpers or shared validation helpers without changing selector order, labels, defaults, or returned values in `custom_components/rental_control/config_flow_helpers/schemas.py`
+- [x] T021 [US1] Update `custom_components/rental_control/config_flow.py` so `_get_schema` remains importable as a thin wrapper over `custom_components/rental_control/config_flow_helpers/schemas.py` with the current `hass`, `user_input`, `default_dict`, and `entry_id` call semantics
+- [x] T022 [US2] Preserve options-only extension behavior for `CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS`, `CONF_CODE_BUFFER_BEFORE`, and `CONF_CODE_BUFFER_AFTER` when `entry_id` is not `None` in `custom_components/rental_control/config_flow_helpers/schemas.py`
+- [x] T023 [US1] Run schema validation with `uv run pytest tests/unit/test_config_flow.py tests/unit/test_config_flow_schemas.py -q` against the listed test files
 
 **Checkpoint**: Schema extraction proves FR-001, FR-002, FR-005, FR-006,
 FR-010, FR-014, SC-001, SC-002, SC-004, and SC-005 before validation moves.
@@ -171,21 +171,21 @@ current behavior.
 
 ### Tests for Validation Helpers
 
-- [ ] T024 [P] [US1] Add URL validation parity tests for malformed URL, unsupported scheme, HTTPS-required, SSL-disabled HTTP, non-200 response, timeout path if covered by existing helpers, and non-calendar content type in `tests/unit/test_config_flow_validation.py`
-- [ ] T025 [P] [US1] Add scalar validation parity tests for refresh frequency bounds, check-in time, checkout time, day count, max events, code length minimum/evenness, max-name length, and trim-name prefix boundary errors in `tests/unit/test_config_flow_validation.py`
-- [ ] T026 [US1] Add code-generator conversion timing tests proving display descriptions convert to generator types before form re-render on later validation errors in `tests/unit/test_config_flow_validation.py`
-- [ ] T027 [US2] Add lock-entry conversion tests for `None`, empty string, whitespace, `(none)`, lock-manager title, stored lock entity ID defaults, and successful options-flow save data in `tests/unit/test_config_flow_validation.py`
-- [ ] T028 [US1] Add successful initial-flow conversion tests proving `CONF_CREATION_DATETIME` and `CONF_GENERATE` insertion match current behavior in `tests/unit/test_config_flow_validation.py`
+- [x] T024 [P] [US1] Add URL validation parity tests for malformed URL, unsupported scheme, HTTPS-required, SSL-disabled HTTP, non-200 response, timeout path if covered by existing helpers, and non-calendar content type in `tests/unit/test_config_flow_validation.py`
+- [x] T025 [P] [US1] Add scalar validation parity tests for refresh frequency bounds, check-in time, checkout time, day count, max events, code length minimum/evenness, max-name length, and trim-name prefix boundary errors in `tests/unit/test_config_flow_validation.py`
+- [x] T026 [US1] Add code-generator conversion timing tests proving display descriptions convert to generator types before form re-render on later validation errors in `tests/unit/test_config_flow_validation.py`
+- [x] T027 [US2] Add lock-entry conversion tests for `None`, empty string, whitespace, `(none)`, lock-manager title, stored lock entity ID defaults, and successful options-flow save data in `tests/unit/test_config_flow_validation.py`
+- [x] T028 [US1] Add successful initial-flow conversion tests proving `CONF_CREATION_DATETIME` and `CONF_GENERATE` insertion match current behavior in `tests/unit/test_config_flow_validation.py`
 
 ### Implementation for Validation Helpers
 
-- [ ] T029 [US4] Create `custom_components/rental_control/config_flow_helpers/validation.py` with SPDX headers, a module docstring, and focused helpers for lock normalization, URL validation/fetch, scalar checks, code-generator conversion, trim-name checks, lock conversion, and successful metadata insertion
-- [ ] T030 [US3] Keep `custom_components.rental_control.config_flow._normalize_lock_entry` importable as a wrapper or re-export while preserving exact behavior for `None`, empty strings, whitespace, and existing values in `custom_components/rental_control/config_flow.py`
-- [ ] T031 [US1] Preserve URL validation and fetch behavior in `custom_components/rental_control/config_flow_helpers/validation.py`, including `cv.url()`, HTTPS-required with `CONF_VERIFY_SSL`, `async_get_clientsession(..., verify_ssl=...)`, `asyncio.timeout(REQUEST_TIMEOUT)`, non-200 logging, and `text/calendar` content-type checks
-- [ ] T032 [US1] Preserve scalar validation error keys and precedence in `custom_components/rental_control/config_flow_helpers/validation.py` for refresh frequency, check-in, checkout, days, max events, code length, max-name length, and trim-name prefix boundary
-- [ ] T033 [US1] Preserve code-generator conversion and mutation timing in `custom_components/rental_control/config_flow_helpers/validation.py` so re-rendered forms observe the same converted value behavior as current `_start_config_flow`
-- [ ] T034 [US2] Preserve successful lock-entry conversion in `custom_components/rental_control/config_flow_helpers/validation.py`, converting `(none)` to `None` and lock-manager titles to entity IDs only when no errors exist
-- [ ] T035 [US1] Run validation helper checks with `uv run pytest tests/unit/test_config_flow.py tests/unit/test_config_flow_validation.py -q` against the listed test files
+- [x] T029 [US4] Create `custom_components/rental_control/config_flow_helpers/validation.py` with SPDX headers, a module docstring, and focused helpers for lock normalization, URL validation/fetch, scalar checks, code-generator conversion, trim-name checks, lock conversion, and successful metadata insertion
+- [x] T030 [US3] Keep `custom_components.rental_control.config_flow._normalize_lock_entry` importable as a wrapper or re-export while preserving exact behavior for `None`, empty strings, whitespace, and existing values in `custom_components/rental_control/config_flow.py`
+- [x] T031 [US1] Preserve URL validation and fetch behavior in `custom_components/rental_control/config_flow_helpers/validation.py`, including `cv.url()`, HTTPS-required with `CONF_VERIFY_SSL`, `async_get_clientsession(..., verify_ssl=...)`, `asyncio.timeout(REQUEST_TIMEOUT)`, non-200 logging, and `text/calendar` content-type checks
+- [x] T032 [US1] Preserve scalar validation error keys and precedence in `custom_components/rental_control/config_flow_helpers/validation.py` for refresh frequency, check-in, checkout, days, max events, code length, max-name length, and trim-name prefix boundary
+- [x] T033 [US1] Preserve code-generator conversion and mutation timing in `custom_components/rental_control/config_flow_helpers/validation.py` so re-rendered forms observe the same converted value behavior as current `_start_config_flow`
+- [x] T034 [US2] Preserve successful lock-entry conversion in `custom_components/rental_control/config_flow_helpers/validation.py`, converting `(none)` to `None` and lock-manager titles to entity IDs only when no errors exist
+- [x] T035 [US1] Run validation helper checks with `uv run pytest tests/unit/test_config_flow.py tests/unit/test_config_flow_validation.py -q` against the listed test files
 
 **Checkpoint**: Validation helpers prove FR-001, FR-002, FR-004, FR-007,
 FR-008, FR-010, FR-014, SC-001, SC-003, SC-005, and SC-008.
@@ -204,18 +204,18 @@ defaults, and entry data are returned.
 
 ### Tests for Step Helpers
 
-- [ ] T036 [US1] Add step-transition tests proving an initial `user_input is None` flow returns the same `user` form with empty errors and current defaults in `tests/unit/test_config_flow_validation.py`
-- [ ] T037 [US1] Add error re-render tests proving submitted `user_input`, accumulated field/base errors, description placeholders, defaults, and `entry_id` are preserved in `tests/unit/test_config_flow_validation.py`
-- [ ] T038 [US1] Add create-entry transition tests proving initial-flow title, data, duplicate-detection behavior, creation timestamp insertion, and generated flag insertion remain unchanged in `tests/unit/test_config_flow_validation.py`
-- [ ] T039 [US2] Add options-flow transition tests proving step `init`, existing entry defaults, options-only fields, saved data, and returned create-entry result remain unchanged in `tests/unit/test_config_flow_validation.py`
+- [x] T036 [US1] Add step-transition tests proving an initial `user_input is None` flow returns the same `user` form with empty errors and current defaults in `tests/unit/test_config_flow_validation.py`
+- [x] T037 [US1] Add error re-render tests proving submitted `user_input`, accumulated field/base errors, description placeholders, defaults, and `entry_id` are preserved in `tests/unit/test_config_flow_validation.py`
+- [x] T038 [US1] Add create-entry transition tests proving initial-flow title, data, duplicate-detection behavior, creation timestamp insertion, and generated flag insertion remain unchanged in `tests/unit/test_config_flow_validation.py`
+- [x] T039 [US2] Add options-flow transition tests proving step `init`, existing entry defaults, options-only fields, saved data, and returned create-entry result remain unchanged in `tests/unit/test_config_flow_validation.py`
 
 ### Implementation for Step Helpers
 
-- [ ] T040 [US4] Create `custom_components/rental_control/config_flow_helpers/steps.py` with SPDX headers, a module docstring, and short orchestration helpers for initial form rendering, submitted-data validation, error form rendering, and entry creation
-- [ ] T041 [US3] Update `custom_components/rental_control/config_flow.py` so `_start_config_flow` remains importable with the current six-parameter signature and delegates to `custom_components/rental_control/config_flow_helpers/steps.py`
-- [ ] T042 [US3] Ensure step helpers call the shell object's `_get_unique_id()` only when present, preserving `RentalControlFlowHandler._get_unique_id()` ownership and the `config_flow.gen_uuid` patch seam in `custom_components/rental_control/config_flow.py`
-- [ ] T043 [US1] Ensure `custom_components/rental_control/config_flow_helpers/steps.py` does not add flow steps, change `user` or `init` step IDs, change `async_create_entry()` titles, write config entries outside `async_create_entry()`, perform extra URL fetches, or schedule async tasks
-- [ ] T044 [US1] Run step-helper validation with `uv run pytest tests/unit/test_config_flow.py tests/unit/test_config_flow_validation.py -q` against the listed test files
+- [x] T040 [US4] Create `custom_components/rental_control/config_flow_helpers/steps.py` with SPDX headers, a module docstring, and short orchestration helpers for initial form rendering, submitted-data validation, error form rendering, and entry creation
+- [x] T041 [US3] Update `custom_components/rental_control/config_flow.py` so `_start_config_flow` remains importable with the current six-parameter signature and delegates to `custom_components/rental_control/config_flow_helpers/steps.py`
+- [x] T042 [US3] Ensure step helpers call the shell object's `_get_unique_id()` only when present, preserving `RentalControlFlowHandler._get_unique_id()` ownership and the `config_flow.gen_uuid` patch seam in `custom_components/rental_control/config_flow.py`
+- [x] T043 [US1] Ensure `custom_components/rental_control/config_flow_helpers/steps.py` does not add flow steps, change `user` or `init` step IDs, change `async_create_entry()` titles, write config entries outside `async_create_entry()`, perform extra URL fetches, or schedule async tasks
+- [x] T044 [US1] Run step-helper validation with `uv run pytest tests/unit/test_config_flow.py tests/unit/test_config_flow_validation.py -q` against the listed test files
 
 **Checkpoint**: Step helpers prove FR-001 through FR-004, FR-007, FR-008,
 FR-010, FR-014, SC-001, SC-003, SC-004, SC-005, and SC-008.
@@ -235,21 +235,21 @@ returned forms.
 
 ### Tests for Shell Delegation and Form Context
 
-- [ ] T045 [US3] Add config-flow shell tests proving `RentalControlFlowHandler`, `RentalControlOptionsFlow`, `VERSION = 10`, `async_step_user`, `async_step_init`, and `async_get_options_flow` remain present on `custom_components.rental_control.config_flow` in `tests/unit/test_config_flow.py`
-- [ ] T046 [US3] Add compatibility wrapper tests proving `_normalize_lock_entry`, `_get_schema`, `_show_config_form`, and `_start_config_flow` remain importable from `custom_components.rental_control.config_flow` and behave compatibly in `tests/unit/test_config_flow.py`
-- [ ] T047 [US1] Add `ConfigFormContext` form-render tests proving `_show_config_form` returns the same schema, errors, placeholders, step ID, defaults, and options-only fields for config and options contexts in `tests/unit/test_config_flow_schemas.py`
-- [ ] T048 [US1] Add internal call-site coverage proving the `_start_config_flow` error path and initial-form path both render through grouped context without changing `async_show_form()` output in `tests/unit/test_config_flow_validation.py`
+- [x] T045 [US3] Add config-flow shell tests proving `RentalControlFlowHandler`, `RentalControlOptionsFlow`, `VERSION = 10`, `async_step_user`, `async_step_init`, and `async_get_options_flow` remain present on `custom_components.rental_control.config_flow` in `tests/unit/test_config_flow.py`
+- [x] T046 [US3] Add compatibility wrapper tests proving `_normalize_lock_entry`, `_get_schema`, `_show_config_form`, and `_start_config_flow` remain importable from `custom_components.rental_control.config_flow` and behave compatibly in `tests/unit/test_config_flow.py`
+- [x] T047 [US1] Add `ConfigFormContext` form-render tests proving `_show_config_form` returns the same schema, errors, placeholders, step ID, defaults, and options-only fields for config and options contexts in `tests/unit/test_config_flow_schemas.py`
+- [x] T048 [US1] Add internal call-site coverage proving the `_start_config_flow` error path and initial-form path both render through grouped context without changing `async_show_form()` output in `tests/unit/test_config_flow_validation.py`
 
 ### Implementation for Shell Delegation and Form Context
 
-- [ ] T049 [US3] Update `custom_components/rental_control/config_flow.py` imports to use `config_flow_helpers` modules while keeping `RentalControlFlowHandler`, `RentalControlOptionsFlow`, `VERSION = 10`, `async_step_user`, `async_step_init`, `async_get_options_flow`, and module-level `gen_uuid` in the shell
-- [ ] T050 [US3] Keep `RentalControlFlowHandler._get_unique_id()` in `custom_components/rental_control/config_flow.py` and ensure it calls module-level `gen_uuid(self.created)` at runtime rather than a helper-cached alias
-- [ ] T051 [US4] Reduce `custom_components/rental_control/config_flow.py` `_get_schema` below 80 lines by delegating to focused schema builders without changing its current call semantics
-- [ ] T052 [US4] Reduce `custom_components/rental_control/config_flow.py` `_start_config_flow` below 80 lines by delegating to focused step helpers without changing its current six-parameter compatibility signature
-- [ ] T053 [US4] Change `custom_components/rental_control/config_flow.py` `_show_config_form` to accept a `ConfigFormContext` or compatibility-normalized context while declaring no more than six parameters and returning the same `async_show_form()` result
-- [ ] T054 [US4] Update both internal `_show_config_form` call sites in the `_start_config_flow` error re-render path and initial-form path to pass `ConfigFormContext` in `custom_components/rental_control/config_flow.py` or `custom_components/rental_control/config_flow_helpers/steps.py`
-- [ ] T055 [US4] Remove temporary extraction shims from `custom_components/rental_control/config_flow.py` and `custom_components/rental_control/config_flow_helpers/*.py`, leaving only planned wrappers, helper exports, typed context values, and focused helper functions
-- [ ] T056 [US1] Run shell and form-context validation with `uv run pytest tests/unit/test_config_flow.py tests/unit/test_config_flow_schemas.py tests/unit/test_config_flow_validation.py -q` against the listed test files
+- [x] T049 [US3] Update `custom_components/rental_control/config_flow.py` imports to use `config_flow_helpers` modules while keeping `RentalControlFlowHandler`, `RentalControlOptionsFlow`, `VERSION = 10`, `async_step_user`, `async_step_init`, `async_get_options_flow`, and module-level `gen_uuid` in the shell
+- [x] T050 [US3] Keep `RentalControlFlowHandler._get_unique_id()` in `custom_components/rental_control/config_flow.py` and ensure it calls module-level `gen_uuid(self.created)` at runtime rather than a helper-cached alias
+- [x] T051 [US4] Reduce `custom_components/rental_control/config_flow.py` `_get_schema` below 80 lines by delegating to focused schema builders without changing its current call semantics
+- [x] T052 [US4] Reduce `custom_components/rental_control/config_flow.py` `_start_config_flow` below 80 lines by delegating to focused step helpers without changing its current six-parameter compatibility signature
+- [x] T053 [US4] Change `custom_components/rental_control/config_flow.py` `_show_config_form` to accept a `ConfigFormContext` or compatibility-normalized context while declaring no more than six parameters and returning the same `async_show_form()` result
+- [x] T054 [US4] Update both internal `_show_config_form` call sites in the `_start_config_flow` error re-render path and initial-form path to pass `ConfigFormContext` in `custom_components/rental_control/config_flow.py` or `custom_components/rental_control/config_flow_helpers/steps.py`
+- [x] T055 [US4] Remove temporary extraction shims from `custom_components/rental_control/config_flow.py` and `custom_components/rental_control/config_flow_helpers/*.py`, leaving only planned wrappers, helper exports, typed context values, and focused helper functions
+- [x] T056 [US1] Run shell and form-context validation with `uv run pytest tests/unit/test_config_flow.py tests/unit/test_config_flow_schemas.py tests/unit/test_config_flow_validation.py -q` against the listed test files
 
 **Checkpoint**: Shell delegation and form-context reduction prove FR-001 through
 FR-010, FR-014, SC-001 through SC-005, and SC-008 with the public flow still
@@ -269,16 +269,16 @@ observe the patched object without requiring callers to import helper modules.
 
 ### Tests for Compatibility Seams
 
-- [ ] T057 [US3] Add import-surface tests proving `RentalControlFlowHandler`, `RentalControlOptionsFlow`, `gen_uuid`, `_normalize_lock_entry`, `_get_schema`, `_show_config_form`, and `_start_config_flow` remain importable from `custom_components.rental_control.config_flow` in `tests/unit/test_config_flow.py`
-- [ ] T058 [US3] Add patch-seam tests proving patches to `custom_components.rental_control.config_flow.gen_uuid` still affect duplicate detection through `RentalControlFlowHandler._get_unique_id()` in `tests/unit/test_config_flow.py`
-- [ ] T059 [US3] Add Home Assistant flow-manager smoke tests proving initial setup and options editing still initialize through the same domain, step IDs, flow classes, callbacks, and version metadata in `tests/unit/test_config_flow.py`
-- [ ] T060 [US3] Add direct helper compatibility tests for hidden-consumer seams around `_get_schema`, `_show_config_form`, and `_start_config_flow` where practical without requiring production callers to import helper modules in `tests/unit/test_config_flow.py`
+- [x] T057 [US3] Add import-surface tests proving `RentalControlFlowHandler`, `RentalControlOptionsFlow`, `gen_uuid`, `_normalize_lock_entry`, `_get_schema`, `_show_config_form`, and `_start_config_flow` remain importable from `custom_components.rental_control.config_flow` in `tests/unit/test_config_flow.py`
+- [x] T058 [US3] Add patch-seam tests proving patches to `custom_components.rental_control.config_flow.gen_uuid` still affect duplicate detection through `RentalControlFlowHandler._get_unique_id()` in `tests/unit/test_config_flow.py`
+- [x] T059 [US3] Add Home Assistant flow-manager smoke tests proving initial setup and options editing still initialize through the same domain, step IDs, flow classes, callbacks, and version metadata in `tests/unit/test_config_flow.py`
+- [x] T060 [US3] Add direct helper compatibility tests for hidden-consumer seams around `_get_schema`, `_show_config_form`, and `_start_config_flow` where practical without requiring production callers to import helper modules in `tests/unit/test_config_flow.py`
 
 ### Implementation Verification
 
-- [ ] T061 [US3] Verify no production caller in `custom_components/rental_control/**/*.py` imports config-flow shell classes or compatibility helpers from `custom_components/rental_control/config_flow_helpers/` instead of `custom_components/rental_control/config_flow.py`
-- [ ] T062 [US3] Verify helper imports in `custom_components/rental_control/config_flow_helpers/*.py` do not cache or bypass the config-flow module `gen_uuid` patch seam
-- [ ] T063 [US3] Run import and patch-seam validation with `uv run pytest tests/unit/test_config_flow.py tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -q` against the listed files
+- [x] T061 [US3] Verify no production caller in `custom_components/rental_control/**/*.py` imports config-flow shell classes or compatibility helpers from `custom_components/rental_control/config_flow_helpers/` instead of `custom_components/rental_control/config_flow.py`
+- [x] T062 [US3] Verify helper imports in `custom_components/rental_control/config_flow_helpers/*.py` do not cache or bypass the config-flow module `gen_uuid` patch seam
+- [x] T063 [US3] Run import and patch-seam validation with `uv run pytest tests/unit/test_config_flow.py tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -q` against the listed files
 
 **Checkpoint**: Compatibility verification proves FR-003, FR-004, FR-010,
 SC-001, SC-004, and SC-005 before maintainability cleanup.
@@ -296,14 +296,14 @@ still present and no new complexity directive added.
 
 ### Cleanup and Complexity Gates
 
-- [ ] T064 [US4] Confirm final implementation diff is limited to `custom_components/rental_control/config_flow.py`, `custom_components/rental_control/config_flow_helpers/*.py`, and directly required config-flow tests under `tests/unit/` or `tests/integration/`
-- [ ] T065 [US4] Confirm no new configuration options, flow steps, validation rules, error keys, defaults, selector choices, entry data keys, options data keys, public caller behavior, Home Assistant state writes, config-entry writes outside current flow transitions, calendar fetches, Keymaster service calls, blocking I/O, async tasks, or user-visible delays were introduced in config-flow files
-- [ ] T066 [US4] Measure `custom_components/rental_control/config_flow.py` and `custom_components/rental_control/config_flow_helpers/*.py` with `wc -l` and confirm every config-flow-related file is below 400 lines
-- [ ] T067 [US4] Ensure every project-owned function in `custom_components/rental_control/config_flow.py` and `custom_components/rental_control/config_flow_helpers/*.py` is below 80 lines, including `_get_schema` and `_start_config_flow`
-- [ ] T068 [US4] Ensure every project-owned parameter list in `custom_components/rental_control/config_flow.py` and `custom_components/rental_control/config_flow_helpers/*.py` has no more than six parameters unless an external Home Assistant framework signature requires otherwise, including `_show_config_form`
-- [ ] T069 [US4] Verify the existing `# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.` directive remains present in `custom_components/rental_control/config_flow.py`
-- [ ] T070 [US4] Verify no new `aislop-ignore`, `aislop-ignore-file`, or equivalent complexity suppression was added to `custom_components/rental_control/config_flow.py` or `custom_components/rental_control/config_flow_helpers/*.py`
-- [ ] T071 [US4] Run isolated complexity validation with `uv run pre-commit run aislop` and confirm file-size, function-length, and parameter-count thresholds pass for the config-flow decomposition
+- [x] T064 [US4] Confirm final implementation diff is limited to `custom_components/rental_control/config_flow.py`, `custom_components/rental_control/config_flow_helpers/*.py`, and directly required config-flow tests under `tests/unit/` or `tests/integration/`
+- [x] T065 [US4] Confirm no new configuration options, flow steps, validation rules, error keys, defaults, selector choices, entry data keys, options data keys, public caller behavior, Home Assistant state writes, config-entry writes outside current flow transitions, calendar fetches, Keymaster service calls, blocking I/O, async tasks, or user-visible delays were introduced in config-flow files
+- [x] T066 [US4] Measure `custom_components/rental_control/config_flow.py` and `custom_components/rental_control/config_flow_helpers/*.py` with `wc -l` and confirm every config-flow-related file is below 400 lines
+- [x] T067 [US4] Ensure every project-owned function in `custom_components/rental_control/config_flow.py` and `custom_components/rental_control/config_flow_helpers/*.py` is below 80 lines, including `_get_schema` and `_start_config_flow`
+- [x] T068 [US4] Ensure every project-owned parameter list in `custom_components/rental_control/config_flow.py` and `custom_components/rental_control/config_flow_helpers/*.py` has no more than six parameters unless an external Home Assistant framework signature requires otherwise, including `_show_config_form`
+- [x] T069 [US4] Verify the existing `# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.` directive remains present in `custom_components/rental_control/config_flow.py`
+- [x] T070 [US4] Verify no new `aislop-ignore`, `aislop-ignore-file`, or equivalent complexity suppression was added to `custom_components/rental_control/config_flow.py` or `custom_components/rental_control/config_flow_helpers/*.py`
+- [x] T071 [US4] Run isolated complexity validation with `uv run pre-commit run aislop` and confirm file-size, function-length, and parameter-count thresholds pass for the config-flow decomposition
 
 **Checkpoint**: Maintainability proves FR-011, FR-012, FR-013, FR-014,
 SC-006, SC-007, and SC-008.
@@ -317,15 +317,15 @@ traceability, and implementation notes before the runtime refactor is complete.
 
 ### Acceptance and Quality Gates
 
-- [ ] T072 Run unchanged config-flow parity tests with `uv run pytest tests/unit/test_config_flow.py -x -q` against `tests/unit/test_config_flow.py`
-- [ ] T073 Run all new focused helper tests with `uv run pytest tests/unit/test_config_flow_schemas.py tests/unit/test_config_flow_validation.py -q` against the listed test files
-- [ ] T074 Run integration caller parity tests with `uv run pytest tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -x -q` against the listed integration files
-- [ ] T075 Run full regression tests with `uv run pytest tests/ -x -q` against `tests/`
-- [ ] T076 Run linting with `uv run ruff check custom_components/ tests/` against `custom_components/` and `tests/`
-- [ ] T077 Run full pre-commit validation with `uv run pre-commit run --all-files` against repository-tracked files, including reuse, yamllint, actionlint, aislop, ruff, ruff-format, mypy, interrogate, and gitlint hooks
-- [ ] T078 Verify every FR-001 through FR-014 has a test, implementation, or acceptance task mapped in `specs/020-decompose-config-flow/tasks.md`
-- [ ] T079 Verify every SC-001 through SC-009 has a test, implementation, or acceptance task mapped in `specs/020-decompose-config-flow/tasks.md`
-- [ ] T080 Review `specs/020-decompose-config-flow/quickstart.md` and confirm the implementation PR notes list unchanged parity commands, focused schema and validation commands, import and patch-seam results, `_show_config_form` parameter-count results, file-size measurements, final `aislop` results, full `pytest tests/ -x -q`, ruff, and pre-commit results
+- [x] T072 Run unchanged config-flow parity tests with `uv run pytest tests/unit/test_config_flow.py -x -q` against `tests/unit/test_config_flow.py`
+- [x] T073 Run all new focused helper tests with `uv run pytest tests/unit/test_config_flow_schemas.py tests/unit/test_config_flow_validation.py -q` against the listed test files
+- [x] T074 Run integration caller parity tests with `uv run pytest tests/integration/test_full_setup.py tests/integration/test_refresh_cycle.py -x -q` against the listed integration files
+- [x] T075 Run full regression tests with `uv run pytest tests/ -x -q` against `tests/`
+- [x] T076 Run linting with `uv run ruff check custom_components/ tests/` against `custom_components/` and `tests/`
+- [x] T077 Run full pre-commit validation with `uv run pre-commit run --all-files` against repository-tracked files, including reuse, yamllint, actionlint, aislop, ruff, ruff-format, mypy, interrogate, and gitlint hooks
+- [x] T078 Verify every FR-001 through FR-014 has a test, implementation, or acceptance task mapped in `specs/020-decompose-config-flow/tasks.md`
+- [x] T079 Verify every SC-001 through SC-009 has a test, implementation, or acceptance task mapped in `specs/020-decompose-config-flow/tasks.md`
+- [x] T080 Review `specs/020-decompose-config-flow/quickstart.md` and confirm the implementation PR notes list unchanged parity commands, focused schema and validation commands, import and patch-seam results, `_show_config_form` parameter-count results, file-size measurements, final `aislop` results, full `pytest tests/ -x -q`, ruff, and pre-commit results
 
 ---
 
