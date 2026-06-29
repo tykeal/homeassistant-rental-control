@@ -81,7 +81,7 @@ parameters.
 | II: Atomic Commit Discipline | PASS | This PR is one docs-only PLAN commit. Future implementation can split module extraction, watcher object introduction, shell re-export wiring, and tests into atomic commits. |
 | III: Licensing & Attribution | PASS | New markdown artifacts include SPDX headers. Future `startup_readability.py` must include project SPDX headers, type hints, and docstrings. |
 | IV: Pre-Commit Integrity | PASS | No hook bypass is planned. Quickstart defines validation before any implementation merge. |
-| V: Agent Co-Authorship & DCO | PASS | The PLAN commit uses `git commit -s` and the requested Claude co-author trailer. |
+| V: Agent Co-Authorship & DCO | PASS | The PLAN commit uses `git commit -s` and a constitution-compliant AI co-author trailer. |
 | VI: User Experience Consistency | PASS | HA lifecycle order, package-level imports, patch seams, listener cleanup, and startup refresh behavior are explicitly preserved. |
 | VII: Performance Requirements | PASS | Extracted logic keeps the same callbacks and one-shot refresh behavior with no extra I/O, writes, tasks, or delays. |
 
@@ -365,7 +365,7 @@ dependency, package manager, or tool is introduced.
 | II: Atomic Commit Discipline | PASS | PLAN artifacts are one docs-only change; future implementation can be split by extraction, watcher decomposition, wiring, and tests. |
 | III: Licensing & Attribution | PASS | `plan.md`, `research.md`, `data-model.md`, and `quickstart.md` include SPDX headers. Future Python helper files must do the same. |
 | IV: Pre-Commit Integrity | PASS | The PR must pass hooks and CI without bypass flags. |
-| V: Agent Co-Authorship & DCO | PASS | The planned commit uses sign-off and the requested Claude co-author trailer. |
+| V: Agent Co-Authorship & DCO | PASS | The planned commit uses sign-off and a constitution-compliant AI co-author trailer. |
 | VI: User Experience Consistency | PASS | Setup/unload/update order, package imports, `async_start_listener` patching, one-shot refresh, debounce, watchdog, and cleanup semantics are preserved. |
 | VII: Performance Requirements | PASS | The watcher object performs the same in-memory checks and existing one-shot task only, with no new I/O, writes, services, or delays. |
 
