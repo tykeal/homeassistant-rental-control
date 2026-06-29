@@ -50,8 +50,6 @@ from .reconciliation import DesiredPlan as _DesiredPlan
 from .reconciliation import ManagedSlot as _ManagedSlot
 from .reconciliation import compute_desired_plan as compute_desired_plan  # noqa: F401
 
-# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
-
 _LOGGER = logging.getLogger(__name__)
 
 
