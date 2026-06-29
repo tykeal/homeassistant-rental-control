@@ -255,7 +255,7 @@ def _select_event_times(
         return checkin, checkout
     try:
         return event["DTSTART"].dt.time(), event["DTEND"].dt.time()
-    except AttributeError:
+    except (AttributeError, KeyError):  # fmt: skip
         return ctx.checkin, ctx.checkout
 
 

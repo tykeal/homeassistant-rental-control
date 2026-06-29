@@ -99,3 +99,31 @@ def test_parse_calendar_prefixes_missing_summary_without_trailing_space() -> Non
 
     assert len(events) == 1
     assert events[0].summary == "RC"
+
+
+def test_select_event_times_defaults_without_dtend() -> None:
+    """A timed VEVENT without DTEND uses configured default times."""
+    event = Event()
+    event.add("dtstart", datetime(2026, 6, 15, 12, tzinfo=timezone.utc))
+
+    assert calendar_parsing._select_event_times(event, None, _parse_ctx()) == (
+        time(16, 0),
+        time(10, 0),
+    )
+
+
+def test_parse_calendar_preserves_missing_dtend_zero_length() -> None:
+    """A timed VEVENT without DTEND keeps the existing zero-length stay."""
+    event = Event()
+    event.add("summary", "Alice")
+    event.add("dtstart", datetime(2026, 6, 15, 12, tzinfo=timezone.utc))
+
+    events = calendar_parsing.parse_calendar(
+        _calendar_with_event(event),
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 30, tzinfo=timezone.utc),
+        _parse_ctx(),
+    )
+
+    assert len(events) == 1
+    assert events[0].end == events[0].start
