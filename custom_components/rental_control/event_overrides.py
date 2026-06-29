@@ -30,6 +30,7 @@ import uuid  # noqa: F401 - accessed through self._module for patch compatibilit
 
 from homeassistant.util import dt
 
+from . import util as _util
 from .event_overrides_helpers import shell_apply as _shell_apply
 from .event_overrides_helpers import shell_cleanup as _shell_cleanup
 from .event_overrides_helpers import shell_compat as _shell_compat
@@ -39,10 +40,6 @@ from .event_overrides_helpers.models import SlotUpdateRequest
 from .event_overrides_helpers.trim import is_trimmed_match
 from .event_overrides_helpers.trim import strip_prefix
 from .util import OperationResult
-from .util import async_fire_clear_code  # noqa: F401 - accessed via self._module
-from .util import async_fire_set_code  # noqa: F401 - accessed via self._module
-from .util import async_fire_update_times  # noqa: F401 - accessed via self._module
-from .util import get_event_identities  # noqa: F401 - accessed via self._module
 
 _LOGGER = logging.getLogger(__name__)
 _PREFLIGHT_WARNINGS = {
@@ -53,6 +50,26 @@ _PREFLIGHT_WARNINGS = {
     "name_appeared": "Skipping clear for slot %d because physical name appeared after planning",
     "pin_changed": "Skipping clear for slot %d because physical PIN presence changed after planning",
 }
+
+
+async def async_fire_set_code(*args: Any, **kwargs: Any) -> OperationResult:
+    """Delegate set-code calls through the util patch seam at runtime."""
+    return await _util.async_fire_set_code(*args, **kwargs)
+
+
+async def async_fire_clear_code(*args: Any, **kwargs: Any) -> OperationResult:
+    """Delegate clear-code calls through the util patch seam at runtime."""
+    return await _util.async_fire_clear_code(*args, **kwargs)
+
+
+async def async_fire_update_times(*args: Any, **kwargs: Any) -> OperationResult:
+    """Delegate update-times calls through the util patch seam at runtime."""
+    return await _util.async_fire_update_times(*args, **kwargs)
+
+
+def get_event_identities(*args: Any, **kwargs: Any) -> list[Any]:
+    """Delegate event identity lookup through the util patch seam at runtime."""
+    return _util.get_event_identities(*args, **kwargs)
 
 
 def _to_utc(value: datetime) -> datetime:

@@ -49,12 +49,29 @@ from .coordinator_helpers.models import normalize_event_override_update
 from .reconciliation import DesiredPlan as _DesiredPlan
 from .reconciliation import ManagedSlot as _ManagedSlot
 from .reconciliation import compute_desired_plan as compute_desired_plan  # noqa: F401
-from .util import add_call as add_call  # noqa: F401
-from .util import async_fire_clear_code as async_fire_clear_code  # noqa: F401
 
 # aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _util_module():
+    """Return the util module for runtime patch-sensitive delegation."""
+    from . import util
+
+    return util
+
+
+def add_call(hass, coro, domain, service, target, data):
+    """Delegate service-call collection through util at runtime."""
+    return _util_module().add_call(hass, coro, domain, service, target, data)
+
+
+async def async_fire_clear_code(
+    coordinator, slot: int, expected_name: str | None = None
+):
+    """Delegate clear-code calls through util at runtime."""
+    return await _util_module().async_fire_clear_code(coordinator, slot, expected_name)
 
 
 class RentalControlCoordinator(
@@ -70,6 +87,23 @@ class RentalControlCoordinator(
 
     _parent_entry_id: str | None
     _child_locknames: set[str]
+    code_buffer_after: int
+    code_buffer_before: int
+    code_generator: str
+    code_length: int
+    days: int
+    event: Any
+    event_overrides: Any
+    honor_event_times: bool
+    ignore_non_reserved: bool
+    lockname: str | None
+    max_events: int
+    max_name_length: int
+    num_misses: int
+    should_update_code: bool
+    start_slot: int
+    trim_names: bool
+    verify_ssl: bool
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry):
         """Set up a calendar coordinator."""

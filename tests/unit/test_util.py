@@ -366,6 +366,11 @@ class TestGetSlotNameFallback:
         result = get_slot_name("  Jane Smith  ", "", "")
         assert result == "Jane Smith"
 
+    def test_non_reserved_dash_name_not_truncated(self) -> None:
+        """Verify non-Reserved provider names keep dash suffixes."""
+        assert get_slot_name("Beach House - Smith", "", "") == "Beach House - Smith"
+        assert get_slot_name("Acme - Bob", "", "") == "Acme - Bob"
+
     def test_fallback_with_prefix(self) -> None:
         """Verify fallback works with prefix stripping."""
         result = get_slot_name("Rental Plain Name", "", "Rental")
@@ -3387,3 +3392,61 @@ class TestBufferRegressionSemantics:
 
         assert event.extra_state_attributes["start"] == original_start
         assert event.extra_state_attributes["end"] == original_end
+
+
+class TestUtilShellCompatibility:
+    """Tests for util shell imports and patch-sensitive wrappers."""
+
+    def test_required_public_surface_is_reexported(self) -> None:
+        """Verify the util compatibility shell exposes required names."""
+        required = [
+            "dt",
+            "add_call",
+            "apply_buffer",
+            "async_fire_clear_code",
+            "async_fire_set_code",
+            "async_fire_update_times",
+            "async_reload_package_platforms",
+            "check_gather_results",
+            "delete_rc_and_base_folder",
+            "EventIdentity",
+            "gen_uuid",
+            "get_entry_data",
+            "get_event_identities",
+            "get_slot_name",
+            "handle_state_change",
+            "is_cleared_keymaster_text_state",
+            "is_unreadable_keymaster_text_state",
+            "normalize_uid",
+            "OperationResult",
+            "trim_name",
+        ]
+
+        missing = [name for name in required if not hasattr(util_module, name)]
+
+        assert missing == []
+
+    def test_patch_sensitive_attributes_remain_on_util(self) -> None:
+        """Verify util still owns patch-sensitive dependency attributes."""
+        for name in (
+            "asyncio",
+            "async_track_state_change_event",
+            "pn_create",
+            "pn_dismiss",
+            "_SET_CODE_CONFIRMATION_TIMEOUT",
+        ):
+            assert hasattr(util_module, name)
+
+    def test_get_event_names_uses_util_identity_wrapper(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Patching util.get_event_identities affects get_event_names."""
+        monkeypatch.setattr(
+            util_module,
+            "get_event_identities",
+            lambda rc, calendar=None: [
+                EventIdentity("patched", dt_util.now(), dt_util.now(), None)
+            ],
+        )
+
+        assert util_module.get_event_names(MagicMock()) == ["patched"]
