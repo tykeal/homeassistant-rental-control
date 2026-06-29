@@ -76,7 +76,7 @@ directive and add no complexity suppression.
 | II: Atomic Commit Discipline | PASS | This PR is one docs-only PLAN commit. Future implementation can split schema helpers, validation helpers, shell wiring, compatibility wrappers, and tests into atomic commits. |
 | III: Licensing & Attribution | PASS | New markdown artifacts include SPDX headers. Future Python helper modules must include project SPDX headers and public docstrings. |
 | IV: Pre-Commit Integrity | PASS | No hook bypass is planned. Quickstart defines local validation before implementation merge. |
-| V: Agent Co-Authorship & DCO | PASS | The PLAN commit uses `git commit -s` and the requested Claude co-author trailer. |
+| V: Agent Co-Authorship & DCO | PASS | The PLAN commit uses `git commit -s` and the requested AI co-author trailer. |
 | VI: User Experience Consistency | PASS | Form fields, selectors, defaults, errors, step IDs, entry titles, entry data, options data, and import seams are explicitly preserved. |
 | VII: Performance Requirements | PASS | Helpers are pure except the existing submitted-data URL fetch; the shell adds no extra I/O, state writes, config-entry writes, tasks, or delays. |
 
@@ -363,7 +363,7 @@ or tool is introduced.
 | II: Atomic Commit Discipline | PASS | PLAN artifacts are one docs-only change; future implementation can be split into small extraction and test commits. |
 | III: Licensing & Attribution | PASS | `plan.md`, `research.md`, `data-model.md`, and `quickstart.md` include SPDX headers. Future Python helpers must do the same. |
 | IV: Pre-Commit Integrity | PASS | The PR must pass hooks and CI without bypass flags. |
-| V: Agent Co-Authorship & DCO | PASS | The planned commit uses sign-off and the requested Claude co-author trailer. |
+| V: Agent Co-Authorship & DCO | PASS | The planned commit uses sign-off and the requested AI co-author trailer. |
 | VI: User Experience Consistency | PASS | Flow classes, step IDs, schema, defaults, selectors, errors, entry data, options data, and import/patch seams are preserved. |
 | VII: Performance Requirements | PASS | Extracted helpers are in-memory around the same submitted-data URL fetch and add no new I/O, writes, tasks, or delays. |
 
