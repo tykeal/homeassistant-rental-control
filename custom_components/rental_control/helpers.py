@@ -293,7 +293,8 @@ def compute_early_expiry_time(
 def get_slot_name(summary: str, description: str, prefix: str) -> str | None:
     """Determine the name for a given slot / event."""
     if prefix:
-        name = re.compile(f"{prefix} (.*)").findall(summary)[0]
+        matches = re.compile(f"{re.escape(prefix)} (.*)").findall(summary)
+        name = matches[0] if matches else summary
     else:
         name = summary
     if re.compile("Not available|Blocked").search(name):
