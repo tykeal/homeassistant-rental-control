@@ -10,4 +10,4 @@ name: 'rental-control CodeQL config'
 # real, security-sensitive code paths. Production code under
 # custom_components/ remains fully analyzed.
 paths-ignore:
-  - tests
+  - tests/**
