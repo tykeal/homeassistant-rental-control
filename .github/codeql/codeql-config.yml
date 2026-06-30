@@ -1,0 +1,13 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'rental-control CodeQL config'
+
+# Exclude the test suite from CodeQL analysis. Test code is not shipped
+# and pytest assertions frequently trip security queries (e.g. substring
+# URL checks in expected-error-message assertions) without representing
+# real, security-sensitive code paths. Production code under
+# custom_components/ remains fully analyzed.
+paths-ignore:
+  - tests/**
