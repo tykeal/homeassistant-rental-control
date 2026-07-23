@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+import datetime
 import logging
 from typing import Any
 
@@ -15,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import COORDINATOR
 from .const import DOMAIN
@@ -43,6 +46,18 @@ async def async_setup_entry(
     async_add_entities([calendar])
 
     return True
+
+
+def _datetime_to_date(value: datetime.datetime | datetime.date) -> datetime.date:
+    """Collapse a datetime to a local calendar date, leaving dates untouched."""
+    # ICS events carry timezone info, so convert to the user's local timezone
+    # BEFORE dropping the time. Calling .date() on a raw UTC datetime would
+    # yield the UTC calendar day, which can be off by one.
+    if isinstance(value, datetime.datetime):
+        return dt_util.as_local(value).date()
+    # Already a date (all-day event); date has no .date() method, so return
+    # it unchanged rather than raising AttributeError.
+    return value
 
 
 class RentalControlCalendar(
@@ -76,7 +91,14 @@ class RentalControlCalendar(
     @property
     def event(self) -> CalendarEvent | None:
         """Return the next upcoming event."""
-        return self.coordinator.event
+        upcoming = self.coordinator.event
+        if upcoming is None:
+            return None
+        return replace(
+            upcoming,
+            start=_datetime_to_date(upcoming.start),
+            end=_datetime_to_date(upcoming.end),
+        )
 
     @property
     def unique_id(self) -> str:
@@ -86,4 +108,13 @@ class RentalControlCalendar(
     async def async_get_events(self, hass, start_date, end_date) -> Any:
         """Get all events in a specific time frame."""
         _LOGGER.debug("Running RentalControlCalendar async get events")
-        return await self.coordinator.async_get_events(hass, start_date, end_date)
+        events = await self.coordinator.async_get_events(hass, start_date, end_date)
+
+        return [
+            replace(
+                e,
+                start=_datetime_to_date(e.start),
+                end=_datetime_to_date(e.end),
+            )
+            for e in events or []
+        ]
