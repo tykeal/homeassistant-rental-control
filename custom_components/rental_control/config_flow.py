@@ -26,6 +26,7 @@ from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_BUFFER_AFTER
 from .const import CONF_CODE_BUFFER_BEFORE
+from .const import CONF_DATE_ONLY  # ADDED
 from .const import CONF_DAYS
 from .const import CONF_EVENT_PREFIX
 from .const import CONF_HONOR_EVENT_TIMES
@@ -40,6 +41,7 @@ from .const import DEFAULT_CHECKIN
 from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_CODE_BUFFER_AFTER
 from .const import DEFAULT_CODE_BUFFER_BEFORE
+from .const import DEFAULT_DATE_ONLY  # ADDED
 from .const import DEFAULT_DAYS
 from .const import DEFAULT_EVENT_PREFIX
 from .const import DEFAULT_HONOR_EVENT_TIMES
@@ -70,6 +72,7 @@ class RentalControlFlowHandler(  # type: ignore[call-arg]
     DEFAULTS = {
         CONF_CHECKIN: DEFAULT_CHECKIN,
         CONF_CHECKOUT: DEFAULT_CHECKOUT,
+        CONF_DATE_ONLY: DEFAULT_DATE_ONLY,  # ADDED
         CONF_DAYS: DEFAULT_DAYS,
         CONF_IGNORE_NON_RESERVED: True,
         CONF_EVENT_PREFIX: DEFAULT_EVENT_PREFIX,

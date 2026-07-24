@@ -280,6 +280,11 @@ def _behavior_fields(context: SchemaBuildContext) -> dict[Any, Any]:
                 context, CONF_HONOR_EVENT_TIMES, DEFAULT_HONOR_EVENT_TIMES
             ),
         ): cv.boolean,
+        # ADDED: opt-in date-only calendar display, defaults to disabled
+        cv.vol.Optional(
+            CONF_DATE_ONLY,
+            default=_get_default(context, CONF_DATE_ONLY, DEFAULT_DATE_ONLY),
+        ): cv.boolean,
         cv.vol.Optional(
             CONF_IGNORE_NON_RESERVED,
             default=_get_default(context, CONF_IGNORE_NON_RESERVED, True),
