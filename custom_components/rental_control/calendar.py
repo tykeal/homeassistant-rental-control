@@ -19,7 +19,9 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
+from .const import CONF_DATE_ONLY  # ADDED
 from .const import COORDINATOR
+from .const import DEFAULT_DATE_ONLY  # ADDED
 from .const import DOMAIN
 from .const import NAME
 from .coordinator import RentalControlCoordinator
@@ -41,7 +43,8 @@ async def async_setup_entry(
         COORDINATOR
     ]
 
-    calendar = RentalControlCalendar(coordinator)
+    # CHANGED: pass config_entry so the calendar can read the date_only option
+    calendar = RentalControlCalendar(coordinator, config_entry)
 
     async_add_entities([calendar])
 
@@ -60,14 +63,39 @@ def _datetime_to_date(value: datetime.datetime | datetime.date) -> datetime.date
     return value
 
 
+# ADDED: collapse a reservation to the nights the property is occupied.
+def _collapse_span(
+    start: datetime.datetime | datetime.date,
+    end: datetime.datetime | datetime.date,
+) -> tuple[datetime.date, datetime.date]:
+    """Collapse an event span to all-day dates covering the nights occupied."""
+    # All-day end dates are EXCLUSIVE, so a checkout of 11:00 Jan 8 collapsing
+    # to the date Jan 8 renders the stay as Jan 5-7 -- the nights the guest is
+    # actually in the property. Checkout day is intentionally not shown. No
+    # adjustment to the end date is needed.
+    new_start = _datetime_to_date(start)
+    new_end = _datetime_to_date(end)
+    # A booking with no overnight stay would collapse to a zero-length span,
+    # but CalendarEvent requires end > start. Clamp to a single day so the
+    # entity does not raise
+    if new_end <= new_start:
+        new_end = new_start + datetime.timedelta(days=1)
+    return new_start, new_end
+
+
 class RentalControlCalendar(
     CoordinatorEntity[RentalControlCoordinator], CalendarEntity
 ):
     """A device for getting the next Task from a WebDav Calendar."""
 
-    def __init__(self, coordinator: RentalControlCoordinator) -> None:
+    def __init__(
+        self,
+        coordinator: RentalControlCoordinator,
+        config_entry: ConfigEntry,  # ADDED
+    ) -> None:
         """Create the iCal Calendar Event Device."""
         super().__init__(coordinator)
+        self._config_entry = config_entry  # ADDED
         self._attr_has_entity_name = True
         self._attr_name = NAME
         self._entity_category: EntityCategory = EntityCategory.DIAGNOSTIC
@@ -77,6 +105,13 @@ class RentalControlCalendar(
     def available(self) -> bool:
         """Return the calendar availability."""
         return bool(self.coordinator.last_update_success)
+
+    # ADDED: read live from the entry so a settings change takes effect
+    # without needing a reload.
+    @property
+    def _date_only(self) -> bool:
+        """Return whether date-only display is enabled."""
+        return bool(self._config_entry.data.get(CONF_DATE_ONLY, DEFAULT_DATE_ONLY))
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -94,11 +129,11 @@ class RentalControlCalendar(
         upcoming = self.coordinator.event
         if upcoming is None:
             return None
-        return replace(
-            upcoming,
-            start=_datetime_to_date(upcoming.start),
-            end=_datetime_to_date(upcoming.end),
-        )
+        # ADDED: when disabled, hand back the coordinator's object untouched.
+        if not self._date_only:
+            return upcoming
+        start, end = _collapse_span(upcoming.start, upcoming.end)  # CHANGED
+        return replace(upcoming, start=start, end=end)
 
     @property
     def unique_id(self) -> str:
@@ -110,11 +145,13 @@ class RentalControlCalendar(
         _LOGGER.debug("Running RentalControlCalendar async get events")
         events = await self.coordinator.async_get_events(hass, start_date, end_date)
 
-        return [
-            replace(
-                e,
-                start=_datetime_to_date(e.start),
-                end=_datetime_to_date(e.end),
-            )
-            for e in events or []
-        ]
+        # ADDED: when disabled, return the coordinator's list unchanged.
+        if not self._date_only:
+            return events
+
+        # CHANGED: collapse each event's span rather than each date separately.
+        collapsed = []
+        for e in events or []:
+            start, end = _collapse_span(e.start, e.end)
+            collapsed.append(replace(e, start=start, end=end))
+        return collapsed

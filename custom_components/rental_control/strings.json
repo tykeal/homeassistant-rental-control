@@ -22,6 +22,7 @@
           "cleaning_window": "Cleaning Window (hours)",
           "code_generation": "Door code generator",
           "code_length": "Door code length (>= 4 and an even number)",
+          "date_only": "Show reservations as all-day events",
           "days": "Maximum number of days into the future to fetch",
           "event_prefix": "Prefix for all events (useful if linking more than one rental)",
           "ignore_non_reserved": "Ignore events that are not standard reservations",
@@ -41,7 +42,9 @@
           "verify_ssl": "Verify SSL certificates"
         },
         "data_description": {
-          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)"
+          "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)",
+          "date_only": "Displays each reservation as a single all-day block. Guest arrival and departure times are hidden from the calendar."
+
         }
       }
     }
@@ -69,6 +72,7 @@
           "cleaning_window": "Cleaning Window (hours)",
           "code_generation": "Door code generator",
           "code_length": "Door code length (>= 4 and an even number)",
+          "date_only": "Show reservations as all-day events",
           "days": "Maximum number of days into the future to fetch",
           "event_prefix": "Prefix for all events (useful if linking more than one rental)",
           "ignore_non_reserved": "Ignore events that are not standard reservations",
@@ -91,7 +95,9 @@
         "data_description": {
           "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)",
           "code_buffer_before": "Minutes before check-in time to activate the lock code (0 = no buffer)",
-          "code_buffer_after": "Minutes after checkout time to deactivate the lock code (0 = no buffer)"
+          "code_buffer_after": "Minutes after checkout time to deactivate the lock code (0 = no buffer)",
+          "date_only": "Displays each reservation as a single all-day block. Guest arrival and departure times are hidden from the calendar."
+
         }
       }
     }
