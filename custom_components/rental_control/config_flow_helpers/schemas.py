@@ -28,6 +28,7 @@ from ..const import CONF_CODE_BUFFER_AFTER
 from ..const import CONF_CODE_BUFFER_BEFORE
 from ..const import CONF_CODE_GENERATION
 from ..const import CONF_CODE_LENGTH
+from ..const import CONF_DATE_ONLY
 from ..const import CONF_DAYS
 from ..const import CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from ..const import CONF_EVENT_PREFIX
@@ -48,6 +49,7 @@ from ..const import DEFAULT_CODE_BUFFER_AFTER
 from ..const import DEFAULT_CODE_BUFFER_BEFORE
 from ..const import DEFAULT_CODE_GENERATION
 from ..const import DEFAULT_CODE_LENGTH
+from ..const import DEFAULT_DATE_ONLY
 from ..const import DEFAULT_DAYS
 from ..const import DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from ..const import DEFAULT_EVENT_PREFIX
@@ -279,6 +281,10 @@ def _behavior_fields(context: SchemaBuildContext) -> dict[Any, Any]:
             default=_get_default(
                 context, CONF_HONOR_EVENT_TIMES, DEFAULT_HONOR_EVENT_TIMES
             ),
+        ): cv.boolean,
+        cv.vol.Optional(
+            CONF_DATE_ONLY,
+            default=_get_default(context, CONF_DATE_ONLY, DEFAULT_DATE_ONLY),
         ): cv.boolean,
         cv.vol.Optional(
             CONF_IGNORE_NON_RESERVED,
