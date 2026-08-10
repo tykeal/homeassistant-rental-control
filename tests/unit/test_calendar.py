@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from datetime import datetime
 from datetime import timezone
 from unittest.mock import AsyncMock
@@ -14,7 +15,9 @@ from homeassistant.components.calendar import CalendarEvent
 from homeassistant.helpers.entity import EntityCategory
 
 from custom_components.rental_control.calendar import RentalControlCalendar
+from custom_components.rental_control.calendar import _datetime_to_date
 from custom_components.rental_control.calendar import async_setup_entry
+from custom_components.rental_control.const import CONF_DATE_ONLY
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import NAME
@@ -27,6 +30,7 @@ def _mock_coordinator(
     unique_id: str = "test_unique_id",
     last_update_success: bool = False,
     event: CalendarEvent | None = None,
+    date_only: bool = False,
 ) -> MagicMock:
     """Create a mock RentalControlCoordinator for testing."""
     coordinator = MagicMock()
@@ -40,6 +44,10 @@ def _mock_coordinator(
     coordinator.event = event
     coordinator.last_update_success = last_update_success
     coordinator.async_get_events = AsyncMock(return_value=[])
+    # config_entry.data must be a real dict so .get() returns real values
+    # rather than a truthy MagicMock, which would force date_only on.
+    coordinator.config_entry = MagicMock()
+    coordinator.config_entry.data = {CONF_DATE_ONLY: date_only}
     return coordinator
 
 
@@ -304,3 +312,97 @@ class TestAsyncGetEvents:
         call_args = coordinator.async_get_events.call_args
         assert call_args[0][1] is start
         assert call_args[0][2] is end
+
+
+# ---------------------------------------------------------------------------
+# Date-only display option tests
+# ---------------------------------------------------------------------------
+
+
+class TestDateOnlyOption:
+    """Tests for the date_only calendar display option."""
+
+    def test_datetime_to_date_passthrough_for_date(self) -> None:
+        """An already-date value is returned unchanged."""
+        value = date(2025, 7, 5)
+        assert _datetime_to_date(value) is value
+
+    def test_event_unchanged_when_option_disabled(self) -> None:
+        """With date_only off, event is returned untouched."""
+        mock_event = CalendarEvent(
+            summary="Guest",
+            start=datetime(2025, 7, 5, 16, 0, tzinfo=timezone.utc),
+            end=datetime(2025, 7, 8, 11, 0, tzinfo=timezone.utc),
+        )
+        coordinator = _mock_coordinator(event=mock_event, date_only=False)
+        cal = RentalControlCalendar(coordinator)
+        assert cal.event is mock_event
+
+    def test_event_collapsed_to_dates_when_enabled(self) -> None:
+        """With date_only on, a timed event becomes date-only, checkout dropped."""
+        coordinator = _mock_coordinator(
+            event=CalendarEvent(
+                summary="Guest",
+                start=datetime(2025, 7, 5, 16, 0, tzinfo=timezone.utc),
+                end=datetime(2025, 7, 8, 11, 0, tzinfo=timezone.utc),
+            ),
+            date_only=True,
+        )
+        cal = RentalControlCalendar(coordinator)
+        result = cal.event
+        assert result is not None
+        assert result.start == date(2025, 7, 5)
+        # Exclusive end: Jul 8 renders as nights of Jul 5-7, checkout excluded.
+        assert result.end == date(2025, 7, 8)
+
+    def test_same_day_booking_clamped_to_one_day(self) -> None:
+        """A booking with no overnight stay is clamped so end > start."""
+        coordinator = _mock_coordinator(
+            event=CalendarEvent(
+                summary="Day use",
+                start=datetime(2025, 7, 5, 14, 0, tzinfo=timezone.utc),
+                end=datetime(2025, 7, 5, 16, 0, tzinfo=timezone.utc),
+            ),
+            date_only=True,
+        )
+        cal = RentalControlCalendar(coordinator)
+        result = cal.event
+        assert result is not None
+        assert result.start == date(2025, 7, 5)
+        assert result.end == date(2025, 7, 6)
+
+    async def test_get_events_unchanged_when_disabled(self) -> None:
+        """With date_only off, async_get_events returns the list untouched."""
+        events = [
+            CalendarEvent(
+                summary="Booking",
+                start=datetime(2025, 7, 5, 16, 0, tzinfo=timezone.utc),
+                end=datetime(2025, 7, 8, 11, 0, tzinfo=timezone.utc),
+            ),
+        ]
+        coordinator = _mock_coordinator(date_only=False)
+        coordinator.async_get_events = AsyncMock(return_value=events)
+        cal = RentalControlCalendar(coordinator)
+        result = await cal.async_get_events(
+            MagicMock(), datetime(2025, 7, 1), datetime(2025, 7, 31)
+        )
+        assert result is events
+
+    async def test_get_events_collapsed_when_enabled(self) -> None:
+        """With date_only on, async_get_events collapses each event to dates."""
+        coordinator = _mock_coordinator(date_only=True)
+        coordinator.async_get_events = AsyncMock(
+            return_value=[
+                CalendarEvent(
+                    summary="Booking",
+                    start=datetime(2025, 7, 5, 16, 0, tzinfo=timezone.utc),
+                    end=datetime(2025, 7, 8, 11, 0, tzinfo=timezone.utc),
+                ),
+            ]
+        )
+        cal = RentalControlCalendar(coordinator)
+        result = await cal.async_get_events(
+            MagicMock(), datetime(2025, 7, 1), datetime(2025, 7, 31)
+        )
+        assert result[0].start == date(2025, 7, 5)
+        assert result[0].end == date(2025, 7, 8)
