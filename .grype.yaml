@@ -184,3 +184,116 @@ ignore:
       name: zeroconf
       version: "0.148.0"
       type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-62p4-gmf7-7g93
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-xj96-63gp-2gmr
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-vjc4-5qp5-m44j
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-45hq-cxwh-f6vc
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-5x94-69rx-g8h2
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-phj9-mv4w-65pm
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-8v84-f9pq-wr9x
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-6r8x-57c9-28j4
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-9hw9-ch79-4vh6
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-jjj6-mw9f-p565
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-pg7v-jwj7-p798
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-fj7v-r99m-22gq
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # pillow transitive dependency via homeassistant —
+  # we cannot pin it directly. Fixed in 12.3.0.
+  - vulnerability: GHSA-4x4j-2g7c-83w6
+    package:
+      name: pillow
+      version: "12.2.0"
+      type: python
+
+  # cryptography transitive dependency via
+  # homeassistant — we cannot pin it directly.
+  # Fixed in 50.0.0.
+  - vulnerability: GHSA-g6cj-pr64-35w5
+    package:
+      name: cryptography
+      version: "48.0.1"
+      type: python
