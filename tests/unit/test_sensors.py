@@ -928,9 +928,7 @@ class TestGenerateDoorCodeStaticRandom:
 
         # Verify it matches what a local RNG seeded from description produces
         max_range = int("9999".rjust(4, "9"))
-        expected = str(random.Random("Fallback test").randrange(1, max_range, 4)).zfill(
-            4
-        )
+        expected = str(random.Random("Fallback test").randrange(1, max_range)).zfill(4)
         assert code == expected
 
     def test_static_random_uid_and_description_none_falls_back_to_date_based(
@@ -967,9 +965,7 @@ class TestGenerateDoorCodeStaticRandom:
 
         # Empty UID should be treated as absent; code seeded from description
         max_range = int("9999".rjust(4, "9"))
-        expected = str(random.Random("Fallback test").randrange(1, max_range, 4)).zfill(
-            4
-        )
+        expected = str(random.Random("Fallback test").randrange(1, max_range)).zfill(4)
         assert code == expected
 
 

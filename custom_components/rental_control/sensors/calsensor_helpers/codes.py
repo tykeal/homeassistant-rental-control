@@ -31,9 +31,7 @@ def _static_random_code(request: DoorCodeRequest) -> str | None:
         return None
     rng = random.Random(seed)
     max_range = int("9999".rjust(request.code_length, "9"))
-    return str(rng.randrange(1, max_range, request.code_length)).zfill(
-        request.code_length
-    )
+    return str(rng.randrange(1, max_range)).zfill(request.code_length)
 
 
 def generate_door_code(request: DoorCodeRequest) -> str:

@@ -11,6 +11,9 @@ import random
 
 import pytest
 
+from custom_components.rental_control.coordinator_helpers.codegen import (
+    generate_slot_code,
+)
 from custom_components.rental_control.sensors.calsensor_helpers.codes import (
     generate_door_code,
 )
@@ -76,7 +79,7 @@ def test_static_random_description_fallback() -> None:
         _request("static_random", uid=None, description="Fallback test")
     )
     expected = str(
-        random.Random("Fallback test").randrange(1, int("9999".rjust(4, "9")), 4)
+        random.Random("Fallback test").randrange(1, int("9999".rjust(4, "9")))
     ).zfill(4)
     assert code == expected
 
@@ -93,7 +96,7 @@ def test_empty_uid_falls_back_to_description_seed() -> None:
     """Verify empty UID uses the mutable description fallback as before."""
     code = generate_door_code(_request("static_random", uid="", description="Fallback"))
     expected = str(
-        random.Random("Fallback").randrange(1, int("9999".rjust(4, "9")), 4)
+        random.Random("Fallback").randrange(1, int("9999".rjust(4, "9")))
     ).zfill(4)
     assert code == expected
 
@@ -107,3 +110,31 @@ def test_static_random_does_not_perturb_global_rng() -> None:
     generate_door_code(_request("static_random", uid="local-only-seed"))
 
     assert random.random() == expected
+
+
+def test_static_random_full_code_space_is_reachable() -> None:
+    """Verify static-random is not limited to one residue class."""
+    residues = {
+        int(generate_door_code(_request("static_random", uid=f"seed-{index}"))) % 4
+        for index in range(100)
+    }
+
+    assert len(residues) > 1
+
+
+def test_static_random_matches_coordinator_generation() -> None:
+    """Verify sensor and coordinator static-random generation stay in sync."""
+    request = _request(
+        "static_random",
+        uid="shared-static-random-uid",
+        description="Shared reservation details",
+    )
+
+    assert generate_door_code(request) == generate_slot_code(
+        "static_random",
+        request.code_length,
+        request.start,
+        request.end,
+        request.description,
+        request.uid,
+    )
