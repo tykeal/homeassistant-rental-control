@@ -79,7 +79,7 @@ def generate_slot_code(
         if seed:
             rng = random.Random(seed)
             max_range = int("9999".rjust(code_length, "9"))
-            code = str(rng.randrange(1, max_range, code_length)).zfill(code_length)
+            code = str(rng.randrange(1, max_range)).zfill(code_length)
 
     return (
         code if code is not None else generate_date_based_code(code_length, start, end)

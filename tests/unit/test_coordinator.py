@@ -8946,9 +8946,7 @@ class TestCoordinatorPersistenceUpdate:
 
         reservations = coordinator._build_reservations([event])
 
-        expected = str(random.Random("stable-random-uid").randrange(1, 9999, 4)).zfill(
-            4
-        )
+        expected = str(random.Random("stable-random-uid").randrange(1, 9999)).zfill(4)
         assert reservations[0].slot_code == expected
 
     def test_sync_store_writes_identity_start_and_end(
