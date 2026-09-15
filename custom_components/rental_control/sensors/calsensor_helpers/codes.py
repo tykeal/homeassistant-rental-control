@@ -29,9 +29,9 @@ def _static_random_code(request: DoorCodeRequest) -> str | None:
     seed = request.uid if request.uid else request.description
     if not seed:
         return None
-    random.seed(seed)
+    rng = random.Random(seed)
     max_range = int("9999".rjust(request.code_length, "9"))
-    return str(random.randrange(1, max_range, request.code_length)).zfill(
+    return str(rng.randrange(1, max_range, request.code_length)).zfill(
         request.code_length
     )
 
