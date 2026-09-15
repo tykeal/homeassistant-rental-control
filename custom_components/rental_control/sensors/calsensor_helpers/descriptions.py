@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import re
 
+from ...codegen import extract_last_four as _shared_extract_last_four
 from .models import ParsedReservationAttributes
 
 KNOWN_FIELDS: frozenset[str] = frozenset(
@@ -72,27 +73,7 @@ def extract_last_four(
     phone_extractor: Callable[[], str | None] | None = None,
 ) -> str | None:
     """Extract the last four phone digits from a description."""
-    if description is None:
-        return None
-    ret = re.compile(r"""\(?Last 4 Digits\)?:\s+(\d{4})(?!\d)""").findall(description)
-    if ret:
-        return str(ret[0])
-    ret = re.compile(r"""Phone\s*\(last\s*4\):\s*(\d{4})(?!\d)""", re.I).findall(
-        description
-    )
-    if ret:
-        return str(ret[0])
-    if "Phone" in description:
-        phone = (
-            phone_extractor()
-            if phone_extractor is not None
-            else extract_phone_number(description)
-        )
-        if phone:
-            phone = phone.replace(" ", "")
-            if len(phone) >= 4:
-                return str(phone)[-4:]
-    return None
+    return _shared_extract_last_four(description, phone_extractor=phone_extractor)
 
 
 def extract_url(description: str | None) -> str | None:

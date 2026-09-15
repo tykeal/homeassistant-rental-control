@@ -44,6 +44,17 @@ def test_last_four_fallbacks_match_legacy() -> None:
     assert descriptions.extract_last_four("Phone: +1 555-123-9876") == "9876"
 
 
+def test_last_four_honors_injected_phone_extractor() -> None:
+    """Verify injected phone extraction remains part of last-four parsing."""
+    assert (
+        descriptions.extract_last_four(
+            "Phone: unavailable",
+            phone_extractor=lambda: "+1 555-000-1234",
+        )
+        == "1234"
+    )
+
+
 def test_dynamic_attributes_match_legacy_filtering() -> None:
     """Verify dynamic fields skip known labels and URL-like labels."""
     description = (

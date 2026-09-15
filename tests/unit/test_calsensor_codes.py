@@ -64,6 +64,41 @@ def test_last_four_only_applies_to_four_digit_codes() -> None:
     )
 
 
+def test_last_four_request_none_uses_date_based_fallback() -> None:
+    """Verify explicit missing last-four values are not re-extracted."""
+    assert (
+        generate_door_code(
+            _request(
+                "last_four",
+                description="Last 4 Digits: 9876",
+                last_four=None,
+            )
+        )
+        == "1520"
+    )
+
+
+def test_coordinator_omitted_last_four_extracts_description() -> None:
+    """Verify coordinator generation still extracts last-four values."""
+    request = _request(
+        "last_four",
+        description="Last 4 Digits: 9876",
+        last_four=None,
+    )
+
+    assert (
+        generate_slot_code(
+            request.generator,
+            request.code_length,
+            request.start,
+            request.end,
+            request.description,
+            request.uid,
+        )
+        == "9876"
+    )
+
+
 def test_static_random_uid_determinism() -> None:
     """Verify static-random keeps UID-seeded deterministic behavior."""
     first = generate_door_code(_request("static_random", uid="same-uid"))
