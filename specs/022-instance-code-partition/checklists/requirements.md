@@ -38,6 +38,15 @@
   intra-instance probing ordered by reservation UID, accepted probe-order
   instability, and opt-out rollout. These are recorded as requirements and
   assumptions rather than open questions.
+- Review round 2 closed a contradiction between FR-006 (disjointness
+  assumes equal capacity) and the original FR-009 (capacity need not be
+  set identically). Capacity is now stated as a property of the shared
+  parent lock: optional to set, but mandatory to set uniformly when used.
+  Added FR-009a, FR-009b, FR-023a, FR-024a, SC-009, SC-010, two edge
+  cases, one assumption, and User Story 4 scenarios 4 and 5.
+- A mismatched capacity override cannot be detected at runtime, because
+  FR-005 forbids cross-instance visibility. This is documented as an
+  accepted limitation alongside overlapping slot ranges, not solved.
 - Related issues intentionally left unsolved here: #735 (force re-issue,
   needed to heal the existing live collision), #736 (persist the generated
   code), and the separate code-length issue.

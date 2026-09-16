@@ -142,7 +142,8 @@ partitioning scheme. It must be possible to extend the scheme without
 requiring every ordinary operator to configure anything.
 
 **Independent Test**: Configure an instance whose slot range sits above
-the default capacity, raise the capacity override, and verify the instance
+the default capacity, raise the capacity override on that instance *and
+on every instance sharing the parent lock*, and verify the instance
 receives a block disjoint from its siblings.
 
 **Acceptance Scenarios**:
@@ -158,6 +159,16 @@ receives a block disjoint from its siblings.
    capacity, **When** codes are generated, **Then** the integration warns
    that the capacity is too small for the configured slot range and tells
    the operator to raise the override.
+4. **Given** an operator viewing the capacity option, **When** they read
+   its help text or the documentation, **Then** both state that the value
+   describes the shared parent lock and must be set identically on every
+   instance using that lock, and warn that a partial or mismatched
+   override can produce overlapping blocks and duplicate codes.
+5. **Given** one instance raises the override while its siblings remain
+   at the default, **When** codes are generated, **Then** blocks may
+   overlap despite disjoint slot ranges and duplicates become possible —
+   an accepted, documented, undetectable misconfiguration rather than a
+   behaviour the integration can correct.
 
 ---
 
@@ -207,6 +218,29 @@ for the same bookings.
 - **Slot range extending past the configured capacity**: blocks can no
   longer be guaranteed disjoint for that instance. The integration warns
   and recommends raising the capacity override.
+- **Capacity override applied unevenly across instances**
+  (misconfiguration, and the most likely way this feature silently
+  fails): capacity is the divisor that defines block boundaries, so
+  instances that disagree about it partition the same code space into
+  different-sized blocks, and those blocks can overlap even though the
+  slot ranges remain disjoint. Worked example in a 4-digit space of 9998
+  usable values — instance A on slots 10–30 with capacity 250 derives
+  roughly (399, 1199), while instance B on slots 40–60 with capacity 500
+  derives roughly (799, 1199): about 400 code values are shared and
+  cross-instance collisions return. This is a realistic path, not a
+  contrived one: an operator who hits the capacity ceiling will naturally
+  raise the override on the one instance that warned rather than on all
+  ten. The override MUST therefore be applied uniformly to every instance
+  sharing a parent lock, and both the option help text and the
+  documentation must say so.
+- **Detection of a capacity mismatch is not possible by design**: an
+  instance has no visibility into its siblings' configuration and
+  FR-005 forbids acquiring any, so the integration cannot warn about a
+  mismatch it cannot observe. Uniform capacity is an operator obligation
+  enforced by documentation only. This is the same class of limitation as
+  overlapping slot ranges below, and is accepted rather than solved,
+  because solving it would require the live cross-instance coordination
+  this feature deliberately avoids.
 - **Overlapping or duplicated slot ranges across instances**
   (misconfiguration): two instances derive the same block, so uniqueness
   degrades to within-block probing per instance and cross-instance
@@ -251,9 +285,13 @@ for the same bookings.
   instances: no instance may query another instance, a shared registry, a
   shared file, or the parent lock in order to generate a code.
 - **FR-006**: Given instances with non-overlapping slot ranges, the same
-  capacity, and the same code length, the system MUST produce blocks that
-  are pairwise disjoint, such that no code from one instance can equal a
-  code from another.
+  effective capacity, and the same code length, the system MUST produce
+  blocks that are pairwise disjoint, such that no code from one instance
+  can equal a code from another. Equal effective capacity is a
+  precondition of disjointness, not an incidental detail: capacity is the
+  divisor that defines block boundaries, so instances that disagree about
+  it carve the code space differently and their blocks can overlap even
+  when their slot ranges do not.
 - **FR-007**: The system MUST treat the parent-lock capacity as a constant
   defaulting to 250, so that an ordinary deployment requires no new
   configuration on any instance.
@@ -261,8 +299,21 @@ for the same bookings.
   overrides the capacity for deployments whose parent lock is addressed
   beyond the default — for example large buildings using name-based
   virtual slots.
-- **FR-009**: The system MUST NOT require the capacity override to be set,
-  nor set identically, on every instance for the default case to work.
+- **FR-009**: The system MUST NOT require the capacity override to be set
+  on any instance for the default case to work: when no instance
+  overrides it, every instance shares the default capacity and blocks are
+  disjoint with zero configuration.
+- **FR-009a**: Capacity is a property of the shared parent lock, not of
+  an individual instance. When the override IS used, it MUST be set to
+  the same value on every instance sharing that parent lock. A mismatched
+  or partially applied override breaks disjointness and re-admits
+  cross-instance collisions, which is precisely the failure this feature
+  exists to prevent.
+- **FR-009b**: The system MUST NOT attempt to detect a capacity mismatch
+  by querying other instances, and MUST NOT silently assume agreement.
+  Uniform capacity is an operator obligation surfaced through
+  documentation and option help text (FR-023), because FR-005 forbids the
+  cross-instance visibility that automatic detection would require.
 - **FR-010**: The system MUST warn, without failing, when an instance's
   slot range extends beyond the configured capacity, and the warning MUST
   identify the instance and advise raising the override.
@@ -317,10 +368,19 @@ for the same bookings.
 - **FR-023**: The system MUST document the new capacity and opt-out
   options, the default capacity, and the recommendation to use a longer
   code length on parent locks shared by many units.
+- **FR-023a**: The capacity option's help text in the configuration UI
+  and the user documentation MUST both state that the override describes
+  the shared parent lock and MUST be set to the same value on every
+  instance sharing that lock, and MUST warn that applying it to only some
+  instances can produce overlapping blocks and duplicate codes.
 - **FR-024**: Changes MUST be covered by tests that assert cross-instance
   disjointness, within-instance uniqueness, restart determinism, opt-out
   equivalence with the previous behaviour, and the warning paths for
   exhaustion and undersized capacity.
+- **FR-024a**: Tests MUST include a case demonstrating that instances
+  with disjoint slot ranges but differing capacity values can produce
+  overlapping blocks, so that the documented precondition is pinned by an
+  executable example rather than only by prose.
 
 ### Key Entities
 
@@ -331,7 +391,8 @@ for the same bookings.
   partitioning.
 - **Parent lock capacity**: the number of slot positions the shared parent
   lock is assumed to address. Defaults to 250. Determines how finely the
-  code space is divided.
+  code space is divided. It describes the lock, not the instance, so all
+  instances sharing a lock must use the same value.
 - **Code space**: the set of numeric values expressible at the configured
   code length, from which every door code is drawn.
 - **Instance block**: the contiguous, disjoint portion of the code space
@@ -362,6 +423,13 @@ for the same bookings.
   existing `static_random` seeding.
 - **Capacity default of 250** reflects typical parent-lock addressing.
   Deployments beyond it are expected to use the override.
+- **Capacity is uniform across a parent lock.** Blocks are disjoint only
+  because every instance divides the code space by the same number, so
+  the override — when used at all — must be applied identically to every
+  instance sharing the lock. Instances cannot see one another's
+  configuration (FR-005), so this cannot be verified at runtime and is
+  guaranteed by documentation and operator discipline alone. It is the
+  single most likely way this feature fails silently.
 - **Space sizing at the default capacity**: at a 4-digit code length the
   per-slot-equivalent space is roughly 39 values; at 5 digits roughly 399.
   A longer code length is therefore advisable on parent locks shared by
@@ -399,6 +467,9 @@ for the same bookings.
 - Any live coordination mechanism, shared registry, or cross-instance
   discovery.
 - Detecting or repairing overlapping slot ranges between instances.
+- Detecting or repairing a capacity override applied unevenly across
+  instances; FR-005 rules out the visibility this would require, so it is
+  addressed by documentation instead.
 - Changes to downstream consumers of door codes, including how the
   captive-portal service resolves a code across integrations.
 
@@ -407,9 +478,10 @@ for the same bookings.
 ### Measurable Outcomes
 
 - **SC-001**: Across a simulated property of 10 instances sharing one
-  parent lock with adjacent slot ranges, 100% of generated
-  `static_random` codes are unique across the whole property, for every
-  tested booking set.
+  parent lock with adjacent slot ranges and a uniform capacity, 100% of
+  generated `static_random` codes are unique across the whole property,
+  for every tested booking set. This holds both at the default capacity
+  and at a raised capacity applied to every instance.
 - **SC-002**: Within any single instance, 100% of concurrently planned
   bookings receive distinct codes, including sets contrived to force
   candidate collisions.
@@ -429,3 +501,11 @@ for the same bookings.
 - **SC-008**: Every generated code remains numeric, exactly the
   configured code length, and zero-padded — no change to the format
   contract relied on by downstream consumers.
+- **SC-009**: The uniform-capacity requirement is discoverable without
+  reading the source: it appears in the capacity option's help text and
+  in the user documentation, each stating that the value must match on
+  every instance sharing a parent lock and what goes wrong when it does
+  not.
+- **SC-010**: A test demonstrates the mismatched-capacity overlap
+  explicitly, so any future change that alters block derivation must
+  confront the precondition rather than silently invalidate it.
