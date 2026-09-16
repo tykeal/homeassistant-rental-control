@@ -318,9 +318,10 @@ for the same bookings.
   `static_random` generator. The `date_based` and `last_four` generators
   MUST be left byte-for-byte unchanged.
 - **FR-002**: The system MUST expose one behaviourally identical
-  partitioned allocation contract to every generation path, so that
-  coordinator-driven and sensor-driven generation produce identical codes
-  for the same booking set and observed retention state.
+  partitioned allocation contract to every `static_random` generation
+  path, so that coordinator-driven and sensor-driven `static_random`
+  generation produce identical codes for the same booking set and observed
+  retention state.
 - **FR-003**: The system MUST NOT change the configured or default code
   length as part of this feature.
 
@@ -355,14 +356,15 @@ for the same bookings.
   to generate a code. Reading this instance's own managed slots for the
   existing retention behaviour is permitted and does not provide
   cross-instance visibility.
-- **FR-006**: Given instances with non-overlapping slot ranges, the same
-  effective capacity, and the same code length, the system MUST produce
-  blocks that are pairwise disjoint, such that no code from one instance
-  can equal a code from another. Equal effective capacity is a
-  precondition of disjointness, not an incidental detail: capacity is the
-  divisor that defines block boundaries, so instances that disagree about
-  it carve the code space differently and their blocks can overlap even
-  when their slot ranges do not.
+- **FR-006**: Given valid, in-range, non-degraded instances with
+  non-overlapping slot ranges, the same effective capacity, the same code
+  length, and sufficient block capacity, the system MUST produce blocks
+  that are pairwise disjoint, such that no in-block generated code from
+  one instance can equal an in-block generated code from another. Equal
+  effective capacity is a precondition of disjointness, not an incidental
+  detail: capacity is the divisor that defines block boundaries, so
+  instances that disagree about it carve the code space differently and
+  their blocks can overlap even when their slot ranges do not.
 - **FR-007**: The system MUST treat the parent-lock capacity as a constant
   defaulting to 250, so that an ordinary deployment requires no new
   configuration on any instance.
@@ -404,10 +406,10 @@ for the same bookings.
   with size `B`, draw exactly one value from the existing static-random
   deterministic PRNG stream with range `[0, B)`, equivalent to replacing
   the legacy whole-space upper bound with the block size. When `B = 1`,
-  the only offset is `0`. Add the drawn offset to the block start offset
-  and render the resulting code value. The same normalized seed, block
-  start, block size, and configured code length MUST always produce the
-  same candidate value.
+  the only offset is `0`. Add the drawn offset to the block start offset,
+  then add `1` to map the domain offset to the rendered code value. The
+  same normalized seed, block start, block size, and configured code
+  length MUST always produce the same candidate value.
 - **FR-011b**: When a booking has neither reservation UID nor description,
   the system MUST use the existing date-based fallback, MUST warn for that
   booking without logging the generated code, and MUST treat the result as
@@ -531,6 +533,12 @@ for the same bookings.
   generated partitioned or legacy values. This includes readable
   pre-feature PINs that happen to equal the old whole-space generator
   output.
+- **FR-022c**: On the migration from pre-partitioned generation to
+  partitioned generation, FR-022b overrides any "update generated code"
+  setting for readable observed PINs so existing guest credentials do not
+  rotate solely because the generator changed. Outside that migration
+  window, existing explicit reissue/update semantics continue to control
+  intentional code changes.
 - **FR-023**: The system MUST document the new capacity and opt-out
   options, the default capacity, and the recommendation to use the next
   supported longer code length, currently 6 digits, on parent locks shared
@@ -690,12 +698,13 @@ for the same bookings.
 - **SC-006**: No booking is ever left without a code: every degraded
   condition (block exhausted, empty computed block, slot range beyond
   capacity, no usable seed, opted-out partitioning) still yields a
-  correctly formatted code and emits clear, instance-identifying warnings.
-  Empty-block and slot-range degraded paths emit one warning per affected
-  instance per reconciliation pass; block-exhaustion and unseeded
-  fallbacks emit one warning per affected booking per reconciliation pass;
-  opt-out emits one warning or confirmation per configuration change. All
-  warnings redact raw PIN values.
+  correctly formatted code and emits the warning-or-confirmation behaviour
+  specified for that condition. Empty-block and slot-range degraded paths
+  emit one clear, instance-identifying warning per affected instance per
+  reconciliation pass; block-exhaustion and unseeded fallbacks emit one
+  warning per affected booking per reconciliation pass; opt-out emits one
+  warning or confirmation per configuration change. All warnings redact
+  raw PIN values.
 - **SC-007**: Upgrading an existing installation rotates zero codes for
   active bookings whose existing lock PIN is readable during
   reconciliation.
