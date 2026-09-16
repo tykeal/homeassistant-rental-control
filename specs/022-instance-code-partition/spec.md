@@ -61,10 +61,11 @@ that the union of all generated codes contains no duplicates.
    **When** each generates codes for its bookings, **Then** no code
    produced by one instance equals any code produced by the other, for any
    combination of reservation UIDs.
-2. **Given** an instance configured with `static_random`, **When** it
-   generates a code, **Then** the code falls inside the block of the code
-   space derived from that instance's own slot range and no other
-   instance's block includes that value.
+2. **Given** a partition-enabled instance configured with `static_random`
+   and valid, non-degraded partition inputs, **When** it generates a code
+   for a booking with a usable seed, **Then** the code falls inside the
+   block of the code space derived from that instance's own slot range
+   and no other valid sibling instance's block includes that value.
 3. **Given** instances that cannot communicate with one another, **When**
    codes are generated, **Then** uniqueness is achieved without any
    instance querying another instance, a shared registry, or the parent
@@ -228,11 +229,14 @@ for the same bookings.
   possibly-duplicate code is preferred over issuing none, because a
   missing code locks a guest out immediately whereas a duplicate is rare
   and detectable.
-- **Configured capacity larger than the usable code space** (for example a
-  high override with a 4-digit code length, which would make each block
-  smaller than one value): partitioning cannot be expressed. The
-  integration warns and falls back to whole-space generation for that
-  instance rather than producing degenerate blocks.
+- **Empty computed block**: when the configured capacity and the
+  instance's slot range yield no code values for that instance's
+  half-open interval, partitioning cannot be expressed for that instance.
+  This can happen when the capacity is larger than the usable code space,
+  but only the computed interval matters; a multi-slot instance can still
+  receive a non-empty block. The integration warns and falls back to
+  whole-space generation for that instance rather than producing
+  degenerate blocks.
 - **Slot range extending past the configured capacity**: blocks can no
   longer be guaranteed disjoint for that instance. The integration warns
   and recommends raising the capacity override.
@@ -247,10 +251,12 @@ for the same bookings.
   instances that disagree about it partition the same code space into
   different-sized blocks, and those blocks can overlap even though the
   slot ranges remain disjoint. Worked example in a 4-digit space of 9998
-  usable values — instance A on slots 10–30 with capacity 250 derives
-  roughly (399, 1199), while instance B on slots 40–60 with capacity 500
-  derives roughly (799, 1199): about 400 code values are shared and
-  cross-instance collisions return. This is a realistic path, not a
+  usable values — instance A on slots 10-30 with capacity 250 derives
+  offsets `[359, 1199)` and code values `0360` through `1199`, while
+  instance B on slots 40-60 with capacity 500 derives offsets
+  `[779, 1199)` and code values `0780` through `1199`: 420 code values
+  are shared and cross-instance collisions return. This is a realistic
+  path, not a
   contrived one: an operator who hits the capacity ceiling will naturally
   raise the override on the one instance that warned rather than on all
   ten. The override MUST therefore be applied uniformly to every instance
@@ -369,41 +375,63 @@ for the same bookings.
   fallback) mapped into the instance's block, and MUST NOT derive it from
   the slot number the booking currently occupies, so that a reconciliation
   slot move never changes a guest's code.
+- **FR-011a**: The candidate mapping MUST preserve the existing
+  `static_random` seed normalization: use the reservation UID when it is
+  present, otherwise use the description text, and fall back to the
+  existing date-based generator when neither exists. For a non-empty block
+  with size `B`, draw exactly one value from the existing static-random
+  deterministic PRNG stream with range `[0, B)`, equivalent to replacing
+  the legacy whole-space upper bound with the block size. When `B = 1`,
+  the only offset is `0`. Add the drawn offset to the block start offset
+  and render the resulting code value. The same normalized seed, block
+  start, block size, and configured code length MUST always produce the
+  same candidate value.
 
 #### Within-instance uniqueness
 
-- **FR-012**: The system MUST ensure that two bookings within the same
-  instance's plan never receive the same code, by deterministically
-  probing for the next free value within the instance's own block when a
-  candidate value is already taken.
+- **FR-012**: For a non-degraded instance plan with enough free block
+  values, the system MUST ensure that two bookings within the same plan
+  never receive the same code, by deterministically probing for the next
+  free value within the instance's own block when a candidate value is
+  already taken.
 - **FR-012a**: Coordinator-driven reconciliation and sensor-driven display
   MUST consume the same plan-level allocation contract. When no current
   plan exists, such as the first refresh, both paths MUST build allocation
   from the same visible booking set before displaying or reserving codes,
   so a sensor cannot show an unprobed per-booking candidate that differs
   from the reconciled code.
+- **FR-012b**: Codes retained from the lock for active bookings MUST be
+  inserted into the plan's occupied-code set before probing newly
+  generated candidates. A retained code remains assigned to its booking
+  even when it falls outside the new partition block, and new generated
+  bookings MUST avoid every retained code they can observe. If retained
+  codes consume all available in-block values, later generated bookings
+  use the block-exhaustion fallback and warning path.
 - **FR-013**: The probe MUST visit candidate values in a fixed order:
   start at the booking's mapped candidate offset, then advance by one
   offset at a time within the block, wrapping to the block start after the
   block end, until a free value is found or the whole block has been
   visited.
 - **FR-013a**: Bookings MUST be resolved in a total, stable order whose
-  primary key is reservation UID. Missing UIDs sort after present UIDs,
-  equal UIDs are broken by the legacy seed text, booking start time,
-  booking end time, and a stable source-calendar identifier, and any
-  remaining indistinguishable duplicate events are ordered by a canonical
-  serialization of those fields. The order MUST NOT depend on calendar
-  fetch order, entity iteration order, or processing order.
+  primary key is reservation UID. Missing UIDs sort after present UIDs.
+  Equal UIDs are broken only by immutable booking occurrence attributes:
+  booking start time, booking end time, source-calendar identifier, and an
+  immutable source-occurrence key when the source provides one. Mutable
+  description text MUST NOT reorder bookings that already have a UID. If
+  two source events remain indistinguishable after those keys, the system
+  MUST coalesce them as one booking for allocation or warn that their
+  relative order cannot be made deterministic; it MUST NOT silently rely
+  on fetch order, entity iteration order, or processing order.
 - **FR-014**: The probe MUST consider only codes within the instance's own
   plan; it MUST NOT read codes belonging to other instances.
 - **FR-015**: When every value in the instance's block is taken, the
   system MUST still return a code for the booking by falling back to the
   unpartitioned whole-space value, and MUST record a warning identifying
   the instance and the exhaustion condition.
-- **FR-016**: When the configured capacity leaves a block smaller than one
-  value for the configured code length, the system MUST warn and fall back
-  to unpartitioned generation for that instance rather than producing a
-  degenerate block.
+- **FR-016**: When the configured capacity and slot range leave the
+  instance with an empty computed block for the configured code length,
+  the system MUST warn and fall back to unpartitioned generation for that
+  instance rather than producing a degenerate block.
 
 #### Determinism
 
@@ -430,6 +458,10 @@ for the same bookings.
 - **FR-022**: The system MUST preserve existing code retention behaviour,
   so that a code already observed on the lock for an active booking is
   retained rather than rotated to the newly derived value.
+- **FR-022a**: Retained observed codes participate in the same plan-level
+  uniqueness calculation as newly generated codes. Retention wins for the
+  booking that already owns the observed PIN, and other bookings probe or
+  fall back rather than being assigned that same observed code.
 - **FR-023**: The system MUST document the new capacity and opt-out
   options, the default capacity, and the recommendation to use a longer
   code length on parent locks shared by many units.
@@ -485,9 +517,9 @@ for the same bookings.
   bookings that have never reached the lock are affected. The alternative
   — persisting an allocation map — is heavier than the problem warrants.
 - **Never fail to issue a code.** Every degraded path (block exhausted,
-  capacity larger than the code space, slot range beyond capacity) warns
-  and degrades to the previous whole-space behaviour rather than raising
-  or returning no code.
+  empty computed block, slot range beyond capacity) warns and degrades to
+  the previous whole-space behaviour rather than raising or returning no
+  code.
 - **Ordering by reservation identity is stable.** The reservation UID is
   treated as the primary immutable ordering key for the life of a booking,
   consistent with the existing `static_random` seeding, with deterministic
@@ -570,10 +602,10 @@ for the same bookings.
 - **SC-005**: A deployment left entirely at defaults obtains cross-
   instance uniqueness with zero new configuration entered by the operator.
 - **SC-006**: No booking is ever left without a code: every degraded
-  condition (block exhausted, capacity larger than the code space, slot
-  range beyond capacity) still yields a correctly formatted code and emits
-  clear, instance-identifying warnings. Capacity and slot-range degraded
-  paths emit one warning per affected instance and reconciliation pass;
+  condition (block exhausted, empty computed block, slot range beyond
+  capacity) still yields a correctly formatted code and emits clear,
+  instance-identifying warnings. Empty-block and slot-range degraded paths
+  emit one warning per affected instance and reconciliation pass;
   block-exhaustion fallbacks emit one warning per affected booking.
 - **SC-007**: Upgrading an existing installation rotates zero codes for
   active bookings whose existing lock PIN is readable during
