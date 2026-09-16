@@ -378,9 +378,10 @@ for the same bookings.
   rejected during configuration validation before block derivation can use
   them.
 - **FR-009**: The system MUST NOT require the capacity override to be set
-  on any instance for the default case to work: when no instance
-  overrides it, every instance shares the default capacity and blocks are
-  disjoint with zero configuration.
+  on any instance for the valid default case to work: when no instance
+  overrides it and every managed range ends within the default capacity,
+  every instance shares the default capacity and blocks are disjoint with
+  zero capacity configuration.
 - **FR-009a**: Capacity is a property of the shared parent lock, not of
   an individual instance. When the override IS used, it MUST be set to
   the same value on every instance sharing that parent lock. A mismatched
@@ -417,18 +418,20 @@ for the same bookings.
   a degraded, non-partitioned credential outside the cross-instance
   uniqueness guarantee.
 
-#### Within-instance uniqueness
+#### Within-instance `static_random` uniqueness
 
-- **FR-012**: For a non-degraded instance plan with enough free block
-  values and no pre-existing duplicate retained PINs, the system MUST
-  ensure that newly generated bookings and non-duplicate retained bookings
-  within the same plan never receive the same code, by deterministically
-  probing for the next free value within the instance's own block when a
-  candidate value is already taken.
-- **FR-012a**: Coordinator-driven reconciliation and sensor-driven display
-  MUST consume the same plan-level allocation contract. The allocation
-  population is the current active, future, and otherwise slot-eligible
-  bookings for the instance after the integration's normal calendar
+- **FR-012**: For a partition-enabled `static_random`, non-degraded
+  instance plan with enough free block values and no pre-existing
+  duplicate retained PINs, the system MUST ensure that newly generated
+  bookings and non-duplicate retained bookings within the same plan never
+  receive the same code, by deterministically probing for the next free
+  value within the instance's own block when a candidate value is already
+  taken.
+- **FR-012a**: For partition-enabled `static_random`, coordinator-driven
+  reconciliation and sensor-driven display MUST consume the same
+  plan-level allocation contract. The allocation population is the current
+  active, future, and otherwise slot-eligible bookings for the instance
+  after the integration's normal calendar
   parsing, checkout, cancellation, and maximum-event filtering, plus every
   slot-eligible retained booking whose managed slot still has an observed
   PIN, including future retained bookings and retained ghost placeholders
@@ -444,31 +447,34 @@ for the same bookings.
   refresh, both paths MUST build allocation from that same population
   before displaying or reserving codes, so a sensor cannot show an
   unprobed per-booking candidate that differs from the reconciled code.
-- **FR-012b**: Codes retained from the lock for slot-eligible bookings
-  MUST be inserted into the plan's occupied-code set before probing newly
-  generated candidates. A retained code remains assigned to its booking
-  even when it falls outside the new partition block, and new generated
-  in-block bookings MUST avoid every retained code they can observe. If
+- **FR-012b**: For partition-enabled `static_random`, codes retained from
+  the lock for slot-eligible bookings MUST be inserted into the plan's
+  occupied-code set before probing newly generated candidates. A retained
+  code remains assigned to its booking even when it falls outside the new
+  partition block, and new generated in-block bookings MUST avoid every
+  retained code they can observe. If
   retained codes consume all available in-block values, later generated
   bookings use the block-exhaustion fallback and warning path; the
   fallback may still duplicate a retained PIN and must warn for that
   booking.
-- **FR-012c**: The allocation identity used for plan membership MUST be
-  UID- or source-occurrence-aware, not only slot, name, start, and end.
+- **FR-012c**: The `static_random` allocation identity used for plan
+  membership MUST be UID- or source-occurrence-aware, not only slot, name,
+  start, and end.
   Two source events with different UIDs or immutable occurrence keys MUST
   remain separate allocation participants even when they share a display
   name and time window. Retention rematching MUST prefer the same
   allocation identity when it exists; if an older retained PIN can only be
   associated with a managed slot or legacy fingerprint, it still occupies
   the plan for probing until the reconciler can match it to one allocation
-  identity or the retention window expires.
-- **FR-013**: The probe MUST visit candidate values in a fixed order:
-  start at the booking's mapped candidate offset, then advance by one
-  offset at a time within the block, wrapping to the block start after the
-  block end, until a free value is found or the whole block has been
-  visited.
-- **FR-013a**: Bookings MUST be resolved in a total, stable order whose
-  primary key is reservation UID. Missing UIDs sort after present UIDs.
+  identity or the existing ghost/retention policy expires it.
+- **FR-013**: The `static_random` probe MUST visit candidate values in a
+  fixed order: start at the booking's mapped candidate offset, then
+  advance by one offset at a time within the block, wrapping to the block
+  start after the block end, until a free value is found or the whole
+  block has been visited.
+- **FR-013a**: `static_random` bookings MUST be resolved in a total,
+  stable order whose primary key is reservation UID. Missing UIDs sort
+  after present UIDs.
   Equal UIDs are broken only by immutable booking occurrence attributes:
   booking start time, booking end time, source-calendar identifier, and an
   immutable source-occurrence key when the source provides one. For
@@ -480,21 +486,23 @@ for the same bookings.
   duplicate source records, and warn without logging the PIN; it MUST NOT
   silently rely on fetch order, entity iteration order, or processing
   order.
-- **FR-014**: The probe MUST consider only codes within the instance's own
-  plan; it MUST NOT read codes belonging to other instances.
-- **FR-015**: When every value in the instance's block is taken, the
-  system MUST still return a code for the booking by falling back to the
-  legacy `static_random` whole-space value for that booking's normalized
-  UID-or-description seed, and MUST record a warning identifying the
-  instance and the exhaustion condition.
+- **FR-014**: The `static_random` probe MUST consider only codes within
+  the instance's own plan; it MUST NOT read codes belonging to other
+  instances.
+- **FR-015**: When every value in the instance's `static_random` block is
+  taken, the system MUST still return a code for the booking by falling
+  back to the legacy `static_random` whole-space value for that booking's
+  normalized UID-or-description seed, and MUST record a warning
+  identifying the instance and the exhaustion condition.
 - **FR-015a**: Partition-degradation warnings, including block exhaustion,
   empty computed blocks, out-of-range slots, no usable seed, opt-out, and
   retained-code exceptions, MUST NOT include raw PIN values or other
   credential material.
 - **FR-016**: When the configured capacity and slot range leave the
-  instance with an empty computed block for the configured code length,
-  the system MUST warn and fall back to unpartitioned generation for that
-  instance rather than producing a degenerate block.
+  partition-enabled `static_random` instance with an empty computed block
+  for the configured code length, the system MUST warn and fall back to
+  unpartitioned generation for that instance rather than producing a
+  degenerate block.
 
 #### Determinism
 
@@ -503,9 +511,12 @@ for the same bookings.
   MUST produce identical codes across Home Assistant restarts, reloads,
   and reinstalls. The generated candidate values before retention remain
   deterministic from bookings and configuration alone.
-- **FR-018**: Code generation MUST NOT mutate or depend on global random
-  state, and MUST NOT depend on wall-clock time, entity ordering, or
-  process-local memory that does not survive a restart.
+- **FR-018**: Per-booking candidate generation MUST NOT mutate or depend
+  on global random state, wall-clock time, entity ordering, or
+  process-local memory that does not survive a restart. Plan-level probing
+  is deterministic for an identical allocation population and observed
+  retained-code state; time-varying eligibility changes the population
+  and can change later unissued bookings as described in Assumptions.
 - **FR-019**: Generated codes MUST continue to satisfy the existing format
   contract: numeric, of exactly the configured code length, zero-padded.
 
@@ -513,6 +524,11 @@ for the same bookings.
 
 - **FR-020**: The system MUST enable partitioning by default for
   `static_random` on both new and upgraded installations.
+- **FR-020a**: Entries without a configured managed lock or parent-lock
+  context cannot observe retained PINs or define the same plan allocation
+  population. Their `static_random` sensor-only generation remains legacy
+  whole-space generation and is outside the partitioned cross-instance
+  guarantee until a lock context is configured.
 - **FR-021**: The system MUST provide a configuration option that disables
   partitioning per instance, returning that instance to the previous
   whole-space generation behaviour exactly.
@@ -525,9 +541,11 @@ for the same bookings.
   generated or unretained bookings, so opt-out returns exactly to legacy
   whole-space generation for those bookings. Readable observed PINs are
   still retained under FR-022.
-- **FR-022**: The system MUST preserve existing code retention behaviour,
-  so that a code already observed on the lock for a slot-eligible booking is
-  retained rather than rotated to the newly derived value.
+- **FR-022**: Outside the migration override in FR-022b/FR-022c, the
+  system MUST preserve the existing conditional code retention behaviour:
+  observed PINs are retained according to the current update/reissue
+  policy, and explicit update or reissue settings can intentionally
+  replace a readable observed PIN.
 - **FR-022a**: Retained observed codes participate in the same plan-level
   uniqueness calculation as newly generated codes. Retention wins for the
   booking that already owns the observed PIN, and other in-block bookings
@@ -544,11 +562,15 @@ for the same bookings.
   values. This includes readable pre-feature PINs that happen to equal the
   old whole-space generator output.
 - **FR-022c**: On the migration from pre-partitioned generation to
-  partitioned generation, FR-022b overrides any "update generated code"
-  setting for readable observed PINs so existing guest credentials do not
-  rotate solely because the generator changed. Outside that migration
-  window, existing explicit reissue/update semantics continue to control
-  intentional code changes.
+  partitioned generation for a `static_random` entry, FR-022b overrides
+  any "update generated code" setting for readable observed PINs so
+  existing guest credentials do not rotate solely because the generator
+  changed. The migration window is identified by a stored partitioning
+  schema version on the config entry: it is active while the stored version
+  is missing or older than the partitioning version, and it is cleared only
+  after one successful reconciliation records the current version. Outside
+  that window, existing explicit reissue/update semantics continue to
+  control intentional code changes.
 - **FR-023**: The system MUST document the new capacity and opt-out
   options, the default capacity, and the recommendation to use the next
   supported longer code length, currently 6 digits, on parent locks shared
@@ -580,6 +602,9 @@ for the same bookings.
   occupancy, not only the legacy single-booking helper path.
 - **FR-024d**: Tests MUST cover warning behaviour for coalesced
   indistinguishable source events and locally duplicate retained PINs.
+- **FR-024e**: Configuration-flow tests MUST reject zero, negative,
+  non-integer, and malformed capacity overrides, and MUST cover the
+  default-capacity path where no override is provided.
 
 ### Key Entities
 
