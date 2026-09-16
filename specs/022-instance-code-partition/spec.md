@@ -167,9 +167,10 @@ receives a block disjoint from its siblings.
 
 **Acceptance Scenarios**:
 
-1. **Given** a deployment left entirely at defaults, **When** codes are
-   generated, **Then** partitioning works with no capacity configuration
-   on any instance.
+1. **Given** a deployment whose managed slot ranges end within the default
+   capacity and whose partitioning and capacity options are left at
+   defaults, **When** codes are generated, **Then** partitioning works
+   with no capacity configuration on any instance.
 2. **Given** an operator who raises the capacity override on the instances
    of a large building, **When** codes are generated, **Then** blocks are
    sized against the raised capacity and remain disjoint between those
@@ -412,27 +413,28 @@ for the same bookings.
 #### Within-instance uniqueness
 
 - **FR-012**: For a non-degraded instance plan with enough free block
-  values, the system MUST ensure that two bookings within the same plan
-  never receive the same code, by deterministically probing for the next
-  free value within the instance's own block when a candidate value is
-  already taken.
+  values and no pre-existing duplicate retained PINs, the system MUST
+  ensure that newly generated bookings and non-duplicate retained bookings
+  within the same plan never receive the same code, by deterministically
+  probing for the next free value within the instance's own block when a
+  candidate value is already taken.
 - **FR-012a**: Coordinator-driven reconciliation and sensor-driven display
   MUST consume the same plan-level allocation contract. The allocation
   population is the current active, future, and otherwise slot-eligible
   bookings for the instance after the integration's normal calendar
-  parsing, checkout, cancellation, and maximum-event filtering, plus active
-  retained bookings whose managed slot still has an observed PIN, including
-  retained ghost placeholders that temporarily represent missing feed
-  events with an observed PIN. Overflow bookings that will not be assigned
-  a slot in the current plan, cancelled bookings, checked-out bookings,
-  ghost placeholders without an observed PIN, and bookings outside the
-  instance's managed slot range do not participate. When no current plan
-  exists, such as the first refresh, both paths MUST build allocation from
-  that same population before displaying or reserving codes, so a sensor
-  cannot show an unprobed per-booking candidate that differs from the
-  reconciled code.
-- **FR-012b**: Codes retained from the lock for active bookings MUST be
-  inserted into the plan's occupied-code set before probing newly
+  parsing, checkout, cancellation, and maximum-event filtering, plus every
+  slot-eligible retained booking whose managed slot still has an observed
+  PIN, including future retained bookings and retained ghost placeholders
+  that temporarily represent missing feed events with an observed PIN.
+  Overflow bookings that will not be assigned a slot in the current plan,
+  cancelled bookings, checked-out bookings, ghost placeholders without an
+  observed PIN, and bookings outside the instance's managed slot range do
+  not participate. When no current plan exists, such as the first refresh,
+  both paths MUST build allocation from that same population before
+  displaying or reserving codes, so a sensor cannot show an unprobed
+  per-booking candidate that differs from the reconciled code.
+- **FR-012b**: Codes retained from the lock for slot-eligible bookings
+  MUST be inserted into the plan's occupied-code set before probing newly
   generated candidates. A retained code remains assigned to its booking
   even when it falls outside the new partition block, and new generated
   in-block bookings MUST avoid every retained code they can observe. If
@@ -461,6 +463,10 @@ for the same bookings.
   system MUST still return a code for the booking by falling back to the
   unpartitioned whole-space value, and MUST record a warning identifying
   the instance and the exhaustion condition.
+- **FR-015a**: Partition-degradation warnings, including block exhaustion,
+  empty computed blocks, out-of-range slots, no usable seed, opt-out, and
+  retained-code exceptions, MUST NOT include raw PIN values or other
+  credential material.
 - **FR-016**: When the configured capacity and slot range leave the
   instance with an empty computed block for the configured code length,
   the system MUST warn and fall back to unpartitioned generation for that
@@ -490,8 +496,13 @@ for the same bookings.
   that the instance will use whole-space generation and can duplicate
   codes produced by sibling instances, forfeiting the cross-instance
   uniqueness guarantee for that instance.
+- **FR-021b**: When partitioning is disabled, the instance MUST bypass the
+  new plan-level partition allocation and probing logic for newly
+  generated or unretained bookings, so opt-out returns exactly to legacy
+  whole-space generation for those bookings. Readable observed PINs are
+  still retained under FR-022.
 - **FR-022**: The system MUST preserve existing code retention behaviour,
-  so that a code already observed on the lock for an active booking is
+  so that a code already observed on the lock for a slot-eligible booking is
   retained rather than rotated to the newly derived value.
 - **FR-022a**: Retained observed codes participate in the same plan-level
   uniqueness calculation as newly generated codes. Retention wins for the
@@ -500,9 +511,16 @@ for the same bookings.
   duplicate observed PINs are retained for their bookings as an explicit
   exception; new in-block allocations avoid the locally observed PIN, but
   block-exhaustion fallback can still duplicate and must warn.
+- **FR-022b**: During upgrade and later reconciliation, any readable
+  observed PIN in this instance's managed slots for a slot-eligible
+  booking MUST be retained for that booking before comparing against newly
+  generated partitioned or legacy values. This includes readable
+  pre-feature PINs that happen to equal the old whole-space generator
+  output.
 - **FR-023**: The system MUST document the new capacity and opt-out
-  options, the default capacity, and the recommendation to use a longer
-  code length on parent locks shared by many units.
+  options, the default capacity, and the recommendation to use the next
+  supported longer code length, currently 6 digits, on parent locks shared
+  by many units.
 - **FR-023a**: The capacity option's help text in the configuration UI
   and the user documentation MUST both state that the override describes
   the shared parent lock and MUST be set to the same value on every
@@ -649,8 +667,9 @@ for the same bookings.
   or unretained bookings match the values produced by the previous
   release for the same bookings.
 - **SC-005**: A deployment with pre-existing disjoint slot ranges, valid
-  seeded `static_random` bookings, sufficient block capacity, and the new
-  partitioning and capacity options left at defaults obtains
+  seeded `static_random` bookings, a common code length, managed ranges
+  ending within the default capacity, sufficient block capacity, and the
+  new partitioning and capacity options left at defaults obtains
   cross-instance uniqueness for newly generated codes with zero new
   partition configuration entered by the operator.
 - **SC-006**: No booking is ever left without a code: every degraded
@@ -658,9 +677,10 @@ for the same bookings.
   capacity, no usable seed, opted-out partitioning) still yields a
   correctly formatted code and emits clear, instance-identifying warnings.
   Empty-block and slot-range degraded paths emit one warning per affected
-  instance and reconciliation pass; block-exhaustion and unseeded
-  fallbacks emit one warning per affected booking; opt-out emits one
-  warning or confirmation per configuration change.
+  instance per reconciliation pass; block-exhaustion and unseeded
+  fallbacks emit one warning per affected booking per reconciliation pass;
+  opt-out emits one warning or confirmation per configuration change. All
+  warnings redact raw PIN values.
 - **SC-007**: Upgrading an existing installation rotates zero codes for
   active bookings whose existing lock PIN is readable during
   reconciliation.
