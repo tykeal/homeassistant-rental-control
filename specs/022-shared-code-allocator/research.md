@@ -15,8 +15,9 @@ documents.
 by all config entries, so it cannot be a per-entry mixin. The coordinator is
 already composed of six shell mixins; a seventh would tie system-wide state to
 per-entry lifetime. A package also keeps the collision logic pure and testable
-without a Home Assistant fixture: only `store.py` and `singleton.py` touch
-`hass`.
+without a Home Assistant fixture: `registry.py`, `candidates.py`, and the plain
+models do not import Home Assistant, while store, singleton, services, and
+notifications stay at the package boundary.
 
 **Alternatives considered**:
 
@@ -60,9 +61,10 @@ is a good deterministic seed because it is a hash input with high entropy.
 
 **Rationale**: The fingerprint changes when a booking's dates change, which
 would otherwise orphan the old allocation and issue a fresh code to a guest
-mid-stay. `Reservation.fingerprint_history` already carries prior fingerprints
-for exactly this conservative rematch. Re-keying the allocation record preserves
-SC-005 across date edits.
+mid-stay. The allocation step must hydrate `Reservation.fingerprint_history`
+from the persisted mappings before rekeying so it has the same conservative
+rematch input as the planner. Re-keying the allocation record preserves SC-005
+across date edits.
 
 **Alternatives considered**:
 

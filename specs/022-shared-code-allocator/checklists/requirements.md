@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Requirement Completeness
 
-- [x] No [NEEDS CLARIFICATION] markers remain
+- [x] No live clarification markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -42,7 +42,7 @@ SPDX-License-Identifier: Apache-2.0
   maintainer settled the architectural pattern before specification. They
   anchor requirements to existing behaviour rather than prescribing new
   implementation structure.
-- No [NEEDS CLARIFICATION] markers were required. All open questions named in
+- No clarification markers were required. All open questions named in
   issue #743 — release timing, registry loss fallback, migration, `date_based`
   collisions, lockless entries, and singleton lifecycle — were decided in the
   spec and stated as requirements.

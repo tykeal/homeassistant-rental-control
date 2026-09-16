@@ -65,8 +65,9 @@ loop
 **Performance Goals**: Allocation is in-memory under one `asyncio.Lock` and
 runs once per refresh per entry. Per cycle it is O(reservations) with an O(1)
 registry lookup per reservation, degrading to a bounded walk only on collision.
-The registry is saved through `Store.async_delay_save` so a refresh performs at
-most one queued write, keeping the 30s minimum refresh interval intact.
+The registry is normally saved through `Store.async_delay_save`; the lockless
+path flushes a newly issued code before publishing it because no lock can
+re-adopt that value after a crash.
 **Constraints**: No new operator configuration (FR-024). No change to
 `DEFAULT_CODE_LENGTH` or the configured length (FR-012). No door code in any
 form in logs or diagnostics (FR-025). No physical lock write may be introduced or
@@ -109,8 +110,9 @@ specs/022-shared-code-allocator/
 ```
 
 `contracts/` is present because this feature introduces a durable persisted
-schema and an internal API consumed by more than one caller. No HTTP, WebSocket,
-or Home Assistant service contract is added.
+schema, an internal API consumed by more than one caller, and the
+`clear_orphaned_codes` Home Assistant service. No HTTP or WebSocket contract is
+added.
 
 ### Source Code (repository root)
 
@@ -177,9 +179,11 @@ def get_allocator(hass) -> DoorCodeAllocator | None
 `async_get_or_create_allocator` mirrors Keymaster's
 `_async_get_or_create_coordinator`: return `hass.data[DOMAIN][ALLOCATOR]` when
 present, otherwise construct, `await allocator.async_load()`, store, and return.
-Creation failure pops `hass.data[DOMAIN].pop(ALLOCATOR, None)` and re-raises so
-`async_setup_entry` converts it to `ConfigEntryNotReady` (FR-002). Because two
-entries can set up concurrently, creation is guarded by a module-level
+Creation failure pops `hass.data[DOMAIN].pop(ALLOCATOR, None)` and re-raises;
+absent or invalid registry payloads are handled inside `async_load()` as an
+empty registry per FR-018, while only allocator construction or Home Assistant
+storage failures surface as `ConfigEntryNotReady` (FR-002). Because two entries
+can set up concurrently, creation is guarded by a module-level
 `asyncio.Lock` stored alongside the allocator, and the "already present" check
 is repeated after acquiring it.
 
@@ -187,18 +191,18 @@ is repeated after acquiring it.
 `hass.data[DOMAIN] = {}` is ensured and **before**
 `coordinator.async_load_slot_store()`, so the registry exists before any refresh
 can request a code. It also calls
-`allocator.register_entry(config_entry.entry_id)` there (see the adoption gate).
+`await allocator.async_register_entry(config_entry.entry_id)` there (see the
+adoption gate).
 
 `async_unload_entry` does not touch the allocator or the registry; it only
 removes `hass.data[DOMAIN][entry_id]` as it does today (FR-003). A reload
 therefore re-adopts from the registry and rotates nothing.
 
-Entry removal is a distinct hook. The plan adds `async_remove_entry` to
-`__init__.py`, which calls `allocator.async_release_entry(entry_id)`; that
-method releases only allocations whose code is not currently observed on any
-managed lock and retains the rest as orphan records with a warning (FR-004).
+Entry removal aborts pending adoption for that entry and marks its owners
+orphaned; it does not release codes because the coordinator may already be gone.
 Retained orphans are cleared by the operator through the
-`rental_control.clear_orphaned_codes` service described in decision 7.
+`rental_control.clear_orphaned_codes` service described in decision 7, after a
+fresh system-wide observation can prove the code is no longer programmed.
 
 ### 2. Where allocation runs in the refresh cycle
 
@@ -210,10 +214,14 @@ inserted after check-in protection and before `compute_desired_plan`:
 await code_allocation.async_resolve_codes(self, reservations, observed_slots)
 ```
 
-The step runs entirely inside the allocator's lock in four ordered phases:
+The step runs through one allocator entrypoint so all four phases share a single
+lock hold; the public phase methods keep their own locks for unit tests and
+other standalone callers and are not called recursively while that lock is held.
 
 1. **Adopt** every observed code for this entry's managed slots, attributing it
-   to the reservation matched to that slot (FR-020, FR-021).
+   to the reservation matched to that slot (FR-020, FR-021). If the reservation
+   matches an owner through `fingerprint_history`, treat it as the same owner
+   before conflict detection so date edits do not self-conflict.
 2. **Rekey** allocations whose reservation was rematched, using
    `Reservation.fingerprint_history`, so a date or UID change keeps the code.
 3. **Allocate** for reservations that still have no code, in a stable order
@@ -226,11 +234,16 @@ The step runs entirely inside the allocator's lock in four ordered phases:
 the cycle on failure; the allocation step keeps that property and must not raise
 for ordinary conditions such as exhaustion, which are reported instead.
 
+Before phase 2, the caller hydrates current-feed reservations from the persisted
+mapping store (`fingerprint_history`, `missing_count`, and ghost reservations)
+so rematches and disappearance grace use the same inputs as the planner.
+
 For entries with no managed lock (`event_overrides is None`), `_async_update_data`
-gains a small branch that builds reservations with `managed_slots=None` and runs
-phases 2 through 4 only (there is nothing to adopt), then sets
-`self._latest_res_by_key` so `get_slot_code` works. It computes no plan, emits no
-actions, and calls no services (FR-023).
+gains a small branch that builds reservations with `managed_slots=None`,
+including the same ghost reservations and missing-count state, and runs phases 2
+through 4 only (there is nothing to adopt), then sets `self._latest_res_by_key`
+so `get_slot_code` works. It computes no plan, emits no actions, and calls no
+services (FR-023).
 
 ### 3. Preferred code, collision resolution, determinism (FR-009 to FR-011)
 
@@ -358,16 +371,17 @@ must not grow toward #735's force-re-issue. The full contract is in
 
 ### Hazard 1 — "publish no code" must never clear a lock slot
 
-The concrete mechanism is narrower and sharper than the issue comment could
-know, and the plan names it: `reconciliation/actions.py` line 35 computes
+For readable slots, the mechanism is narrower and sharper than the issue comment
+could know: `reconciliation/actions.py` line 35 computes
 
 ```python
 code_drift = ms.actual_code is not None and ms.actual_code != desired_res.slot_code
 ```
 
-With `slot_code` absent, `code_drift` becomes true for every occupied matched
-slot, yielding `OVERWRITE_MANUAL_CHANGE` and a rewrite with no code. That is the
-lockout path, and it is reached before any `CLEAR` classification is considered.
+With a non-`None` sentinel, `code_drift` becomes true for every occupied readable
+matched slot, yielding `OVERWRITE_MANUAL_CHANGE` and a rewrite with no code.
+Unreadable occupied slots can reach the same hazard through drift-field handling,
+so the regression must cover both readable and unreadable observations.
 
 Four guards close it:
 
@@ -388,8 +402,13 @@ Four guards close it:
    and no write.
 4. **`DesiredPlan.validate`**: a new invariant rejects any `SET`,
    `OVERWRITE_MANUAL_CHANGE`, or `UPDATE_TIMES` action whose desired reservation
-   has no code, and `event_overrides.async_apply_plan` refuses to execute such an
+   has no code; pass `reservation_by_identity` into validation so the invariant
+   is checkable. `event_overrides.async_apply_plan` refuses to execute such an
    action defensively. Violations are logged like other invariant violations.
+
+Capacity filtering must also retain an already-occupied slot for its codeless
+reservation before treating it as overflow, even when `max_events` would
+otherwise exclude that reservation from `plan.selected`.
 
 The symmetric guarantee on the allocator side already exists in FR-014 and is
 implemented by the sweep: a code observed on any managed lock is never released,
@@ -429,9 +448,10 @@ startup. The gate is scoped so that it never delays a code that already exists:
 - While the set is non-empty, **adoption, rekeying, and registry-known lookups
   proceed normally**; only issuance of a brand-new code is deferred, with
   `code_source="unallocated"` for that cycle.
-- The gate also opens on a wall-clock deadline measured from allocator creation,
-  after which issuance proceeds with a warning naming the entries that never
-  reported. This prevents one broken entry from suppressing codes forever.
+- A wall-clock deadline raises a warning and persistent notification naming the
+  entries that never reported, but does not by itself permit unsafe issuance.
+  New codes remain fail-closed until adoption completes or an operator removes
+  the stale entry and clears any resulting orphan.
 
 So restarts and upgrades — where every active reservation has either a registry
 record or an observable lock code — see no window at all, and the deferred case
@@ -487,11 +507,9 @@ the spec says.
 - `_resolve_observed_code` in `coordinator_helpers/reservations.py` is unchanged
   and remains the source of observed codes; the allocation step consumes its
   result rather than replacing it.
-- Lockless entries have no observable code. On upgrade their sensors keep
-  showing the same code as before, because the generator's preferred code is
-  still tried first (FR-010) and is unclaimed unless a lock-backed entry already
-  adopted it, in which case a deterministic replacement is issued once and then
-  persists.
+- Lockless entries have no observable code. If the registry is absent or
+  corrupt, an already-active lockless reservation has no durable source and
+  publishes no code until a new allocation can be safely persisted (FR-018).
 - The per-entry cache store, its schema version, and its no-PIN policy are
   untouched. #736's "`slot_code` is never persisted" note in
   `plan_models.py` is superseded by the new registry and should be updated in
@@ -597,7 +615,7 @@ and never a code, encoded or otherwise (FR-025).
 Both previously open points are now decided by the maintainer and folded into
 the plan: FR-004's operator recovery path is the
 `rental_control.clear_orphaned_codes` service (design decision 7), and a service
-is not "configuration" under FR-024. No `[NEEDS CLARIFICATION]` markers remain.
+is not "configuration" under FR-024. No live clarification markers remain.
 
 ## Phase Notes
 

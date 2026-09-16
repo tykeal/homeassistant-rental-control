@@ -33,7 +33,7 @@ and reused by all later entries.
 **Operations** (all async, all taken under `_lock`):
 
 - `async_load()` — load and validate the store, or start empty with a warning.
-- `register_entry(entry_id)` — add to `_pending_adoption`; called during
+- `async_register_entry(entry_id)` — add to `_pending_adoption`; called during
   `async_setup_entry` before the first refresh.
 - `async_adopt(request)` — record an observed code as this reservation's
   allocation, or as a conflict when another owner already holds it.
@@ -42,8 +42,8 @@ and reused by all later entries.
   else the first free candidate, else report exhaustion.
 - `async_sweep(entry_id, active_keys, observed_codes)` — release allocations for
   reservations that are gone and whose codes are not observed.
-- `async_release_entry(entry_id)` — entry-removal release with the same
-  observed-code guard.
+- `async_mark_entry_removed(entry_id)` — abort pending adoption for a removed
+  entry and mark its allocations orphaned without releasing codes.
 - `async_clear_orphans(known_entry_ids, observed_codes, dry_run)` — operator
   cleanup of allocations whose owning entry no longer exists, using that same
   guard, returning an `OrphanCleanupReport`.
@@ -51,10 +51,12 @@ and reused by all later entries.
 **Validation rules**:
 
 - No operation may return a code recorded to a different `identity_key` (FR-005).
+- Loaded codes must be decimal digits whose length equals their stored
+  `code_length`; any mismatch corrupts the whole payload (FR-018).
 - `async_allocate` for a known `identity_key` returns the same code and performs
   no registry mutation (FR-007).
 - Issuance, and only issuance, is suppressed while `_pending_adoption` is
-  non-empty and the deadline has not passed.
+  non-empty; the deadline notifies but does not make unsafe issuance proceed.
 - Issuance is suppressed for an entry with unreadable managed slots that the
   registry does not account for (FR-018).
 - No operation emits a reconciliation action or calls a lock service.
@@ -76,6 +78,8 @@ values in memory; obfuscation applies only when `RegistryStore` writes them.
   until it has exactly zero or one owner again (FR-022).
 - A code whose length differs from the requesting entry's configured length is
   never offered to that entry (FR-012); it still blocks that exact string.
+- Changing an entry's `code_length` while it has active allocations is rejected
+  by the options flow; otherwise FR-012 and FR-017 would conflict.
 
 ### AllocationRecord
 
@@ -87,8 +91,8 @@ One issued or observed code.
   obfuscated form as `encoded_code`; see the contract.
 - `code_ref: str` — masked identifier for logs and diagnostics, derived from a
   different salt than the at-rest encoding and never a substitute for it.
-- `encoding_salt_source: str` — which value salts the at-rest encoding,
-  `entry_id` in schema version 1, fixed for the record's lifetime.
+- `encoding_salt_source: str` / `encoding_salt_value: str` — which captured
+  value salts the at-rest encoding, fixed for the record's lifetime.
 - `owners: list[AllocationOwner]` — one owner normally, more than one only for
   an adoption conflict.
 - `created_at` / `updated_at` — ISO-8601 timestamps.

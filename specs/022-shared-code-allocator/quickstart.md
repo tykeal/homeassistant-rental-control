@@ -55,9 +55,8 @@ after a restart.
 `STORE_CODE_REGISTRY_KEY = "rental_control.code_registry"`, and
 `CODE_REGISTRY_SCHEMA_VERSION = 1` to `const.py`.
 
-Codes are obfuscated at rest with Keymaster's scheme. Copy the shape from
-`/home/tykeal/repos/personal/homeassistant/keymaster/custom_components/keymaster/serialization.py`
-lines 101-113, salting with the record's first owner `entry_id`:
+Codes are obfuscated at rest with Keymaster's salted-base64 scheme, salting
+with the record's captured first-owner `entry_id`:
 
 ```python
 encoded = base64.b64encode(salt.encode("utf-8") + code.encode("utf-8")).decode("utf-8")
@@ -72,20 +71,23 @@ codes out of plaintext backups, nothing more.
 Mirror Keymaster's accessor shape, including the cleanup on failure:
 
 ```python
-if ALLOCATOR in hass.data[DOMAIN]:
-    return hass.data[DOMAIN][ALLOCATOR]
-try:
-    allocator = DoorCodeAllocator(hass)
-    await allocator.async_load()
-except Exception:
-    hass.data[DOMAIN].pop(ALLOCATOR, None)
-    raise
-hass.data[DOMAIN][ALLOCATOR] = allocator
+async with hass.data[DOMAIN][ALLOCATOR_LOCK]:
+    if ALLOCATOR in hass.data[DOMAIN]:
+        return hass.data[DOMAIN][ALLOCATOR]
+    try:
+        allocator = DoorCodeAllocator(hass)
+        await allocator.async_load()
+    except Exception:
+        hass.data[DOMAIN].pop(ALLOCATOR, None)
+        raise
+    hass.data[DOMAIN][ALLOCATOR] = allocator
+return allocator
 ```
 
 Wire it into `async_setup_entry` before `coordinator.async_load_slot_store()`,
-and call `allocator.register_entry(config_entry.entry_id)` there. Let a failure
-surface as `ConfigEntryNotReady`. Do not touch `async_unload_entry`.
+and call `await allocator.async_register_entry(config_entry.entry_id)` there.
+Let a failure surface as `ConfigEntryNotReady`. Do not touch
+`async_unload_entry`.
 
 Checkpoint: a second entry must reuse the first allocator, unloading one entry
 of two must leave the registry and the other entry's codes untouched, and a
@@ -114,7 +116,7 @@ Do this *before* the allocation step, so the fail-closed path is safe the moment
 codes can go missing.
 
 1. `Reservation.slot_code` becomes `str | None`; update its docstring, including
-   the superseded #736 note.
+   the superseded #736 note, and change ghost reservations from `""` to `None`.
 2. `classify_matched_desired_slot`: return `(ActionKind.NOOP,
    "code_unavailable")` when `desired_res.slot_code is None`, **before** the
    `code_drift` computation on line 35. This is the lockout guard; without it an

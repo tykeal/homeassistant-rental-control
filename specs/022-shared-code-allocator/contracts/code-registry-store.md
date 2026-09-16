@@ -28,6 +28,7 @@ for clearing orphaned allocations.
       {
         "encoded_code": "MDFKOVpRMEs3RjAwMDAwMDAwMDAwMDAwMDAwNDE3",
         "encoding_salt_source": "entry_id",
+        "encoding_salt_value": "01J9ZQ0K7F0000000000000000",
         "code_length": 4,
         "created_at": "2026-09-14T08:15:00-07:00",
         "updated_at": "2026-09-16T11:59:00-07:00",
@@ -63,11 +64,10 @@ def decode_code(encoded_code: str, salt: str) -> str:
 ```
 
 **Salt source**: the `entry_id` of the record's *first* owner, captured when the
-record is created and recorded in `encoding_salt_source` for the record's
-lifetime. `entry_id` is immutable for the life of a config entry and is already
-present in the record, so decoding needs no extra lookup. A record that outlives
-its first owner (an orphan, or a conflict whose first owner released) keeps the
-original salt; the salt is a byte prefix, not an ownership claim.
+record is created and stored as `encoding_salt_value` for the record's lifetime;
+`encoding_salt_source` records that this value is an entry ID. A record that
+outlives its first owner (an orphan, or a conflict whose first owner released)
+keeps the original salt; the salt is a byte prefix, not an ownership claim.
 
 **This is obfuscation, not encryption, and not a security boundary.** The salt
 is stored in the same file as the value it obfuscates, so anyone who can read
@@ -91,11 +91,11 @@ load, nowhere else.
   the masked `code_ref` for logs and diagnostics. It is unrelated to the at-rest
   encoding salt and neither replaces the other. Losing it is harmless; a new one
   is generated and refs change.
-- `encoded_code` — the obfuscated code, decoding to the literal code string
-  including leading zeros.
-- `encoding_salt_source` — which value was used as the encode salt. `entry_id`
-  is the only value in schema version 1; the field exists so a future change of
-  salt source can be read unambiguously.
+- `encoded_code` — the obfuscated code, decoding to decimal digits whose length
+  equals `code_length`, including leading zeros.
+- `encoding_salt_source` / `encoding_salt_value` — which value was used as the
+  encode salt and the captured value. `entry_id` is the only source in schema
+  version 1.
 - `code_length` — length at issue time, used to skip records that cannot belong
   to a requesting entry's space. It is recorded separately so the registry can
   filter without decoding every record.
@@ -110,11 +110,11 @@ load, nowhere else.
 
 Any of the following make the payload unusable: missing or non-integer
 `schema_version`, `schema_version` greater than 1, `records` not a list, a record
-whose `encoded_code` is missing or fails to decode to a non-empty string, a
-record with no owners, an `encoding_salt_source` the release does not recognise,
-or a duplicate `identity_key` across two different codes. In every such case the
-allocator logs a warning, raises a persistent notification, and starts from an
-empty registry (FR-018). It never partially loads.
+whose `encoded_code` is missing or fails to decode to decimal digits of exactly
+`code_length`, a record with no owners, an `encoding_salt_source` the release
+does not recognise, or a duplicate `identity_key` across two different codes. In
+every such case the allocator logs a warning, raises a persistent notification,
+and starts from an empty registry (FR-018). It never partially loads.
 
 ### Compatibility
 
@@ -136,7 +136,7 @@ def get_allocator(hass: HomeAssistant) -> DoorCodeAllocator | None
 
 class DoorCodeAllocator:
     async def async_load(self) -> None: ...
-    def register_entry(self, entry_id: str) -> None: ...
+    async def async_register_entry(self, entry_id: str) -> None: ...
 
     async def async_adopt(self, request: AdoptionRequest) -> AllocationResult: ...
     async def async_rekey(self, old_key: str, new_key: str) -> bool: ...
@@ -146,8 +146,8 @@ class DoorCodeAllocator:
         entry_id: str,
         active_keys: set[str],
         observed_codes: set[str],
-    ) -> list[str]: ...
-    async def async_release_entry(self, entry_id: str) -> list[str]: ...
+    ) -> ReleaseReport: ...
+    async def async_mark_entry_removed(self, entry_id: str) -> ReleaseReport: ...
     async def async_clear_orphans(
         self,
         known_entry_ids: set[str],
@@ -159,14 +159,23 @@ class DoorCodeAllocator:
     def diagnostics(self) -> dict[str, Any]: ...
 ```
 
+`AdoptionRequest` carries `entry_id`, `identity_key`, the observed `code`,
+`code_length`, and matched slot metadata needed for diagnostics. If the same code
+is already owned by another identity, adoption records a conflict owner, reports
+it, and never returns that code for new issuance until the conflict is cleared.
+
+`ReleaseReport` contains `code_ref`, `entry_id`, `identity_key`, and a
+`released`/`retained` status. It never includes the raw or encoded code.
+
 ### Behavioural guarantees
 
 - **Serialization**: every method above mutates only under a single
   `asyncio.Lock`, so concurrent entries cannot both claim a code (FR-006).
 - **Idempotency**: `async_allocate` with a known `identity_key` returns the same
   `code` with the recorded `origin` and mutates nothing (FR-007).
-- **Uniqueness**: no method ever returns a code whose record has an owner with a
-  different `identity_key` (FR-005).
+- **Uniqueness**: allocation never returns a code whose record has an owner with
+  a different `identity_key`; adoption may record an observed conflict but does
+  not make that code available for new issuance (FR-005, FR-022).
 - **Non-destructive**: no method returns, emits, or schedules a reconciliation
   action, and none calls a lock service. The allocator can never clear a slot.
 - **Fail-closed, not fail-loud**: exhaustion, a closed adoption gate, and
@@ -235,8 +244,10 @@ without consuming a response while a developer-tools caller sees the full report
 
 1. Compute the orphan set: records with at least one owner whose `entry_id` is
    not in `hass.config_entries.async_entries(DOMAIN)`.
-2. For each, apply the shared FR-014 guard. A record whose code is observed on
-   any managed lock, or whose owner still has `lock_observed=True`, is refused.
+2. Refresh system-wide managed-lock observations, then apply the shared FR-014
+   guard. A record whose code is observed on any managed lock is refused; an
+   orphan owner's old `lock_observed=True` is cleared only after this fresh
+   observation proves the code is absent.
 3. When `dry_run` is true, report what would happen and change nothing.
 4. Otherwise release the unrefused records, save the registry, and report.
 
