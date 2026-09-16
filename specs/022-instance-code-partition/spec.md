@@ -240,8 +240,9 @@ for the same bookings.
   is recorded once for each affected booking, because each fallback
   credential can collide independently. Issuing a
   possibly-duplicate code is preferred over issuing none, because a
-  missing code locks a guest out immediately whereas a duplicate is rare
-  and detectable.
+  missing code locks a guest out immediately. The fallback carries a
+  residual collision and ambiguous-authentication risk until the operator
+  increases usable capacity or uses the separate reissue/remediation flow.
 - **Empty computed block**: when the configured capacity and the
   instance's slot range yield no code values for that instance's
   half-open interval, partitioning cannot be expressed for that instance.
@@ -432,13 +433,17 @@ for the same bookings.
   slot-eligible retained booking whose managed slot still has an observed
   PIN, including future retained bookings and retained ghost placeholders
   that temporarily represent missing feed events with an observed PIN.
-  Overflow bookings that will not be assigned a slot in the current plan,
-  cancelled bookings, checked-out bookings, ghost placeholders without an
-  observed PIN, and bookings outside the instance's managed slot range do
-  not participate. When no current plan exists, such as the first refresh,
-  both paths MUST build allocation from that same population before
-  displaying or reserving codes, so a sensor cannot show an unprobed
-  per-booking candidate that differs from the reconciled code.
+  A locally observed PIN always takes precedence over exclusion: retained
+  overflow bookings and cancelled or checked-out bookings whose old PIN
+  remains readable in a managed slot stay in the occupied-code set until
+  the integration confirms that the slot was cleared. Overflow bookings
+  without an observed PIN, cancelled bookings with confirmed clears,
+  checked-out bookings with confirmed clears, ghost placeholders without
+  an observed PIN, and bookings outside the instance's managed slot range
+  do not participate. When no current plan exists, such as the first
+  refresh, both paths MUST build allocation from that same population
+  before displaying or reserving codes, so a sensor cannot show an
+  unprobed per-booking candidate that differs from the reconciled code.
 - **FR-012b**: Codes retained from the lock for slot-eligible bookings
   MUST be inserted into the plan's occupied-code set before probing newly
   generated candidates. A retained code remains assigned to its booking
@@ -466,19 +471,22 @@ for the same bookings.
   primary key is reservation UID. Missing UIDs sort after present UIDs.
   Equal UIDs are broken only by immutable booking occurrence attributes:
   booking start time, booking end time, source-calendar identifier, and an
-  immutable source-occurrence key when the source provides one. Mutable
-  description text MUST NOT reorder bookings that already have a UID. If
-  two source events remain indistinguishable after those keys, the system
-  MUST coalesce them into one allocation identity, return the same
-  credential for the duplicate source records, and warn without logging the
-  PIN; it MUST NOT silently rely on fetch order, entity iteration order, or
-  processing order.
+  immutable source-occurrence key when the source provides one. For
+  UID-less bookings, the description text is part of the ordering key
+  because it is also the legacy seed. Mutable description text MUST NOT
+  reorder bookings that already have a UID. If two source events remain
+  indistinguishable after the applicable keys, the system MUST coalesce
+  them into one allocation identity, return the same credential for the
+  duplicate source records, and warn without logging the PIN; it MUST NOT
+  silently rely on fetch order, entity iteration order, or processing
+  order.
 - **FR-014**: The probe MUST consider only codes within the instance's own
   plan; it MUST NOT read codes belonging to other instances.
 - **FR-015**: When every value in the instance's block is taken, the
   system MUST still return a code for the booking by falling back to the
-  unpartitioned whole-space value, and MUST record a warning identifying
-  the instance and the exhaustion condition.
+  legacy `static_random` whole-space value for that booking's normalized
+  UID-or-description seed, and MUST record a warning identifying the
+  instance and the exhaustion condition.
 - **FR-015a**: Partition-degradation warnings, including block exhaustion,
   empty computed blocks, out-of-range slots, no usable seed, opt-out, and
   retained-code exceptions, MUST NOT include raw PIN values or other
@@ -526,13 +534,15 @@ for the same bookings.
   probe rather than being assigned that same observed code. Pre-existing
   duplicate observed PINs are retained for their bookings as an explicit
   exception; new in-block allocations avoid the locally observed PIN, but
-  block-exhaustion fallback can still duplicate and must warn.
-- **FR-022b**: During upgrade and later reconciliation, any readable
-  observed PIN in this instance's managed slots for a slot-eligible
-  booking MUST be retained for that booking before comparing against newly
-  generated partitioned or legacy values. This includes readable
-  pre-feature PINs that happen to equal the old whole-space generator
-  output.
+  block-exhaustion fallback can still duplicate and must warn. Locally
+  detected duplicate retained PINs MUST warn as a uniqueness exception
+  without logging the PIN values.
+- **FR-022b**: During the first migration reconciliation after enabling
+  partitioned generation, any readable observed PIN in this instance's
+  managed slots for a slot-eligible booking MUST be retained for that
+  booking before comparing against newly generated partitioned or legacy
+  values. This includes readable pre-feature PINs that happen to equal the
+  old whole-space generator output.
 - **FR-022c**: On the migration from pre-partitioned generation to
   partitioned generation, FR-022b overrides any "update generated code"
   setting for readable observed PINs so existing guest credentials do not
@@ -568,6 +578,8 @@ for the same bookings.
 - **FR-024c**: Tests MUST include a coordinator-versus-sensor parity case
   that exercises plan-level probing on first refresh and retained-code
   occupancy, not only the legacy single-booking helper path.
+- **FR-024d**: Tests MUST cover warning behaviour for coalesced
+  indistinguishable source events and locally duplicate retained PINs.
 
 ### Key Entities
 
@@ -674,8 +686,9 @@ for the same bookings.
   capacity, no unseeded bookings, no out-of-block retained PINs, and
   no duplicate retained PINs, 100% of newly generated `static_random`
   codes are unique across the whole property, for every tested booking set
-  with sufficient block capacity. This holds both at the default capacity
-  and at a raised capacity applied to every instance.
+  with sufficient free block capacity after retained-code occupancy. This
+  holds both at the default capacity and at a raised capacity applied to
+  every instance.
 - **SC-002**: Within any single instance whose block has enough free
   values for the planned newly generated bookings, whose bookings have
   usable seeds, and whose plan is non-degraded with no duplicate retained
@@ -695,16 +708,19 @@ for the same bookings.
   new partitioning and capacity options left at defaults obtains
   cross-instance uniqueness for newly generated codes with zero new
   partition configuration entered by the operator.
-- **SC-006**: No booking is ever left without a code: every degraded
+- **SC-006**: No eligible booking selected for the current plan is ever
+  left without a code: every degraded
   condition (block exhausted, empty computed block, slot range beyond
   capacity, no usable seed, opted-out partitioning) still yields a
   correctly formatted code and emits the warning-or-confirmation behaviour
   specified for that condition. Empty-block and slot-range degraded paths
-  emit one clear, instance-identifying warning per affected instance per
-  reconciliation pass; block-exhaustion and unseeded fallbacks emit one
-  warning per affected booking per reconciliation pass; opt-out emits one
-  warning or confirmation per configuration change. All warnings redact
-  raw PIN values.
+  emit clear, instance-identifying warnings per affected instance;
+  block-exhaustion, duplicate-retained, coalesced-event, and unseeded
+  fallbacks emit warnings for affected bookings or allocation identities;
+  opt-out emits one warning or confirmation per configuration change.
+  Runtime warnings are transition- or rate-limited so a persistent
+  condition remains visible without flooding logs. All warnings redact raw
+  PIN values.
 - **SC-007**: Upgrading an existing installation rotates zero codes for
   active bookings whose existing lock PIN is readable during
   reconciliation.
