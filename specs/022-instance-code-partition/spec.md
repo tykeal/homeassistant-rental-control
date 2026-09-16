@@ -31,10 +31,11 @@ collisions structurally impossible for the `static_random` generator by
 partitioning the code space into disjoint per-instance blocks derived from
 configuration each instance already has, with no live coordination between
 instances, and resolves the remaining within-instance collisions with a
-deterministic probe. Degraded and misconfigured paths that fall back to
-whole-space generation, plus retained out-of-block legacy or manual
-codes that siblings cannot observe, are explicit exceptions and forfeit
-that guarantee.
+deterministic probe for newly generated, non-degraded bookings. Degraded
+and misconfigured paths that fall back to whole-space generation,
+pre-existing duplicate retained PINs, plus retained out-of-block legacy
+or manual codes that siblings cannot observe, are explicit exceptions
+and forfeit that guarantee.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -172,9 +173,10 @@ receives a block disjoint from its siblings.
    defaults, **When** codes are generated, **Then** partitioning works
    with no capacity configuration on any instance.
 2. **Given** an operator who raises the capacity override on the instances
-   of a large building, **When** codes are generated, **Then** blocks are
-   sized against the raised capacity and remain disjoint between those
-   instances.
+   of a large building and the resulting per-instance blocks are
+   non-empty with enough capacity for planned bookings, **When** codes are
+   generated, **Then** blocks are sized against the raised capacity and
+   remain disjoint between those instances.
 3. **Given** an instance whose slot range extends beyond the configured
    capacity, **When** codes are generated, **Then** the integration warns
    that the capacity is too small for the configured slot range and tells
@@ -233,8 +235,10 @@ for the same bookings.
   no free value remains in the block, the generator falls back to the
   unpartitioned whole-space value for that booking and records a clear
   warning naming the instance and advising a longer code length or a lower
-  capacity. The warning is recorded once for each affected booking, because
-  each fallback credential can collide independently. Issuing a
+  capacity only when the lower value is the real shared parent-lock
+  capacity and is applied uniformly to every sibling instance. The warning
+  is recorded once for each affected booking, because each fallback
+  credential can collide independently. Issuing a
   possibly-duplicate code is preferred over issuing none, because a
   missing code locks a guest out immediately whereas a duplicate is rare
   and detectable.
@@ -442,6 +446,15 @@ for the same bookings.
   bookings use the block-exhaustion fallback and warning path; the
   fallback may still duplicate a retained PIN and must warn for that
   booking.
+- **FR-012c**: The allocation identity used for plan membership MUST be
+  UID- or source-occurrence-aware, not only slot, name, start, and end.
+  Two source events with different UIDs or immutable occurrence keys MUST
+  remain separate allocation participants even when they share a display
+  name and time window. Retention rematching MUST prefer the same
+  allocation identity when it exists; if an older retained PIN can only be
+  associated with a managed slot or legacy fingerprint, it still occupies
+  the plan for probing until the reconciler can match it to one allocation
+  identity or the retention window expires.
 - **FR-013**: The probe MUST visit candidate values in a fixed order:
   start at the booking's mapped candidate offset, then advance by one
   offset at a time within the block, wrapping to the block start after the
@@ -454,9 +467,10 @@ for the same bookings.
   immutable source-occurrence key when the source provides one. Mutable
   description text MUST NOT reorder bookings that already have a UID. If
   two source events remain indistinguishable after those keys, the system
-  MUST coalesce them as one booking for allocation or warn that their
-  relative order cannot be made deterministic; it MUST NOT silently rely
-  on fetch order, entity iteration order, or processing order.
+  MUST coalesce them into one allocation identity, return the same
+  credential for the duplicate source records, and warn without logging the
+  PIN; it MUST NOT silently rely on fetch order, entity iteration order, or
+  processing order.
 - **FR-014**: The probe MUST consider only codes within the instance's own
   plan; it MUST NOT read codes belonging to other instances.
 - **FR-015**: When every value in the instance's block is taken, the
@@ -655,10 +669,11 @@ for the same bookings.
   with sufficient block capacity. This holds both at the default capacity
   and at a raised capacity applied to every instance.
 - **SC-002**: Within any single instance whose block has enough free
-  values for the planned newly generated bookings and no duplicate
-  retained PINs, 100% of concurrently planned newly generated or
-  non-duplicate retained bookings receive distinct codes, including sets
-  contrived to force candidate collisions.
+  values for the planned newly generated bookings, whose bookings have
+  usable seeds, and whose plan is non-degraded with no duplicate retained
+  PINs, 100% of concurrently planned newly generated or non-duplicate
+  retained bookings receive distinct codes, including sets contrived to
+  force candidate collisions.
 - **SC-003**: For a fixed set of bookings and configuration, 100% of
   generated candidate codes are identical across repeated generation runs
   and simulated restarts. Returned codes are identical when the observed
