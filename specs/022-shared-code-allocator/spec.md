@@ -210,7 +210,9 @@ it held before the restart.
   leave the allocator, the registry, and the other entries' allocations intact,
   removing only the unloaded entry's per-entry state.
 - **FR-004**: When a config entry is removed (as opposed to unloaded), the
-  system MUST release all allocations owned by that entry.
+  system MUST release allocations owned by that entry only after no managed
+  lock still reports the code programmed; otherwise it MUST retain and report
+  the orphaned allocation.
 
 #### Uniqueness
 
@@ -250,7 +252,9 @@ it held before the restart.
 - **FR-013**: The system MUST release a reservation's allocation once the owning
   config entry no longer manages a lock slot for that reservation — that is,
   after the booking has ended or been cancelled and its slot has been cleared —
-  so the code space does not leak.
+  so the code space does not leak. For config entries with no managed lock
+  slot, the system MUST release the allocation when the booking or feed state
+  no longer contains an active reservation for that allocation.
 - **FR-014**: The system MUST NOT release an allocation for a code that is still
   programmed on a managed lock.
 - **FR-015**: A released code MUST become available for future allocation, and a
@@ -263,12 +267,14 @@ it held before the restart.
   the same manner as Keymaster's `Store` usage, so allocations survive Home
   Assistant restarts.
 - **FR-017**: A reservation's allocated code MUST remain identical across Home
-  Assistant restarts, config entry reloads, and reinstallation of the
-  integration, for as long as the reservation is active.
+  Assistant restarts, config entry reloads, and integration package
+  reinstalls that preserve config entry identity, for as long as the
+  reservation is active.
 - **FR-018**: If the persisted registry is absent, unreadable, or fails
   validation, the system MUST start from an empty registry, MUST warn the
-  operator, and MUST rebuild the registry by adoption (FR-020) rather than
-  rotating codes.
+  operator, and MUST rebuild lock-backed allocations by adoption (FR-020).
+  For lockless active reservations without an observed or durable code source,
+  it MUST fail closed by publishing no code rather than assigning a replacement.
 
 #### Display parity
 
@@ -283,14 +289,18 @@ it held before the restart.
   retained today by `_resolve_observed_code` in
   `coordinator_helpers/reservations.py`, MUST be adopted into the registry as
   allocations owned by the observing reservation, so upgrading does not rotate
-  any in-flight guest code.
+  any in-flight guest code. The system MUST complete adoption for all currently
+  loaded entries before issuing new allocations, so a later-observed programmed
+  code cannot be missed by an earlier allocation request.
 - **FR-021**: An adopted code MUST take precedence over the generator's
   preferred code for that reservation; adoption MUST NOT trigger reallocation.
 - **FR-022**: When adoption encounters the same code on two different
   reservations — the pre-existing duplicate condition from #743 — the system
   MUST record both, MUST report the conflict to the operator, and MUST NOT
-  silently rotate either code. Correcting an existing duplicate is #735's
-  force-re-issue operation, not this feature's.
+  silently rotate either code. A code with one or more observed owners MUST
+  remain unavailable to new allocations until the conflict is cleared.
+  Correcting an existing duplicate is #735's force-re-issue operation, not
+  this feature's.
 
 #### Coverage and configuration
 
@@ -302,7 +312,8 @@ it held before the restart.
   any setting that must be kept consistent across config entries.
 - **FR-025**: The system MUST log allocation, collision resolution, release,
   adoption, adoption conflicts, and exhaustion with enough detail for an
-  operator to determine which reservation holds which code and why.
+  operator to determine which reservation holds which masked or hashed code
+  identifier and why. Logs and diagnostics MUST NOT include raw door codes.
 
 ### Key Entities
 
@@ -310,11 +321,13 @@ it held before the restart.
   issues and releases codes. Owns the registry and serializes allocation. Held
   on shared integration data and shared by all config entries.
 - **Allocation Registry**: the persisted mapping from an issued code to the
-  reservation holding it. Survives restarts. Its contents are the sole basis for
-  collision detection.
-- **Allocation**: one issued code bound to one reservation. Carries the issued
-  code, the owning config entry, the reservation's stable identity, and whether
-  the code was generator-preferred, collision-resolved, or adopted from a lock.
+  reservation or observed conflict set holding it. Survives restarts. Its
+  contents are the sole basis for collision detection.
+- **Allocation**: one issued code bound to one reservation, or one observed
+  conflict membership for a code temporarily held by multiple reservations.
+  Carries the issued code, the owning config entry, the reservation's stable
+  identity, and whether the code was generator-preferred, collision-resolved,
+  adopted from a lock, or part of an adoption conflict.
 - **Reservation Identity**: the stable fingerprint already used by the
   reconciliation planner to identify a booking across feed refreshes. It is the
   allocation key and the seed for deterministic collision resolution.

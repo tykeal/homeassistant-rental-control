@@ -11,9 +11,9 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Content Quality
 
-- [x] No implementation details (languages, frameworks, APIs)
+- [x] No implementation details beyond required domain concepts
 - [x] Focused on user value and business needs
-- [x] Written for non-technical stakeholders
+- [x] Written for property-manager and maintainer stakeholders
 - [x] All mandatory sections completed
 
 ## Requirement Completeness
@@ -32,7 +32,7 @@ SPDX-License-Identifier: Apache-2.0
 - [x] All functional requirements have clear acceptance criteria
 - [x] User scenarios cover primary flows
 - [x] Feature meets measurable outcomes defined in Success Criteria
-- [x] No implementation details leak into specification
+- [x] No implementation details beyond required domain concepts leak into specification
 
 ## Notes
 
