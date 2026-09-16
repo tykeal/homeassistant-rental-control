@@ -44,6 +44,9 @@ and reused by all later entries.
   reservations that are gone and whose codes are not observed.
 - `async_release_entry(entry_id)` — entry-removal release with the same
   observed-code guard.
+- `async_clear_orphans(known_entry_ids, observed_codes, dry_run)` — operator
+  cleanup of allocations whose owning entry no longer exists, using that same
+  guard, returning an `OrphanCleanupReport`.
 
 **Validation rules**:
 
@@ -62,7 +65,8 @@ and reused by all later entries.
 
 Pure, no Home Assistant imports. Holds `records: dict[str, AllocationRecord]`
 keyed by the literal code string, plus a derived `by_identity: dict[str, str]`
-index from `identity_key` to code.
+index from `identity_key` to code. Keys and `AllocationRecord.code` are plain
+values in memory; obfuscation applies only when `RegistryStore` writes them.
 
 **Validation rules**:
 
@@ -79,8 +83,12 @@ One issued or observed code.
 
 **Fields**:
 
-- `code: str` — the literal zero-padded code.
-- `code_ref: str` — masked identifier for logs and diagnostics.
+- `code: str` — the literal zero-padded code, in memory only. Persisted in
+  obfuscated form as `encoded_code`; see the contract.
+- `code_ref: str` — masked identifier for logs and diagnostics, derived from a
+  different salt than the at-rest encoding and never a substitute for it.
+- `encoding_salt_source: str` — which value salts the at-rest encoding,
+  `entry_id` in schema version 1, fixed for the record's lifetime.
 - `owners: list[AllocationOwner]` — one owner normally, more than one only for
   an adoption conflict.
 - `created_at` / `updated_at` — ISO-8601 timestamps.
@@ -127,10 +135,30 @@ never raises; the caller records it and the reservation holds.
 **Owner module**: `custom_components.rental_control.allocator.store`
 
 Wraps `homeassistant.helpers.storage.Store` at key
-`rental_control.code_registry`, schema version 1. Load failures of any kind
-(absent, unreadable, wrong version, malformed) resolve to an empty registry plus
-a warning and a persistent notification. Saves use `async_delay_save` so a burst
-of entry refreshes produces one write.
+`rental_control.code_registry`, schema version 1. It is the only component that
+converts between plain in-memory codes and their obfuscated `encoded_code` form:
+encode on save, decode on load, never elsewhere. The obfuscation is Keymaster's
+salted base64 and is not a security boundary; see the contract. Load failures of
+any kind (absent, unreadable, wrong version, malformed, undecodable) resolve to
+an empty registry plus a warning and a persistent notification. Saves use
+`async_delay_save` so a burst of entry refreshes produces one write.
+
+### OrphanCleanupReport
+
+**Owner module**: `custom_components.rental_control.allocator.models`
+
+Result of `async_clear_orphans`, returned to the service caller and used for the
+log line and the operator notification.
+
+**Fields**:
+
+- `dry_run: bool` — whether anything was actually released.
+- `cleared: list[OrphanOutcome]` — records released.
+- `retained: list[OrphanOutcome]` — records deliberately kept.
+
+`OrphanOutcome` carries `code_ref`, `entry_id`, `identity_key`, and for retained
+records a `reason` of `code_still_programmed` or `adoption_conflict`. No field
+carries a code in any form.
 
 ## Changed entities
 
@@ -171,8 +199,10 @@ the published attributes instead of being backfilled by sensor-side generation.
 hass.data[DOMAIN][ALLOCATOR] ─── DoorCodeAllocator
                                       │ owns
                                       ├── AllocationRegistry ── AllocationRecord*
-                                      │                             └── AllocationOwner*
-                                      └── RegistryStore ── HA Store
+                                      │        (plain codes)        └── AllocationOwner*
+                                      ├── RegistryStore ── HA Store
+                                      │        (encodes on save, decodes on load)
+                                      └── clear_orphaned_codes service
 
 hass.data[DOMAIN][entry_id][COORDINATOR] ─── RentalControlCoordinator
                                                   │ per refresh

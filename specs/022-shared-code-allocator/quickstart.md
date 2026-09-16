@@ -55,6 +55,20 @@ after a restart.
 `STORE_CODE_REGISTRY_KEY = "rental_control.code_registry"`, and
 `CODE_REGISTRY_SCHEMA_VERSION = 1` to `const.py`.
 
+Codes are obfuscated at rest with Keymaster's scheme. Copy the shape from
+`/home/tykeal/repos/personal/homeassistant/keymaster/custom_components/keymaster/serialization.py`
+lines 101-113, salting with the record's first owner `entry_id`:
+
+```python
+encoded = base64.b64encode(salt.encode("utf-8") + code.encode("utf-8")).decode("utf-8")
+code = base64.b64decode(encoded)[len(salt.encode("utf-8")):].decode("utf-8")
+```
+
+Keep this inside `store.py` only. The registry works in plain values; do not
+leak encoded strings into comparison, candidate rejection, or any API. And do
+not describe it as encryption in a docstring — it is obfuscation that keeps
+codes out of plaintext backups, nothing more.
+
 Mirror Keymaster's accessor shape, including the cleanup on failure:
 
 ```python
@@ -73,8 +87,26 @@ Wire it into `async_setup_entry` before `coordinator.async_load_slot_store()`,
 and call `allocator.register_entry(config_entry.entry_id)` there. Let a failure
 surface as `ConfigEntryNotReady`. Do not touch `async_unload_entry`.
 
-Checkpoint: a second entry must reuse the first allocator, and unloading one
-entry of two must leave the registry and the other entry's codes untouched.
+Checkpoint: a second entry must reuse the first allocator, unloading one entry
+of two must leave the registry and the other entry's codes untouched, and a
+saved payload must not contain any code as a readable digit string.
+
+## 2a. Add the orphan cleanup service
+
+`allocator/services.py`, registered from `async_get_or_create_allocator` behind
+`hass.services.has_service(DOMAIN, "clear_orphaned_codes")` so two entries do
+not double-register. Declare it in `services.yaml`, `strings.json` under
+`services`, and both `translations/en.json` and `translations/fr.json`, copying
+the structure the existing `checkout` and `set_state` entries use.
+
+The handler calls `allocator.async_clear_orphans(...)` and returns its report
+with `SupportsResponse.OPTIONAL`. Reuse the sweep's FR-014 guard helper; do not
+write a second copy of "is this code still on a lock". Keep the service to
+clearing orphans — no conflict resolution, no re-issue, that is #735.
+
+Checkpoint: with a removed entry whose code is still programmed, the service
+clears nothing and reports `code_still_programmed`; once the slot is cleared, a
+second call releases the record; a third call is a no-op.
 
 ## 3. Make `slot_code` optional and add the guards
 
@@ -142,8 +174,10 @@ pre-commit run --all-files
 Coverage floor is 95%; new modules need tests in the same commit. Confirm
 before opening the implementation PR:
 
-- No log line or diagnostics field contains a raw code. Grep the new modules for
-  `%s` formatting of `code` and confirm each uses `code_ref`.
+- No log line, diagnostics field, or service response contains a code. Grep the
+  new modules for `%s` formatting of `code` and confirm each uses `code_ref`.
+- No saved registry payload contains a code as readable digits. Assert this in
+  `test_allocator_store.py` against the serialized JSON, not just the model.
 - No file exceeds 400 lines, no function exceeds 80 lines, no signature exceeds
   six parameters, and no aislop suppression was added.
 - The hazard-1 regression test exists and passes.

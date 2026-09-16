@@ -52,9 +52,10 @@ specifically `homeassistant.helpers.storage.Store`, config-entry lifecycle,
 and `DataUpdateCoordinator`; dev/test dependency `homeassistant>=2026.6.0`;
 test tooling `pytest-homeassistant-custom-component`
 **Storage**: One new Home Assistant `Store` at key
-`rental_control.code_registry`, schema version 1, shared by every config entry.
-The existing per-entry cache store (`rental_control.slot_mappings.<entry_id>`,
-`STORE_SCHEMA_VERSION`) is unchanged and keeps its no-raw-PIN policy.
+`rental_control.code_registry`, schema version 1, shared by every config entry,
+holding codes obfuscated at rest. The existing per-entry cache store
+(`rental_control.slot_mappings.<entry_id>`, `STORE_SCHEMA_VERSION`) is unchanged
+and keeps its no-PIN policy.
 **Testing**: `uv run pytest tests/ -q -p no:randomly` and
 `uv run ruff check custom_components/ tests/`; pre-commit for ruff-format,
 mypy, interrogate, reuse, aislop, gitlint
@@ -67,8 +68,8 @@ registry lookup per reservation, degrading to a bounded walk only on collision.
 The registry is saved through `Store.async_delay_save` so a refresh performs at
 most one queued write, keeping the 30s minimum refresh interval intact.
 **Constraints**: No new operator configuration (FR-024). No change to
-`DEFAULT_CODE_LENGTH` or the configured length (FR-012). No raw door codes in
-logs or diagnostics (FR-025). No physical lock write may be introduced or
+`DEFAULT_CODE_LENGTH` or the configured length (FR-012). No door code in any
+form in logs or diagnostics (FR-025). No physical lock write may be introduced or
 removed by the absence of an allocation. 95% coverage floor. Files below 400
 lines, functions below 80 lines, at most six parameters, no aislop suppression.
 **Scale/Scope**: Ten or more config entries on one Home Assistant system
@@ -122,6 +123,7 @@ custom_components/rental_control/
 │   ├── candidates.py              # Deterministic full-cycle candidate sequence
 │   ├── store.py                   # Store key/version, load, validate, save
 │   ├── allocator.py               # Lock, allocate/adopt/release/sweep/rekey
+│   ├── services.py                # clear_orphaned_codes registration/handler
 │   └── singleton.py               # get-or-create on hass.data, teardown rules
 ├── coordinator_helpers/
 │   ├── code_allocation.py         # Refresh-cycle allocation step (new)
@@ -135,6 +137,9 @@ custom_components/rental_control/
 │   └── calsensor_helpers/
 │       ├── slots.py               # Read allocated code for lockless entries too
 │       └── codes.py               # Generation helper leaves the display path
+├── services.yaml                  # clear_orphaned_codes declaration
+├── strings.json                   # Service name/description/fields
+├── translations/{en,fr}.json      # Service translations
 └── const.py                       # ALLOCATOR, registry store key/version
 
 tests/
@@ -143,6 +148,7 @@ tests/
 │   ├── test_allocator_candidates.py
 │   ├── test_allocator_store.py
 │   ├── test_allocator_singleton.py
+│   ├── test_allocator_services.py
 │   └── test_code_allocation_step.py
 └── integration/
     ├── test_allocator_cross_entry.py
@@ -191,6 +197,8 @@ Entry removal is a distinct hook. The plan adds `async_remove_entry` to
 `__init__.py`, which calls `allocator.async_release_entry(entry_id)`; that
 method releases only allocations whose code is not currently observed on any
 managed lock and retains the rest as orphan records with a warning (FR-004).
+Retained orphans are cleared by the operator through the
+`rental_control.clear_orphaned_codes` service described in decision 7.
 
 ### 2. Where allocation runs in the refresh cycle
 
@@ -249,24 +257,37 @@ deterministic result for a given identity and registry. Exhaustion is declared
 only after all `n` candidates are rejected, and is reported once per cycle per
 entry rather than per reservation (FR-008).
 
-### 4. Registry, store key, and masking (FR-005, FR-016, FR-025)
+### 4. Registry, store key, and at-rest obfuscation (FR-005, FR-016, FR-025)
 
 One store, `rental_control.code_registry`, version 1, shared by all entries.
-The payload is a list of records keyed by the literal code string, each with one
-or more owners; two or more owners means an adoption conflict. Full schema is in
+The payload is a list of records keyed by the code, each with one or more
+owners; two or more owners means an adoption conflict. Full schema is in
 [contracts/code-registry-store.md](contracts/code-registry-store.md) and the
 entity semantics are in [data-model.md](data-model.md).
 
-Raw codes are persisted. This is a deliberate departure from the per-entry cache
-store's no-raw-PIN rule, and it is required: FR-017 wants a code to survive a
-restart and FR-019 wants the sensor to display it, so the value must be
-recoverable, not merely comparable. The precedent is Keymaster, which persists
-PINs in its own `Store`. FR-025's prohibition is on logs and diagnostics, which
-the design honours by never logging a code: every log line and diagnostics field
-uses a `code_ref`, the first eight hex characters of
-`sha256(store_salt + code)`, where `store_salt` is a random value generated once
-and persisted with the registry. Operators can correlate "which reservation
-holds which code" without the value leaking into a log bundle.
+Codes must be *recoverable* — FR-017 wants a code to survive a restart and
+FR-019 wants the sensor to display it, and adopted or collision-resolved codes
+cannot be re-derived — but they are not stored as bare digits. Each record holds
+`encoded_code`, using the same scheme Keymaster applies to PINs in
+`custom_components/keymaster/serialization.py`: base64 of the salt bytes
+followed by the code bytes, decoded by stripping the salt's byte length. The
+salt is the `entry_id` of the record's first owner, fixed for the record's
+lifetime and recorded in `encoding_salt_source`.
+
+**This is obfuscation, not encryption, and not a security boundary.** The salt
+sits in the same file as the value it hides, so file access trivially recovers
+every code. It buys exactly one thing: door codes do not appear as greppable
+plaintext in `.storage` or in backup archives. Nothing in the design may treat
+it as a protection against an attacker.
+
+Encoding is at-rest only. In-memory values are plain, and collision detection
+compares plain values; encode on save, decode on load, nowhere else.
+
+Separately and for a different purpose, logs and diagnostics never contain a
+code at all. They use `code_ref`, the first eight hex characters of
+`sha256(code_ref_salt + code)`, where `code_ref_salt` is a random value
+generated once and persisted with the registry (FR-025). The two salts are
+unrelated and neither substitutes for the other.
 
 Load failure, absence, or validation failure yields an empty registry plus a
 warning and a persistent notification (FR-018); adoption then rebuilds it.
@@ -300,6 +321,38 @@ for this reservation this cycle" — either fail-closed per FR-018 or awaiting t
 adoption gate. `code_source` gains `"allocated"`, `"collision_resolved"`,
 `"adopted"`, and `"unallocated"`. The guards are in
 [Hazard resolutions](#hazard-resolutions) below.
+
+### 7. Orphan cleanup service (FR-004)
+
+`rental_control.clear_orphaned_codes` releases allocations whose owning config
+entry no longer exists. A service is not operator-supplied configuration under
+FR-024 — that requirement targets values that must be kept consistent across
+entries, the capacity constant that sank the rejected partitioning design — so
+a manual operator action with no persisted setting is in scope.
+
+Registered once in `allocator/services.py` from
+`async_get_or_create_allocator`, guarded by `hass.services.has_service` so the
+second config entry does not re-register it. It is a domain service, not an
+entity service, because it has no entity target; the existing `checkout` and
+`set_state` entity services on the sensor platform are untouched. Declared in
+`services.yaml`, `strings.json`, and both `translations/en.json` and
+`translations/fr.json`, matching the pattern those two services already follow.
+
+Three properties matter:
+
+- **FR-014 holds here too.** The service calls the same guard helper as
+  `async_sweep` and `async_release_entry`; a code still programmed on a managed
+  lock is refused, never released. The rule is shared, not reimplemented.
+- **It reports both sides.** The response, the log line, and a persistent
+  notification list what was cleared and what was refused with a reason
+  (`code_still_programmed` or `adoption_conflict`), using `code_ref` only.
+- **It is idempotent and always safe.** A `dry_run` field previews the outcome,
+  and the operation takes the allocator lock like every other mutation, so it
+  cannot race a refresh.
+
+It stays narrow. It does not resolve conflicts, does not re-issue codes, and
+must not grow toward #735's force-re-issue. The full contract is in
+[contracts/code-registry-store.md](contracts/code-registry-store.md).
 
 ## Hazard resolutions
 
@@ -439,12 +492,13 @@ the spec says.
   still tried first (FR-010) and is unclaimed unless a lock-backed entry already
   adopted it, in which case a deterministic replacement is issued once and then
   persists.
-- The per-entry cache store, its schema version, and its no-raw-PIN policy are
+- The per-entry cache store, its schema version, and its no-PIN policy are
   untouched. #736's "`slot_code` is never persisted" note in
   `plan_models.py` is superseded by the new registry and should be updated in
   the same commit that changes the field type.
 - No config flow change, no options change, no entity rename, no new required
-  option (FR-024, SC-007).
+  option (FR-024, SC-007). The one new service is a manual operator action, not
+  a setting, and nothing depends on it having been run.
 - Downgrading to a prior release leaves an unused `rental_control.code_registry`
   file behind, which is harmless; codes revert to per-entry generation.
 
@@ -465,9 +519,16 @@ New unit coverage:
 - `candidates.py`: full-cycle non-repetition for lengths 4 and 6, determinism
   for a fixed identity, and stability when the registry changes around it.
 - `store.py`: missing, unreadable, wrong-version, and corrupt payload all yield
-  an empty registry plus a warning; delayed save is used.
+  an empty registry plus a warning; delayed save is used; encode/decode round
+  trips exactly, including leading zeros, and no saved payload contains a bare
+  code (assert the serialized JSON does not contain the digit string).
 - `singleton.py`: second entry reuses the first allocator; creation failure pops
   the key; unload of one entry leaves the allocator intact.
+- `services.py`: the service registers once across two entries; `dry_run`
+  changes nothing; a code still on a lock is retained with
+  `code_still_programmed`; a conflict record is retained with
+  `adoption_conflict`; a second call is a no-op; no response field or log line
+  contains a code.
 - `code_allocation.py`: adopt-before-allocate ordering, idempotency on repeat
   requests, rekey via `fingerprint_history`, sweep retention for observed codes,
   exhaustion reporting.
@@ -491,14 +552,15 @@ tests against the coordinator's allocated code.
 
 ## Phase 0 Research Output
 
-See [research.md](research.md). One open marker remains, recorded there and
-repeated in Complexity Tracking below.
+See [research.md](research.md). All planning questions are resolved; no open
+clarifications remain.
 
 ## Phase 1 Design Output
 
 See [data-model.md](data-model.md) for entities, states, and validation rules,
 [contracts/code-registry-store.md](contracts/code-registry-store.md) for the
-persisted schema and the internal allocator API, and [quickstart.md](quickstart.md)
+persisted schema, the internal allocator API, and the cleanup service, and
+[quickstart.md](quickstart.md)
 for the implementation and validation guide. Agent-context updates are omitted
 because no new language, framework, dependency, or tool is introduced.
 
@@ -520,19 +582,22 @@ because no new language, framework, dependency, or tool is introduced.
 
 No constitutional violations require justification.
 
-One deliberate policy exception is recorded rather than hidden: the new registry
-persists raw door codes, where the existing per-entry cache store does not. The
-rationale, the Keymaster precedent, and the compensating masking rule are in
-[Design decision 4](#4-registry-store-key-and-masking-fr-005-fr-016-fr-025).
+One storage policy point is recorded rather than hidden. The new registry
+persists door codes in a recoverable form, where the per-entry cache store
+persists none at all. Recoverability is forced by FR-017 and FR-019, since
+adopted and collision-resolved codes cannot be re-derived. At rest the value is
+obfuscated with Keymaster's salted base64 scheme, which keeps codes out of
+plaintext in `.storage` and in backups. It is **not** encryption and **not** a
+security boundary: the salt lives in the same file, so anyone who can read the
+file can recover every code. It is worth doing because casual exposure is the
+realistic risk, and it is worth being honest that it stops nothing else. Logs
+and diagnostics are handled separately and more strictly: they carry `code_ref`
+and never a code, encoded or otherwise (FR-025).
 
-**[NEEDS CLARIFICATION]** FR-004 speaks of "allocator-level verification or an
-explicit operator recovery path" for orphaned allocations, but #735 owns the
-force-re-issue operation and FR-024 forbids new configuration. As planned,
-orphan records from a removed config entry are retained and reported
-indefinitely, with no supported way to clear them until #735 lands. If that is
-unacceptable, the smallest addition would be a diagnostics-visible list plus a
-service, and a service is arguably not "configuration" — but that is a scope
-decision for the owner, not one the plan should make unilaterally.
+Both previously open points are now decided by the maintainer and folded into
+the plan: FR-004's operator recovery path is the
+`rental_control.clear_orphaned_codes` service (design decision 7), and a service
+is not "configuration" under FR-024. No `[NEEDS CLARIFICATION]` markers remain.
 
 ## Phase Notes
 
