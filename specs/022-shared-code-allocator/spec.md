@@ -212,7 +212,8 @@ it held before the restart.
 - **FR-004**: When a config entry is removed (as opposed to unloaded), the
   system MUST release allocations owned by that entry only after no managed
   lock still reports the code programmed; otherwise it MUST retain and report
-  the orphaned allocation.
+  the orphaned allocation until allocator-level verification or an explicit
+  operator recovery path confirms the code has been cleared.
 
 #### Uniqueness
 
@@ -223,7 +224,8 @@ it held before the restart.
   different config entries cannot both claim the same code.
 - **FR-007**: Allocation MUST be keyed on a reservation's stable identity and
   MUST be idempotent: repeating a request for an already-allocated reservation
-  returns the existing code and does not modify the registry.
+  returns the existing code and does not modify the registry. These continuity
+  guarantees apply while that stable identity remains unchanged.
 - **FR-008**: When no unallocated candidate remains in the configured code
   space, the system MUST decline to issue a code, MUST report the exhaustion to
   the operator, and MUST NOT issue a duplicate.
@@ -242,7 +244,8 @@ it held before the restart.
   the system MUST select a replacement from a candidate sequence that is
   deterministically derived from the requesting reservation's stable identity,
   so the same reservation facing the same registry always reaches the same
-  result.
+  result. The sequence MUST be non-repeating across all valid codes in the
+  configured code space before exhaustion is reported.
 - **FR-012**: Every issued code MUST conform to the config entry's configured
   code length. This feature MUST NOT change the configured or default code
   length.
@@ -253,8 +256,9 @@ it held before the restart.
   config entry no longer manages a lock slot for that reservation — that is,
   after the booking has ended or been cancelled and its slot has been cleared —
   so the code space does not leak. For config entries with no managed lock
-  slot, the system MUST release the allocation when the booking or feed state
-  no longer contains an active reservation for that allocation.
+  slot, the system MUST use the same booking-end, cancellation, and
+  disappearance-grace rules that protect against transient feed omissions before
+  releasing the allocation.
 - **FR-014**: The system MUST NOT release an allocation for a code that is still
   programmed on a managed lock.
 - **FR-015**: A released code MUST become available for future allocation, and a
@@ -273,8 +277,9 @@ it held before the restart.
 - **FR-018**: If the persisted registry is absent, unreadable, or fails
   validation, the system MUST start from an empty registry, MUST warn the
   operator, and MUST rebuild lock-backed allocations by adoption (FR-020).
-  For lockless active reservations without an observed or durable code source,
-  it MUST fail closed by publishing no code rather than assigning a replacement.
+  Any relevant lock slot that cannot be read and adopted, and any lockless
+  active reservation without an observed or durable code source, MUST fail
+  closed by publishing no code rather than assigning a replacement.
 
 #### Display parity
 
@@ -343,16 +348,18 @@ it held before the restart.
 - **SC-002**: One hundred percent of the configured code space is available to
   every config entry; no entry is restricted to a fraction of it.
 - **SC-003**: For every reservation, the code shown by the calendar sensor
-  matches the code programmed into the lock slot in one hundred percent of
-  observed cases, including collision-resolved codes.
+  matches the allocator's code in one hundred percent of observed cases. For
+  lock-backed reservations, that allocator code also matches the code
+  programmed into the lock slot, including collision-resolved codes.
 - **SC-004**: Upgrading an installation with active reservations rotates zero
   in-flight guest codes.
-- **SC-005**: Every active reservation holds an identical code before and after
-  a Home Assistant restart, a single entry reload, and an integration reinstall.
+- **SC-005**: Every active reservation with an available registry, durable
+  source, or observed lock code holds an identical code before and after a Home
+  Assistant restart, a single entry reload, and an integration reinstall.
 - **SC-006**: Every code issued to a reservation whose booking has ended and
-  whose slot has been cleared becomes available for reuse, so steady-state
-  registry size tracks the number of managed slots rather than growing without
-  bound.
+  whose release guard has passed becomes available for reuse, so steady-state
+  registry size tracks active allocations plus explicitly retained orphan and
+  conflict records rather than growing without bound.
 - **SC-007**: Operators need to supply zero additional configuration values to
   obtain the uniqueness guarantee.
 - **SC-008**: Code space exhaustion and pre-existing duplicate codes are both
