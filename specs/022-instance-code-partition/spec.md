@@ -32,7 +32,9 @@ partitioning the code space into disjoint per-instance blocks derived from
 configuration each instance already has, with no live coordination between
 instances, and resolves the remaining within-instance collisions with a
 deterministic probe. Degraded and misconfigured paths that fall back to
-whole-space generation are explicit exceptions and forfeit that guarantee.
+whole-space generation, plus retained out-of-block legacy or manual
+codes that siblings cannot observe, are explicit exceptions and forfeit
+that guarantee.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -203,9 +205,9 @@ for the same bookings.
    **When** the `static_random` generator runs, **Then** partitioning is
    active (opt-out, not opt-in).
 2. **Given** an operator who disables the option on an instance, **When**
-   codes are generated for that instance, **Then** the codes are exactly
-   those the previous whole-space generator produced for the same
-   bookings.
+   codes are generated for new or unretained bookings on that instance,
+   **Then** the codes are exactly those the previous whole-space generator
+   produced for the same bookings.
 3. **Given** the option is disabled on one instance only, **When** codes
    are generated, **Then** that instance warns that opt-out forfeits the
    cross-instance uniqueness guarantee and other instances continue to
@@ -284,11 +286,16 @@ for the same bookings.
 - **No usable seed** (neither reservation UID nor description): the
   existing fallback to the date-based generator applies unchanged, and the
   resulting code is not partitioned. Cross-instance uniqueness is not
-  guaranteed for that booking.
+  guaranteed for that booking. The integration warns for that booking,
+  without logging the generated code, so the operator can see that
+  partitioning degraded.
 - **Instance reconfigured** (slot range, maximum events, capacity, or code
   length changed): its block changes, so codes for bookings not yet
   written to the lock change. Codes already on the lock are retained by
-  existing retention behaviour.
+  existing retention behaviour. A retained out-of-block code can overlap a
+  sibling instance's current block because siblings cannot observe one
+  another's retained PINs; this is an explicit retention/no-coordination
+  exception to the cross-instance guarantee.
 
 ## Requirements *(mandatory)*
 
@@ -299,9 +306,10 @@ for the same bookings.
 - **FR-001**: The system MUST apply code-space partitioning only to the
   `static_random` generator. The `date_based` and `last_four` generators
   MUST be left byte-for-byte unchanged.
-- **FR-002**: The system MUST implement partitioning exactly once, in the
-  shared door-code generation module, so that coordinator-driven and
-  sensor-driven generation produce identical codes for the same booking.
+- **FR-002**: The system MUST expose one behaviourally identical
+  partitioned allocation contract to every generation path, so that
+  coordinator-driven and sensor-driven generation produce identical codes
+  for the same booking set and observed retention state.
 - **FR-003**: The system MUST NOT change the configured or default code
   length as part of this feature.
 
@@ -332,7 +340,10 @@ for the same bookings.
   block.
 - **FR-005**: The system MUST NOT require any live coordination between
   instances: no instance may query another instance, a shared registry, a
-  shared file, or the parent lock in order to generate a code.
+  shared file, or parent-lock slots outside its own managed range in order
+  to generate a code. Reading this instance's own managed slots for the
+  existing retention behaviour is permitted and does not provide
+  cross-instance visibility.
 - **FR-006**: Given instances with non-overlapping slot ranges, the same
   effective capacity, and the same code length, the system MUST produce
   blocks that are pairwise disjoint, such that no code from one instance
@@ -386,6 +397,11 @@ for the same bookings.
   and render the resulting code value. The same normalized seed, block
   start, block size, and configured code length MUST always produce the
   same candidate value.
+- **FR-011b**: When a booking has neither reservation UID nor description,
+  the system MUST use the existing date-based fallback, MUST warn for that
+  booking without logging the generated code, and MUST treat the result as
+  a degraded, non-partitioned credential outside the cross-instance
+  uniqueness guarantee.
 
 #### Within-instance uniqueness
 
@@ -395,18 +411,27 @@ for the same bookings.
   free value within the instance's own block when a candidate value is
   already taken.
 - **FR-012a**: Coordinator-driven reconciliation and sensor-driven display
-  MUST consume the same plan-level allocation contract. When no current
+  MUST consume the same plan-level allocation contract. The allocation
+  population is the current active, future, and otherwise slot-eligible
+  bookings for the instance after the integration's normal calendar
+  parsing, checkout, cancellation, and maximum-event filtering, plus active
+  retained bookings whose managed slot still has an observed PIN. Overflow
+  bookings that will not be assigned a slot in the current plan, cancelled
+  bookings, checked-out bookings, ghost placeholders, and bookings outside
+  the instance's managed slot range do not participate. When no current
   plan exists, such as the first refresh, both paths MUST build allocation
-  from the same visible booking set before displaying or reserving codes,
-  so a sensor cannot show an unprobed per-booking candidate that differs
-  from the reconciled code.
+  from that same population before displaying or reserving codes, so a
+  sensor cannot show an unprobed per-booking candidate that differs from
+  the reconciled code.
 - **FR-012b**: Codes retained from the lock for active bookings MUST be
   inserted into the plan's occupied-code set before probing newly
   generated candidates. A retained code remains assigned to its booking
   even when it falls outside the new partition block, and new generated
-  bookings MUST avoid every retained code they can observe. If retained
-  codes consume all available in-block values, later generated bookings
-  use the block-exhaustion fallback and warning path.
+  in-block bookings MUST avoid every retained code they can observe. If
+  retained codes consume all available in-block values, later generated
+  bookings use the block-exhaustion fallback and warning path; the
+  fallback may still duplicate a retained PIN and must warn for that
+  booking.
 - **FR-013**: The probe MUST visit candidate values in a fixed order:
   start at the booking's mapped candidate offset, then advance by one
   offset at a time within the block, wrapping to the block start after the
@@ -436,8 +461,10 @@ for the same bookings.
 #### Determinism
 
 - **FR-017**: Given identical bookings and identical instance
-  configuration, the system MUST produce identical codes across Home
-  Assistant restarts, reloads, and reinstalls.
+  configuration, and identical observed retained-code state, the system
+  MUST produce identical codes across Home Assistant restarts, reloads,
+  and reinstalls. The generated candidate values before retention remain
+  deterministic from bookings and configuration alone.
 - **FR-018**: Code generation MUST NOT mutate or depend on global random
   state, and MUST NOT depend on wall-clock time, entity ordering, or
   process-local memory that does not survive a restart.
@@ -460,8 +487,11 @@ for the same bookings.
   retained rather than rotated to the newly derived value.
 - **FR-022a**: Retained observed codes participate in the same plan-level
   uniqueness calculation as newly generated codes. Retention wins for the
-  booking that already owns the observed PIN, and other bookings probe or
-  fall back rather than being assigned that same observed code.
+  booking that already owns the observed PIN, and other in-block bookings
+  probe rather than being assigned that same observed code. Pre-existing
+  duplicate observed PINs are retained for their bookings as an explicit
+  exception; new in-block allocations avoid the locally observed PIN, but
+  block-exhaustion fallback can still duplicate and must warn.
 - **FR-023**: The system MUST document the new capacity and opt-out
   options, the default capacity, and the recommendation to use a longer
   code length on parent locks shared by many units.
@@ -478,11 +508,15 @@ for the same bookings.
 - **FR-024**: Changes MUST be covered by tests that assert cross-instance
   disjointness, within-instance uniqueness, restart determinism, opt-out
   equivalence with the previous behaviour, and the warning paths for
-  exhaustion and undersized capacity.
+  exhaustion, empty blocks, out-of-range slots, opt-out, and unseeded
+  date-based fallback.
 - **FR-024a**: Tests MUST include a case demonstrating that instances
   with disjoint slot ranges but differing capacity values can produce
   overlapping blocks, so that the documented precondition is pinned by an
   executable example rather than only by prose.
+- **FR-024b**: Tests MUST cover retained observed PINs as occupied values,
+  including a retained PIN outside the new block and a pre-existing
+  duplicate retained PIN, so the retention exceptions remain explicit.
 
 ### Key Entities
 
@@ -517,9 +551,9 @@ for the same bookings.
   bookings that have never reached the lock are affected. The alternative
   — persisting an allocation map — is heavier than the problem warrants.
 - **Never fail to issue a code.** Every degraded path (block exhausted,
-  empty computed block, slot range beyond capacity) warns and degrades to
-  the previous whole-space behaviour rather than raising or returning no
-  code.
+  empty computed block, slot range beyond capacity, no usable seed, or
+  explicit opt-out) warns and degrades to the previous whole-space or
+  date-based behaviour rather than raising or returning no code.
 - **Ordering by reservation identity is stable.** The reservation UID is
   treated as the primary immutable ordering key for the life of a booking,
   consistent with the existing `static_random` seeding, with deterministic
@@ -586,10 +620,11 @@ for the same bookings.
 
 - **SC-001**: Across a simulated property of 10 partition-enabled
   instances sharing one parent lock with adjacent slot ranges, a uniform
-  capacity, no unseeded bookings, and sufficient block capacity, 100% of
-  generated `static_random` codes are unique across the whole property,
-  for every tested booking set. This holds both at the default capacity
-  and at a raised capacity applied to every instance.
+  capacity, no unseeded bookings, no out-of-block retained PINs, and
+  sufficient block capacity, 100% of generated `static_random` codes are
+  unique across the whole property, for every tested booking set. This
+  holds both at the default capacity and at a raised capacity applied to
+  every instance.
 - **SC-002**: Within any single instance whose block has enough free
   values for the planned bookings, 100% of concurrently planned bookings
   receive distinct codes, including sets contrived to force candidate
@@ -597,16 +632,21 @@ for the same bookings.
 - **SC-003**: For a fixed set of bookings and configuration, 100% of
   generated codes are identical across repeated generation runs and
   simulated restarts.
-- **SC-004**: With partitioning disabled, 100% of generated codes match
-  the values produced by the previous release for the same bookings.
-- **SC-005**: A deployment left entirely at defaults obtains cross-
-  instance uniqueness with zero new configuration entered by the operator.
+- **SC-004**: With partitioning disabled, 100% of generated codes for new
+  or unretained bookings match the values produced by the previous
+  release for the same bookings.
+- **SC-005**: A deployment with pre-existing disjoint slot ranges and the
+  new partitioning and capacity options left at defaults obtains
+  cross-instance uniqueness with zero new partition configuration entered
+  by the operator.
 - **SC-006**: No booking is ever left without a code: every degraded
   condition (block exhausted, empty computed block, slot range beyond
-  capacity) still yields a correctly formatted code and emits clear,
-  instance-identifying warnings. Empty-block and slot-range degraded paths
-  emit one warning per affected instance and reconciliation pass;
-  block-exhaustion fallbacks emit one warning per affected booking.
+  capacity, no usable seed, opted-out partitioning) still yields a
+  correctly formatted code and emits clear, instance-identifying warnings.
+  Empty-block and slot-range degraded paths emit one warning per affected
+  instance and reconciliation pass; block-exhaustion and unseeded
+  fallbacks emit one warning per affected booking; opt-out emits one
+  warning or confirmation per configuration change.
 - **SC-007**: Upgrading an existing installation rotates zero codes for
   active bookings whose existing lock PIN is readable during
   reconciliation.
