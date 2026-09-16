@@ -60,7 +60,10 @@ with the record's captured first-owner `entry_id`:
 
 ```python
 encoded = base64.b64encode(salt.encode("utf-8") + code.encode("utf-8")).decode("utf-8")
-code = base64.b64decode(encoded)[len(salt.encode("utf-8")):].decode("utf-8")
+raw = base64.b64decode(encoded, validate=True)
+if not raw.startswith(salt.encode("utf-8")):
+    raise ValueError("encoded code does not match stored salt")
+code = raw[len(salt.encode("utf-8")):].decode("utf-8")
 ```
 
 Keep this inside `store.py` only. The registry works in plain values; do not

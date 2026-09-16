@@ -251,15 +251,16 @@ the cycle on failure; the allocation step keeps that property and must not raise
 for ordinary conditions such as exhaustion, which are reported instead.
 
 Before phase 2, the caller hydrates current-feed reservations from the persisted
-mapping store (`fingerprint_history`, `missing_count`, and ghost reservations)
-so rematches and disappearance grace use the same inputs as the planner.
+mapping store (`fingerprint_history`, `missing_count`, `published_once`, and
+ghost reservations) so rematches, disappearance grace, and registry-loss
+fail-closed decisions use durable inputs rather than the current check-in window.
 
 For entries with no managed lock (`event_overrides is None`), `_async_update_data`
 gains a small branch that builds reservations with `managed_slots=None`,
-including the same ghost reservations and missing-count state, and runs phases 2
-through 4 only (there is nothing to adopt), then sets `self._latest_res_by_key`
-so `get_slot_code` works. It computes no plan, emits no actions, and calls no
-services (FR-023).
+including the same ghost reservations, missing-count state, and durable
+`published_once` flag, and runs phases 2 through 4 only (there is nothing to
+adopt), then sets `self._latest_res_by_key` so `get_slot_code` works. It
+computes no plan, emits no actions, and calls no services (FR-023).
 
 ### 3. Preferred code, collision resolution, determinism (FR-009 to FR-011)
 
@@ -337,9 +338,14 @@ if self._event_attributes["slot_code"] is None:
 construction. `calsensor_helpers/codes.py` remains only if another caller needs
 it; the display path no longer imports it. `slots.read_slot` currently only
 consults the coordinator when `event_overrides_present` is true; that gate is
-replaced by an unconditional `coordinator.get_slot_code(identity_key)` /
-`get_slot_assignment(identity_key)` lookup, which is correct now that lockless
-entries populate `_latest_res_by_key`. `slot_code` may be `None`, which the
+replaced by an unconditional confirmed-code lookup. For lock-backed entries,
+`coordinator.get_slot_code(identity_key)` exposes the allocator's code only
+after the matching `SET`/update has been confirmed by the coordinator's physical
+observation; while a plan is deferred or a write is unconfirmed it retains the
+last observed code, or `None` if no safe value has been confirmed. Lockless
+entries have no physical confirmation step and publish the allocated value once
+it is persisted in `_latest_res_by_key`. `get_slot_assignment(identity_key)`
+continues to provide the slot metadata. `slot_code` may be `None`, which the
 attribute dict already permits.
 
 `last_four` is unaffected. It is parsed from the description, not generated, so
@@ -443,11 +449,14 @@ Both that guard and the issuance rule below need physical slot state, so the
 allocator is given it explicitly rather than inferring it. Each owner record
 carries the `lockname` and `slot` its code is programmed on (`None` for a
 lockless entry), and each cycle passes a `CycleObservation` of that entry's
-managed slots, readable codes, and unreadable slots. From those two the allocator
-decides retention — a code is programmed if it was read back, or if its own slot
-could not be read — and derives the unaccounted set as the unreadable slots no
-registry owner claims. Neither rule is left to be guessed from inputs that do
-not contain the answer.
+managed slots, readable codes, and unreadable slots. For newly issued
+lock-backed codes, the reservation builder supplies the planned slot on the
+`AllocationRequest` before allocation; the allocator copies it into the owner
+record immediately, and plan validation rejects any lock-backed allocation that
+lacks that binding. From those inputs the allocator decides retention — a code
+is programmed if it was read back, or if its own slot could not be read — and
+derives the unaccounted set as the unreadable slots no registry owner claims.
+Neither rule is left to be guessed from inputs that do not contain the answer.
 
 So the allocator refuses to *issue new* codes for an entry whose unaccounted set
 is non-empty: if a slot's code cannot be read and no record covers that slot, the
@@ -547,17 +556,19 @@ the spec says.
   and remains the source of observed codes; the allocation step consumes its
   result rather than replacing it.
 - Lockless entries have no observable code, so registry loss is unrecoverable
-  for them. An already-active lockless reservation — one whose check-in window
-  has already started when the allocator starts from an empty registry — is
-  held at `code_source="unallocated"` with `reason="recovery_fail_closed"`.
-  Issuing it a fresh code would be a *replacement*, not a recovery: the guest
-  may already hold the old code, and FR-018 requires failing closed rather than
-  silently substituting. Allocating and persisting a new code does not make it a
-  recovered source. Reservations whose window has not yet started were never
-  communicated, so they are genuinely new and allocate normally. The distinction
-  is the request's `active_now` flag combined with the allocator's
-  registry-loss flag; the operator is notified once, and #735's force re-issue
-  is the sanctioned way to give an active guest a new code.
+  for them. A lockless reservation whose code may already have been communicated
+  is held at `code_source="unallocated"` with
+  `reason="recovery_fail_closed"`. The check-in window is not the source of
+  truth because the calendar sensor can publish future `slot_code` values; the
+  per-entry cache instead records a durable `published_once` flag when a code is
+  exposed through the sensor or captive portal, and `AllocationRequest` carries
+  that flag as `previously_published`. Issuing such a reservation a fresh code
+  would be a *replacement*, not a recovery: the guest may already hold the old
+  code, and FR-018 requires failing closed rather than silently substituting.
+  Allocating and persisting a new code does not make it a recovered source.
+  Reservations with no durable publication record are genuinely new and allocate
+  normally. The operator is notified once, and #735's force re-issue is the
+  sanctioned way to give a guest a new code.
 - The per-entry cache store, its schema version, and its no-PIN policy are
   untouched. #736's "`slot_code` is never persisted" note in
   `plan_models.py` is superseded by the new registry and should be updated in

@@ -70,6 +70,9 @@ code calls `async_resolve_cycle`.
   `code_length`; any mismatch corrupts the whole payload (FR-018).
 - `async_allocate` for a known `identity_key` returns the same code and performs
   no registry mutation (FR-007).
+- A newly allocated lock-backed owner records the planned `lockname` and `slot`
+  supplied on its `AllocationRequest`; it is never persisted with a missing
+  physical identity that would make FR-014 undecidable.
 - Issuance, and only issuance, is suppressed while `_pending_adoption` is
   non-empty; the deadline notifies but does not make unsafe issuance proceed.
 - Issuance is suppressed for an entry with unreadable managed slots that the
@@ -176,9 +179,12 @@ for. A lockless entry supplies `lockname=None` and empty sets.
 ### AllocationRequest / AllocationResult
 
 **Request fields**: `entry_id`, `identity_key`, `preferred_code`, `code_length`,
-`fingerprint_history`, `active_now: bool` (the check-in window has started), and
+`fingerprint_history`, `previously_published: bool` (the per-entry cache has
+durably recorded that the code was exposed through the sensor or captive
+portal), `lockname: str | None`, `slot: int | None`, and
 `issuance_allowed: bool` (default `True`, set by `async_resolve_cycle` from the
-derived unaccounted-slot set).
+derived unaccounted-slot set). Newly allocated lock-backed owners copy the
+request's physical fields; lockless owners use `None` for both.
 
 **Result fields**: `code: str | None`, `origin: AllocationOrigin | None`,
 `reason: str | None` where `reason` is one of `"exhausted"`,
@@ -205,9 +211,11 @@ Wraps `homeassistant.helpers.storage.Store` at key
 `rental_control.code_registry`, schema version 1. It is the only component that
 converts between plain in-memory codes and their obfuscated `encoded_code` form:
 encode on save, decode on load, never elsewhere. The obfuscation is Keymaster's
-salted base64 and is not a security boundary; see the contract. Load failures of
-any kind (absent, unreadable, wrong version, malformed, undecodable) resolve to
-an empty registry plus a warning and a persistent notification. Saves use
+salted base64 and is not a security boundary; see the contract. An absent store
+or invalid payload (wrong version, malformed, undecodable) resolves to an empty
+registry plus a warning and a persistent notification. Home Assistant storage
+I/O failures are different: setup raises `ConfigEntryNotReady` so the old
+registry is not silently discarded and codes are not reissued. Saves use
 `async_delay_save` so a burst of entry refreshes produces one write.
 
 ### OrphanCleanupReport

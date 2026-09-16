@@ -61,8 +61,11 @@ def encode_code(code: str, salt: str) -> str:
     return base64.b64encode(salt.encode("utf-8") + code.encode("utf-8")).decode("utf-8")
 
 def decode_code(encoded_code: str, salt: str) -> str:
-    raw = base64.b64decode(encoded_code)
-    return raw[len(salt.encode("utf-8")):].decode("utf-8")
+    salt_bytes = salt.encode("utf-8")
+    raw = base64.b64decode(encoded_code, validate=True)
+    if not raw.startswith(salt_bytes):
+        raise ValueError("encoded code does not match stored salt")
+    return raw[len(salt_bytes):].decode("utf-8")
 ```
 
 **Salt source**: the `entry_id` of the record's *first* owner, captured when the
@@ -88,9 +91,11 @@ load, nowhere else.
 
 ### Field rules
 
-- `schema_version` — must equal `1`. A higher value means the file was written
-  by a newer release; the allocator refuses it, warns, and starts empty rather
-  than risk misinterpreting records.
+- `schema_version` — must equal `1`. Any other value is rejected before
+  constructing the registry. A higher value means the file was written by a
+  newer release; a lower or missing value is not a schema this release can
+  interpret. The allocator refuses it, warns, and starts empty rather than risk
+  misinterpreting records.
 - `code_ref_salt` — random hex generated once on first save. Used only to derive
   the masked `code_ref` for logs and diagnostics. It is unrelated to the at-rest
   encoding salt and neither replaces the other. Losing it is harmless; a new one
@@ -119,11 +124,13 @@ load, nowhere else.
 ### Validation and failure behaviour
 
 Any of the following make the payload unusable: missing or non-integer
-`schema_version`, `schema_version` greater than 1, `records` not a list, a record
-whose `encoded_code` is missing or fails to decode to decimal digits of exactly
-`code_length`, a record with no owners, an `encoding_salt_source` the release
-does not recognise, two records whose `encoded_code` values decode to the same
-code, or the same `identity_key` owned by two different records.
+`schema_version`, `schema_version` not equal to 1, `records` not a list, a
+record whose `encoded_code` is missing, is not strict base64, does not decode to
+bytes starting with that record's stored `encoding_salt_value`, or fails to
+decode to decimal digits of exactly `code_length`, a record with no owners, an
+`encoding_salt_source` the release does not recognise, two records whose
+`encoded_code` values decode to the same code, or the same `identity_key` owned
+by two different records.
 
 The duplicate-decoded-code rule is not optional. The persisted form is a list
 while the in-memory registry is keyed by the plain code, so without this check
@@ -241,11 +248,19 @@ public phase methods exist so tests can exercise one behaviour at a time; they
 are not a supported way to compose a cycle.
 
 `AllocationRequest` fields: `entry_id`, `identity_key`, `preferred_code`,
-`code_length`, `fingerprint_history`, `active_now: bool` (the reservation's
-check-in window has already started). `issuance_allowed: bool` defaults to
-`True` and is set by `async_resolve_cycle` from the derived unaccounted-slot
-set; a standalone `async_allocate` call therefore never returns
-`unaccounted_slots`.
+`code_length`, `fingerprint_history`, `previously_published: bool` (the
+per-entry cache has durably recorded that this reservation's code was exposed
+through the sensor or captive portal), plus `lockname` and `slot` for
+lock-backed reservations. Lockless requests set both physical fields to
+`None`. `issuance_allowed: bool` defaults to `True` and is set by
+`async_resolve_cycle` from the derived unaccounted-slot set; a standalone
+`async_allocate` call therefore never returns `unaccounted_slots`.
+
+For a newly issued lock-backed code, the request's `lockname` and `slot` become
+the owner's physical identity before the result is returned. The caller derives
+them from the planned slot assignment before allocation, so a later unreadable
+or missing observation can still be guarded by FR-014 instead of releasing an
+unbound record.
 
 `AdoptionRequest` carries `entry_id`, `identity_key`, the observed `code`,
 `code_length`, and the `lockname` and `slot` it was observed on, which become
@@ -294,13 +309,14 @@ or encoded code.
 | `exhausted` | both | Every candidate in the space is taken | `slot_code = None`, warn once per cycle, notify operator |
 | `adoption_pending` | both | Gate closed, new issuance deferred | `slot_code = None`, debug log, retry next cycle |
 | `unaccounted_slots` | `async_resolve_cycle` only | Unreadable slots the registry cannot account for | `slot_code = None`, warn, retry next cycle |
-| `recovery_fail_closed` | both | Registry was lost; this reservation is already active and has no recovered code | `slot_code = None`, warn, never replace |
+| `recovery_fail_closed` | both | Registry was lost; this reservation may already have been published and has no recovered code | `slot_code = None`, warn, never replace |
 
 `unaccounted_slots` is derivable only inside `async_resolve_cycle`, which has the
 `CycleObservation`; a standalone `async_allocate` has no slot context and never
 produces it. `recovery_fail_closed` applies when `async_load` started from an
-empty registry after a load failure and the request has `active_now=True` with
-no adopted or recovered code — see FR-018 and decision 7 in the plan.
+empty registry after a load failure and the request has
+`previously_published=True` with no adopted or recovered code — see FR-018 and
+decision 7 in the plan.
 
 In every `code is None` case the caller sets `code_source = "unallocated"` and
 the planner holds the slot without writing or clearing it.
