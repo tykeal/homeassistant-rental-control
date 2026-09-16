@@ -63,15 +63,18 @@ that the union of all generated codes contains no duplicates.
    **When** each generates codes for its bookings, **Then** no code
    produced by one instance equals any code produced by the other, for any
    combination of reservation UIDs.
-2. **Given** a partition-enabled instance configured with `static_random`
-   and valid, non-degraded partition inputs, **When** it generates a code
-   for a booking with a usable seed, **Then** the code falls inside the
-   block of the code space derived from that instance's own slot range
-   and no other valid sibling instance's block includes that value.
-3. **Given** instances that cannot communicate with one another, **When**
+2. **Given** a partition-enabled instance configured with `static_random`,
+   valid non-degraded partition inputs, and siblings that share the same
+   effective capacity and code length with non-overlapping ranges, **When**
+   it generates a code for a booking with a usable seed, **Then** the code
+   falls inside the block of the code space derived from that instance's
+   own slot range and no sibling block includes that value.
+3. **Given** partition-enabled instances with non-overlapping slot ranges,
+   the same effective capacity and code length, usable seeds, no retained
+   duplicate or out-of-block PINs, and enough block capacity, **When**
    codes are generated, **Then** uniqueness is achieved without any
-   instance querying another instance, a shared registry, or the parent
-   lock.
+   instance querying another instance, a shared registry, or parent-lock
+   slots outside its own managed range.
 
 ---
 
@@ -88,15 +91,17 @@ trustworthy.
 identity. A partitioning scheme that broke it would be a regression worse
 than the defect it fixes.
 
-**Independent Test**: Generate codes for a fixed set of bookings, discard
-all in-memory state, regenerate from the same inputs, and verify the
-mapping from booking to code is byte-identical.
+**Independent Test**: Generate codes for a fixed set of bookings and
+observed retained-code state, discard all in-memory state, regenerate from
+the same inputs and observed state, and verify the mapping from booking to
+code is byte-identical.
 
 **Acceptance Scenarios**:
 
-1. **Given** an unchanged set of bookings and unchanged instance
-   configuration, **When** codes are generated repeatedly across restarts,
-   **Then** each booking receives the identical code every time.
+1. **Given** an unchanged set of bookings, unchanged instance
+   configuration, and unchanged observed retained-code state, **When**
+   codes are generated repeatedly across restarts, **Then** each booking
+   receives the identical code every time.
 2. **Given** a booking whose slot assignment changes during
    reconciliation, **When** its code is generated, **Then** the code is
    unchanged, because the code derives from reservation identity and the
@@ -128,10 +133,11 @@ is identical on a second run.
 
 **Acceptance Scenarios**:
 
-1. **Given** two bookings in one instance whose candidate codes are equal,
-   **When** codes are generated, **Then** the later booking in the fixed
-   resolution order receives the next free value in its instance's block
-   and the two codes differ.
+1. **Given** two bookings in one non-degraded instance plan whose
+   candidate codes are equal and whose block has a free value for the
+   later booking, **When** codes are generated, **Then** the later booking
+   in the fixed resolution order receives the next free value in its
+   instance's block and the two codes differ.
 2. **Given** the same colliding set of bookings, **When** generation is
    repeated on a later run or after a restart, **Then** exactly the same
    booking keeps the original candidate and exactly the same booking is
@@ -415,14 +421,16 @@ for the same bookings.
   population is the current active, future, and otherwise slot-eligible
   bookings for the instance after the integration's normal calendar
   parsing, checkout, cancellation, and maximum-event filtering, plus active
-  retained bookings whose managed slot still has an observed PIN. Overflow
-  bookings that will not be assigned a slot in the current plan, cancelled
-  bookings, checked-out bookings, ghost placeholders, and bookings outside
-  the instance's managed slot range do not participate. When no current
-  plan exists, such as the first refresh, both paths MUST build allocation
-  from that same population before displaying or reserving codes, so a
-  sensor cannot show an unprobed per-booking candidate that differs from
-  the reconciled code.
+  retained bookings whose managed slot still has an observed PIN, including
+  retained ghost placeholders that temporarily represent missing feed
+  events with an observed PIN. Overflow bookings that will not be assigned
+  a slot in the current plan, cancelled bookings, checked-out bookings,
+  ghost placeholders without an observed PIN, and bookings outside the
+  instance's managed slot range do not participate. When no current plan
+  exists, such as the first refresh, both paths MUST build allocation from
+  that same population before displaying or reserving codes, so a sensor
+  cannot show an unprobed per-booking candidate that differs from the
+  reconciled code.
 - **FR-012b**: Codes retained from the lock for active bookings MUST be
   inserted into the plan's occupied-code set before probing newly
   generated candidates. A retained code remains assigned to its booking
@@ -517,6 +525,9 @@ for the same bookings.
 - **FR-024b**: Tests MUST cover retained observed PINs as occupied values,
   including a retained PIN outside the new block and a pre-existing
   duplicate retained PIN, so the retention exceptions remain explicit.
+- **FR-024c**: Tests MUST include a coordinator-versus-sensor parity case
+  that exercises plan-level probing on first refresh and retained-code
+  occupancy, not only the legacy single-booking helper path.
 
 ### Key Entities
 
@@ -621,24 +632,27 @@ for the same bookings.
 - **SC-001**: Across a simulated property of 10 partition-enabled
   instances sharing one parent lock with adjacent slot ranges, a uniform
   capacity, no unseeded bookings, no out-of-block retained PINs, and
-  sufficient block capacity, 100% of generated `static_random` codes are
-  unique across the whole property, for every tested booking set. This
-  holds both at the default capacity and at a raised capacity applied to
-  every instance.
+  no duplicate retained PINs, 100% of newly generated `static_random`
+  codes are unique across the whole property, for every tested booking set
+  with sufficient block capacity. This holds both at the default capacity
+  and at a raised capacity applied to every instance.
 - **SC-002**: Within any single instance whose block has enough free
-  values for the planned bookings, 100% of concurrently planned bookings
-  receive distinct codes, including sets contrived to force candidate
-  collisions.
+  values for the planned newly generated bookings and no duplicate
+  retained PINs, 100% of concurrently planned newly generated or
+  non-duplicate retained bookings receive distinct codes, including sets
+  contrived to force candidate collisions.
 - **SC-003**: For a fixed set of bookings and configuration, 100% of
-  generated codes are identical across repeated generation runs and
-  simulated restarts.
+  generated candidate codes are identical across repeated generation runs
+  and simulated restarts. Returned codes are identical when the observed
+  retained-code state is also identical.
 - **SC-004**: With partitioning disabled, 100% of generated codes for new
   or unretained bookings match the values produced by the previous
   release for the same bookings.
-- **SC-005**: A deployment with pre-existing disjoint slot ranges and the
-  new partitioning and capacity options left at defaults obtains
-  cross-instance uniqueness with zero new partition configuration entered
-  by the operator.
+- **SC-005**: A deployment with pre-existing disjoint slot ranges, valid
+  seeded `static_random` bookings, sufficient block capacity, and the new
+  partitioning and capacity options left at defaults obtains
+  cross-instance uniqueness for newly generated codes with zero new
+  partition configuration entered by the operator.
 - **SC-006**: No booking is ever left without a code: every degraded
   condition (block exhausted, empty computed block, slot range beyond
   capacity, no usable seed, opted-out partitioning) still yields a
