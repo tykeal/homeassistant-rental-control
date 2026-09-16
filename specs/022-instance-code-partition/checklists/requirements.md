@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Specification Quality Checklist: Instance-Partitioned Static Random Door Codes
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
@@ -50,5 +55,9 @@
 - Related issues intentionally left unsolved here: #735 (force re-issue,
   needed to heal the existing live collision), #736 (persist the generated
   code), and the separate code-length issue.
-- Module names, file paths, and algorithm details belong to the planning
-  stage and are deliberately absent from this spec.
+- Module names, file paths, low-level implementation choices, and code
+  organization details belong to the planning stage and are deliberately
+  absent from this spec. Behaviour-defining rules such as UID-primary
+  ordering, canonical block boundaries, probing order, and whole-space
+  fallback are intentionally present because they are required for
+  testability and interoperability across generation paths.

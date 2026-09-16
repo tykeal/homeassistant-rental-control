@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Feature Specification: Instance-Partitioned Static Random Door Codes
 
 **Feature Branch**: `022-instance-code-partition`
@@ -21,11 +26,13 @@ sync only their own subset, never noticed. Downstream consumers treat the
 door code as a credential and resolve a booking by code across *all*
 integrations, so a duplicate can authorize the wrong guest's booking.
 
-This feature makes cross-instance collisions structurally impossible for
-the `static_random` generator by partitioning the code space into disjoint
-per-instance blocks derived from configuration each instance already has,
-with no live coordination between instances, and resolves the remaining
-within-instance collisions with a deterministic probe.
+For valid, enabled partitioned inputs, this feature makes cross-instance
+collisions structurally impossible for the `static_random` generator by
+partitioning the code space into disjoint per-instance blocks derived from
+configuration each instance already has, with no live coordination between
+instances, and resolves the remaining within-instance collisions with a
+deterministic probe. Degraded and misconfigured paths that fall back to
+whole-space generation are explicit exceptions and forfeit that guarantee.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -40,17 +47,20 @@ resolve to the wrong guest.
 **Why this priority**: This is the reported production defect and the
 security exposure. Everything else in this feature exists to support it.
 
-**Independent Test**: Configure several instances with adjacent,
-non-overlapping slot ranges and the `static_random` generator, generate
-codes for a full set of bookings in each, and verify that the union of all
-generated codes contains no duplicates.
+**Independent Test**: Configure several partition-enabled instances with
+adjacent, non-overlapping slot ranges, the same effective capacity, enough
+block capacity for their planned bookings, and the `static_random`
+generator, generate codes for a full set of bookings in each, and verify
+that the union of all generated codes contains no duplicates.
 
 **Acceptance Scenarios**:
 
-1. **Given** two instances sharing a parent lock with non-overlapping slot
-   ranges and the `static_random` generator, **When** each generates codes
-   for its bookings, **Then** no code produced by one instance equals any
-   code produced by the other, for any combination of reservation UIDs.
+1. **Given** two partition-enabled instances sharing a parent lock with
+   non-overlapping slot ranges, the same effective capacity, enough block
+   capacity for their planned bookings, and the `static_random` generator,
+   **When** each generates codes for its bookings, **Then** no code
+   produced by one instance equals any code produced by the other, for any
+   combination of reservation UIDs.
 2. **Given** an instance configured with `static_random`, **When** it
    generates a code, **Then** the code falls inside the block of the code
    space derived from that instance's own slot range and no other
@@ -196,7 +206,13 @@ for the same bookings.
    those the previous whole-space generator produced for the same
    bookings.
 3. **Given** the option is disabled on one instance only, **When** codes
-   are generated, **Then** other instances continue to partition normally.
+   are generated, **Then** that instance warns that opt-out forfeits the
+   cross-instance uniqueness guarantee and other instances continue to
+   partition normally.
+4. **Given** an operator disables partitioning, **When** the confirmation
+   text or documentation is shown, **Then** it states that whole-space
+   generation can collide with sibling instances and should be used only
+   when the operator accepts that risk.
 
 ---
 
@@ -207,9 +223,11 @@ for the same bookings.
   no free value remains in the block, the generator falls back to the
   unpartitioned whole-space value for that booking and records a clear
   warning naming the instance and advising a longer code length or a lower
-  capacity. Issuing a possibly-duplicate code is preferred over issuing
-  none, because a missing code locks a guest out immediately whereas a
-  duplicate is rare and detectable.
+  capacity. The warning is recorded once for each affected booking, because
+  each fallback credential can collide independently. Issuing a
+  possibly-duplicate code is preferred over issuing none, because a
+  missing code locks a guest out immediately whereas a duplicate is rare
+  and detectable.
 - **Configured capacity larger than the usable code space** (for example a
   high override with a 4-digit code length, which would make each block
   smaller than one value): partitioning cannot be expressed. The
@@ -218,6 +236,11 @@ for the same bookings.
 - **Slot range extending past the configured capacity**: blocks can no
   longer be guaranteed disjoint for that instance. The integration warns
   and recommends raising the capacity override.
+- **Partitioning disabled for one instance**: that instance deliberately
+  returns to whole-space generation and can collide with sibling
+  instances. The integration warns or requires confirmation when the
+  operator disables partitioning, and documentation states that opt-out
+  forfeits the cross-instance uniqueness guarantee.
 - **Capacity override applied unevenly across instances**
   (misconfiguration, and the most likely way this feature silently
   fails): capacity is the divisor that defines block boundaries, so
@@ -254,7 +277,8 @@ for the same bookings.
   uniqueness weaknesses.
 - **No usable seed** (neither reservation UID nor description): the
   existing fallback to the date-based generator applies unchanged, and the
-  resulting code is not partitioned.
+  resulting code is not partitioned. Cross-instance uniqueness is not
+  guaranteed for that booking.
 - **Instance reconfigured** (slot range, maximum events, capacity, or code
   length changed): its block changes, so codes for bookings not yet
   written to the lock change. Codes already on the lock are retained by
@@ -281,6 +305,25 @@ for the same bookings.
   space solely from that instance's own existing configuration — its
   starting slot, its maximum event count, its code length — measured
   against a parent-lock capacity value.
+- **FR-004a**: The code-space domain used for partitioning MUST be the
+  existing `static_random` candidate domain: integers `1` through
+  `10^code_length - 2`, inclusive, rendered with zero padding to the
+  configured length. The domain therefore contains
+  `10^code_length - 2` usable values.
+- **FR-004b**: Blocks MUST be derived with a canonical half-open formula.
+  Let `D = 10^code_length - 2`, `C = effective_capacity`,
+  `S = start_slot - 1`, and `E = S + max_events`. The instance owns
+  offsets `[floor(S * D / C), floor(E * D / C))` within the domain, then
+  maps each offset `o` to code value `o + 1`. For example, with
+  `D = 9998` and `C = 250`, slots 1-10 own offsets `[0, 399)` and code
+  values `0001` through `0399`, while slots 11-20 own offsets
+  `[399, 799)` and code values `0400` through `0799`; adjacent slot
+  ranges therefore never share an endpoint.
+- **FR-004c**: If `start_slot < 1`, `max_events < 1`, or
+  `start_slot + max_events - 1` exceeds the effective capacity, block
+  derivation is invalid for that instance and MUST use the degraded path
+  defined for out-of-range slots rather than clamping into a neighbouring
+  block.
 - **FR-005**: The system MUST NOT require any live coordination between
   instances: no instance may query another instance, a shared registry, a
   shared file, or the parent lock in order to generate a code.
@@ -299,6 +342,10 @@ for the same bookings.
   overrides the capacity for deployments whose parent lock is addressed
   beyond the default — for example large buildings using name-based
   virtual slots.
+- **FR-008a**: The capacity override MUST accept only positive integers.
+  Zero, negative, non-integer, or otherwise malformed values MUST be
+  rejected during configuration validation before block derivation can use
+  them.
 - **FR-009**: The system MUST NOT require the capacity override to be set
   on any instance for the default case to work: when no instance
   overrides it, every instance shares the default capacity and blocks are
@@ -329,10 +376,24 @@ for the same bookings.
   instance's plan never receive the same code, by deterministically
   probing for the next free value within the instance's own block when a
   candidate value is already taken.
-- **FR-013**: The probe MUST visit candidate values in a fixed, defined
-  order, and bookings MUST be resolved in a fixed order determined by
-  reservation UID, so that the outcome does not depend on calendar order,
-  fetch order, or processing order.
+- **FR-012a**: Coordinator-driven reconciliation and sensor-driven display
+  MUST consume the same plan-level allocation contract. When no current
+  plan exists, such as the first refresh, both paths MUST build allocation
+  from the same visible booking set before displaying or reserving codes,
+  so a sensor cannot show an unprobed per-booking candidate that differs
+  from the reconciled code.
+- **FR-013**: The probe MUST visit candidate values in a fixed order:
+  start at the booking's mapped candidate offset, then advance by one
+  offset at a time within the block, wrapping to the block start after the
+  block end, until a free value is found or the whole block has been
+  visited.
+- **FR-013a**: Bookings MUST be resolved in a total, stable order whose
+  primary key is reservation UID. Missing UIDs sort after present UIDs,
+  equal UIDs are broken by the legacy seed text, booking start time,
+  booking end time, and a stable source-calendar identifier, and any
+  remaining indistinguishable duplicate events are ordered by a canonical
+  serialization of those fields. The order MUST NOT depend on calendar
+  fetch order, entity iteration order, or processing order.
 - **FR-014**: The probe MUST consider only codes within the instance's own
   plan; it MUST NOT read codes belonging to other instances.
 - **FR-015**: When every value in the instance's block is taken, the
@@ -362,6 +423,10 @@ for the same bookings.
 - **FR-021**: The system MUST provide a configuration option that disables
   partitioning per instance, returning that instance to the previous
   whole-space generation behaviour exactly.
+- **FR-021a**: Disabling partitioning MUST warn or require confirmation
+  that the instance will use whole-space generation and can duplicate
+  codes produced by sibling instances, forfeiting the cross-instance
+  uniqueness guarantee for that instance.
 - **FR-022**: The system MUST preserve existing code retention behaviour,
   so that a code already observed on the lock for an active booking is
   retained rather than rotated to the newly derived value.
@@ -373,6 +438,11 @@ for the same bookings.
   the shared parent lock and MUST be set to the same value on every
   instance sharing that lock, and MUST warn that applying it to only some
   instances can produce overlapping blocks and duplicate codes.
+- **FR-023b**: The opt-out option's help text in the configuration UI and
+  the user documentation MUST both state that disabling partitioning
+  restores legacy whole-space generation, can duplicate codes produced by
+  sibling instances, and removes the cross-instance uniqueness guarantee
+  for the opted-out instance.
 - **FR-024**: Changes MUST be covered by tests that assert cross-instance
   disjointness, within-instance uniqueness, restart determinism, opt-out
   equivalence with the previous behaviour, and the warning paths for
@@ -418,9 +488,10 @@ for the same bookings.
   capacity larger than the code space, slot range beyond capacity) warns
   and degrades to the previous whole-space behaviour rather than raising
   or returning no code.
-- **Ordering by reservation UID is stable.** The reservation UID is
-  treated as immutable for the life of a booking, consistent with the
-  existing `static_random` seeding.
+- **Ordering by reservation identity is stable.** The reservation UID is
+  treated as the primary immutable ordering key for the life of a booking,
+  consistent with the existing `static_random` seeding, with deterministic
+  tie-breakers for missing or repeated UIDs.
 - **Capacity default of 250** reflects typical parent-lock addressing.
   Deployments beyond it are expected to use the override.
 - **Capacity is uniform across a parent lock.** Blocks are disjoint only
@@ -431,18 +502,20 @@ for the same bookings.
   guaranteed by documentation and operator discipline alone. It is the
   single most likely way this feature fails silently.
 - **Space sizing at the default capacity**: at a 4-digit code length the
-  per-slot-equivalent space is roughly 39 values; at 5 digits roughly 399.
-  A longer code length is therefore advisable on parent locks shared by
-  many units, but changing the default code length is not part of this
+  per-slot-equivalent space is roughly 39 values; at a supported 6-digit
+  code length it is roughly 3,999. A longer supported code length is
+  therefore advisable on parent locks shared by many units, but changing
+  the default code length or supported code-length set is not part of this
   feature.
 
 ## Migration and Live Behaviour
 
-- **Existing guests will not be disrupted.** Reconciliation reads the PIN
-  back from the lock and retains the observed value when it differs from
-  the freshly generated one. Codes already written for active bookings
-  will therefore *not* rotate when this feature ships. The change takes
-  effect for codes that have not yet been written.
+- **Existing guests will not be disrupted when the lock is readable.**
+  Reconciliation reads the PIN back from the lock and retains the observed
+  value when it differs from the freshly generated one. Codes already
+  written for active bookings will therefore *not* rotate when this
+  feature ships if Keymaster returns an observed PIN for the slot. The
+  change takes effect for codes that have not yet been written.
 - **The existing production collision will NOT self-heal.** Both colliding
   codes are already present on the lock, so retention preserves both.
   Clearing the live duplicate requires the force-re-issue capability
@@ -451,15 +524,17 @@ for the same bookings.
   Assistant's own store; the lock is the sole durable record. Determinism
   here is therefore a property of regeneration from booking identity and
   configuration, not of stored state. Persisting the code is tracked
-  separately in issue #736 and is out of scope.
+  separately in issue #736 and is out of scope. If the lock is unreadable
+  during an upgrade or refresh, there is no observed PIN to retain, so an
+  active booking can receive the newly generated value.
 
 ## Out of Scope
 
 - The `date_based` and `last_four` generators, including their own
   uniqueness weaknesses. Deliberately excluded and deliberately not
   tracked separately.
-- Changing the default code length from 4 to 5 digits — covered by a
-  separate issue.
+- Changing the default code length or supporting additional unsupported
+  code lengths — covered by issue #741.
 - Healing or re-issuing codes already written to the lock, including the
   live production duplicate — issue #735.
 - Persisting the generated code to the Home Assistant store — issue #736.
@@ -477,14 +552,16 @@ for the same bookings.
 
 ### Measurable Outcomes
 
-- **SC-001**: Across a simulated property of 10 instances sharing one
-  parent lock with adjacent slot ranges and a uniform capacity, 100% of
+- **SC-001**: Across a simulated property of 10 partition-enabled
+  instances sharing one parent lock with adjacent slot ranges, a uniform
+  capacity, no unseeded bookings, and sufficient block capacity, 100% of
   generated `static_random` codes are unique across the whole property,
   for every tested booking set. This holds both at the default capacity
   and at a raised capacity applied to every instance.
-- **SC-002**: Within any single instance, 100% of concurrently planned
-  bookings receive distinct codes, including sets contrived to force
-  candidate collisions.
+- **SC-002**: Within any single instance whose block has enough free
+  values for the planned bookings, 100% of concurrently planned bookings
+  receive distinct codes, including sets contrived to force candidate
+  collisions.
 - **SC-003**: For a fixed set of bookings and configuration, 100% of
   generated codes are identical across repeated generation runs and
   simulated restarts.
@@ -495,9 +572,12 @@ for the same bookings.
 - **SC-006**: No booking is ever left without a code: every degraded
   condition (block exhausted, capacity larger than the code space, slot
   range beyond capacity) still yields a correctly formatted code and emits
-  exactly one clear, instance-identifying warning.
+  clear, instance-identifying warnings. Capacity and slot-range degraded
+  paths emit one warning per affected instance and reconciliation pass;
+  block-exhaustion fallbacks emit one warning per affected booking.
 - **SC-007**: Upgrading an existing installation rotates zero codes for
-  bookings already written to the lock.
+  active bookings whose existing lock PIN is readable during
+  reconciliation.
 - **SC-008**: Every generated code remains numeric, exactly the
   configured code length, and zero-padded — no change to the format
   contract relied on by downstream consumers.
