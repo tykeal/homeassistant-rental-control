@@ -168,8 +168,12 @@ gate is scoped to *new issuance only*: adoption, rekeying, and registry lookups
 are never delayed, so every reservation that already had a code keeps publishing
 it immediately. The pending set is seeded from
 `hass.config_entries.async_entries(DOMAIN)` so it is correct even though entries
-set up concurrently, and a wall-clock deadline opens the gate if an entry never
-reports.
+set up concurrently, and entries leave it on a completed pass, on setup failure,
+on disable, and on unload or removal while still pending — so a broken entry
+drains out rather than holding the gate shut. A wall-clock deadline warns and
+notifies about entries that never reported, but never opens the gate: new
+issuance stays fail-closed, because opening it could issue a replacement code
+for an unadopted lockless reservation, which is precisely what FR-018 forbids.
 
 **Alternatives considered**:
 

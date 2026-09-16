@@ -160,9 +160,13 @@ tests/
 
 **Structure Decision**: A dedicated `allocator/` package rather than more
 mixins on the coordinator. The allocator outlives any single coordinator, is
-shared by every entry, and must stay testable without Home Assistant. Only
-`store.py` and `singleton.py` touch `hass`; `registry.py` and `candidates.py`
-are pure. The coordinator reaches the allocator through one helper module,
+shared by every entry, and must stay testable without Home Assistant. The
+boundary runs inside the package: `models.py`, `registry.py`, and
+`candidates.py` are pure and import no Home Assistant, while `store.py`,
+`singleton.py`, `services.py`, and `allocator.py` (which holds `hass` for
+persistence and notifications) are the Home Assistant-aware half. New logic
+belongs in the pure half unless it genuinely needs `hass`. The coordinator
+reaches the allocator through one helper module,
 `coordinator_helpers/code_allocation.py`, matching the existing shell pattern.
 
 ## Design Decisions
@@ -184,8 +188,9 @@ absent or invalid registry payloads are handled inside `async_load()` as an
 empty registry per FR-018, while only allocator construction or Home Assistant
 storage failures surface as `ConfigEntryNotReady` (FR-002). Because two entries
 can set up concurrently, creation is guarded by a module-level
-`asyncio.Lock` stored alongside the allocator, and the "already present" check
-is repeated after acquiring it.
+`asyncio.Lock` defined in `allocator/singleton.py` — not one stored in
+`hass.data`, which would itself need an unguarded first write — and the
+"already present" check is repeated after acquiring it.
 
 `async_setup_entry` creates the allocator immediately after
 `hass.data[DOMAIN] = {}` is ensured and **before**
@@ -194,8 +199,16 @@ can request a code. It also calls
 `await allocator.async_register_entry(config_entry.entry_id)` there (see the
 adoption gate).
 
-`async_unload_entry` does not touch the allocator or the registry; it only
-removes `hass.data[DOMAIN][entry_id]` as it does today (FR-003). A reload
+Registration has a matching unregistration, or the gate leaks. Every path that
+ends setup before the entry completes its first allocation pass — the
+`ConfigEntryNotReady` raise, an exception later in `async_setup_entry`, and
+`async_unload_entry` for an entry still pending — calls
+`await allocator.async_unregister_entry(entry_id)` first. `async_unregister_entry`
+is idempotent, so a healthy entry that already left the set on its first pass is
+unaffected.
+
+`async_unload_entry` does not otherwise touch the allocator or the registry; it
+only removes `hass.data[DOMAIN][entry_id]` as it does today (FR-003). A reload
 therefore re-adopts from the registry and rotates nothing.
 
 Entry removal aborts pending adoption for that entry and marks its owners
@@ -214,9 +227,12 @@ inserted after check-in protection and before `compute_desired_plan`:
 await code_allocation.async_resolve_codes(self, reservations, observed_slots)
 ```
 
-The step runs through one allocator entrypoint so all four phases share a single
-lock hold; the public phase methods keep their own locks for unit tests and
-other standalone callers and are not called recursively while that lock is held.
+The step runs through one allocator entrypoint, `async_resolve_cycle`, taking a
+`CycleRequest` built from this entry's `CycleObservation` plus its adoptions,
+rekeys, and allocation requests, so all four phases share a single lock hold. The
+public phase methods keep their own locks for unit tests and other standalone
+callers; `async_resolve_cycle` drives private non-locking helpers instead, since
+`_lock` is non-reentrant and calling the public methods under it would deadlock.
 
 1. **Adopt** every observed code for this entry's managed slots, attributing it
    to the reservation matched to that slot (FR-020, FR-021). If the reservation
@@ -284,8 +300,11 @@ cannot be re-derived — but they are not stored as bare digits. Each record hol
 `encoded_code`, using the same scheme Keymaster applies to PINs in
 `custom_components/keymaster/serialization.py`: base64 of the salt bytes
 followed by the code bytes, decoded by stripping the salt's byte length. The
-salt is the `entry_id` of the record's first owner, fixed for the record's
-lifetime and recorded in `encoding_salt_source`.
+salt is the `entry_id` of the record's first owner, captured at record creation
+and stored verbatim in `encoding_salt_value` for the record's lifetime;
+`encoding_salt_source` is only a provenance label naming where that value came
+from. Decoding reads the stored value, so removing the first owner never makes
+an orphaned or conflicted record undecodable.
 
 **This is obfuscation, not encryption, and not a security boundary.** The salt
 sits in the same file as the value it hides, so file access trivially recovers
@@ -354,11 +373,16 @@ entity service, because it has no entity target; the existing `checkout` and
 Three properties matter:
 
 - **FR-014 holds here too.** The service calls the same guard helper as
-  `async_sweep` and `async_release_entry`; a code still programmed on a managed
-  lock is refused, never released. The rule is shared, not reimplemented.
+  `async_sweep` and `async_mark_entry_removed`, evaluated against the same
+  `CycleObservation` shape; a code still programmed on a managed lock, or
+  sitting in an unreadable slot, is refused rather than released. An orphan on a
+  lock no loaded entry observes is retained as `unverifiable_lock` — the
+  integration cannot prove it is gone, so it does not act. The rule is defined
+  once and shared, not reimplemented.
 - **It reports both sides.** The response, the log line, and a persistent
   notification list what was cleared and what was refused with a reason
-  (`code_still_programmed` or `adoption_conflict`), using `code_ref` only.
+  (`code_still_programmed`, `unverifiable_lock`, or `adoption_conflict`), using
+  `code_ref` only.
 - **It is idempotent and always safe.** A `dry_run` field previews the outcome,
   and the operation takes the allocator lock like every other mutation, so it
   cannot race a refresh.
@@ -415,11 +439,20 @@ implemented by the sweep: a code observed on any managed lock is never released,
 so the registry cannot hand a live guest's code to somebody else while the
 reconciliation planner is holding the slot.
 
-Additionally, the allocator refuses to *issue new* codes for an entry that has
-unreadable managed slots not accounted for by the registry. If a slot's code
-cannot be read and the registry has no record covering that slot, the integration
-cannot prove a new code is unique, so it fails closed for new reservations
-(FR-018) while every existing code keeps working untouched.
+Both that guard and the issuance rule below need physical slot state, so the
+allocator is given it explicitly rather than inferring it. Each owner record
+carries the `lockname` and `slot` its code is programmed on (`None` for a
+lockless entry), and each cycle passes a `CycleObservation` of that entry's
+managed slots, readable codes, and unreadable slots. From those two the allocator
+decides retention — a code is programmed if it was read back, or if its own slot
+could not be read — and derives the unaccounted set as the unreadable slots no
+registry owner claims. Neither rule is left to be guessed from inputs that do
+not contain the answer.
+
+So the allocator refuses to *issue new* codes for an entry whose unaccounted set
+is non-empty: if a slot's code cannot be read and no record covers that slot, the
+integration cannot prove a new code is unique, so it fails closed for new
+reservations (FR-018) while every existing code keeps working untouched.
 
 ### Hazard 2 — transient no-code window at startup
 
@@ -444,14 +477,20 @@ startup. The gate is scoped so that it never delays a code that already exists:
 
 - At creation the allocator enumerates `hass.config_entries.async_entries(DOMAIN)`
   and records every non-disabled entry as pending adoption.
-- An entry leaves the pending set when its first allocation step finishes.
+- An entry leaves the pending set when its first allocation step finishes, and
+  also when it fails setup, is disabled, or unloads while still pending. A
+  broken entry therefore drains out of the set instead of holding the gate shut
+  for healthy entries.
 - While the set is non-empty, **adoption, rekeying, and registry-known lookups
   proceed normally**; only issuance of a brand-new code is deferred, with
   `code_source="unallocated"` for that cycle.
-- A wall-clock deadline raises a warning and persistent notification naming the
-  entries that never reported, but does not by itself permit unsafe issuance.
-  New codes remain fail-closed until adoption completes or an operator removes
-  the stale entry and clears any resulting orphan.
+- A wall-clock deadline raises a warning and persistent notification naming any
+  entries still pending, and does not open the gate. New issuance stays
+  fail-closed until adoption completes or an operator removes the stale entry
+  and clears any resulting orphan. Opening the gate on a timer could issue a
+  replacement code for an unadopted lockless reservation, which FR-018 forbids;
+  the unregistration paths above, not the deadline, are what stop a failed entry
+  blocking issuance indefinitely.
 
 So restarts and upgrades — where every active reservation has either a registry
 record or an observable lock code — see no window at all, and the deferred case
@@ -507,16 +546,31 @@ the spec says.
 - `_resolve_observed_code` in `coordinator_helpers/reservations.py` is unchanged
   and remains the source of observed codes; the allocation step consumes its
   result rather than replacing it.
-- Lockless entries have no observable code. If the registry is absent or
-  corrupt, an already-active lockless reservation has no durable source and
-  publishes no code until a new allocation can be safely persisted (FR-018).
+- Lockless entries have no observable code, so registry loss is unrecoverable
+  for them. An already-active lockless reservation — one whose check-in window
+  has already started when the allocator starts from an empty registry — is
+  held at `code_source="unallocated"` with `reason="recovery_fail_closed"`.
+  Issuing it a fresh code would be a *replacement*, not a recovery: the guest
+  may already hold the old code, and FR-018 requires failing closed rather than
+  silently substituting. Allocating and persisting a new code does not make it a
+  recovered source. Reservations whose window has not yet started were never
+  communicated, so they are genuinely new and allocate normally. The distinction
+  is the request's `active_now` flag combined with the allocator's
+  registry-loss flag; the operator is notified once, and #735's force re-issue
+  is the sanctioned way to give an active guest a new code.
 - The per-entry cache store, its schema version, and its no-PIN policy are
   untouched. #736's "`slot_code` is never persisted" note in
   `plan_models.py` is superseded by the new registry and should be updated in
   the same commit that changes the field type.
-- No config flow change, no options change, no entity rename, no new required
-  option (FR-024, SC-007). The one new service is a manual operator action, not
-  a setting, and nothing depends on it having been run.
+- No config flow change, no new option, no entity rename, no new required
+  setting (FR-024, SC-007). The options flow gains exactly one validation guard:
+  changing an entry's code length while it holds active allocations is rejected
+  with an error message, because `async_allocate` returns a known identity's
+  existing code unchanged (FR-007) and would otherwise hand a four-digit code
+  back to an entry now configured for six (FR-012). That is a rejection, not a
+  new operator-supplied value, and re-issuing at a new length stays with #735
+  and #741. The one new service is a manual operator action, not a setting, and
+  nothing depends on it having been run.
 - Downgrading to a prior release leaves an unused `rental_control.code_registry`
   file behind, which is harmless; codes revert to per-entry generation.
 
@@ -537,14 +591,20 @@ New unit coverage:
 - `candidates.py`: full-cycle non-repetition for lengths 4 and 6, determinism
   for a fixed identity, and stability when the registry changes around it.
 - `store.py`: missing, unreadable, wrong-version, and corrupt payload all yield
-  an empty registry plus a warning; delayed save is used; encode/decode round
-  trips exactly, including leading zeros, and no saved payload contains a bare
-  code (assert the serialized JSON does not contain the digit string).
+  an empty registry plus a warning; two records decoding to the same code, and a
+  duplicate `identity_key`, are both rejected as whole-payload corruption rather
+  than silently collapsing; delayed save is used; encode/decode round trips
+  exactly, including leading zeros; and a saved record has no plaintext code
+  field, no field equal to the code, and an `encoded_code` that decodes back to
+  it — asserted per field, not by substring-searching the payload, which would
+  both false-positive on timestamps and false-negative on real leaks.
 - `singleton.py`: second entry reuses the first allocator; creation failure pops
-  the key; unload of one entry leaves the allocator intact.
+  the key; unload of one entry leaves the allocator intact; an entry that fails
+  setup is unregistered from the adoption gate.
 - `services.py`: the service registers once across two entries; `dry_run`
   changes nothing; a code still on a lock is retained with
-  `code_still_programmed`; a conflict record is retained with
+  `code_still_programmed`; an orphan on an unobserved lock is retained with
+  `unverifiable_lock`; a conflict record is retained with
   `adoption_conflict`; a second call is a no-op; no response field or log line
   contains a code.
 - `code_allocation.py`: adopt-before-allocate ordering, idempotency on repeat

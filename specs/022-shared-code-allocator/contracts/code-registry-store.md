@@ -37,6 +37,8 @@ for clearing orphaned allocations.
             "entry_id": "01J9ZQ0K7F0000000000000000",
             "identity_key": "v1:...",
             "origin": "adopted",
+            "lockname": "front_door",
+            "slot": 3,
             "lock_observed": true,
             "first_seen": "2026-09-14T08:15:00-07:00",
             "last_seen": "2026-09-16T11:59:00-07:00"
@@ -64,10 +66,12 @@ def decode_code(encoded_code: str, salt: str) -> str:
 ```
 
 **Salt source**: the `entry_id` of the record's *first* owner, captured when the
-record is created and stored as `encoding_salt_value` for the record's lifetime;
-`encoding_salt_source` records that this value is an entry ID. A record that
-outlives its first owner (an orphan, or a conflict whose first owner released)
-keeps the original salt; the salt is a byte prefix, not an ownership claim.
+record is created and stored verbatim in `encoding_salt_value` for the record's
+lifetime. `encoding_salt_source` is a provenance label naming where that value
+came from (`entry_id`); it is not itself the salt. Decoding always uses
+`encoding_salt_value`. A record that outlives its first owner (an orphan, or a
+conflict whose first owner released) keeps the stored salt, so removing an entry
+never breaks decoding; the salt is a byte prefix, not an ownership claim.
 
 **This is obfuscation, not encryption, and not a security boundary.** The salt
 is stored in the same file as the value it obfuscates, so anyone who can read
@@ -93,18 +97,24 @@ load, nowhere else.
   is generated and refs change.
 - `encoded_code` — the obfuscated code, decoding to decimal digits whose length
   equals `code_length`, including leading zeros.
-- `encoding_salt_source` / `encoding_salt_value` — which value was used as the
-  encode salt and the captured value. `entry_id` is the only source in schema
-  version 1.
+- `encoding_salt_value` — the literal salt bytes prefixed before the code, fixed
+  at record creation. `encoding_salt_source` — a provenance label for that
+  value; `entry_id` is the only source in schema version 1. Decode reads
+  `encoding_salt_value`, never the label.
 - `code_length` — length at issue time, used to skip records that cannot belong
   to a requesting entry's space. It is recorded separately so the registry can
   filter without decoding every record.
 - `owners` — exactly one entry normally. Two or more means an adoption conflict
   (FR-022): reported, retained, never auto-resolved.
 - `owners[].origin` — one of `preferred`, `collision_resolved`, `adopted`.
-- `owners[].lock_observed` — true when the code was seen on a managed slot at
-  the most recent observation of its entry. While true, the record must not be
-  released (FR-014).
+- `owners[].lockname` / `owners[].slot` — the managed lock and slot number the
+  code is programmed on, or `null` for a lockless entry that has no physical
+  slot. These are the physical identity the FR-014 release guard and the
+  unreadable-slot accounting are evaluated against; without them neither rule is
+  decidable.
+- `owners[].lock_observed` — true when the code was seen on that lock and slot
+  at the most recent observation of its entry. While true, the record must not
+  be released (FR-014).
 
 ### Validation and failure behaviour
 
@@ -112,9 +122,20 @@ Any of the following make the payload unusable: missing or non-integer
 `schema_version`, `schema_version` greater than 1, `records` not a list, a record
 whose `encoded_code` is missing or fails to decode to decimal digits of exactly
 `code_length`, a record with no owners, an `encoding_salt_source` the release
-does not recognise, or a duplicate `identity_key` across two different codes. In
-every such case the allocator logs a warning, raises a persistent notification,
-and starts from an empty registry (FR-018). It never partially loads.
+does not recognise, two records whose `encoded_code` values decode to the same
+code, or the same `identity_key` owned by two different records.
+
+The duplicate-decoded-code rule is not optional. The persisted form is a list
+while the in-memory registry is keyed by the plain code, so without this check
+one record silently overwrites the other on load and an owner — possibly one
+holding a live guest code — disappears. Detect it before constructing the
+registry, on the decoded values, and treat it as corruption of the whole
+payload rather than dropping a record.
+
+In every such case the allocator logs a warning naming the failing rule (with
+`code_ref`, never a code), raises a persistent notification, and starts from an
+empty registry (FR-018). It never partially loads, and it never repairs a
+payload in place.
 
 ### Compatibility
 
@@ -137,21 +158,23 @@ def get_allocator(hass: HomeAssistant) -> DoorCodeAllocator | None
 class DoorCodeAllocator:
     async def async_load(self) -> None: ...
     async def async_register_entry(self, entry_id: str) -> None: ...
+    async def async_unregister_entry(self, entry_id: str) -> None: ...
 
+    # Batch entrypoint: the only path production code uses.
+    async def async_resolve_cycle(self, request: CycleRequest) -> CycleResult: ...
+
+    # Phase methods: each takes the lock itself. Tests and diagnostics only.
     async def async_adopt(self, request: AdoptionRequest) -> AllocationResult: ...
     async def async_rekey(self, old_key: str, new_key: str) -> bool: ...
     async def async_allocate(self, request: AllocationRequest) -> AllocationResult: ...
-    async def async_sweep(
-        self,
-        entry_id: str,
-        active_keys: set[str],
-        observed_codes: set[str],
-    ) -> ReleaseReport: ...
+    async def async_sweep(self, observation: CycleObservation,
+                          active_keys: set[str]) -> ReleaseReport: ...
+
     async def async_mark_entry_removed(self, entry_id: str) -> ReleaseReport: ...
     async def async_clear_orphans(
         self,
         known_entry_ids: set[str],
-        observed_codes: set[str],
+        observations: list[CycleObservation],
         dry_run: bool = False,
     ) -> OrphanCleanupReport: ...
 
@@ -159,18 +182,86 @@ class DoorCodeAllocator:
     def diagnostics(self) -> dict[str, Any]: ...
 ```
 
+### Observation context
+
+Both the FR-014 release guard and the FR-018 unreadable-slot rule are decided
+against physical slot state, so that state has to reach the allocator. One value
+carries it for an entry for one refresh cycle:
+
+```python
+@dataclass(frozen=True)
+class CycleObservation:
+    entry_id: str
+    lockname: str | None          # None for a lockless entry
+    managed_slots: frozenset[int]
+    observed_codes: dict[str, int]   # plain code -> slot number, readable slots
+    unreadable_slots: frozenset[int] # managed slots whose code could not be read
+```
+
+`code_allocation.py` builds it from what the coordinator already observed via
+`keymaster_observation.py`; `unreadable_slots` is exactly the set that helper
+drops `actual_code` for. A lockless entry supplies empty sets.
+
+From it the allocator derives, without any further input:
+
+- **Release safety (FR-014)**: a record's owner is refreshed to
+  `lock_observed=True` when its code is in `observed_codes`, or when its
+  `(lockname, slot)` is in `unreadable_slots` — an unreadable slot may still
+  hold that code, so it counts as programmed.
+- **Unaccounted slots (FR-018)**: `unreadable_slots` minus the slots claimed by
+  registry owners with the same `entry_id` and `lockname`. A non-empty remainder
+  means the entry has a slot whose contents nothing can account for, so a new
+  code cannot be proven unique.
+
+### Batch entrypoint
+
+```python
+@dataclass(frozen=True)
+class CycleRequest:
+    observation: CycleObservation
+    adoptions: list[AdoptionRequest]
+    rekeys: list[tuple[str, str]]          # (old_key, new_key)
+    allocations: list[AllocationRequest]
+    active_keys: set[str]
+
+
+@dataclass(frozen=True)
+class CycleResult:
+    adopted: dict[str, AllocationResult]     # identity_key -> result
+    allocated: dict[str, AllocationResult]   # identity_key -> result
+    released: ReleaseReport
+    unaccounted_slots: frozenset[int]
+```
+
+`async_resolve_cycle` acquires `_lock` once and runs adopt → rekey → allocate →
+sweep against private, non-locking helpers, so one entry's whole cycle is atomic
+against another's (FR-006). It **must not** call the public phase methods: the
+lock is a plain non-reentrant `asyncio.Lock` and doing so would deadlock. The
+public phase methods exist so tests can exercise one behaviour at a time; they
+are not a supported way to compose a cycle.
+
+`AllocationRequest` fields: `entry_id`, `identity_key`, `preferred_code`,
+`code_length`, `fingerprint_history`, `active_now: bool` (the reservation's
+check-in window has already started). `issuance_allowed: bool` defaults to
+`True` and is set by `async_resolve_cycle` from the derived unaccounted-slot
+set; a standalone `async_allocate` call therefore never returns
+`unaccounted_slots`.
+
 `AdoptionRequest` carries `entry_id`, `identity_key`, the observed `code`,
-`code_length`, and matched slot metadata needed for diagnostics. If the same code
-is already owned by another identity, adoption records a conflict owner, reports
-it, and never returns that code for new issuance until the conflict is cleared.
+`code_length`, and the `lockname` and `slot` it was observed on, which become
+the owner's physical identity. If the same code is already owned by another
+identity, adoption records a conflict owner, reports it, and never returns that
+code for new issuance until the conflict is cleared.
 
 `ReleaseReport` contains `code_ref`, `entry_id`, `identity_key`, and a
-`released`/`retained` status. It never includes the raw or encoded code.
+`released`/`retained` status with a retention reason. It never includes the raw
+or encoded code.
 
 ### Behavioural guarantees
 
 - **Serialization**: every method above mutates only under a single
-  `asyncio.Lock`, so concurrent entries cannot both claim a code (FR-006).
+  non-reentrant `asyncio.Lock`, so concurrent entries cannot both claim a code
+  (FR-006). `async_resolve_cycle` holds it for the whole cycle.
 - **Idempotency**: `async_allocate` with a known `identity_key` returns the same
   `code` with the recorded `origin` and mutates nothing (FR-007).
 - **Uniqueness**: allocation never returns a code whose record has an owner with
@@ -178,25 +269,38 @@ it, and never returns that code for new issuance until the conflict is cleared.
   not make that code available for new issuance (FR-005, FR-022).
 - **Non-destructive**: no method returns, emits, or schedules a reconciliation
   action, and none calls a lock service. The allocator can never clear a slot.
-- **Fail-closed, not fail-loud**: exhaustion, a closed adoption gate, and
-  unaccounted unreadable slots all return `AllocationResult(code=None,
-  reason=...)`. They do not raise.
-- **Release safety**: `async_sweep`, `async_release_entry`, and
-  `async_clear_orphans` all skip any record whose code appears in
-  `observed_codes` or whose owner has `lock_observed=True`, returning it as
-  retained rather than released (FR-014). They share one guard helper; the rule
-  is not reimplemented per caller.
+- **Fail-closed, not fail-loud**: exhaustion, a closed adoption gate, unaccounted
+  unreadable slots, and post-loss recovery all return
+  `AllocationResult(code=None, reason=...)`. They do not raise.
+- **Release safety**: `async_sweep`, `async_mark_entry_removed`, and
+  `async_clear_orphans` all evaluate one shared guard helper, whose only inputs
+  are the record's owners and the supplied `CycleObservation` values. A record
+  is retained when any owner has `lock_observed=True` after refresh, when its
+  `(lockname, slot)` is unreadable, or when no supplied observation covers its
+  `lockname` at all. The rule is defined once and not reimplemented per caller
+  (FR-014).
+- **Entry lifecycle**: `async_register_entry` adds to the adoption pending set;
+  `async_unregister_entry` removes an entry that failed setup, was disabled, or
+  was unloaded before completing a pass, so a broken entry cannot hold the gate
+  shut indefinitely. Both are idempotent.
 - **No codes out**: `diagnostics`, the cleanup report, and every log statement
   expose `code_ref`, never the code in plain or encoded form (FR-025).
 
 ### `AllocationResult.reason` values
 
-| Value | Meaning | Caller behaviour |
-|-------|---------|------------------|
-| `None` | A code was issued or returned | Set `slot_code`, set `code_source` |
-| `exhausted` | Every candidate in the space is taken | `slot_code = None`, warn once per cycle, notify operator |
-| `adoption_pending` | Gate closed, new issuance deferred | `slot_code = None`, debug log, retry next cycle |
-| `unaccounted_slots` | Unreadable slots the registry cannot account for | `slot_code = None`, warn, retry next cycle |
+| Value | Produced by | Meaning | Caller behaviour |
+|-------|-------------|---------|------------------|
+| `None` | both | A code was issued or returned | Set `slot_code`, set `code_source` |
+| `exhausted` | both | Every candidate in the space is taken | `slot_code = None`, warn once per cycle, notify operator |
+| `adoption_pending` | both | Gate closed, new issuance deferred | `slot_code = None`, debug log, retry next cycle |
+| `unaccounted_slots` | `async_resolve_cycle` only | Unreadable slots the registry cannot account for | `slot_code = None`, warn, retry next cycle |
+| `recovery_fail_closed` | both | Registry was lost; this reservation is already active and has no recovered code | `slot_code = None`, warn, never replace |
+
+`unaccounted_slots` is derivable only inside `async_resolve_cycle`, which has the
+`CycleObservation`; a standalone `async_allocate` has no slot context and never
+produces it. `recovery_fail_closed` applies when `async_load` started from an
+empty registry after a load failure and the request has `active_now=True` with
+no adopted or recovered code — see FR-018 and decision 7 in the plan.
 
 In every `code is None` case the caller sets `code_source = "unallocated"` and
 the planner holds the slot without writing or clearing it.
@@ -244,12 +348,20 @@ without consuming a response while a developer-tools caller sees the full report
 
 1. Compute the orphan set: records with at least one owner whose `entry_id` is
    not in `hass.config_entries.async_entries(DOMAIN)`.
-2. Refresh system-wide managed-lock observations, then apply the shared FR-014
-   guard. A record whose code is observed on any managed lock is refused; an
-   orphan owner's old `lock_observed=True` is cleared only after this fresh
-   observation proves the code is absent.
-3. When `dry_run` is true, report what would happen and change nothing.
-4. Otherwise release the unrefused records, save the registry, and report.
+2. Collect a fresh `CycleObservation` from every currently loaded entry and
+   apply the shared FR-014 guard helper — the same function `async_sweep` uses,
+   not a parallel implementation. An orphan owner's stale `lock_observed=True`
+   is cleared only when a supplied observation covers its `lockname` and shows
+   the code absent from a readable slot.
+3. An orphan whose `lockname` is `null` (a lockless entry) has nothing
+   programmed anywhere and is releasable immediately.
+4. An orphan whose `lockname` is covered by no loaded entry cannot be verified
+   either way. It is retained as `unverifiable_lock`, not released — the
+   operator's remedy is to clear the slot physically or re-add the entry. This
+   is deliberately conservative: a retained orphan costs one unusable code, a
+   wrongly released one can hand a live guest's code to somebody else.
+5. When `dry_run` is true, report what would happen and change nothing.
+6. Otherwise release the unrefused records, save the registry, and report.
 
 The service is idempotent: a second call with nothing left to clear releases
 nothing and reports an empty `cleared` list. It is safe to run at any time,
@@ -275,8 +387,10 @@ mutating operation.
 }
 ```
 
-`reason` is one of `code_still_programmed` (the FR-014 guard refused it) or
-`adoption_conflict` (the code has more than one owner and must go to #735). The
+`reason` is one of `code_still_programmed` (the FR-014 guard saw the code, or its
+slot was unreadable), `unverifiable_lock` (no loaded entry observes that lock, so
+its state is unknown), or `adoption_conflict` (the code has more than one owner
+and must go to #735). The
 same summary is logged and, when anything was retained, raised as a persistent
 notification so the operator learns why without re-running the service. No raw
 code appears in the response, the log, or the notification.

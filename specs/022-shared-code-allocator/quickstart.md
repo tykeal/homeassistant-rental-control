@@ -68,10 +68,15 @@ leak encoded strings into comparison, candidate rejection, or any API. And do
 not describe it as encryption in a docstring — it is obfuscation that keeps
 codes out of plaintext backups, nothing more.
 
-Mirror Keymaster's accessor shape, including the cleanup on failure:
+Mirror Keymaster's accessor shape, including the cleanup on failure. The
+creation lock is a module-level `asyncio.Lock` in `singleton.py`, not a
+`hass.data` entry — a lock kept in `hass.data` would itself need an unguarded
+first write, which is the race it is meant to prevent:
 
 ```python
-async with hass.data[DOMAIN][ALLOCATOR_LOCK]:
+_CREATE_LOCK = asyncio.Lock()  # module level in allocator/singleton.py
+
+async with _CREATE_LOCK:
     if ALLOCATOR in hass.data[DOMAIN]:
         return hass.data[DOMAIN][ALLOCATOR]
     try:
@@ -86,12 +91,16 @@ return allocator
 
 Wire it into `async_setup_entry` before `coordinator.async_load_slot_store()`,
 and call `await allocator.async_register_entry(config_entry.entry_id)` there.
-Let a failure surface as `ConfigEntryNotReady`. Do not touch
-`async_unload_entry`.
+Every path that leaves setup before the first allocation pass — the
+`ConfigEntryNotReady` raise, any later exception in `async_setup_entry`, and
+`async_unload_entry` while the entry is still pending — must first call
+`await allocator.async_unregister_entry(entry_id)`, or that entry holds the
+adoption gate shut for everyone. The call is idempotent.
 
-Checkpoint: a second entry must reuse the first allocator, unloading one entry
-of two must leave the registry and the other entry's codes untouched, and a
-saved payload must not contain any code as a readable digit string.
+Checkpoint: a second entry must reuse the first allocator, an entry that fails
+setup must not remain in `_pending_adoption`, unloading one entry of two must
+leave the registry and the other entry's codes untouched, and a saved record
+must carry no plaintext code field while its `encoded_code` round-trips.
 
 ## 2a. Add the orphan cleanup service
 
@@ -178,8 +187,13 @@ before opening the implementation PR:
 
 - No log line, diagnostics field, or service response contains a code. Grep the
   new modules for `%s` formatting of `code` and confirm each uses `code_ref`.
-- No saved registry payload contains a code as readable digits. Assert this in
-  `test_allocator_store.py` against the serialized JSON, not just the model.
+- No persisted record carries a plaintext code. Assert it precisely in
+  `test_allocator_store.py`: the record has no plain-code field, no field in the
+  serialized record *equals* the code, and `decode_code(record["encoded_code"],
+  record["encoding_salt_value"])` returns the expected code. Do not substring
+  search the whole payload for the digits — timestamps, entry IDs, and identity
+  keys can contain the same sequence, so that test both passes when it should
+  fail and fails when it should pass.
 - No file exceeds 400 lines, no function exceeds 80 lines, no signature exceeds
   six parameters, and no aislop suppression was added.
 - The hazard-1 regression test exists and passes.
