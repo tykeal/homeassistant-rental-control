@@ -325,7 +325,8 @@ class DoorCodeAllocator:
             if report.cleared and not dry_run:
                 self._store.async_save(self._registry)
             services.report_orphan_cleanup(self.hass, report)
-            services.report_forced_hold_deferrals(self, ())
+            if not dry_run:
+                services.report_forced_hold_deferrals(self, ())
             return report
 
     def _release_guard_reason(
