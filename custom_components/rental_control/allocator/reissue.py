@@ -178,6 +178,17 @@ def rollback_blocked_reissues(
                 origin=owner.origin,
                 reason=reason,
             )
+        _LOGGER.info(
+            "Forced re-issue replaced-code disposition entry=%s identity=%s "
+            "lock=%s slot=%s replaced_code_ref=%s disposition=failed "
+            "retention_reason=%s",
+            stage.entry_id,
+            stage.identity_key,
+            stage.lockname,
+            stage.slot,
+            stage.replaced_code_ref,
+            reason,
+        )
         rolled_back.append(
             ReissueOutcome(
                 stage.entry_id,

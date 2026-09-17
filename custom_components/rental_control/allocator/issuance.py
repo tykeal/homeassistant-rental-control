@@ -192,9 +192,7 @@ async def resolve_cycle(
         released = allocator._sweep_unlocked(request.observation, request.active_keys)
         if not allocator._registry_lost:
             hold_releases = reissue.release_forced_holds(allocator, request)
-            services.report_forced_hold_deferrals(
-                allocator.hass, hold_releases, request.forced_reissues
-            )
+            services.report_forced_hold_deferrals(allocator, request.forced_reissues)
             reissue_outcomes = reissue.merge_release_outcomes(
                 reissue_outcomes,
                 hold_releases,

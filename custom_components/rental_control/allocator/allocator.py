@@ -310,6 +310,7 @@ class DoorCodeAllocator:
         observations: list[CycleObservation],
         dry_run: bool = False,
         force_reissued_holds: bool = False,
+        loaded_entry_ids: set[str] | None = None,
     ) -> OrphanCleanupReport:
         """Clear orphaned allocations that the shared guard proves safe."""
         async with self._lock:
@@ -319,10 +320,12 @@ class DoorCodeAllocator:
                 observations,
                 dry_run=dry_run,
                 force_reissued_holds=force_reissued_holds,
+                loaded_entry_ids=loaded_entry_ids or set(),
             )
             if report.cleared and not dry_run:
                 self._store.async_save(self._registry)
             services.report_orphan_cleanup(self.hass, report)
+            services.report_forced_hold_deferrals(self, ())
             return report
 
     def _release_guard_reason(

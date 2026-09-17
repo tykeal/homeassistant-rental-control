@@ -24,17 +24,18 @@ def clear_orphans(
     *,
     dry_run: bool,
     force_reissued_holds: bool,
+    loaded_entry_ids: set[str],
 ) -> OrphanCleanupReport:
     """Clear orphaned owners and explicitly reclaimed forced holds."""
     cleared = []
     retained = []
     for record in list(allocator._registry.records.values()):
         owners = _cleanup_candidates(
-            record.owners, known_entry_ids, force_reissued_holds
+            record.owners, known_entry_ids, loaded_entry_ids, force_reissued_holds
         )
         for owner in owners:
             force_reclaim = _is_forced_reclaim(
-                owner, known_entry_ids, force_reissued_holds
+                owner, loaded_entry_ids, force_reissued_holds
             )
             if force_reclaim:
                 reason = reissue.forced_hold_retention_reason(
@@ -62,7 +63,10 @@ def clear_orphans(
 
 
 def _cleanup_candidates(
-    owners: list[AllocationOwner], known_entry_ids: set[str], force_reissued_holds: bool
+    owners: list[AllocationOwner],
+    known_entry_ids: set[str],
+    loaded_entry_ids: set[str],
+    force_reissued_holds: bool,
 ) -> list[AllocationOwner]:
     """Return ordinary orphans plus explicitly requested live hold owners."""
     candidates = [
@@ -72,19 +76,19 @@ def _cleanup_candidates(
         candidates.extend(
             owner
             for owner in list(owners)
-            if owner.entry_id in known_entry_ids
+            if owner.entry_id in loaded_entry_ids
             and reissue.is_forced_release_hold(owner.identity_key)
         )
     return candidates
 
 
 def _is_forced_reclaim(
-    owner: AllocationOwner, known_entry_ids: set[str], force_reissued_holds: bool
+    owner: AllocationOwner, loaded_entry_ids: set[str], force_reissued_holds: bool
 ) -> bool:
     """Return whether the operator override applies to one owner."""
     return (
         force_reissued_holds
-        and owner.entry_id in known_entry_ids
+        and owner.entry_id in loaded_entry_ids
         and reissue.is_forced_release_hold(owner.identity_key)
     )
 

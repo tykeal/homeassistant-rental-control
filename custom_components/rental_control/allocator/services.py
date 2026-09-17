@@ -18,6 +18,7 @@ from homeassistant.helpers import config_validation as cv
 from ..const import COORDINATOR
 from ..const import DOMAIN
 from ..const import NAME
+from . import reissue as allocator_reissue
 from . import reissue_service
 from .models import CycleObservation
 from .models import ForcedReissueDirective
@@ -69,6 +70,7 @@ def _handle_clear_orphaned_codes(hass: HomeAssistant) -> Any:
             _collect_observations(hass),
             dry_run=bool(call.data[ATTR_DRY_RUN]),
             force_reissued_holds=bool(call.data[ATTR_FORCE_REISSUED_HOLDS]),
+            loaded_entry_ids=_loaded_entry_ids(hass),
         )
         return {
             "dry_run": report.dry_run,
@@ -77,6 +79,17 @@ def _handle_clear_orphaned_codes(hass: HomeAssistant) -> Any:
         }
 
     return handler
+
+
+def _loaded_entry_ids(hass: HomeAssistant) -> set[str]:
+    """Return Rental Control entries with loaded integration data."""
+    return {
+        entry_id
+        for entry_id, entry_data in hass.data.get(DOMAIN, {}).items()
+        if isinstance(entry_id, str)
+        and isinstance(entry_data, dict)
+        and COORDINATOR in entry_data
+    }
 
 
 def _collect_observations(hass: HomeAssistant) -> list[CycleObservation]:
@@ -134,25 +147,36 @@ def report_orphan_cleanup(hass: HomeAssistant, report: OrphanCleanupReport) -> N
 
 
 def report_forced_hold_deferrals(
-    hass: HomeAssistant,
-    outcomes: list[ReissueOutcome],
+    allocator: Any,
     current_directives: tuple[ForcedReissueDirective, ...],
 ) -> None:
-    """Notify when forced-release holds remain deferred past one cycle."""
-    if not outcomes:
-        return
-    deferred = [
-        outcome
-        for outcome in outcomes
-        if outcome.disposition == "held_pending_release"
-        and outcome.retention_reason not in (None, "adoption_conflict")
-        and not _matches_current_directive(outcome, current_directives)
-    ]
+    """Reconcile notifications for all outstanding forced-release holds."""
+    hass = allocator.hass
+    observations = _collect_observations(hass)
+    deferred = []
+    for record in allocator._registry.records.values():
+        for owner in record.owners:
+            if not allocator_reissue.is_forced_release_hold(owner.identity_key):
+                continue
+            outcome = ReissueOutcome(
+                owner.entry_id,
+                owner.identity_key.split(":", 1)[0],
+                owner.lockname,
+                owner.slot,
+                record.code_ref,
+                None,
+                None,
+                "held_pending_release",
+                allocator_reissue.forced_hold_retention_reason(
+                    allocator, record, owner, observations
+                ),
+            )
+            if outcome.retention_reason in (None, "adoption_conflict"):
+                continue
+            if not _matches_current_directive(outcome, current_directives):
+                deferred.append(outcome)
     if not deferred:
-        if any(
-            not _matches_current_directive(outcome, current_directives)
-            for outcome in outcomes
-        ) and hasattr(hass, "bus"):
+        if hasattr(hass, "bus"):
             async_dismiss(hass, _FORCED_HOLD_NOTIFICATION_ID)
         return
     message = "Forced re-issue hold releases remain deferred: " + ", ".join(

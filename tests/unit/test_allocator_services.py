@@ -15,6 +15,9 @@ import pytest
 from custom_components.rental_control.allocator import services as services_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AdoptionRequest
+from custom_components.rental_control.allocator.models import AllocationOrigin
+from custom_components.rental_control.allocator.models import AllocationOwner
+from custom_components.rental_control.allocator.models import AllocationRecord
 from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import OrphanCleanupReport
@@ -29,6 +32,7 @@ from custom_components.rental_control.allocator.services import (
     register_allocator_services,
 )
 from custom_components.rental_control.const import ALLOCATOR
+from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 
 
@@ -378,6 +382,7 @@ async def test_clear_orphans_force_reclaims_live_holds(
         ],
         dry_run=True,
         force_reissued_holds=True,
+        loaded_entry_ids={"entry-a"},
     )
 
     assert [
@@ -399,11 +404,36 @@ async def test_clear_orphans_force_reclaims_live_holds(
             )
         ],
         force_reissued_holds=True,
+        loaded_entry_ids={"entry-a"},
     )
 
     assert [item.identity_key for item in acted.cleared] == [hold_key]
     assert allocator._registry.code_for_identity(hold_key) is None
     assert allocator._registry.code_for_identity("ordinary") == "2468"
+
+
+async def test_clear_orphans_force_requires_loaded_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Configured but unloaded entry holds are not explicit reclaim candidates."""
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    allocator = _allocator(hass)
+    hold_key = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    await _allocate(allocator, "entry-a", hold_key, "1357", "front", 1)
+
+    report = await allocator.async_clear_orphans(
+        {"entry-a"},
+        [],
+        dry_run=True,
+        force_reissued_holds=True,
+        loaded_entry_ids=set(),
+    )
+
+    assert report.cleared == []
+    assert allocator._registry.code_for_identity(hold_key) == "1357"
 
 
 def test_forced_hold_deferral_notification_skips_first_cycle(
@@ -412,7 +442,9 @@ def test_forced_hold_deferral_notification_skips_first_cycle(
 ) -> None:
     """Only older forced-release hold deferrals create notifications."""
     from custom_components.rental_control.allocator.models import ForcedReissueDirective
-    from custom_components.rental_control.allocator.models import ReissueOutcome
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
 
     created = []
     dismissed = []
@@ -426,25 +458,35 @@ def test_forced_hold_deferral_notification_skips_first_cycle(
         "async_dismiss",
         lambda _hass, notification_id: dismissed.append(notification_id),
     )
-    outcome = ReissueOutcome(
-        "entry-a",
-        "identity-a",
-        "front",
-        1,
-        "abc12345",
-        None,
-        None,
-        "held_pending_release",
-        "code_still_programmed",
+    allocator = _allocator(hass)
+    hold_key = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    allocator._registry.records["1357"] = AllocationRecord(
+        code="1357",
+        code_ref="abc12345",
+        encoding_salt_value="entry-a",
+        owners=[
+            AllocationOwner(
+                "entry-a",
+                hold_key,
+                AllocationOrigin.PREFERRED,
+                lockname="front",
+                slot=1,
+                lock_observed=True,
+            )
+        ],
     )
+    allocator._registry.rebuild_index()
+    hass.data.setdefault(DOMAIN, {})["entry-a"] = {
+        COORDINATOR: SimpleNamespace(
+            lockname="front", _observe_managed_slots=lambda: []
+        )
+    }
 
     services_module.report_forced_hold_deferrals(
-        hass,
-        [outcome],
-        (ForcedReissueDirective("entry-a", "identity-a", "front", 1),),
+        allocator, (ForcedReissueDirective("entry-a", "identity-a", "front", 1),)
     )
-    services_module.report_forced_hold_deferrals(hass, [outcome], ())
+    services_module.report_forced_hold_deferrals(allocator, ())
 
     assert len(created) == 1
-    assert "abc12345:code_still_programmed" in created[0][0][1]
+    assert "abc12345:unverifiable_lock" in created[0][0][1]
     assert "adoption_conflict" not in created[0][0][1]
