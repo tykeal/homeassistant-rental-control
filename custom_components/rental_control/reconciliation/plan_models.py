@@ -28,8 +28,10 @@ class Reservation:
     ``uid_aliases`` and ``booking_aliases`` are *volatile* secondary
     identifiers that may change between feed refreshes.
 
-    ``slot_code`` is never written to the HA Store; it is an in-memory
-    field used only during the current reconciliation cycle.
+    ``slot_code`` is the allocator's code for the current planning
+    cycle.  ``None`` means no safe code source exists this cycle, so
+    reconciliation must hold any existing slot without writing or
+    clearing its physical code.
 
     Attributes:
         identity_key: Versioned stable fingerprint of normalized slot
@@ -46,8 +48,8 @@ class Reservation:
             existing extraction logic.
         display_slot_name: Prefixed/trimmed Keymaster name computed at
             write time.
-        slot_code: Generated or retained code for current planning; not
-            persisted raw in Store.
+        slot_code: Allocated or retained code for current planning, or
+            ``None`` when no safe code is available.
         uid_aliases: Volatile iCal UIDs seen for this reservation.
             Aliases only, not primary identity.
         booking_aliases: Optional extracted booking or confirmation
@@ -65,7 +67,8 @@ class Reservation:
             makes the reservation clearable unless protected.
         desired_slot: Slot selected by the current desired plan.
         overflow_reason: Why the reservation is not assigned, e.g.
-            ``"capacity"`` or ``"blocked_clear"``.
+            ``"capacity"``, ``"blocked_clear"``, or
+            ``"code_unavailable"``.
     """
 
     identity_key: str
@@ -76,7 +79,7 @@ class Reservation:
     summary: str
     slot_name: str
     display_slot_name: str
-    slot_code: str = field(repr=False)
+    slot_code: str | None = field(repr=False)
     uid_aliases: set[str] = field(default_factory=set)
     booking_aliases: set[str] = field(default_factory=set)
     fingerprint_history: set[str] = field(default_factory=set)
@@ -223,13 +226,15 @@ class DesiredPlan:
 
     Invariants:
         - ``len(selected) <= max_events`` unless protected active
-          reservations exceed capacity; capacity violations are
-          diagnostic-only.
+          reservations or retained occupied codeless holds exceed
+          capacity; capacity violations are diagnostic-only.
         - Each selected identity appears exactly once.
         - Each selected slot appears exactly once.
         - No selected reservation is assigned behind a farther
           unprotected reservation once physical operations are
           confirmed.
+        - No action that writes reservation state targets a reservation
+          without an available code.
 
     Attributes:
         plan_id: Refresh-scoped identifier for logging and operation
@@ -257,13 +262,21 @@ class DesiredPlan:
     actions: list[SlotAction] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
-    def validate(self) -> list[str]:
+    def validate(
+        self, reservation_by_identity: dict[str, Reservation] | None = None
+    ) -> list[str]:
         """Return a list of invariant violations found in this plan.
 
         Checks that each selected identity key appears exactly once and
-        that each selected slot number appears exactly once.  Returns
-        an empty list when all invariants hold.  Callers may raise on a
+        that each selected slot number appears exactly once.  When
+        reservation details are supplied, also checks that write actions
+        do not target reservations with unavailable codes.  Returns an
+        empty list when all invariants hold.  Callers may raise on a
         non-empty result or record the violations as diagnostics.
+
+        Args:
+            reservation_by_identity: Optional reservation lookup keyed by
+                identity for validating action-to-reservation invariants.
 
         Returns:
             List of human-readable violation messages; empty when the
@@ -283,4 +296,26 @@ class DesiredPlan:
                     f"Slot {slot} is claimed by more than one reservation in selected."
                 )
             seen_slots.add(slot)
+        if reservation_by_identity is not None:
+            write_actions = {
+                ActionKind.ASSIGN,
+                ActionKind.SET,
+                ActionKind.OVERWRITE_MANUAL_CHANGE,
+                ActionKind.UPDATE_IN_PLACE,
+                ActionKind.UPDATE_TIMES,
+            }
+            for action in self.actions:
+                if action.kind not in write_actions:
+                    continue
+                action_identity = action.identity_key or action.desired_id
+                reservation = (
+                    reservation_by_identity.get(action_identity)
+                    if action_identity
+                    else None
+                )
+                if reservation is not None and reservation.slot_code is None:
+                    violations.append(
+                        f"{action.kind.value} action for slot {action.slot} targets "
+                        f"codeless reservation {reservation.identity_key!r}."
+                    )
         return violations

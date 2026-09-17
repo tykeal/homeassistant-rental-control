@@ -31,6 +31,8 @@ def classify_matched_desired_slot(
     """Classify an occupied matched slot with desired reservation context."""
     if desired_res is None:
         return ActionKind.NOOP, None
+    if desired_res.slot_code is None:
+        return ActionKind.NOOP, "code_unavailable"
     drift_fields = _compute_drift_fields(ms, desired_res)
     code_drift = ms.actual_code is not None and ms.actual_code != desired_res.slot_code
     name_drift = (

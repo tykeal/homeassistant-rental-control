@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..reconciliation import ActionKind
 from .apply_clear import decide_clear_result_mutation
 from .apply_dispatch import classify_action
 from .apply_set import build_set_operation_id
@@ -16,6 +17,28 @@ from .apply_update import build_replacement_plan_id
 from .apply_update import build_update_time_suppression
 from .apply_update import parse_drift_fields
 
+_CODE_REQUIRED_ACTIONS = {
+    ActionKind.ASSIGN,
+    ActionKind.SET,
+    ActionKind.OVERWRITE_MANUAL_CHANGE,
+    ActionKind.UPDATE_IN_PLACE,
+    ActionKind.UPDATE_TIMES,
+}
+
+
+def _codeless_action_warning(action: Any, res_by_key: dict[str, Any]) -> str | None:
+    """Return a warning when an action would write a missing code."""
+    if action.kind not in _CODE_REQUIRED_ACTIONS:
+        return None
+    identity_key = action.identity_key or action.desired_id
+    reservation = res_by_key.get(identity_key) if identity_key else None
+    if reservation is None or reservation.slot_code is not None:
+        return None
+    return (
+        f"{action.kind.value} action for slot {action.slot} targets "
+        f"codeless reservation {reservation.identity_key}; skipping"
+    )
+
 
 async def async_apply_plan(self, coordinator: Any, plan, res_by_key):
     """Apply a desired plan by executing slot actions."""
@@ -24,6 +47,10 @@ async def async_apply_plan(self, coordinator: Any, plan, res_by_key):
     results = []
     try:
         for action in plan.actions:
+            codeless_warning = _codeless_action_warning(action, res_by_key)
+            if codeless_warning is not None:
+                self._logger.warning(codeless_warning)
+                continue
             decision = classify_action(action, res_by_key)
             if decision["warning"]:
                 if "%d" in decision["warning"]:

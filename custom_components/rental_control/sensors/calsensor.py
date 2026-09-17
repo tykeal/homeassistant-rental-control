@@ -225,7 +225,10 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         )
         event_attributes = self._build_event_attributes(event)
         self._event_attributes.update(event_attributes)
-        if self._event_attributes["slot_code"] is None:
+        if (
+            self._event_attributes["slot_code"] is None
+            and self.coordinator.event_overrides is None
+        ):
             self._event_attributes["slot_code"] = self._generate_door_code()
         result = render_state.render_event_result(
             event,

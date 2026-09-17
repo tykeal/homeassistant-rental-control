@@ -167,7 +167,7 @@ def _ghost_from_mapping(
             display_slot_name=_format_display_slot_name(
                 slot_name, prefix, ctx.trim_names, ctx.max_name_length
             ),
-            slot_code="",
+            slot_code=None,
             uid_aliases=_persisted_string_set(identity.get("uid_aliases", [])),
             booking_aliases=_persisted_string_set(identity.get("booking_aliases", [])),
             fingerprint_history=_persisted_string_set(

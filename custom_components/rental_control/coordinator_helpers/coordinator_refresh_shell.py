@@ -220,13 +220,13 @@ class CoordinatorRefreshMixin:
                 start_slot=self.start_slot,
             )
 
-            violations = plan.validate()
-            for v in violations:
-                _LOGGER.warning("Plan %s invariant violation: %s", plan_id, v)
-
             res_by_key: dict[str, _Reservation] = {
                 r.identity_key: r for r in reservations
             }
+            violations = plan.validate(res_by_key)
+            for v in violations:
+                _LOGGER.warning("Plan %s invariant violation: %s", plan_id, v)
+
             if self._must_defer_for_checkin_restore(reservations, observed_slots):
                 _LOGGER.info(
                     "Deferring reconciliation for %s until check-in state is "

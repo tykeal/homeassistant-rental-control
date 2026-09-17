@@ -2671,7 +2671,7 @@ class TestTwoCycleTransientMissTolerance:
             summary=f"Ghost {key}",
             slot_name=f"Ghost {key}",
             display_slot_name=f"RC Ghost {key}",
-            slot_code="",
+            slot_code=None,
             missing_count=missing_count,
         )
 
@@ -3122,7 +3122,7 @@ class TestReappearingBeforeThirdMiss:
             summary="Reappear Guest",
             slot_name="Reappear Guest",
             display_slot_name="RC Reappear Guest",
-            slot_code="",
+            slot_code=None,
             missing_count=0,  # reset on reappearance
         )
         slot3 = ManagedSlot(

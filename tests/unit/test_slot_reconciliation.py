@@ -103,6 +103,7 @@ def _make_reservation(
     start: datetime | None = None,
     end: datetime | None = None,
     missing_count: int = 0,
+    slot_code: str | None = "1234",
 ) -> Reservation:
     """Return a minimal valid Reservation for use in tests."""
     return Reservation(
@@ -114,7 +115,7 @@ def _make_reservation(
         summary="Test Guest",
         slot_name="Test Guest",
         display_slot_name="RC Test Guest",
-        slot_code="1234",
+        slot_code=slot_code,
         missing_count=missing_count,
     )
 
@@ -1215,6 +1216,24 @@ class TestReservation:
         r_repr = repr(r)
         assert "1234" not in r_repr
 
+    def test_slot_code_can_be_unavailable(self) -> None:
+        """slot_code accepts None when no safe code is available."""
+        r = _make_reservation(slot_code=None)
+        assert r.slot_code is None
+
+    def test_allocator_code_sources_are_assignable(self) -> None:
+        """code_source accepts allocator lifecycle source strings."""
+        sources = {
+            "allocated",
+            "collision_resolved",
+            "adopted",
+            "unallocated",
+        }
+        for source in sources:
+            r = _make_reservation()
+            r.code_source = source
+            assert r.code_source == source
+
     def test_uid_aliases_mutable_set(self) -> None:
         """uid_aliases is an independent mutable set per instance."""
         r1 = _make_reservation(identity_key="k1")
@@ -1479,6 +1498,12 @@ class TestDesiredPlan:
         plan.overflow["k-extra"] = "capacity"
         assert plan.overflow["k-extra"] == "capacity"
 
+    def test_overflow_records_code_unavailable(self) -> None:
+        """overflow dict stores code_unavailable for codeless reservations."""
+        plan = _make_desired_plan()
+        plan.overflow["k-extra"] = "code_unavailable"
+        assert plan.overflow["k-extra"] == "code_unavailable"
+
     def test_actions_list_accepts_slot_actions(self) -> None:
         """actions list accepts SlotAction instances in order."""
         plan = _make_desired_plan()
@@ -1486,6 +1511,26 @@ class TestDesiredPlan:
         plan.actions.append(action)
         assert len(plan.actions) == 1
         assert plan.actions[0].kind is ActionKind.SET
+
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            ActionKind.ASSIGN,
+            ActionKind.SET,
+            ActionKind.OVERWRITE_MANUAL_CHANGE,
+            ActionKind.UPDATE_IN_PLACE,
+            ActionKind.UPDATE_TIMES,
+        ],
+    )
+    def test_validate_rejects_codeless_write_actions(self, kind: ActionKind) -> None:
+        """validate() rejects write actions for codeless reservations."""
+        reservation = _make_reservation(identity_key="k1", slot_code=None)
+        plan = _make_desired_plan(selected={"k1": 5})
+        plan.actions.append(SlotAction(kind=kind, slot=5, identity_key="k1"))
+
+        violations = plan.validate({"k1": reservation})
+
+        assert any("codeless reservation 'k1'" in violation for violation in violations)
 
     def test_slots_dict_accepts_planned_slots(self) -> None:
         """slots dict accepts PlannedSlot values keyed by slot number."""
@@ -3218,6 +3263,7 @@ def _res(
     protected_active: bool = False,
     checked_out: bool = False,
     missing_count: int = 0,
+    slot_code: str | None = "1234",
 ) -> Reservation:
     """Return a minimal Reservation for desired-plan tests.
 
@@ -3237,7 +3283,7 @@ def _res(
         summary=f"Guest {identity_key}",
         slot_name=f"Guest {identity_key}",
         display_slot_name=f"RC Guest {identity_key}",
-        slot_code="1234",
+        slot_code=slot_code,
         eligible=eligible,
         protected_active=protected_active,
         checked_out=checked_out,
@@ -3475,6 +3521,95 @@ class TestComputeDesiredPlanSoonestN:
         assert len(set_actions) == 1
         assert set_actions[0].slot == 5
         assert set_actions[0].identity_key == "r-a"
+
+    def test_codeless_reservation_not_assigned_to_free_slot(self) -> None:
+        """A codeless reservation overflows instead of using a FREE slot."""
+        plan = compute_desired_plan(
+            [_res("r-codeless", 1, slot_code=None)],
+            [_free_slot(5)],
+            max_events=1,
+            plan_id="p-codeless",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.selected == {}
+        assert plan.overflow["r-codeless"] == "code_unavailable"
+        assert all(action.slot != 5 for action in plan.actions)
+
+    def test_codeless_capacity_overflow_keeps_occupied_slot(self) -> None:
+        """A capacity-overflowed codeless reservation keeps its occupied slot."""
+        near = _res("r-near", 1)
+        codeless_far = _res("r-far", 22, slot_code=None)
+        far_slot = _occupied_slot(5, "r-far")
+        far_slot.actual_name = "RC Guest r-far"
+        far_slot.actual_code = "2468"
+        far_slot.actual_code_present = True
+        far_slot.actual_start = codeless_far.buffered_start
+        far_slot.actual_end = codeless_far.buffered_end
+
+        plan = compute_desired_plan(
+            [near, codeless_far],
+            [far_slot, _free_slot(6)],
+            max_events=1,
+            plan_id="p-codeless-capacity",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.selected == {"r-near": 6, "r-far": 5}
+        assert "r-far" not in plan.overflow
+        assert plan.slots[5].action is ActionKind.NOOP
+
+    def test_codeless_retention_preserves_physical_slot(self) -> None:
+        """A retained codeless hold stays paired to its occupied slot."""
+        near = _res("r-near", 1, slot_code="1357")
+        codeless_far = _res("r-far", 22, slot_code=None)
+        for reservation in (near, codeless_far):
+            reservation.slot_name = "Guest Shared"
+            reservation.display_slot_name = "RC Guest Shared"
+        far_slot = _occupied_slot(5, "r-far")
+        far_slot.actual_name = "RC Guest Shared"
+        far_slot.actual_code = "2468"
+        far_slot.actual_code_present = True
+        near_slot = _occupied_slot(6, "r-near")
+        near_slot.persisted_identity_key = None
+        near_slot.actual_name = "RC Guest Shared"
+        near_slot.actual_code = "1357"
+        near_slot.actual_code_present = True
+
+        plan = compute_desired_plan(
+            [near, codeless_far],
+            [far_slot, near_slot],
+            max_events=1,
+            plan_id="p-codeless-pairing",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert plan.selected == {"r-near": 6, "r-far": 5}
+        assert "r-far" not in plan.overflow
+        assert plan.slots[5].action is ActionKind.NOOP
+        assert plan.slots[6].action is ActionKind.NOOP
+
+    def test_codeless_retention_preserves_overflow_rank(self) -> None:
+        """Retained codeless holds do not renumber later overflow diagnostics."""
+        near = _res("r-near", 1)
+        codeless_mid = _res("r-mid", 2, slot_code=None)
+        far = _res("r-far", 3)
+        mid_slot = _occupied_slot(5, "r-mid")
+        mid_slot.actual_name = "RC Guest r-mid"
+        mid_slot.actual_code = "2468"
+        mid_slot.actual_code_present = True
+
+        plan = compute_desired_plan(
+            [near, codeless_mid, far],
+            [mid_slot, _free_slot(6)],
+            max_events=1,
+            plan_id="p-codeless-rank",
+            generated_at=_dt(2026, 7, 1),
+        )
+
+        assert "r-mid" not in plan.overflow
+        assert plan.overflow["r-far"] == "capacity"
+        assert plan.diagnostics["overflow_details"]["r-far"]["rank"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -5201,6 +5336,6 @@ class TestFeedMissLifecycle:
                 summary="Bad",
                 slot_name="Bad",
                 display_slot_name="RC Bad",
-                slot_code="",
+                slot_code=None,
                 missing_count=-1,
             )
