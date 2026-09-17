@@ -21,6 +21,9 @@ from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import CycleRequest
 from custom_components.rental_control.coordinator_helpers import code_allocation
+from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
+    CoordinatorRefreshMixin,
+)
 from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
 from custom_components.rental_control.reconciliation import SlotStatus
@@ -33,9 +36,11 @@ class FakeAllocator:
         """Initialize recorded calls."""
         self.calls: list[str] = []
         self.decline_reason = decline_reason
+        self.requests: list[CycleRequest] = []
 
     async def async_resolve_cycle(self, request: CycleRequest) -> Any:
         """Record a cycle and echo adoption/allocation results."""
+        self.requests.append(request)
         adopted: dict[str, Any] = {}
         allocated: dict[str, Any] = {}
         for adoption in request.adoptions:
@@ -68,6 +73,46 @@ class FakeAllocator:
             allocated=allocated,
             unaccounted_slots=frozenset(),
         )
+
+
+class _LocklessCoordinator(CoordinatorRefreshMixin):
+    """Small coordinator stand-in for lockless allocation tests."""
+
+    hass = SimpleNamespace()
+    _entry_id = "entry-a"
+    code_length = 4
+    _name = "Entry A"
+    _latest_res_by_key: dict[str, Reservation] = {}
+    _latest_plan = None
+
+    def __init__(self) -> None:
+        """Initialize recorded sync state."""
+        self.reservation = _reservation("identity-a", code="1111")
+        self.synced: dict[str, Reservation] | None = None
+
+    def _prepare_reservations_for_adoption(
+        self,
+        _new_calendar: list[Any],
+        _managed_slots: list[ManagedSlot],
+    ) -> list[Reservation]:
+        """Return the test reservation."""
+        return [self.reservation]
+
+    def _apply_checkin_protection(
+        self,
+        reservations: list[Reservation],
+        managed_slots: list[ManagedSlot] | None = None,
+    ) -> None:
+        """Mark the lockless reservation as checked out."""
+        del managed_slots
+        reservations[0].checked_out = True
+
+    def _sync_lockless_slot_store(
+        self,
+        res_by_key: dict[str, Reservation],
+    ) -> None:
+        """Record the eligible reservations synced by lockless allocation."""
+        self.synced = res_by_key
 
 
 def _reservation(identity_key: str, code: str = "9999") -> Reservation:
@@ -131,6 +176,64 @@ async def test_phase3_adopts_without_allocation(
     ]
     assert reservation.slot_code == "2222"
     assert reservation.code_source == "adopted"
+
+
+async def test_checked_out_reservation_not_active(
+    monkeypatch: Any,
+) -> None:
+    """Checked-out reservations are swept instead of kept active."""
+    allocator = FakeAllocator()
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: allocator,
+    )
+    reservation = _reservation("identity-a", code="1111")
+    reservation.checked_out = True
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        None,
+        4,
+        [],
+        [reservation],
+    )
+
+    assert allocator.requests[0].active_keys == set()
+
+
+async def test_lockless_allocation_applies_checkout(
+    monkeypatch: Any,
+) -> None:
+    """Lockless allocation marks checkout before resolving active keys."""
+    coordinator = _LocklessCoordinator()
+    seen_checked_out: list[bool] = []
+
+    async def _resolve_codes(
+        _hass: Any,
+        _entry_id: str,
+        _lockname: str | None,
+        _code_length: int,
+        _managed_slots: list[ManagedSlot],
+        reservations: list[Reservation],
+    ) -> CycleObservation:
+        """Record whether checkout protection ran before allocation."""
+        seen_checked_out.append(reservations[0].checked_out)
+        return CycleObservation(
+            entry_id="entry-a",
+            lockname=None,
+            managed_slots=frozenset(),
+            observed_codes={},
+            unreadable_slots=frozenset(),
+        )
+
+    monkeypatch.setattr(code_allocation, "async_resolve_codes", _resolve_codes)
+
+    await coordinator._run_lockless_allocation([])
+
+    assert seen_checked_out == [True]
+    assert coordinator.synced == {}
 
 
 async def test_adoption_result_is_not_overwritten(

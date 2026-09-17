@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 from homeassistant.components.persistent_notification import async_create
+from homeassistant.components.persistent_notification import async_dismiss
 from homeassistant.core import HomeAssistant
 from homeassistant.core import ServiceCall
 from homeassistant.core import SupportsResponse
@@ -105,7 +106,10 @@ def report_orphan_cleanup(hass: HomeAssistant, report: OrphanCleanupReport) -> N
             for outcome in report.retained
         ],
     )
+    if report.dry_run:
+        return
     if not report.retained:
+        async_dismiss(hass, _ORPHAN_NOTIFICATION_ID)
         return
     message = "Shared code orphan cleanup retained allocations: " + ", ".join(
         f"{outcome.code_ref}:{outcome.reason}" for outcome in report.retained

@@ -69,7 +69,10 @@ async def async_resolve_codes(
             adoptions=adoptions,
             rekeys=build_rekey_requests(reservations),
             allocations=allocations,
-            active_keys={reservation.identity_key for reservation in reservations},
+            active_keys={
+                reservation.identity_key
+                for reservation in select_eligible_reservations(reservations)
+            },
             adoption_complete=adoption_complete,
         )
     )

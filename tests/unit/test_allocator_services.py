@@ -12,11 +12,13 @@ from typing import cast
 from homeassistant.core import HomeAssistant
 import pytest
 
+from custom_components.rental_control.allocator import services as services_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AdoptionRequest
 from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import OrphanCleanupReport
+from custom_components.rental_control.allocator.models import OrphanOutcome
 from custom_components.rental_control.allocator.services import (
     SERVICE_CLEAR_ORPHANED_CODES,
 )
@@ -129,6 +131,67 @@ async def test_service_retains_still_programmed_orphans(
 
     assert _reasons(report) == [reason]
     assert allocator._registry.code_for_identity("identity-a") == "1357"
+
+
+def test_report_dismisses_stale_notification(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clean cleanup report dismisses any previous orphan warning."""
+    dismissed = []
+    created = []
+    monkeypatch.setattr(
+        services_module,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+    monkeypatch.setattr(
+        services_module,
+        "async_create",
+        lambda *_args, **_kwargs: created.append(_args),
+    )
+
+    services_module.report_orphan_cleanup(hass, OrphanCleanupReport(dry_run=False))
+
+    assert dismissed == [services_module._ORPHAN_NOTIFICATION_ID]
+    assert created == []
+
+
+def test_report_dry_run_suppresses_notification(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dry-run cleanup reports do not mutate persistent notifications."""
+    created = []
+    dismissed = []
+    monkeypatch.setattr(
+        services_module,
+        "async_create",
+        lambda *_args, **_kwargs: created.append(_args),
+    )
+    monkeypatch.setattr(
+        services_module,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+
+    services_module.report_orphan_cleanup(
+        hass,
+        OrphanCleanupReport(
+            dry_run=True,
+            retained=[
+                OrphanOutcome(
+                    code_ref="abc12345",
+                    entry_id="orphan",
+                    identity_key="identity",
+                    reason="unverifiable_lock",
+                )
+            ],
+        ),
+    )
+
+    assert created == []
+    assert dismissed == []
 
 
 async def test_service_retains_unverifiable_and_conflict_orphans(
