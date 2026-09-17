@@ -111,6 +111,10 @@ ACCEPTED/ISSUED ──Home Assistant restart──► (absent, hold persists)
   It is never re-armed without a new invocation (FR-013).
 - At most one `PendingReissue` per `target_key`. A repeat invocation while one
   exists returns the existing outcome and performs no second rotation (FR-009).
+- A completed target fingerprint prevents same-runtime repeat calls from
+  rotating again after the hold has been released. That fingerprint is not
+  persisted; after hold release plus a Home Assistant restart, an identical
+  service call is a new operator decision.
 - A `PendingReissue` never causes a slot to be created for a reservation that no
   longer exists. Pending identities are excluded before persisted ghost
   hydration, so a disappeared booking is dropped instead of reconstructed as a
@@ -176,8 +180,10 @@ existing `issuance.observed_alias_key`:
 f"{identity_key}:reissued:{entry_id}:{lockname}:{slot}"
 ```
 
-with `lockname` and `slot` rendered as `none` for a lockless owner, and
-`is_forced_release_hold(key)` recognising the `:reissued:` marker.
+with `lockname` and `slot` rendered as `none` for a lockless owner.
+`is_forced_release_hold(key)` parses the key structurally by splitting on `:`,
+requiring the expected arity and `parts[1] == "reissued"` rather than accepting
+an arbitrary substring match.
 
 **Validation rules**:
 
@@ -191,8 +197,32 @@ with `lockname` and `slot` rendered as `none` for a lockless owner, and
 - A hold owner is skipped by `_sweep_unlocked`, so the ordinary sweep never
   evaluates or reports it.
 - A hold owner is **not** skipped by `async_mark_entry_removed` or
-  `async_clear_orphans`; those apply the full unmodified guard to it, which is
-  the conservative direction.
+  ordinary `async_clear_orphans`; those apply the full unmodified guard to it,
+  which is the conservative direction.
+
+### Forced hold reclamation through `clear_orphaned_codes`
+
+The existing `clear_orphaned_codes` service gains a fail-closed operator
+override for permanently stuck forced-release holds on loaded entries. A hold
+can be stuck precisely because the physical guard can never be satisfied, for
+example when the lock or slot is permanently unreadable. Requiring the
+unmodified physical conditions before reclamation would therefore make the
+remedy a no-op for the only case it exists to fix.
+
+**Validation rules**:
+
+- By default, `clear_orphaned_codes` behaves exactly as it does today: owners
+  whose `entry_id` belongs to a loaded config entry are not orphan candidates.
+- With the explicit override flag, only hold-namespace owners on live entries
+  may be considered. Ordinary live owners are never eligible through this path.
+- The override is an operator assertion that the lock/slot named by the hold is
+  genuinely gone. It does not call or weaken `_release_guard_reason`, and it
+  does not alter `ForcedReleaseExemption`.
+- `dry_run` reports every candidate before acting. Each candidate includes the
+  masked `code_ref`, entry id, lock/slot when present, and the retention reason
+  that made the hold visible as stuck. No report contains a raw code.
+- Acting on a candidate releases only the hold identity. It never releases
+  another owner of the same record and never changes any ordinary orphan path.
 
 ### ForcedReleaseExemption
 

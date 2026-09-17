@@ -254,11 +254,19 @@ record handled under the same release guard.
   yet, or another entry could be issued that same value and recreate the exact
   duplicate this feature exists to fix. The re-issue still proceeds; the
   release is deferred.
+- **Old code never becomes verifiable**: if a forced-release hold remains
+  stuck because the lock or slot can no longer be observed, the ordinary
+  `clear_orphaned_codes` service can reclaim that hold only when the operator
+  passes an explicit override asserting that the lock/slot is genuinely gone.
+  The default remains fail-closed.
 - **Lock unavailable or slot unreadable**: an unreadable slot
   (`SlotStatus.UNKNOWN`) is not an empty slot. The system must not treat it as
   proof the old code is gone.
 - **Invoked twice**: a second invocation against a target already carrying a
-  freshly issued code must not chain another rotation on top of the first.
+  freshly issued code must not chain another rotation on top of the first
+  within one Home Assistant runtime, or while the forced-release hold persists.
+  After the hold has been released and Home Assistant has restarted, the same
+  call is treated as a new operator decision.
 - **Lockless config entry**: there is no physical write to confirm and no
   release guard coverage to wait for, so the new code publishes immediately.
 - **Code space exhausted**: no unique replacement exists. The re-issue must
@@ -267,6 +275,10 @@ record handled under the same release guard.
 - **Reservation ends between invocation and the next reconcile cycle**: the
   pending forced re-issue must not resurrect or re-create a slot for a booking
   that is over.
+- **Reservation identity changes before the next reconcile cycle**: if the
+  booking window or guest details change so the target identity no longer
+  matches any allocation, the cycle reports `no_existing_allocation`, clears
+  the pending record, and does not silently retain the old observed code.
 - **Target entity is not a Rental Control reservation sensor**: refused.
 - **Home Assistant restarts between invocation and the next reconcile cycle**:
   the pending re-issue is in-memory only and is silently dropped. This is
@@ -310,7 +322,10 @@ record handled under the same release guard.
 - **FR-009**: Repeating the same call MUST be safe. A target that is already
   carrying a re-issue that has not yet completed MUST NOT accumulate a second
   pending re-issue, and a target whose re-issue has completed MUST NOT be
-  rotated again by a repeat of the original call.
+  rotated again by a repeat of the original call within one Home Assistant
+  runtime, or while the forced-release hold persists. Once the hold has been
+  released and Home Assistant has restarted, an identical call is a new
+  operator decision.
 - **FR-010**: When the addressed lock is unavailable, or the addressed slot's
   observed status is unreadable, the service MUST NOT treat the slot as empty.
   It MUST either defer the affected step under the existing release guard or
@@ -327,14 +342,16 @@ record handled under the same release guard.
   entry's currently configured generator, receiving that generator's preferred
   code when it is available and a collision-resolved code when it is not,
   exactly as an ordinary allocation would.
-- **FR-013**: A forced re-issue MUST suppress the `manual_observed` retention
-  in `_resolve_observed_code` for the addressed target for the next reconcile
-  cycle only. It MUST NOT disable that protection permanently, for other
-  targets, or for the same target on subsequent cycles. The suppression MUST be
-  held in memory only and MUST introduce no new persisted state; a forced
-  re-issue that has been accepted but not yet consumed by a reconcile cycle
-  therefore lapses on a Home Assistant restart, and the operator invokes the
-  service again.
+- **FR-013**: A forced re-issue MUST suppress every observed-code retention
+  path for the addressed target for the next reconcile cycle only, including
+  `_resolve_observed_code`, the checked-in protected-reservation path, the
+  target's adoption request, and allocator identity-mismatch adoption that would
+  otherwise return the old observed code for the held identity. It MUST NOT
+  disable those protections permanently, for other targets, or for the same
+  target on subsequent cycles. The suppression MUST be held in memory only and
+  MUST introduce no new persisted state; a forced re-issue that has been
+  accepted but not yet consumed by a reconcile cycle therefore lapses on a Home
+  Assistant restart, and the operator invokes the service again.
 - **FR-014**: The replacement code MUST be recorded in the shared registry as
   owned by the addressed reservation identity before or at the moment it is
   written to the lock, so no other entry can be issued the same value.
@@ -383,6 +400,14 @@ record handled under the same release guard.
   retention reason, so an indefinitely stuck release is visible rather than
   silent. A deferral caused solely by the exempted multiple-owner condition
   MUST NOT be reported as stuck.
+- **FR-029**: The existing `clear_orphaned_codes` service MUST be able to
+  consider forced-release hold owners for loaded entries only when the operator
+  passes an explicit override flag asserting that the lock/slot is genuinely
+  gone. Without that flag, behaviour MUST remain exactly as it is today. The
+  override MUST be limited to hold-namespace owners and MUST NOT loosen ordinary
+  orphan handling or the `_release_guard_reason` exemption design. Every
+  candidate MUST be visible under `dry_run`, reported with its retention
+  reason, and identified only by masked `code_ref`.
 
 #### Observability
 
@@ -469,7 +494,8 @@ record handled under the same release guard.
   payloads, zero notifications, and zero non-dry-run service responses
   attributable to this feature.
 - **SC-007**: Invoking the same request twice produces exactly one code
-  rotation.
+  rotation within one Home Assistant runtime, or while the forced-release hold
+  persists.
 - **SC-008**: Every forced re-issue is reconstructable from the logs alone:
   target, invoker, override use, masked replaced code, masked replacement code,
   and replaced-code disposition.

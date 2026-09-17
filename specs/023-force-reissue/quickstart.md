@@ -53,7 +53,8 @@ Each step is one atomic commit that builds and passes the suite.
    and `PendingReissue`; the `ReservationBuildContext` field and its default;
    `_resolve_observed_code`; `build_protected_reservation`;
    `_synthesize_checkin_reservation` passing the generated code for suppressed
-   protected slots; `build_adoption_requests` skip; the `_adoption_complete`
+   protected slots; `build_adoption_requests` skip; the `adopt_unlocked`
+   identity-mismatch suppression while a hold exists; the `_adoption_complete`
    exclusion; and `_prepare_reservations_for_adoption` filtering pending
    identities and bare slots before ghost hydration.
 4. **Service.** `allocator/reissue_service.py`, registration from
@@ -62,9 +63,10 @@ Each step is one atomic commit that builds and passes the suite.
    translations. Target resolution and all nine validation checks.
 5. **Dry run.** `async_preview_reissue` and the separate preview response
    builder.
-6. **Reporting.** The three audit log lines, the deferred-release notification,
-   the allocator diagnostics counters, and the identity-mismatch suppression in
-   `adoption.py`.
+6. **Reporting and reclamation.** The three audit log lines, the
+   deferred-release notification, the allocator diagnostics counters, and the
+   `clear_orphaned_codes` forced-hold reclamation override for stuck holds on
+   live entries.
 
 ## Traps that will cost you a day each
 
@@ -94,6 +96,16 @@ Each step is one atomic commit that builds and passes the suite.
   `matched_physical.actual_code` before calling the helper. For a suppressed
   slot it must pass the generated replacement instead, or the checked-in ghost
   path remains a no-op.
+- **Letting `adopt_unlocked` return the old observed code on N+1.** If the
+  lock still reads the old code after the one-cycle suppression lapses,
+  `identity_code_mismatch` can rewrite the reservation back to the old code and
+  prevent `OVERWRITE_MANUAL_CHANGE` from being retried. A hold for the same
+  entry, lock, and slot must make that path return no code or skip the request.
+- **Gating stuck-hold reclamation on the same physical guard.** A permanently
+  stuck hold is stuck because the physical conditions cannot be verified. The
+  `clear_orphaned_codes` override is an explicit operator assertion that the
+  lock/slot is gone; applying the unmodified physical guard would make the
+  remedy circular.
 
 ## Validation gate
 
