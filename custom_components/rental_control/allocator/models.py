@@ -211,6 +211,8 @@ class OrphanOutcome:
     entry_id: str
     identity_key: str
     reason: str | None = None
+    lockname: str | None = None
+    slot: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

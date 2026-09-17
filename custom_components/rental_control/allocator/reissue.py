@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from datetime import UTC
 from datetime import datetime
+import logging
 from typing import TYPE_CHECKING
+from typing import Any
 
 from . import reissue_state
 from .models import AdoptionRequest
@@ -22,6 +24,7 @@ if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
 
 StagedReissue = reissue_state.StagedReissue
+_LOGGER = logging.getLogger(__name__)
 _FAILURE_REASONS = {
     "exhausted",
     "adoption_pending",
@@ -110,8 +113,19 @@ def finalize_forced_reissue_outcomes(
         if outcome.disposition != "held_pending_release" or result is None:
             finalized.append(outcome)
             continue
+        replacement_ref = allocator.code_ref(result.code) if result.code else None
         if result.code is not None:
             reissue_state.discard_removed_records(allocator, stage)
+            _LOGGER.info(
+                "Forced re-issue replacement entry=%s identity=%s "
+                "lock=%s slot=%s replacement_code_ref=%s origin=%s",
+                outcome.entry_id,
+                outcome.identity_key,
+                outcome.lockname,
+                outcome.slot,
+                replacement_ref,
+                result.origin,
+            )
         finalized.append(
             ReissueOutcome(
                 outcome.entry_id,
@@ -119,7 +133,7 @@ def finalize_forced_reissue_outcomes(
                 outcome.lockname,
                 outcome.slot,
                 outcome.replaced_code_ref,
-                allocator.code_ref(result.code) if result.code else None,
+                replacement_ref,
                 result.origin,
                 outcome.disposition,
                 outcome.retention_reason,
@@ -164,6 +178,17 @@ def rollback_blocked_reissues(
                 origin=owner.origin,
                 reason=reason,
             )
+        _LOGGER.info(
+            "Forced re-issue replaced-code disposition entry=%s identity=%s "
+            "lock=%s slot=%s replaced_code_ref=%s disposition=failed "
+            "retention_reason=%s",
+            stage.entry_id,
+            stage.identity_key,
+            stage.lockname,
+            stage.slot,
+            stage.replaced_code_ref,
+            reason,
+        )
         rolled_back.append(
             ReissueOutcome(
                 stage.entry_id,
@@ -200,6 +225,19 @@ def release_forced_holds(
             )
             if reason is None:
                 allocator._registry.release(owner.identity_key)
+            disposition = "released" if reason is None else "held_pending_release"
+            _LOGGER.info(
+                "Forced re-issue replaced-code disposition entry=%s identity=%s "
+                "lock=%s slot=%s replaced_code_ref=%s disposition=%s "
+                "retention_reason=%s",
+                owner.entry_id,
+                reissue_state.hold_base_identity(owner.identity_key),
+                owner.lockname,
+                owner.slot,
+                record.code_ref,
+                disposition,
+                reason,
+            )
             outcomes.append(
                 ReissueOutcome(
                     owner.entry_id,
@@ -209,7 +247,7 @@ def release_forced_holds(
                     record.code_ref,
                     None,
                     None,
-                    "released" if reason is None else "held_pending_release",
+                    disposition,
                     reason,
                 )
             )
@@ -275,6 +313,23 @@ def forced_hold_matches_slot(
         and is_forced_release_hold(owner.identity_key)
         for record in allocator._registry.records.values()
         for owner in record.owners
+    )
+
+
+def forced_hold_retention_reason(
+    allocator: DoorCodeAllocator,
+    record: AllocationRecord,
+    owner: AllocationOwner,
+    observations: list[Any],
+) -> str | None:
+    """Return the visible guard reason for a forced-release hold."""
+    exemption = ForcedReleaseExemption(record.code, owner.entry_id, owner.identity_key)
+    return allocator._release_guard_reason(
+        record,
+        [owner],
+        observations,
+        refresh_observed=False,
+        forced_release=exemption,
     )
 
 

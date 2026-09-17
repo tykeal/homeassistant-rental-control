@@ -20,6 +20,7 @@ from ..const import NAME
 from . import adoption
 from . import diagnostics
 from . import issuance
+from . import orphans
 from . import reissue
 from . import services
 from .models import AdoptionRequest
@@ -30,9 +31,7 @@ from .models import AllocationResult
 from .models import CycleObservation
 from .models import CycleRequest
 from .models import CycleResult
-from .models import ForcedReleaseExemption
 from .models import OrphanCleanupReport
-from .models import OrphanOutcome
 from .models import ReissuePreview
 from .models import ReissuePreviewRequest
 from .models import ReleaseReport
@@ -42,7 +41,6 @@ from .store import code_ref_for
 
 _LOGGER = logging.getLogger(__name__)
 _ADOPTION_GATE_WARNING_SECONDS = 300.0
-_CONFLICT_NOTIFICATION_ID = f"{DOMAIN}_code_registry_conflict"
 _GATE_NOTIFICATION_ID = f"{DOMAIN}_code_registry_adoption_pending"
 
 
@@ -268,7 +266,7 @@ class DoorCodeAllocator:
                     [owner],
                     observations,
                 )
-                outcome = self._outcome(record, owner, reason)
+                outcome = orphans.build_outcome(record, owner, reason)
                 if reason is None:
                     self._registry.release(owner.identity_key)
                     released.append(outcome)
@@ -296,7 +294,7 @@ class DoorCodeAllocator:
                     if owner.entry_id != entry_id:
                         continue
                     reason = self._release_guard_reason(record, [owner], [])
-                    outcome = self._outcome(record, owner, reason)
+                    outcome = orphans.build_outcome(record, owner, reason)
                     if reason is None:
                         self._registry.release(owner.identity_key)
                         released.append(outcome)
@@ -311,39 +309,24 @@ class DoorCodeAllocator:
         known_entry_ids: set[str],
         observations: list[CycleObservation],
         dry_run: bool = False,
+        force_reissued_holds: bool = False,
+        loaded_entry_ids: set[str] | None = None,
     ) -> OrphanCleanupReport:
         """Clear orphaned allocations that the shared guard proves safe."""
         async with self._lock:
-            cleared = []
-            retained = []
-            for record in list(self._registry.records.values()):
-                orphan_owners = [
-                    owner
-                    for owner in list(record.owners)
-                    if owner.entry_id not in known_entry_ids
-                ]
-                for owner in orphan_owners:
-                    reason = self._release_guard_reason(
-                        record,
-                        [owner],
-                        observations,
-                        refresh_observed=not dry_run,
-                    )
-                    outcome = self._outcome(record, owner, reason)
-                    if reason is None:
-                        cleared.append(outcome)
-                        if not dry_run:
-                            self._registry.release(owner.identity_key)
-                    else:
-                        retained.append(outcome)
-            if cleared and not dry_run:
-                self._store.async_save(self._registry)
-            report = OrphanCleanupReport(
+            report = orphans.clear_orphans(
+                self,
+                known_entry_ids,
+                observations,
                 dry_run=dry_run,
-                cleared=cleared,
-                retained=retained,
+                force_reissued_holds=force_reissued_holds,
+                loaded_entry_ids=loaded_entry_ids or set(),
             )
+            if report.cleared and not dry_run:
+                self._store.async_save(self._registry)
             services.report_orphan_cleanup(self.hass, report)
+            if not dry_run and (report.cleared or report.retained):
+                services.report_forced_hold_deferrals(self, (), observations)
             return report
 
     def _release_guard_reason(
@@ -353,7 +336,7 @@ class DoorCodeAllocator:
         observations: list[CycleObservation],
         *,
         refresh_observed: bool = True,
-        forced_release: ForcedReleaseExemption | None = None,
+        forced_release: reissue.ForcedReleaseExemption | None = None,
     ) -> str | None:
         """Return why owners must be retained, or None when safe to release."""
         if len(record.owners) > 1 and not reissue._conflict_exempt(
@@ -418,17 +401,3 @@ class DoorCodeAllocator:
     ) -> None:
         """Refresh observed state without making a release decision."""
         self._owner_still_programmed(record, owner, observations)
-
-    @staticmethod
-    def _outcome(
-        record: AllocationRecord,
-        owner: AllocationOwner,
-        reason: str | None,
-    ) -> OrphanOutcome:
-        """Build a release or cleanup report row."""
-        return OrphanOutcome(
-            code_ref=record.code_ref,
-            entry_id=owner.entry_id,
-            identity_key=owner.identity_key,
-            reason=reason,
-        )

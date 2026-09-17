@@ -175,6 +175,24 @@ in automations or the developer tools. It transitions the check-in sensor
 from `checked_in` to `checked_out`. The sensor must be in the `checked_in`
 state and the current time must fall within the active reservation window.
 
+### Force Reissue Action
+
+The `rental_control.force_reissue` service action lets an operator rotate one
+reservation or managed lock slot through the shared code allocator. Target
+exactly one reservation with `entity_id`, or target any managed slot with both
+`lockname` and `slot`; slot targeting attaches the live reservation when one
+occupies the slot and otherwise clears a ghost code. You must pass the optional `force` flag when the
+reservation has already checked in, because rotating the code revokes a
+credential the guest may be holding. Use `dry_run` to preview the replacement
+code without changing locks, sensors, or the shared registry.
+
+For lock-backed entries, the reservation sensor continues to publish the last
+confirmed lock code until the physical slot reports the replacement write. If
+Home Assistant restarts after accepting a request but before the next refresh
+consumes it, the in-memory request lapses; invoke the service again.
+Any already-created replaced-code hold remains in the registry, and each
+refresh retries it until the allocator can safely release it.
+
 ### Home Assistant Events
 
 The integration fires events on the Home Assistant event bus for use in

@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from . import reissue
+from . import services
 from .candidates import candidate_codes
 from .models import AdoptionRequest
 from .models import AllocationOrigin
@@ -19,6 +20,8 @@ from .models import AllocationResult
 from .models import CycleObservation
 from .models import CycleRequest
 from .models import CycleResult
+from .models import ForcedReissueDirective
+from .models import ReissueOutcome
 from .registry import AllocationRegistry
 
 if TYPE_CHECKING:
@@ -189,11 +192,9 @@ async def resolve_cycle(
             allocator, reissue_outcomes, staged_reissues, allocated
         )
         released = allocator._sweep_unlocked(request.observation, request.active_keys)
-        if not allocator._registry_lost:
-            reissue_outcomes = reissue.merge_release_outcomes(
-                reissue_outcomes,
-                reissue.release_forced_holds(allocator, request),
-            )
+        reissue_outcomes = _release_and_report_holds(
+            allocator, request, reissue_outcomes
+        )
         recovery_declined = any(
             result.reason == "recovery_fail_closed" for result in allocated.values()
         )
@@ -232,3 +233,22 @@ def unaccounted_slots(
         and owner.slot is not None
     }
     return frozenset(observation.unreadable_slots - claimed)
+
+
+def _release_and_report_holds(
+    allocator: DoorCodeAllocator,
+    request: CycleRequest,
+    outcomes: list[ReissueOutcome],
+) -> list[ReissueOutcome]:
+    """Release forced holds and reconcile their operator notification."""
+    hold_releases = []
+    report_directives: tuple[ForcedReissueDirective, ...] = ()
+    if not allocator._registry_lost:
+        hold_releases = reissue.release_forced_holds(allocator, request)
+        report_directives = request.forced_reissues
+        outcomes = reissue.merge_release_outcomes(outcomes, hold_releases)
+    if hold_releases or services.has_forced_holds(allocator):
+        services.report_forced_hold_deferrals(
+            allocator, report_directives, [request.observation]
+        )
+    return outcomes

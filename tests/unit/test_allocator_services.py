@@ -15,6 +15,9 @@ import pytest
 from custom_components.rental_control.allocator import services as services_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AdoptionRequest
+from custom_components.rental_control.allocator.models import AllocationOrigin
+from custom_components.rental_control.allocator.models import AllocationOwner
+from custom_components.rental_control.allocator.models import AllocationRecord
 from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import OrphanCleanupReport
@@ -29,6 +32,7 @@ from custom_components.rental_control.allocator.services import (
     register_allocator_services,
 )
 from custom_components.rental_control.const import ALLOCATOR
+from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 
 
@@ -320,3 +324,169 @@ async def _allocate(
 def _reasons(report: OrphanCleanupReport) -> list[str]:
     """Return cleanup retention reasons."""
     return [outcome.reason or "" for outcome in report.retained]
+
+
+async def test_clear_orphans_ignores_live_holds_by_default(
+    hass: HomeAssistant,
+) -> None:
+    """Live forced-release holds are not cleanup candidates by default."""
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    allocator = _allocator(hass)
+    hold_key = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    await _allocate(allocator, "entry-a", hold_key, "1357", "front", 1)
+
+    report = await allocator.async_clear_orphans(
+        {"entry-a"},
+        [
+            CycleObservation(
+                entry_id="entry-a",
+                lockname="front",
+                managed_slots=frozenset({1}),
+                observed_codes={"1357": 1},
+                unreadable_slots=frozenset(),
+            )
+        ],
+    )
+
+    assert report.cleared == []
+    assert report.retained == []
+    assert allocator._registry.code_for_identity(hold_key) == "1357"
+
+
+async def test_clear_orphans_force_reclaims_live_holds(
+    hass: HomeAssistant,
+) -> None:
+    """The explicit override reclaims only hold-namespace live owners."""
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    allocator = _allocator(hass)
+    hold_key = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    await _allocate(allocator, "entry-a", hold_key, "1357", "front", 1)
+    await _allocate(allocator, "entry-a", "ordinary", "2468", "front", 2)
+
+    report = await allocator.async_clear_orphans(
+        {"entry-a"},
+        [
+            CycleObservation(
+                entry_id="entry-a",
+                lockname="front",
+                managed_slots=frozenset({1, 2}),
+                observed_codes={"1357": 1, "2468": 2},
+                unreadable_slots=frozenset(),
+            )
+        ],
+        dry_run=True,
+        force_reissued_holds=True,
+        loaded_entry_ids={"entry-a"},
+    )
+
+    assert [
+        (item.identity_key, item.reason, item.lockname, item.slot)
+        for item in report.cleared
+    ] == [(hold_key, "code_still_programmed", "front", 1)]
+    assert allocator._registry.code_for_identity(hold_key) == "1357"
+    assert allocator._registry.code_for_identity("ordinary") == "2468"
+
+    acted = await allocator.async_clear_orphans(
+        {"entry-a"},
+        [
+            CycleObservation(
+                entry_id="entry-a",
+                lockname="front",
+                managed_slots=frozenset({1, 2}),
+                observed_codes={"1357": 1, "2468": 2},
+                unreadable_slots=frozenset(),
+            )
+        ],
+        force_reissued_holds=True,
+        loaded_entry_ids={"entry-a"},
+    )
+
+    assert [item.identity_key for item in acted.cleared] == [hold_key]
+    assert allocator._registry.code_for_identity(hold_key) is None
+    assert allocator._registry.code_for_identity("ordinary") == "2468"
+
+
+async def test_clear_orphans_force_requires_loaded_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Configured but unloaded entry holds are not explicit reclaim candidates."""
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    allocator = _allocator(hass)
+    hold_key = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    await _allocate(allocator, "entry-a", hold_key, "1357", "front", 1)
+
+    report = await allocator.async_clear_orphans(
+        {"entry-a"},
+        [],
+        dry_run=True,
+        force_reissued_holds=True,
+        loaded_entry_ids=set(),
+    )
+
+    assert report.cleared == []
+    assert allocator._registry.code_for_identity(hold_key) == "1357"
+
+
+def test_forced_hold_deferral_notification_skips_first_cycle(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only older forced-release hold deferrals create notifications."""
+    from custom_components.rental_control.allocator.models import ForcedReissueDirective
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    created = []
+    dismissed = []
+    monkeypatch.setattr(
+        services_module,
+        "async_create",
+        lambda *_args, **kwargs: created.append((_args, kwargs)),
+    )
+    monkeypatch.setattr(
+        services_module,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+    allocator = _allocator(hass)
+    hold_key = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    allocator._registry.records["1357"] = AllocationRecord(
+        code="1357",
+        code_ref="abc12345",
+        encoding_salt_value="entry-a",
+        owners=[
+            AllocationOwner(
+                "entry-a",
+                hold_key,
+                AllocationOrigin.PREFERRED,
+                lockname="front",
+                slot=1,
+                lock_observed=True,
+            )
+        ],
+    )
+    allocator._registry.rebuild_index()
+    hass.data.setdefault(DOMAIN, {})["entry-a"] = {
+        COORDINATOR: SimpleNamespace(
+            lockname="front", _observe_managed_slots=lambda: []
+        )
+    }
+
+    services_module.report_forced_hold_deferrals(
+        allocator, (ForcedReissueDirective("entry-a", "identity-a", "front", 1),)
+    )
+    services_module.report_forced_hold_deferrals(allocator, ())
+
+    assert len(created) == 1
+    assert "abc12345:unverifiable_lock" in created[0][0][1]
+    assert "adoption_conflict" not in created[0][0][1]

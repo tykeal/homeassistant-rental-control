@@ -145,6 +145,10 @@
         "dry_run": {
           "name": "Simulation",
           "description": "Signaler ce qui serait effacé sans modifier le registre de codes partagé."
+        },
+        "force_reissued_holds": {
+          "name": "Forcer les attentes réémises",
+          "description": "Récupérer explicitement les attentes de réémission bloquées sur les entrées chargées. À utiliser seulement après avoir vérifié que le verrou ou le créneau a vraiment disparu."
         }
       }
     },
