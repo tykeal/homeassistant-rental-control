@@ -218,6 +218,6 @@ substring-searching a serialized payload.
 
 ## Resolved, with no open questions
 
-No `[NEEDS CLARIFICATION]` markers remain. The spec carries 28 functional
+No clarification markers remain. The spec carries 28 functional
 requirements and zero clarification markers, and every planning question raised
 above was answerable from live source.
