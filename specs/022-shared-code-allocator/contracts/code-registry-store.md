@@ -297,8 +297,10 @@ or encoded code.
   are the record's owners and the supplied `CycleObservation` values. A record
   is retained when any owner has `lock_observed=True` after refresh, when an
   observation for the same `lockname` reports that owner's `slot` as
-  unreadable, or when no supplied observation covers its `lockname` at all. The
-  rule is defined once and not reimplemented per caller
+  unreadable, or when no supplied observation covers its lock-backed
+  `lockname` at all. Lockless owners (`lockname=None`) have no physical
+  observation requirement and are immediately releasable once removed. The rule
+  is defined once and not reimplemented per caller
   (FR-014).
 - **Entry lifecycle**: `async_register_entry` adds to the adoption pending set;
   `async_unregister_entry` removes an entry that failed setup, was disabled, or

@@ -217,7 +217,7 @@ Retained orphans are cleared by the operator through the
 `rental_control.clear_orphaned_codes` service described in decision 7, after a
 fresh system-wide observation can prove the code is no longer programmed.
 
-### 2. Where allocation runs in the refresh cycle
+### 2. Final allocation path in the refresh cycle
 
 `_run_reconciliation` currently does: observe slots, build reservations, apply
 check-in protection, compute plan, apply plan, sync store. The new step is
@@ -227,12 +227,15 @@ inserted after check-in protection and before `compute_desired_plan`:
 await code_allocation.async_resolve_codes(self, reservations, observed_slots)
 ```
 
-The step runs through one allocator entrypoint, `async_resolve_cycle`, taking a
-`CycleRequest` built from this entry's `CycleObservation` plus its adoptions,
-rekeys, and allocation requests, so all four phases share a single lock hold. The
-public phase methods keep their own locks for unit tests and other standalone
-callers; `async_resolve_cycle` drives private non-locking helpers instead, since
-`_lock` is non-reentrant and calling the public methods under it would deadlock.
+In the final Phase 6 state, the step runs through one allocator entrypoint,
+`async_resolve_cycle`, taking a `CycleRequest` built from this entry's
+`CycleObservation` plus its adoptions, rekeys, and allocation requests, so all
+four phases share a single lock hold. Earlier implementation checkpoints are
+narrower by design: Phase 3 calls the adopt path only, Phase 4 converts the
+call site to adopt → allocate, and Phase 6 adds rekey and sweep. The public
+phase methods keep their own locks for unit tests and other standalone callers;
+`async_resolve_cycle` drives private non-locking helpers instead, since `_lock`
+is non-reentrant and calling the public methods under it would deadlock.
 
 1. **Adopt** every observed code for this entry's managed slots, attributing it
    to the reservation matched to that slot (FR-020, FR-021). If the reservation

@@ -246,7 +246,9 @@ records a `reason` of `code_still_programmed`, `unverifiable_lock`, or
 
 - `slot_code: str` becomes `slot_code: str | None`.
   - `str` — the allocator's code for this reservation; identical to what will be
-    written to the lock and shown by the sensor.
+    written to the lock. A lock-backed sensor shows it only after physical
+    confirmation; until then it keeps the last observed code or reports no code
+    if none is safe. A lockless sensor publishes it immediately.
   - `None` — no code is available this cycle. The planner must hold the slot.
 - `code_source` gains `"allocated"`, `"collision_resolved"`, `"adopted"`, and
   `"unallocated"`, alongside today's `"generated"` and `"manual_observed"`.

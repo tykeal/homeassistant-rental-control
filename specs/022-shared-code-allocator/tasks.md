@@ -274,7 +274,10 @@ reservation holding it.
       `compute_desired_plan`, hydrating `fingerprint_history`, `missing_count`,
       and ghost reservations from the persisted mapping store first, treating
       `published_once` as absent/`False` until T031 records it durably, and
-      preserving the existing cycle-skipping `try/except`
+      holding any reservation that was not adopted this pass at
+      `slot_code=None`/`code_source="unallocated"` so the planner cannot emit a
+      generated `SET` before T029 consumes allocator results, while preserving
+      the existing cycle-skipping `try/except`
       (FR-020, plan decision 2)
 - [ ] T025 [P] [US3] Add adoption coverage to
       `tests/unit/test_code_allocation_step.py`: adopt-before-allocate ordering
@@ -523,6 +526,7 @@ Phase 1 Setup
   (ATOMIC B). `slot_code` nullability is never merged without the guards.
 - T011, T014 → T021, T022 (adoption needs the allocator and the registered
   entry set)
+- T021 → T023 (the helper calls the allocator's adopt path)
 - T021, T022, T023 → T024 (the adoption-only step exists before it is spliced
   into the refresh)
 - T016-T018 → T029, T030 (results may set `slot_code = None`, which is only
@@ -530,10 +534,13 @@ Phase 1 Setup
 - T023, T027 → T028 (Phase 4 converts the adoption-only step to the batch
   adopt+allocate entrypoint)
 - T027, T028 → T029
-- T031 → T030 (the lockless path consumes durable `published_once`)
+- T028, T029, T031 → T030 (the lockless path consumes the batch entrypoint,
+  allocation-result consumer, and durable `published_once`)
 - T028, T030 → T040, T041 (Phase 6 extends the existing batch and lockless
   paths with rekey and sweep; Phase 4 does not call missing behaviours)
 - T029 → T037 (the sensor can only display a code the coordinator holds)
+- T037 → T035, T036 (ATOMIC C removes generated display only after
+  `get_slot_code` has confirmation semantics)
 - T004 (`lockname`/`slot` on the owner), T023 (`CycleObservation`), T021
   (adoption) → T041 → T042, T043 — release and cleanup behaviour comes after
   adoption, never before
