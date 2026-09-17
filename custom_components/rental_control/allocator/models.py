@@ -38,8 +38,14 @@ class AllocationOwner:
             raise ValueError("identity_key must be non-empty")
         if not isinstance(self.origin, AllocationOrigin):
             self.origin = AllocationOrigin(self.origin)
+        if self.slot is not None and (
+            not isinstance(self.slot, int) or isinstance(self.slot, bool)
+        ):
+            raise ValueError("slot must be a positive integer or None")
         if self.slot is not None and self.slot < 1:
             raise ValueError("slot must be a positive integer or None")
+        if (self.lockname is None) != (self.slot is None):
+            raise ValueError("lockname and slot must both be set or both be None")
 
 
 @dataclass(slots=True)
@@ -57,6 +63,8 @@ class AllocationRecord:
 
     def __post_init__(self) -> None:
         """Validate code shape and required ownership metadata."""
+        if not isinstance(self.code_length, int) or isinstance(self.code_length, bool):
+            raise ValueError("code_length must be a positive integer")
         if self.code_length < 1:
             raise ValueError("code_length must be positive")
         if not self.code.isdecimal() or len(self.code) != self.code_length:

@@ -33,6 +33,8 @@ def candidate_codes(identity_key: str, code_length: int) -> Iterator[str]:
     forced odd and non-divisible by five, making it coprime to that space
     so every zero-padded code is produced exactly once.
     """
+    if not isinstance(code_length, int) or isinstance(code_length, bool):
+        raise ValueError("code_length must be a positive integer")
     if code_length < 1:
         raise ValueError("code_length must be positive")
     space_size = 10**code_length

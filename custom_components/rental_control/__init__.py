@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 
@@ -76,6 +77,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     allocator = await async_get_or_create_allocator(hass)
     registered_allocator_entry = False
+    remove_update_listener = None
     try:
         await allocator.async_register_entry(config_entry.entry_id)
         registered_allocator_entry = True
@@ -130,17 +132,26 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         if coordinator.lockname:
             async_register_keymaster_listener(hass, config_entry)
 
-        config_entry.add_update_listener(update_listener)
+        remove_update_listener = config_entry.add_update_listener(update_listener)
 
         # remove files if needed
         if should_generate_package:
             delete_rc_and_base_folder(hass, config_entry)
 
         return True
-    except Exception:
+    except asyncio.CancelledError:
+        await _async_cleanup_entry_setup_failure(hass, config_entry)
+        if remove_update_listener is not None:
+            remove_update_listener()
         if registered_allocator_entry:
             await allocator.async_unregister_entry(config_entry.entry_id)
-        hass.data[DOMAIN].pop(config_entry.entry_id, None)
+        raise
+    except Exception:
+        await _async_cleanup_entry_setup_failure(hass, config_entry)
+        if remove_update_listener is not None:
+            remove_update_listener()
+        if registered_allocator_entry:
+            await allocator.async_unregister_entry(config_entry.entry_id)
         raise
 
 
@@ -191,6 +202,32 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     async_dismiss(hass, notification_id)
 
     return unload_ok
+
+
+async def _async_cleanup_entry_setup_failure(
+    hass: HomeAssistant, config_entry: ConfigEntry
+) -> None:
+    """Release listeners and partially loaded platforms after setup failure."""
+    entry_data = hass.data[DOMAIN].get(config_entry.entry_id)
+    if entry_data is None:
+        return
+
+    unload_ok = await hass.config_entries.async_unload_platforms(
+        config_entry, PLATFORMS
+    )
+    if not unload_ok:
+        _LOGGER.warning(
+            "Keeping entry data for %s after setup failure because platform "
+            "teardown did not complete",
+            config_entry.entry_id,
+        )
+        return
+
+    for unsub_listener in list(entry_data.get(UNSUB_LISTENERS, [])):
+        unsub_listener()
+    entry_data.get(UNSUB_LISTENERS, []).clear()
+
+    hass.data[DOMAIN].pop(config_entry.entry_id, None)
 
 
 async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:

@@ -35,10 +35,6 @@ async def async_get_or_create_allocator(hass: HomeAssistant) -> DoorCodeAllocato
         if existing is not None:
             return existing
         allocator = DoorCodeAllocator(hass)
+        await allocator.async_load()
         hass.data[DOMAIN][ALLOCATOR] = allocator
-        try:
-            await allocator.async_load()
-        except Exception:
-            hass.data[DOMAIN].pop(ALLOCATOR, None)
-            raise
         return allocator

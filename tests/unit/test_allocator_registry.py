@@ -146,3 +146,78 @@ def test_rejects_malformed_record_inputs() -> None:
                 ),
             }
         )
+
+
+def test_rejects_duplicate_identity_in_same_record() -> None:
+    """A single record cannot contain the same owner identity twice."""
+    with pytest.raises(ValueError, match="multiple records"):
+        AllocationRegistry(
+            records={
+                "1234": AllocationRecord(
+                    code="1234",
+                    code_ref="ref",
+                    encoding_salt_value="entry-a",
+                    code_length=4,
+                    owners=[
+                        AllocationOwner(
+                            entry_id="entry-a",
+                            identity_key="identity-a",
+                            origin=AllocationOrigin.PREFERRED,
+                        ),
+                        AllocationOwner(
+                            entry_id="entry-a",
+                            identity_key="identity-a",
+                            origin=AllocationOrigin.ADOPTED,
+                        ),
+                    ],
+                )
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("lockname", "slot"),
+    [
+        ("front", None),
+        (None, 1),
+        ("front", True),
+    ],
+)
+def test_rejects_invalid_physical_owner_pair(
+    lockname: str | None, slot: int | None
+) -> None:
+    """Physical owner metadata must be complete and non-boolean."""
+    with pytest.raises(ValueError, match="slot|lockname"):
+        AllocationOwner(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            origin=AllocationOrigin.ADOPTED,
+            lockname=lockname,
+            slot=slot,
+        )
+
+
+@pytest.mark.parametrize("code_length", [True, 1.0, 0])
+def test_rejects_invalid_code_lengths(code_length: object) -> None:
+    """Records and registry APIs accept only positive integer lengths."""
+    with pytest.raises(ValueError, match="code_length"):
+        AllocationRecord(
+            code="1",
+            code_ref="ref",
+            encoding_salt_value="entry-a",
+            code_length=code_length,  # type: ignore[arg-type]
+            owners=[
+                AllocationOwner(
+                    entry_id="entry-a",
+                    identity_key="identity-a",
+                    origin=AllocationOrigin.PREFERRED,
+                )
+            ],
+        )
+
+    with pytest.raises(ValueError, match="code_length"):
+        AllocationRegistry().is_available(
+            "1",
+            code_length,  # type: ignore[arg-type]
+            "identity-a",
+        )

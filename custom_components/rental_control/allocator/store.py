@@ -115,7 +115,12 @@ class RegistryStore:
         """Convert a storage payload into a validated allocation registry."""
         if not isinstance(payload, dict):
             raise ValueError("payload is not an object")
-        if payload.get("schema_version") != CODE_REGISTRY_SCHEMA_VERSION:
+        schema_version = payload.get("schema_version")
+        if (
+            not isinstance(schema_version, int)
+            or isinstance(schema_version, bool)
+            or schema_version != CODE_REGISTRY_SCHEMA_VERSION
+        ):
             raise ValueError("schema_version is not supported")
         records_payload = payload.get("records")
         if not isinstance(records_payload, list):
@@ -141,7 +146,11 @@ class RegistryStore:
         if not isinstance(item, dict):
             raise ValueError("record is not an object")
         code_length = item.get("code_length")
-        if not isinstance(code_length, int) or code_length < 1:
+        if (
+            not isinstance(code_length, int)
+            or isinstance(code_length, bool)
+            or code_length < 1
+        ):
             raise ValueError("record code_length is invalid")
         encoded_code = item.get("encoded_code")
         salt_value = item.get("encoding_salt_value")
@@ -183,18 +192,21 @@ class RegistryStore:
         except ValueError as err:
             raise ValueError("owner origin is invalid") from err
         slot = item.get("slot")
-        if slot is not None and not isinstance(slot, int):
+        if slot is not None and (not isinstance(slot, int) or isinstance(slot, bool)):
             raise ValueError("owner slot is invalid")
         lockname = item.get("lockname")
         if lockname is not None and not isinstance(lockname, str):
             raise ValueError("owner lockname is invalid")
+        lock_observed = item.get("lock_observed", False)
+        if not isinstance(lock_observed, bool):
+            raise ValueError("owner lock_observed is invalid")
         return AllocationOwner(
             entry_id=self._string_field(item, "entry_id"),
             identity_key=self._string_field(item, "identity_key"),
             origin=origin,
             lockname=lockname,
             slot=slot,
-            lock_observed=bool(item.get("lock_observed", False)),
+            lock_observed=lock_observed,
             first_seen=self._string_field(item, "first_seen"),
             last_seen=self._string_field(item, "last_seen"),
         )

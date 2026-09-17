@@ -16,6 +16,7 @@ from custom_components.rental_control.allocator.models import AllocationOwner
 from custom_components.rental_control.allocator.models import AllocationRecord
 from custom_components.rental_control.allocator.registry import AllocationRegistry
 from custom_components.rental_control.allocator.store import RegistryStore
+from custom_components.rental_control.allocator.store import code_ref_for
 from custom_components.rental_control.allocator.store import decode_code
 from custom_components.rental_control.allocator.store import encode_code
 from custom_components.rental_control.const import CODE_REGISTRY_SCHEMA_VERSION
@@ -99,7 +100,7 @@ def test_encode_decode_round_trip_with_leading_zeroes() -> None:
 
 
 def test_serialized_code_fields_do_not_store_plaintext() -> None:
-    """The persisted code field is obfuscated rather than bare digits."""
+    """Persisted registry fields never store the plain door code."""
     wrapper = RegistryStore(SimpleNamespace())
     payload = wrapper._payload_from_registry(_registry())
     record = payload["records"][0]
@@ -107,6 +108,7 @@ def test_serialized_code_fields_do_not_store_plaintext() -> None:
     assert "code" not in record
     assert record["encoded_code"] != "0042"
     assert "0042" not in record["encoded_code"]
+    _assert_plaintext_absent(record, "0042", skip_keys={"encoded_code"})
     assert decode_code(record["encoded_code"], record["encoding_salt_value"]) == "0042"
 
 
@@ -115,6 +117,7 @@ def test_serialized_code_fields_do_not_store_plaintext() -> None:
     [
         (None, "absent"),
         ({"schema_version": 99, "records": []}, "schema_version"),
+        ({"schema_version": True, "records": []}, "schema_version"),
         (
             {
                 "schema_version": CODE_REGISTRY_SCHEMA_VERSION,
@@ -179,6 +182,59 @@ async def test_duplicate_identity_keys_are_rejected() -> None:
     assert result.registry_lost is True
 
 
+async def test_valid_payload_loads_registry_round_trip() -> None:
+    """A saved populated registry payload restores records and owners."""
+    wrapper = RegistryStore(SimpleNamespace())
+    FakeStore.payload = wrapper._payload_from_registry(_registry())
+
+    result = await wrapper.async_load()
+
+    record = result.registry.records["0042"]
+    owner = record.owners[0]
+    assert result.registry_lost is False
+    assert result.registry.code_ref_salt == "ref-salt"
+    assert result.registry.code_for_identity("identity-alpha") == "0042"
+    assert record.code == "0042"
+    assert record.code_ref == code_ref_for("0042", "ref-salt")
+    assert record.encoding_salt_value == "entry-alpha"
+    assert owner.entry_id == "entry-alpha"
+    assert owner.identity_key == "identity-alpha"
+    assert owner.origin is AllocationOrigin.PREFERRED
+    assert owner.lockname == "front"
+    assert owner.slot == 3
+    assert owner.lock_observed is True
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("code_length", True),
+        ("slot", True),
+        ("slot", "3"),
+        ("lockname", None),
+        ("lock_observed", "false"),
+    ],
+)
+async def test_malformed_typed_fields_are_rejected(field: str, value: Any) -> None:
+    """Boolean-like corrupt fields do not load as valid registry data."""
+    record = _record_payload("0042", "entry-alpha", "identity-alpha")
+    if field == "code_length":
+        record[field] = value
+    else:
+        record["owners"][0][field] = value
+    FakeStore.payload = {
+        "schema_version": CODE_REGISTRY_SCHEMA_VERSION,
+        "code_ref_salt": "ref-salt",
+        "records": [record],
+    }
+    wrapper = RegistryStore(SimpleNamespace())
+
+    result = await wrapper.async_load()
+
+    assert result.registry.records == {}
+    assert result.registry_lost is True
+
+
 async def test_storage_io_failure_reports_entry_not_ready() -> None:
     """Home Assistant storage I/O failures do not discard the registry."""
     FakeStore.load_error = OSError("unreadable")
@@ -224,3 +280,20 @@ def _record_payload(code: str, entry_id: str, identity_key: str) -> dict[str, An
             }
         ],
     }
+
+
+def _assert_plaintext_absent(
+    value: Any, plaintext: str, skip_keys: set[str] | None = None
+) -> None:
+    """Assert that a serialized field tree omits a plain door code."""
+    if skip_keys is None:
+        skip_keys = set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key not in skip_keys:
+                _assert_plaintext_absent(child, plaintext, skip_keys)
+    elif isinstance(value, list):
+        for child in value:
+            _assert_plaintext_absent(child, plaintext, skip_keys)
+    elif isinstance(value, str):
+        assert plaintext not in value

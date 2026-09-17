@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from itertools import islice
 
+import pytest
+
 from custom_components.rental_control.allocator.candidates import candidate_codes
 
 
@@ -43,3 +45,10 @@ def test_candidate_walk_is_registry_independent() -> None:
 
     assert occupied_elsewhere
     assert after == before
+
+
+@pytest.mark.parametrize("code_length", [True, 1.0, 0])
+def test_candidate_walk_rejects_invalid_lengths(code_length: object) -> None:
+    """Candidate generation accepts only positive non-boolean integers."""
+    with pytest.raises(ValueError, match="code_length"):
+        list(candidate_codes("identity-a", code_length))  # type: ignore[arg-type]

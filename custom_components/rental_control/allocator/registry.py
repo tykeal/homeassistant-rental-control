@@ -15,6 +15,8 @@ from .models import AllocationRequest
 
 def _validate_code(code: str, code_length: int) -> None:
     """Raise when a code is not decimal digits of the requested length."""
+    if not isinstance(code_length, int) or isinstance(code_length, bool):
+        raise ValueError("code_length must be a positive integer")
     if code_length < 1:
         raise ValueError("code_length must be positive")
     if not code.isdecimal() or len(code) != code_length:
@@ -42,7 +44,7 @@ class AllocationRegistry:
             _validate_code(record.code, record.code_length)
             for owner in record.owners:
                 existing = by_identity.get(owner.identity_key)
-                if existing is not None and existing != code:
+                if existing is not None:
                     raise ValueError("identity_key owned by multiple records")
                 by_identity[owner.identity_key] = code
         self.by_identity = by_identity
