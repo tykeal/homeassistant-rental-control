@@ -56,6 +56,7 @@ def build_adopted_mapping(
             "booking_aliases": [],
         },
         "missing_count": 0,
+        "published_once": True,
         "pending_set_since": None,
         "pending_clear_since": None,
         "fingerprint_history": [],
@@ -95,6 +96,7 @@ def build_cache_mapping(
             "booking_aliases": sorted(res.booking_aliases),
         },
         "missing_count": 0,
+        "published_once": actual.get("published_once", bool(res.slot_code)),
         "pending_set_since": None,
         "pending_clear_since": None,
         "fingerprint_history": sorted(res.fingerprint_history),
@@ -254,6 +256,8 @@ def build_save_payload(
             last_obs.pop("code", None)
             last_obs.pop("slot_code", None)
             mapping["last_observed_actual"] = last_obs
+        if mapping.get("published_once") is not True:
+            mapping["published_once"] = False
         mappings[key] = mapping
     return {
         "schema_version": STORE_SCHEMA_VERSION,

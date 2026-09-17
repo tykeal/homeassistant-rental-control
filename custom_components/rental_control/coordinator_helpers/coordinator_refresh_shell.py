@@ -25,6 +25,8 @@ from icalendar import Calendar
 import x_wr_timezone
 
 from ..const import REQUEST_TIMEOUT
+from ..const import SLOT_STATUS_OCCUPIED
+from ..const import STORE_SCHEMA_VERSION
 from ..reconciliation import Reservation as _Reservation
 from ..util import OperationResult
 from . import calendar_parsing
@@ -180,6 +182,8 @@ class CoordinatorRefreshMixin:
 
         if self.event_overrides:
             await self._run_reconciliation(new_calendar)
+        else:
+            await self._run_lockless_allocation(new_calendar)
 
         await self.async_save_slot_store()
 
@@ -271,6 +275,83 @@ class CoordinatorRefreshMixin:
                 "Reconciliation failed for %s; skipping cycle", self._name
             )
 
+    async def _run_lockless_allocation(self, new_calendar: list[CalendarEvent]) -> None:
+        """Allocate codes for entries that do not manage Keymaster slots."""
+        try:
+            reservations = self._prepare_reservations_for_adoption(new_calendar, [])
+            await code_allocation.async_resolve_codes(
+                self.hass,
+                self._entry_id,
+                None,
+                self.code_length,
+                [],
+                reservations,
+            )
+            res_by_key: dict[str, _Reservation] = {
+                reservation.identity_key: reservation for reservation in reservations
+            }
+            self._sync_lockless_slot_store(res_by_key)
+            self._latest_res_by_key = res_by_key
+            self._latest_plan = None
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Lockless allocation failed for %s; skipping cycle", self._name
+            )
+
+    def _sync_lockless_slot_store(self, res_by_key: dict[str, _Reservation]) -> None:
+        """Persist lockless reservation metadata and published-code state."""
+        mappings: dict[str, Any] = self._slot_mappings.setdefault("mappings", {})
+        current_keys = set(res_by_key)
+        for stale_key in list(mappings):
+            if stale_key not in current_keys:
+                mappings.pop(stale_key, None)
+        now_str = dt.now().isoformat()
+        for reservation in res_by_key.values():
+            mappings[reservation.identity_key] = {
+                "slot": None,
+                "status": SLOT_STATUS_OCCUPIED,
+                "operation_id": None,
+                "operation_kind": None,
+                "identity": {
+                    "identity_key": reservation.identity_key,
+                    "summary": reservation.summary,
+                    "slot_name": reservation.slot_name,
+                    "start": reservation.start.isoformat(),
+                    "end": reservation.end.isoformat(),
+                    "uid_aliases": sorted(reservation.uid_aliases),
+                    "booking_aliases": sorted(reservation.booking_aliases),
+                },
+                "missing_count": reservation.missing_count,
+                "published_once": reservation.published_once
+                or reservation.slot_code is not None,
+                "pending_set_since": None,
+                "pending_clear_since": None,
+                "fingerprint_history": sorted(reservation.fingerprint_history),
+                "updated_at": now_str,
+                "last_observed_actual": {
+                    "slot": None,
+                    "classification": SLOT_STATUS_OCCUPIED,
+                    "name_state": reservation.display_slot_name,
+                    "has_code": reservation.slot_code is not None,
+                    "start_state": reservation.buffered_start.isoformat(),
+                    "end_state": reservation.buffered_end.isoformat(),
+                    "use_date_range": None,
+                    "enabled": None,
+                },
+            }
+        self._slot_mappings.update(
+            {
+                "schema_version": STORE_SCHEMA_VERSION,
+                "entry_id": self._entry_id,
+                "lockname": None,
+                "start_slot": self.start_slot,
+                "max_slots": self.max_events,
+                "updated_at": now_str,
+            }
+        )
+
     def _prepare_reservations_for_adoption(
         self,
         new_calendar: list[CalendarEvent],
@@ -331,6 +412,7 @@ class CoordinatorRefreshMixin:
             reservation.missing_count = (
                 missing_count if isinstance(missing_count, int) else 0
             )
+            reservation.published_once = mapping.get("published_once") is True
 
     async def _ical_parser(
         self, calendar: Calendar, from_date: datetime, to_date: datetime
