@@ -101,14 +101,18 @@ than the recomputed preferred one.
 
 **Acceptance Scenarios**:
 
-1. **Given** a reservation whose allocated code differs from its generator's
-   preferred code, **When** the sensor updates, **Then** `slot_code` shows the
-   allocated code.
+1. **Given** a lock-backed reservation whose allocated code differs from its
+   generator's preferred code, **When** the sensor updates after physical
+   confirmation, **Then** `slot_code` shows the confirmed allocated code; before
+   confirmation it retains the last observed code or reports no code if none is
+   safe.
 2. **Given** a reservation the coordinator has not yet allocated a code for,
    **When** the sensor updates, **Then** the sensor reports no code rather than
    generating one of its own.
-3. **Given** an allocation changes between refreshes, **When** the sensor
-   updates, **Then** it reflects the new allocated value without recomputation.
+3. **Given** a lock-backed allocation changes between refreshes, **When** the
+   matching write is physically confirmed, **Then** the sensor reflects the new
+   allocated value without recomputation; a lockless entry publishes the
+   allocated value immediately because it has no physical confirmation step.
 
 ---
 
@@ -283,10 +287,14 @@ it held before the restart.
 
 #### Display parity
 
-- **FR-019**: The calendar sensor MUST display the code the allocator assigned
-  to the reservation and MUST NOT generate a code of its own. When no allocation
-  exists for the displayed reservation, the sensor MUST report no code rather
-  than generating one.
+- **FR-019**: The calendar sensor MUST NOT generate a code of its own. For
+  lock-backed reservations, it MUST display the allocator's code only after the
+  matching physical lock write has been confirmed; until then it MUST retain the
+  last observed code, or report no code if no safe observed value exists. For
+  lockless reservations, which have no physical confirmation step, it MUST
+  display the allocator's persisted value immediately. When no allocation exists
+  for the displayed reservation, the sensor MUST report no code rather than
+  generating one.
 
 #### Migration and adoption
 
@@ -347,10 +355,12 @@ it held before the restart.
   identical dates under the default `date_based` generator.
 - **SC-002**: One hundred percent of the configured code space is available to
   every config entry; no entry is restricted to a fraction of it.
-- **SC-003**: For every reservation, the code shown by the calendar sensor
-  matches the allocator's code in one hundred percent of observed cases. For
-  lock-backed reservations, that allocator code also matches the code
-  programmed into the lock slot, including collision-resolved codes.
+- **SC-003**: For every reservation, the code shown by the calendar sensor is
+  never independently generated. For lock-backed reservations it matches the
+  allocator's code only after that code is confirmed on the physical lock slot,
+  including collision-resolved codes; before confirmation it retains the last
+  observed code or no code. For lockless reservations it matches the allocator's
+  persisted value immediately.
 - **SC-004**: Upgrading an installation with active reservations rotates zero
   in-flight guest codes.
 - **SC-005**: Every active reservation with an available registry, durable
