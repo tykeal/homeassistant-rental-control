@@ -8131,9 +8131,9 @@ class TestCoordinatorPersistenceUpdate:
             mock_session.get("https://example.com/calendar.ics", body=empty_ics)
             await coordinator._async_update_data()
 
-        # Store cache missing_count is no longer authoritative.
+        # Phase 3 hydrates and advances cache continuity before planning.
         updated_mc = coordinator._slot_mappings["mappings"][fp]["missing_count"]
-        assert updated_mc == 0
+        assert updated_mc == 1
 
     def test_pending_set_with_dates_uses_missing_lifecycle(
         self, hass: "HomeAssistant"
