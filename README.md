@@ -179,8 +179,9 @@ state and the current time must fall within the active reservation window.
 
 The `rental_control.force_reissue` service action lets an operator rotate one
 reservation or managed lock slot through the shared code allocator. Target
-exactly one reservation with `entity_id`, or target a ghost code with both
-`lockname` and `slot`. You must pass the optional `force` flag when the
+exactly one reservation with `entity_id`, or target any managed slot with both
+`lockname` and `slot`; slot targeting attaches the live reservation when one
+occupies the slot and otherwise clears a ghost code. You must pass the optional `force` flag when the
 reservation has already checked in, because rotating the code revokes a
 credential the guest may be holding. Use `dry_run` to preview the replacement
 code without changing locks, sensors, or the shared registry.
