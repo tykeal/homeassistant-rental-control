@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 import uuid
 
 from homeassistant.components.persistent_notification import async_create
-from homeassistant.core import HomeAssistant
 from homeassistant.util import dt
 
 from ..allocator import get_allocator
@@ -25,7 +24,11 @@ from ..const import NAME
 from ..reconciliation import SlotStatus
 from ..reconciliation import compute_desired_plan
 from ..reconciliation.desired import select_eligible_reservations
+from . import reissue
 from .models import ObservedSlotQuery
+from .reissue import CodeResolutionRequest
+from .reissue import CodeResolutionResult
+from .reissue import ReissueSuppression
 from .slot_matching import find_observed_slot
 
 if TYPE_CHECKING:
@@ -37,25 +40,45 @@ _EXHAUSTED_NOTIFICATION_ID = f"{DOMAIN}_code_registry_exhausted"
 
 
 async def async_resolve_codes(
-    hass: HomeAssistant,
-    entry_id: str,
-    lockname: str | None,
-    code_length: int,
-    managed_slots: list[ManagedSlot],
-    reservations: list[Reservation],
-) -> CycleObservation:
+    request: CodeResolutionRequest | object,
+    entry_id: str | None = None,
+    lockname: str | None = None,
+    code_length: int | None = None,
+    managed_slots: list[ManagedSlot] | None = None,
+    reservations: list[Reservation] | None = None,
+) -> CodeResolutionResult:
     """Adopt observed lock codes and allocate unique reservation codes."""
+    request = reissue.coerce_code_resolution_request(
+        request, entry_id, lockname, code_length, managed_slots, reservations
+    )
+    hass = request.hass
+    entry_id = request.entry_id
+    lockname = request.lockname
+    code_length = request.code_length
+    managed_slots = request.managed_slots
+    reservations = request.reservations
+    consumed_target_keys = tuple(
+        reissue.target_key(directive.identity_key, directive.lockname, directive.slot)
+        for directive in request.forced_reissues
+    )
     observation = build_cycle_observation(entry_id, lockname, managed_slots)
     allocator = get_allocator(hass)
     if allocator is None:
         for reservation in reservations:
             reservation.slot_code = None
             reservation.code_source = "unallocated"
-        return observation
+        return CodeResolutionResult(observation, (), consumed_target_keys)
     adoptions = build_adoption_requests(
-        entry_id, lockname, code_length, managed_slots, reservations
+        entry_id,
+        lockname,
+        code_length,
+        managed_slots,
+        reservations,
+        request.suppression,
     )
-    adoption_complete = _adoption_complete(observation, adoptions, managed_slots)
+    adoption_complete = _adoption_complete(
+        observation, adoptions, managed_slots, request.suppression
+    )
     allocations = (
         build_allocation_requests(
             entry_id, lockname, code_length, managed_slots, reservations
@@ -74,6 +97,7 @@ async def async_resolve_codes(
                 for reservation in select_eligible_reservations(reservations)
             },
             adoption_complete=adoption_complete,
+            forced_reissues=request.forced_reissues,
         )
     )
     _apply_adoption_results(allocator, entry_id, reservations, result)
@@ -104,7 +128,9 @@ async def async_resolve_codes(
             continue
         reservation.slot_code = None
         reservation.code_source = "unallocated"
-    return observation
+    return CodeResolutionResult(
+        observation, getattr(result, "reissues", ()), consumed_target_keys
+    )
 
 
 def _apply_adoption_results(
@@ -155,8 +181,10 @@ def _adoption_complete(
     observation: CycleObservation,
     adoptions: list[AdoptionRequest],
     managed_slots: list[ManagedSlot],
+    suppression: ReissueSuppression | None = None,
 ) -> bool:
     """Return whether all readable managed codes were accounted for."""
+    suppression = suppression or ReissueSuppression()
     if observation.unreadable_slots:
         return False
     adopted_slots = {request.slot for request in adoptions}
@@ -165,6 +193,8 @@ def _adoption_complete(
         for slot in managed_slots
         if slot.managed and slot.status is not SlotStatus.UNKNOWN and slot.actual_code
     }
+    readable_coded_slots -= suppression.slots
+    readable_coded_slots -= getattr(adoptions, "suppressed_slots", set())
     return readable_coded_slots <= adopted_slots
 
 
@@ -196,15 +226,22 @@ def build_adoption_requests(
     code_length: int,
     managed_slots: list[ManagedSlot],
     reservations: list[Reservation],
+    suppression: ReissueSuppression | None = None,
 ) -> list[AdoptionRequest]:
     """Return adoption requests for reservations with readable physical codes."""
+    suppression = suppression or ReissueSuppression()
     if lockname is None:
         return []
     consumed_slots: set[int] = set()
-    requests: list[AdoptionRequest] = []
+    requests = reissue.AdoptionRequests()
     for reservation in reservations:
         slot = _matched_code_slot(reservation, managed_slots, consumed_slots)
         if slot is None or slot.actual_code is None:
+            continue
+        if reservation.identity_key in suppression.identity_keys or (
+            slot.slot in suppression.slots and reservation.protected_active
+        ):
+            requests.suppressed_slots.add(slot.slot)
             continue
         if not slot.actual_code.isdecimal() or len(slot.actual_code) != code_length:
             _LOGGER.warning(

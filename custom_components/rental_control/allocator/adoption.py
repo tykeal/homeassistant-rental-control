@@ -15,6 +15,7 @@ from homeassistant.components.persistent_notification import async_create
 from ..const import DOMAIN
 from ..const import NAME
 from . import issuance
+from . import reissue
 from .models import AdoptionRequest
 from .models import AllocationOrigin
 from .models import AllocationOwner
@@ -37,6 +38,28 @@ def adopt_unlocked(
     _coalesce_fingerprint_owner(allocator, request)
     existing = allocator._registry.record_for_identity(request.identity_key)
     if existing is not None and existing.code != request.code:
+        if reissue.forced_hold_matches_slot(
+            allocator, request.entry_id, request.lockname, request.slot
+        ):
+            _LOGGER.info(
+                "Skipped observed code_ref %s for %s:%s at %s:%s while a "
+                "forced re-issue hold is pending",
+                allocator.code_ref(request.code),
+                request.entry_id,
+                request.identity_key,
+                request.lockname,
+                request.slot,
+            )
+            owner = next(
+                owner
+                for owner in existing.owners
+                if owner.identity_key == request.identity_key
+            )
+            return AllocationResult(
+                code=existing.code,
+                origin=owner.origin,
+                reason="reissue_pending",
+            )
         observed_ref = allocator.code_ref(request.code)
         _LOGGER.warning(
             "Identity %s already owns code_ref %s; observed code_ref %s "

@@ -51,7 +51,7 @@ def build_protected_reservation(
     matched_physical: ManagedSlot | None,
     same_name_count: int,
     window: tuple[datetime, datetime],
-    identity: tuple[str, str],
+    identity: tuple[str, str] | tuple[str, str, bool],
     display_slot_name: str,
 ) -> Reservation | None:
     """Synthesize a protected active reservation, or None when unsafe.
@@ -61,7 +61,8 @@ def build_protected_reservation(
         matched_physical: Physical slot matched to the active guest.
         same_name_count: Count of occupied physical slots sharing the name.
         window: Buffered ``(start, end)`` window for the synthesized stay.
-        identity: ``(identity_key, slot_code)`` for the synthesized stay.
+        identity: ``(identity_key, slot_code)`` for the synthesized stay,
+            optionally followed by whether observed-code retention is suppressed.
         display_slot_name: Display name for the synthesized reservation.
 
     Returns:
@@ -83,7 +84,9 @@ def build_protected_reservation(
         and same_name_count != 1
     ):
         return None
-    identity_key, slot_code = identity
+    identity_key = identity[0]
+    slot_code = identity[1]
+    suppress_observed = len(identity) > 2 and identity[2]
     protected = Reservation(
         identity_key=identity_key,
         start=snapshot.start,
@@ -97,7 +100,7 @@ def build_protected_reservation(
         protected_active=True,
         code_source=(
             "manual_observed"
-            if matched_physical.actual_code is not None
+            if matched_physical.actual_code is not None and not suppress_observed
             else "generated"
         ),
     )

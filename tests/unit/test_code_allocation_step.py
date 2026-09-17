@@ -24,6 +24,9 @@ from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
     CoordinatorRefreshMixin,
 )
+from custom_components.rental_control.coordinator_helpers.reissue import (
+    ReissueSuppression,
+)
 from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
 from custom_components.rental_control.reconciliation import SlotStatus
@@ -228,21 +231,18 @@ async def test_lockless_allocation_applies_checkout(
     seen_checked_out: list[bool] = []
 
     async def _resolve_codes(
-        _hass: Any,
-        _entry_id: str,
-        _lockname: str | None,
-        _code_length: int,
-        _managed_slots: list[ManagedSlot],
-        reservations: list[Reservation],
-    ) -> CycleObservation:
+        request: code_allocation.CodeResolutionRequest,
+    ) -> code_allocation.CodeResolutionResult:
         """Record whether checkout protection ran before allocation."""
-        seen_checked_out.append(reservations[0].checked_out)
-        return CycleObservation(
-            entry_id="entry-a",
-            lockname=None,
-            managed_slots=frozenset(),
-            observed_codes={},
-            unreadable_slots=frozenset(),
+        seen_checked_out.append(request.reservations[0].checked_out)
+        return code_allocation.CodeResolutionResult(
+            CycleObservation(
+                entry_id="entry-a",
+                lockname=None,
+                managed_slots=frozenset(),
+                observed_codes={},
+                unreadable_slots=frozenset(),
+            )
         )
 
     monkeypatch.setattr(code_allocation, "async_resolve_codes", _resolve_codes)
@@ -375,6 +375,44 @@ async def test_unmatched_coded_slot_keeps_adoption_gate_pending(
     )
 
     assert allocator.calls == []
+
+
+async def test_suppressed_slot_keeps_entry_issuance_enabled(
+    monkeypatch: Any,
+) -> None:
+    """Suppressed readable slots do not block allocation for the entry."""
+    allocator = FakeAllocator()
+    monkeypatch.setattr(code_allocation, "get_allocator", lambda _hass: allocator)
+    target = _reservation("identity-a", code="3333")
+    target.slot_name = "Target Guest"
+    target.display_slot_name = "RC Target Guest"
+    peer = _reservation("identity-b", code="4444")
+    peer.slot_name = "Other Guest"
+    peer.display_slot_name = "RC Other Guest"
+    target_slot = _slot(1, "1111", "RC Target Guest")
+    target_slot.persisted_identity_key = "identity-a"
+    peer_slot = ManagedSlot(slot=2, managed=True, status=SlotStatus.FREE)
+
+    await code_allocation.async_resolve_codes(
+        code_allocation.CodeResolutionRequest(
+            hass=SimpleNamespace(),
+            entry_id="entry-a",
+            lockname="front",
+            code_length=4,
+            managed_slots=[target_slot, peer_slot],
+            reservations=[target, peer],
+            suppression=ReissueSuppression(frozenset({"identity-a"}), frozenset()),
+        )
+    )
+
+    assert allocator.requests[0].adoption_complete is True
+    assert allocator.requests[0].adoptions == []
+    assert {request.identity_key for request in allocator.requests[0].allocations} == {
+        "identity-a",
+        "identity-b",
+    }
+    assert peer.slot_code == "4444"
+    assert peer.code_source == "allocated"
 
 
 async def test_duplicate_unmatched_slot_keeps_adoption_gate_pending(

@@ -261,6 +261,23 @@ def adoption_matches_forced_reissue(
     )
 
 
+def forced_hold_matches_slot(
+    allocator: DoorCodeAllocator,
+    entry_id: str,
+    lockname: str,
+    slot: int,
+) -> bool:
+    """Return whether a forced-release hold exists for one physical slot."""
+    return any(
+        owner.entry_id == entry_id
+        and owner.lockname == lockname
+        and owner.slot == slot
+        and is_forced_release_hold(owner.identity_key)
+        for record in allocator._registry.records.values()
+        for owner in record.owners
+    )
+
+
 def _conflict_exempt(
     record: AllocationRecord,
     owners: list[AllocationOwner],

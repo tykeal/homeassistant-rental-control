@@ -67,6 +67,7 @@ from ..event_overrides import EventOverrides
 from ..reconciliation import DesiredPlan as _DesiredPlan
 from ..reconciliation import Reservation as _Reservation
 from . import keymaster_bootstrap
+from . import reissue
 from .models import CalendarParseContext
 from .models import KeymasterSlotSnapshot
 from .models import ReservationBuildContext
@@ -284,6 +285,7 @@ class CoordinatorSetupMixin:
             code_generator=self.code_generator,
             code_length=self.code_length,
             active_windows_for_name=self._active_checkin_windows_for_name,
+            reissue_suppression=reissue.current_suppression(self),
         )
 
     def _calendar_parse_context(self) -> CalendarParseContext:
