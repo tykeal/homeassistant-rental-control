@@ -49,6 +49,7 @@ from .coordinator_helpers.models import normalize_event_override_update
 from .reconciliation import DesiredPlan as _DesiredPlan
 from .reconciliation import ManagedSlot as _ManagedSlot
 from .reconciliation import Reservation as _Reservation
+from .reconciliation import SlotStatus as _SlotStatus
 from .reconciliation import compute_desired_plan as compute_desired_plan  # noqa: F401
 
 _LOGGER = logging.getLogger(__name__)
@@ -196,7 +197,13 @@ class RentalControlCoordinator(
             return None
         if self.event_overrides is None:
             return res.slot_code
-        observed_code = self._observed_slot_codes.get(identity_key)
+        selected_slot = self.get_slot_assignment(identity_key)
+        observed = self._observed_slot_codes.get(identity_key)
+        if observed is None:
+            return None
+        observed_slot, observed_code = observed
+        if observed_slot != selected_slot:
+            return None
         if observed_code == res.slot_code:
             return res.slot_code
         return observed_code
@@ -217,8 +224,15 @@ class RentalControlCoordinator(
             if identity_key not in res_by_key:
                 continue
             observed = observed_by_slot.get(slot_number)
-            if observed is not None and observed.actual_code is not None:
-                self._observed_slot_codes[identity_key] = observed.actual_code
+            if observed is None or observed.status is _SlotStatus.UNKNOWN:
+                continue
+            if observed.actual_code is None:
+                self._observed_slot_codes.pop(identity_key, None)
+                continue
+            self._observed_slot_codes[identity_key] = (
+                slot_number,
+                observed.actual_code,
+            )
 
     def get_overflow_reason(self, identity_key: str) -> str | None:
         """Return overflow reason for identity_key in latest plan, or None."""

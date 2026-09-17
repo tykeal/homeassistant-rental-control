@@ -101,6 +101,36 @@ def test_lock_backed_retains_observed_code_while_unconfirmed() -> None:
     assert coordinator.get_slot_code("identity-1") == "1111"
 
 
+def test_lock_backed_clears_code_after_empty_observation() -> None:
+    """A readable empty slot clears the previously observed sensor code."""
+    reservation = _reservation("identity-1", "1111")
+    coordinator = _coordinator(reservation)
+    _record_observed(coordinator, reservation, code="1111")
+
+    _record_observed(coordinator, reservation, code=None, status=SlotStatus.FREE)
+
+    assert coordinator.get_slot_code("identity-1") is None
+
+
+def test_lock_backed_ignores_observed_code_from_old_slot() -> None:
+    """A slot reassignment must not publish a code observed on the old slot."""
+    reservation = _reservation("identity-1", "1111")
+    coordinator = _coordinator(reservation, slot=10)
+    _record_observed(coordinator, reservation, slot=10, code="1111")
+    assert coordinator._latest_plan is not None
+    coordinator._latest_plan.selected[reservation.identity_key] = 11
+
+    _record_observed(
+        coordinator,
+        reservation,
+        slot=11,
+        code=None,
+        status=SlotStatus.FREE,
+    )
+
+    assert coordinator.get_slot_code("identity-1") is None
+
+
 def test_lock_backed_none_when_no_safe_code_was_confirmed() -> None:
     """Lock-backed sensors publish None when no physical code is safe."""
     reservation = _reservation("identity-1", None)
