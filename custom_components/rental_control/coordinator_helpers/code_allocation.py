@@ -50,7 +50,7 @@ async def async_resolve_codes(
         adopted[request.identity_key] = result
         if result.code is not None:
             _apply_adoption_result(reservations, request.identity_key, result)
-    if _adoption_complete(observation, adoptions):
+    if _adoption_complete(observation, adoptions, managed_slots):
         await allocator.async_unregister_entry(entry_id)
     for reservation in reservations:
         if reservation.identity_key in adopted:
@@ -63,12 +63,18 @@ async def async_resolve_codes(
 def _adoption_complete(
     observation: CycleObservation,
     adoptions: list[AdoptionRequest],
+    managed_slots: list[ManagedSlot],
 ) -> bool:
     """Return whether all readable managed codes were accounted for."""
     if observation.unreadable_slots:
         return False
     adopted_slots = {request.slot for request in adoptions}
-    return set(observation.observed_codes.values()) <= adopted_slots
+    readable_coded_slots = {
+        slot.slot
+        for slot in managed_slots
+        if slot.managed and slot.status is not SlotStatus.UNKNOWN and slot.actual_code
+    }
+    return readable_coded_slots <= adopted_slots
 
 
 def build_cycle_observation(

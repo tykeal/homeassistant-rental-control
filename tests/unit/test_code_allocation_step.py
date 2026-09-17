@@ -176,6 +176,30 @@ async def test_unmatched_coded_slot_keeps_adoption_gate_pending(
     assert allocator.calls == []
 
 
+async def test_duplicate_unmatched_slot_keeps_adoption_gate_pending(
+    monkeypatch: Any,
+) -> None:
+    """Duplicate-code slot identities still count toward adoption completeness."""
+    allocator = FakeAllocator()
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: allocator,
+    )
+    reservation = _reservation("identity-a", code="1111")
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        "front",
+        4,
+        [_slot(1, "2222"), _slot(2, "2222", "RC Other Guest")],
+        [reservation],
+    )
+
+    assert allocator.calls == ["adopt:identity-a"]
+
+
 async def test_unreadable_slots_keep_adoption_gate_pending(
     monkeypatch: Any,
 ) -> None:
