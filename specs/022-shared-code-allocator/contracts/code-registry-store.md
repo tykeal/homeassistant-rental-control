@@ -207,9 +207,11 @@ class CycleObservation:
 
 `code_allocation.py` builds it from what the coordinator already observed via
 `keymaster_observation.py`; `unreadable_slots` is exactly the set of managed
-slots classified as `SlotStatus.UNKNOWN` with `blocked_reason="unreadable"`.
-A `SlotStatus.FREE` slot is known-empty even though `actual_code` is `None`, so
-it must not be included. A lockless entry supplies empty sets.
+slots whose observed `status is SlotStatus.UNKNOWN`. That includes missing or
+unavailable entity state and slots with `blocked_reason="unreadable"`;
+`blocked_reason` is diagnostic detail, not the discriminator. A
+`SlotStatus.FREE` slot is known-empty even though `actual_code` is `None`, so it
+must not be included. A lockless entry supplies empty sets.
 
 From it the allocator derives, without any further input:
 

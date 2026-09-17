@@ -260,9 +260,10 @@ reservation holding it.
       `custom_components/rental_control/coordinator_helpers/code_allocation.py`
       with `async_resolve_codes`: build the entry's `CycleObservation` from what
       `keymaster_observation.py` already produced (`managed_slots`,
-      `observed_codes`, `unreadable_slots` containing only
-      `SlotStatus.UNKNOWN` slots with `blocked_reason="unreadable"`; known-empty
-      `SlotStatus.FREE` slots are not unreadable), build `AdoptionRequest`s from
+      `observed_codes`, `unreadable_slots` containing all slots whose observed
+      `status is SlotStatus.UNKNOWN`, including missing/unavailable entity state
+      and `blocked_reason="unreadable"`; known-empty `SlotStatus.FREE` slots are
+      not unreadable), build `AdoptionRequest`s from
       `_resolve_observed_code` results in
       `coordinator_helpers/reservations.py`, and call the allocator through the
       adopt path only for the safe Phase 3 checkpoint (FR-020, contract §2, plan

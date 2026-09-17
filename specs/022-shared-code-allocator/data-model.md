@@ -165,10 +165,12 @@ already produced. It exists so the two safety rules above have inputs.
 **Fields**: `entry_id`, `lockname: str | None`, `managed_slots: frozenset[int]`,
 `observed_codes: dict[str, int]` mapping a readable plain code to its slot, and
 `unreadable_slots: frozenset[int]` — the managed slots whose observation is
-genuinely indeterminate: `SlotStatus.UNKNOWN` with
-`blocked_reason="unreadable"` from `keymaster_observation.py`. A
-`SlotStatus.FREE` slot is known-empty even though `actual_code` is `None`, so it
-must not be included. A lockless entry supplies `lockname=None` and empty sets.
+genuinely indeterminate: observed `status is SlotStatus.UNKNOWN` from
+`keymaster_observation.py`, including both missing or unavailable entity state
+and slots with `blocked_reason="unreadable"`. `blocked_reason` is diagnostic
+only; it is not the discriminator. A `SlotStatus.FREE` slot is known-empty even
+though `actual_code` is `None`, so it must not be included. A lockless entry
+supplies `lockname=None` and empty sets.
 
 **Derived by the allocator, not passed in**:
 
