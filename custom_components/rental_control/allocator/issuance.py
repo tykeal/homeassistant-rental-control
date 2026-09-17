@@ -10,6 +10,7 @@ from datetime import datetime
 import logging
 from typing import TYPE_CHECKING
 
+from . import reissue
 from .candidates import candidate_codes
 from .models import AdoptionRequest
 from .models import AllocationOrigin
@@ -18,6 +19,7 @@ from .models import AllocationResult
 from .models import CycleObservation
 from .models import CycleRequest
 from .models import CycleResult
+from .registry import AllocationRegistry
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
@@ -33,6 +35,27 @@ def observed_alias_key(
     """Return the stable observed-code alias for one physical slot."""
     owner_key = request.identity_key if identity_key is None else identity_key
     return f"{owner_key}:observed:{request.entry_id}:{request.lockname}:{request.slot}"
+
+
+def select_code(
+    registry: AllocationRegistry,
+    preferred_code: str,
+    code_length: int,
+    identity_key: str,
+    *,
+    exclude: frozenset[str] = frozenset(),
+) -> tuple[str | None, AllocationOrigin | None]:
+    """Select an available code without mutating the registry."""
+    if preferred_code not in exclude and registry.is_available(
+        preferred_code, code_length, identity_key
+    ):
+        return preferred_code, AllocationOrigin.PREFERRED
+    for candidate in candidate_codes(identity_key, code_length):
+        if candidate in exclude:
+            continue
+        if registry.is_available(candidate, code_length, identity_key):
+            return candidate, AllocationOrigin.COLLISION_RESOLVED
+    return None, None
 
 
 def allocate_request(
@@ -60,59 +83,46 @@ def allocate_request(
             request.identity_key,
         )
         return AllocationResult(code=None, reason="recovery_fail_closed")
-    if allocator._registry.is_available(
+    code, origin = select_code(
+        allocator._registry,
         request.preferred_code,
         request.code_length,
         request.identity_key,
-    ):
-        record = allocator._registry.allocate(
-            request,
-            request.preferred_code,
-            AllocationOrigin.PREFERRED,
-            allocator.code_ref(request.preferred_code),
-            datetime.now(UTC).isoformat(),
+        exclude=frozenset(),
+    )
+    if code is None or origin is None:
+        preferred_ref = allocator.code_ref(request.preferred_code)
+        _LOGGER.warning(
+            "Exhausted shared code space for %s:%s; preferred code_ref %s",
+            request.entry_id,
+            request.identity_key,
+            preferred_ref,
         )
+        return AllocationResult(code=None, reason="exhausted")
+    record = allocator._registry.allocate(
+        request,
+        code,
+        origin,
+        allocator.code_ref(code),
+        datetime.now(UTC).isoformat(),
+    )
+    if origin is AllocationOrigin.PREFERRED:
         _LOGGER.info(
             "Allocated preferred shared code_ref %s for %s:%s",
             record.code_ref,
             request.entry_id,
             request.identity_key,
         )
-        return AllocationResult(code=record.code, origin=AllocationOrigin.PREFERRED)
-    preferred_ref = allocator.code_ref(request.preferred_code)
-    for candidate in candidate_codes(request.identity_key, request.code_length):
-        if not allocator._registry.is_available(
-            candidate,
-            request.code_length,
-            request.identity_key,
-        ):
-            continue
-        record = allocator._registry.allocate(
-            request,
-            candidate,
-            AllocationOrigin.COLLISION_RESOLVED,
-            allocator.code_ref(candidate),
-            datetime.now(UTC).isoformat(),
-        )
+    else:
         _LOGGER.info(
             "Allocated collision-resolved shared code_ref %s for %s:%s "
             "after preferred code_ref %s was unavailable",
             record.code_ref,
             request.entry_id,
             request.identity_key,
-            preferred_ref,
+            allocator.code_ref(request.preferred_code),
         )
-        return AllocationResult(
-            code=record.code,
-            origin=AllocationOrigin.COLLISION_RESOLVED,
-        )
-    _LOGGER.warning(
-        "Exhausted shared code space for %s:%s; preferred code_ref %s",
-        request.entry_id,
-        request.identity_key,
-        preferred_ref,
-    )
-    return AllocationResult(code=None, reason="exhausted")
+    return AllocationResult(code=record.code, origin=origin)
 
 
 async def resolve_cycle(
@@ -120,8 +130,22 @@ async def resolve_cycle(
 ) -> CycleResult:
     """Resolve one refresh cycle atomically under the allocator lock."""
     async with allocator._lock:
+        reissue_outcomes = (
+            reissue.fail_closed_forced_reissues(request)
+            if allocator._registry_lost
+            else []
+        )
+        staged_reissues: list[reissue.StagedReissue] = []
+        if not allocator._registry_lost:
+            applied, staged_reissues = reissue.apply_forced_reissues(allocator, request)
+            reissue_outcomes.extend(applied)
+
         adopted: dict[str, AllocationResult] = {}
         for adoption in request.adoptions:
+            if not allocator._registry_lost and reissue.adoption_matches_forced_reissue(
+                adoption, request
+            ):
+                continue
             adopted[adoption.identity_key] = allocator._adopt_unlocked(adoption)
 
         for old_key, new_key in request.rekeys:
@@ -145,7 +169,31 @@ async def resolve_cycle(
                 issuance_allowed=allocation.issuance_allowed and issuance_allowed,
             )
             allocated[allocation.identity_key] = allocate_request(allocator, allocation)
+        rollbacks = reissue.rollback_blocked_reissues(
+            allocator, request, staged_reissues, allocated
+        )
+        if rollbacks:
+            reissue_outcomes = [
+                outcome
+                for outcome in reissue_outcomes
+                if not any(
+                    rollback.identity_key == outcome.identity_key
+                    and rollback.entry_id == outcome.entry_id
+                    and rollback.lockname == outcome.lockname
+                    and rollback.slot == outcome.slot
+                    for rollback in rollbacks
+                )
+            ]
+            reissue_outcomes.extend(rollbacks)
+        reissue_outcomes = reissue.finalize_forced_reissue_outcomes(
+            allocator, reissue_outcomes, staged_reissues, allocated
+        )
         released = allocator._sweep_unlocked(request.observation, request.active_keys)
+        if not allocator._registry_lost:
+            reissue_outcomes = reissue.merge_release_outcomes(
+                reissue_outcomes,
+                reissue.release_forced_holds(allocator, request),
+            )
         recovery_declined = any(
             result.reason == "recovery_fail_closed" for result in allocated.values()
         )
@@ -165,6 +213,7 @@ async def resolve_cycle(
             allocated=allocated,
             released=released,
             unaccounted_slots=unaccounted,
+            reissues=tuple(reissue_outcomes),
         )
 
 

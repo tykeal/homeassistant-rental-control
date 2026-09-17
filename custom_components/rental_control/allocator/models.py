@@ -187,6 +187,7 @@ class CycleRequest:
     allocations: list[AllocationRequest]
     active_keys: set[str]
     adoption_complete: bool = True
+    forced_reissues: tuple[ForcedReissueDirective, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +216,7 @@ class CycleResult:
     allocated: dict[str, AllocationResult]
     released: ReleaseReport
     unaccounted_slots: frozenset[int]
+    reissues: tuple[ReissueOutcome, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
