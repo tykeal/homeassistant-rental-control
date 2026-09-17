@@ -36,3 +36,32 @@ clear_orphaned_codes:
       default: false
       selector:
         boolean:
+
+force_reissue:
+  fields:
+    entity_id:
+      required: false
+      selector:
+        entity:
+          integration: rental_control
+          domain: sensor
+    lockname:
+      required: false
+      selector:
+        text:
+    slot:
+      required: false
+      selector:
+        number:
+          min: 1
+          mode: box
+    force:
+      required: false
+      default: false
+      selector:
+        boolean:
+    dry_run:
+      required: false
+      default: false
+      selector:
+        boolean:

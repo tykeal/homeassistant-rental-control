@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 
 _PENDING_ATTR = "_pending_reissues"
 _COMPLETED_ATTR = "_completed_reissues"
+_LOCK_ATTR = "_pending_reissues_lock"
 _MAX_COMPLETED_REISSUES = 128
 
 
@@ -60,6 +62,19 @@ class PendingReissue:
     requested_at: str | None = None
     invoker: str | None = None
     terminal_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReissueTarget:
+    """Resolved target for one forced re-issue request."""
+
+    entry_id: str
+    identity_key: str | None
+    lockname: str | None
+    slot: int | None
+    target_key: str
+    checked_in: bool
+    observed_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +123,33 @@ def completed_reissues(coordinator: Any) -> dict[str, ReissueOutcome]:
         completed = {}
         setattr(coordinator, _COMPLETED_ATTR, completed)
     return completed
+
+
+def reissue_lock(coordinator: Any) -> asyncio.Lock:
+    """Return the per-coordinator lock for service pending-state updates."""
+    lock = getattr(coordinator, _LOCK_ATTR, None)
+    if not isinstance(lock, asyncio.Lock):
+        lock = asyncio.Lock()
+        setattr(coordinator, _LOCK_ATTR, lock)
+    return lock
+
+
+def resolve_entity_target(
+    hass: Any, entity_id: str
+) -> tuple[ReissueTarget | None, str]:
+    """Resolve a reservation sensor entity into a re-issue target."""
+    from . import reissue_targets
+
+    return reissue_targets.resolve_entity_target(hass, entity_id)
+
+
+def resolve_slot_target(
+    hass: Any, lockname: str, slot: int
+) -> tuple[ReissueTarget | None, str]:
+    """Resolve an explicit lock and slot into a re-issue target."""
+    from . import reissue_targets
+
+    return reissue_targets.resolve_slot_target(hass, lockname, slot)
 
 
 def coerce_code_resolution_request(

@@ -33,6 +33,8 @@ from .models import CycleResult
 from .models import ForcedReleaseExemption
 from .models import OrphanCleanupReport
 from .models import OrphanOutcome
+from .models import ReissuePreview
+from .models import ReissuePreviewRequest
 from .models import ReleaseReport
 from .registry import AllocationRegistry
 from .store import RegistryStore
@@ -131,6 +133,18 @@ class DoorCodeAllocator:
             msg = "async_resolve_cycle requires a CycleRequest"
             raise TypeError(msg)
         return await issuance.resolve_cycle(self, request)
+
+    async def async_preview_reissue(
+        self, request: ReissuePreviewRequest
+    ) -> ReissuePreview:
+        """Preview a forced re-issue without mutating allocator state."""
+        if not isinstance(request, ReissuePreviewRequest):
+            msg = "async_preview_reissue requires a ReissuePreviewRequest"
+            raise TypeError(msg)
+        async with self._lock:
+            from . import reissue_preview
+
+            return reissue_preview.preview_reissue(self, request)
 
     async def async_adopt(self, request: object) -> AllocationResult:
         """Adopt an observed lock code into the shared registry."""

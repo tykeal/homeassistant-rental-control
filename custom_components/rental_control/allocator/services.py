@@ -18,6 +18,7 @@ from homeassistant.helpers import config_validation as cv
 from ..const import COORDINATOR
 from ..const import DOMAIN
 from ..const import NAME
+from . import reissue_service
 from .models import CycleObservation
 from .models import OrphanCleanupReport
 
@@ -31,6 +32,7 @@ def register_allocator_services(hass: HomeAssistant) -> None:
     """Register allocator services once for the integration domain."""
     if not hasattr(hass, "services"):
         return
+    reissue_service.register_force_reissue_service(hass)
     if hass.services.has_service(DOMAIN, SERVICE_CLEAR_ORPHANED_CODES):
         return
     hass.services.async_register(
