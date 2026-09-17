@@ -248,7 +248,7 @@ It has exactly three callers, all in the same file: `_sweep_unlocked`,
 single-element `owners` list.
 
 `AllocationRegistry.release(identity_key)`
-(`allocator/registry.py:143`) removes **one** owner from a record,
+(`allocator/registry.py:release`) removes **one** owner from a record,
 pops that identity from `by_identity`, and deletes the record only when no
 owners remain. Releasing one side of a two-owner record therefore leaves the
 other side's ownership — and the code's unavailability — completely intact.
@@ -452,7 +452,7 @@ covers immediate same-runtime retries.
 
 ### 4. Suppressing retention for one cycle
 
-`ReservationBuildContext` (`coordinator_helpers/models.py:87`) gains one field,
+`ReservationBuildContext` (`coordinator_helpers/models.py`) gains one field,
 a frozen `ReissueSuppression` value object holding the suppressed
 `identity_keys: frozenset[str]` and `slots: frozenset[int]` for this cycle,
 defaulting to an empty value so every existing construction site and every
@@ -476,7 +476,7 @@ single `manual_observed` string:
    unchanged, so every non-targeted reservation keeps full retention (spec Out
    of Scope: "Changing the default retention behaviour").
 2. **`checkin_protection.build_protected_reservation`
-   (`coordinator_helpers/checkin_protection.py:52`)**. This is the *second*
+   (`coordinator_helpers/checkin_protection.py:98-102`)**. This is the *second*
    `manual_observed` site in the tree — it synthesizes a protected reservation
    for a checked-in guest whose booking is missing from the feed, pinning
    `slot_code` to the observed code. Its caller,

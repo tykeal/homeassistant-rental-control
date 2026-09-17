@@ -317,7 +317,7 @@ any other reservation or any other cycle.
 - [ ] T017 Add `reissue_suppression: ReissueSuppression = ReissueSuppression()`
       to `ReservationBuildContext` in
       `custom_components/rental_control/coordinator_helpers/models.py`
-      (live definition at line 87, eleven fields, plain `@dataclass`) and fill
+      (eleven fields, plain `@dataclass`) and fill
       it from the coordinator's pending re-issues in
       `_reservation_build_context` in
       `custom_components/rental_control/coordinator_helpers/coordinator_setup_shell.py`,
@@ -605,7 +605,8 @@ permanently stuck holds, with no raw code anywhere outside the dry-run response.
       values only and never a code in plain or encoded form (FR-024)
 
 **Checkpoint**: Every re-issue is auditable, every stuck hold is visible, and
-the intermediate state no longer fires a warning every cycle.
+permanently stuck forced-release holds have an explicit operator reclamation
+path.
 
 ---
 

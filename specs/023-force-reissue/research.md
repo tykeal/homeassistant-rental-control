@@ -92,7 +92,7 @@ cycle.
 described. Retention paths must be enumerated by behaviour, not by grepping for
 one `manual_observed` string. Reading the tree shows three more places where the same "keep what is
 on the lock" decision is made: `build_protected_reservation`
-(`coordinator_helpers/checkin_protection.py:52`) sets
+(`coordinator_helpers/checkin_protection.py:98-102`) sets
 `code_source="manual_observed"` for a synthesized checked-in guest, and
 `build_adoption_requests` (`coordinator_helpers/code_allocation.py`) re-adopts
 the observed physical code onto the reservation identity, after which
