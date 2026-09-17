@@ -617,7 +617,8 @@ deferral, rollback, and lifecycle edge behaves as specified.
 - [ ] T042 [US1] Add the mandatory end-to-end healing test
       `tests/integration/test_reissue_duplicate_healing.py`: two config entries
       with disjoint carved-out slot ranges on **one shared parent lock**, one
-      reservation each, both slots physically       programmed with the **same** code, using identical reservation date ranges
+      reservation each, both slots physically programmed with the **same** code,
+      using identical reservation date ranges
       under the default `date_based` generator so SC-002's deterministic
       cross-entry collision is exercised;
       one refresh adopts both, producing one record with two owners and a
