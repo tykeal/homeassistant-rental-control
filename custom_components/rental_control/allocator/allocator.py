@@ -63,21 +63,7 @@ class DoorCodeAllocator:
 
     def _seed_pending_adoption(self) -> set[str]:
         """Return currently configured Rental Control entries awaiting adoption."""
-        config_entries = getattr(self.hass, "config_entries", None)
-        async_entries = getattr(config_entries, "async_entries", None)
-        if async_entries is None:
-            return set()
-        try:
-            entries = async_entries(DOMAIN)
-        except TypeError:
-            entries = async_entries()
-        return {
-            entry.entry_id
-            for entry in entries
-            if getattr(entry, "entry_id", None) is not None
-            and getattr(entry, "disabled_by", None) is None
-            and _entry_has_lock(entry)
-        }
+        return set()
 
     async def async_register_entry(self, entry_id: str) -> None:
         """Mark an entry as awaiting its first allocator cycle."""
@@ -155,6 +141,7 @@ class DoorCodeAllocator:
                 reason="identity_code_mismatch",
             )
 
+        self._release_moved_observed_alias(request)
         owner = AllocationOwner(
             entry_id=request.entry_id,
             identity_key=request.identity_key,
@@ -193,13 +180,8 @@ class DoorCodeAllocator:
         now: str,
     ) -> None:
         """Record observed-code ownership without moving the primary identity."""
-        alias_key = (
-            f"{request.identity_key}:observed:{request.entry_id}:"
-            f"{request.lockname}:{request.slot}"
-        )
-        owned_code = self._registry.code_for_identity(alias_key)
-        if owned_code is not None and owned_code != request.code:
-            self._registry.release(alias_key)
+        alias_key = _observed_alias_key(request)
+        self._release_moved_observed_alias(request)
         owner = AllocationOwner(
             entry_id=request.entry_id,
             identity_key=alias_key,
@@ -230,22 +212,67 @@ class DoorCodeAllocator:
         ):
             self._report_adoption_conflict(record)
 
+    def _release_moved_observed_alias(self, request: AdoptionRequest) -> None:
+        """Remove this slot's observed alias when it points at another code."""
+        alias_key = _observed_alias_key(request)
+        owned_code = self._registry.code_for_identity(alias_key)
+        if owned_code is not None and owned_code != request.code:
+            self._registry.release(alias_key)
+
     def _coalesce_fingerprint_owner(self, request: AdoptionRequest) -> None:
         """Re-key a historical owner before adoption conflict detection."""
         historical_keys = set(request.fingerprint_history)
         if not historical_keys:
             return
-        record = self._registry.records.get(request.code)
-        if record is None:
-            return
         if request.identity_key in self._registry.by_identity:
             return
-        for owner in record.owners:
-            if owner.identity_key in historical_keys:
-                self._registry.by_identity.pop(owner.identity_key, None)
-                owner.identity_key = request.identity_key
-                self._registry.by_identity[request.identity_key] = record.code
+        for historical_key in historical_keys:
+            code = self._registry.by_identity.get(historical_key)
+            if code is None:
+                continue
+            record = self._registry.records.get(code)
+            if record is None:
+                self._registry.by_identity.pop(historical_key, None)
+                continue
+            self._release_historical_observed_alias(request, historical_key)
+            self._rekey_historical_owner(
+                record,
+                historical_key,
+                request.identity_key,
+                request.code,
+            )
+            return
+
+    def _rekey_historical_owner(
+        self,
+        record: AllocationRecord,
+        historical_key: str,
+        identity_key: str,
+        new_code: str,
+    ) -> None:
+        """Move or remove one historical owner while preserving other owners."""
+        for owner in list(record.owners):
+            if owner.identity_key != historical_key:
+                continue
+            self._registry.by_identity.pop(historical_key, None)
+            if record.code == new_code:
+                owner.identity_key = identity_key
+                self._registry.by_identity[identity_key] = record.code
                 return
+            record.owners.remove(owner)
+            if not record.owners:
+                self._registry.records.pop(record.code, None)
+            return
+
+    def _release_historical_observed_alias(
+        self,
+        request: AdoptionRequest,
+        historical_key: str,
+    ) -> None:
+        """Remove a historical identity's observed alias for this physical slot."""
+        alias_key = _observed_alias_key(request, identity_key=historical_key)
+        if self._registry.code_for_identity(alias_key) is not None:
+            self._registry.release(alias_key)
 
     def _report_adoption_conflict(self, record: AllocationRecord) -> None:
         """Log and notify that an observed code has multiple owners."""
@@ -359,3 +386,13 @@ def _entry_has_lock(entry: object) -> bool:
         and bool(lock_entry.strip())
         and lock_entry.strip() != "(none)"
     )
+
+
+def _observed_alias_key(
+    request: AdoptionRequest,
+    *,
+    identity_key: str | None = None,
+) -> str:
+    """Return the stable observed-code alias for one physical slot."""
+    owner_key = request.identity_key if identity_key is None else identity_key
+    return f"{owner_key}:observed:{request.entry_id}:{request.lockname}:{request.slot}"

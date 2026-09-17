@@ -338,6 +338,138 @@ async def test_fingerprint_history_is_not_self_conflict() -> None:
     assert allocator._registry.conflicts() == []
 
 
+async def test_fingerprint_history_moves_from_old_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Historical owners are found across records when the code changes."""
+    notifications: list[str] = []
+    monkeypatch.setattr(
+        allocator_module,
+        "async_create",
+        lambda _hass, message, **_kwargs: notifications.append(message),
+    )
+    allocator = _allocator()
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-a",
+            identity_key="identity-old",
+            code="2222",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-c",
+            identity_key="identity-c",
+            code="2222",
+            code_length=4,
+            lockname="front",
+            slot=3,
+        )
+    )
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-b",
+            identity_key="identity-b",
+            code="3333",
+            code_length=4,
+            lockname="front",
+            slot=2,
+        )
+    )
+
+    result = await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-a",
+            identity_key="identity-new",
+            code="3333",
+            code_length=4,
+            lockname="front",
+            slot=1,
+            fingerprint_history=frozenset({"identity-old"}),
+        )
+    )
+
+    assert result.code == "3333"
+    assert allocator._registry.code_for_identity("identity-old") is None
+    assert allocator._registry.code_for_identity("identity-new") == "3333"
+    assert [
+        owner.identity_key for owner in allocator._registry.records["2222"].owners
+    ] == ["identity-c"]
+    assert {
+        owner.identity_key for owner in allocator._registry.records["3333"].owners
+    } == {
+        "identity-b",
+        "identity-new",
+    }
+    assert len(notifications) == 2
+
+
+async def test_fingerprint_history_removes_old_observed_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identity coalescing drops stale observed aliases for prior keys."""
+    notifications: list[str] = []
+    monkeypatch.setattr(
+        allocator_module,
+        "async_create",
+        lambda _hass, message, **_kwargs: notifications.append(message),
+    )
+    allocator = _allocator()
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-a",
+            identity_key="identity-old",
+            code="1111",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-a",
+            identity_key="identity-old",
+            code="2222",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-c",
+            identity_key="identity-c",
+            code="2222",
+            code_length=4,
+            lockname="front",
+            slot=3,
+        )
+    )
+
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-a",
+            identity_key="identity-new",
+            code="3333",
+            code_length=4,
+            lockname="front",
+            slot=1,
+            fingerprint_history=frozenset({"identity-old"}),
+        )
+    )
+
+    old_alias = "identity-old:observed:entry-a:front:1"
+    assert allocator._registry.code_for_identity(old_alias) is None
+    assert allocator._registry.code_for_identity("identity-old") is None
+    assert allocator._registry.code_for_identity("identity-new") == "3333"
+    assert [
+        owner.identity_key for owner in allocator._registry.records["2222"].owners
+    ] == ["identity-c"]
+
+
 async def test_identity_mismatch_keeps_observed_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -475,6 +607,69 @@ async def test_mismatched_alias_rekeys_on_manual_code_change(
     assert len(notifications) == 4
 
 
+async def test_mismatched_alias_releases_when_code_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Returning to the primary code removes stale observed-alias ownership."""
+    notifications: list[str] = []
+    monkeypatch.setattr(
+        allocator_module,
+        "async_create",
+        lambda _hass, message, **_kwargs: notifications.append(message),
+    )
+    allocator = _allocator()
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            code="1111",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            code="2222",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-c",
+            identity_key="identity-c",
+            code="2222",
+            code_length=4,
+            lockname="front",
+            slot=3,
+        )
+    )
+
+    result = await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            code="1111",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+
+    alias_key = "identity-a:observed:entry-a:front:1"
+    assert result.code == "1111"
+    assert allocator._registry.code_for_identity(alias_key) is None
+    assert [
+        owner.identity_key for owner in allocator._registry.records["2222"].owners
+    ] == ["identity-c"]
+    assert allocator._registry.code_for_identity("identity-a") == "1111"
+    assert len(notifications) == 2
+
+
 async def test_adoption_gate_warns_without_opening(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -529,7 +724,7 @@ async def test_disabled_entries_do_not_hold_adoption_gate() -> None:
 
     allocator = DoorCodeAllocator(hass)
 
-    assert allocator.diagnostics["pending_adoption"] == ["entry-a"]
+    assert allocator.diagnostics["pending_adoption"] == []
 
 
 def _fake_hass(*entry_ids: str) -> Any:
