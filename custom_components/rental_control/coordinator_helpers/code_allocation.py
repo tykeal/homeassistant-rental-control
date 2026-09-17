@@ -266,8 +266,8 @@ def build_rekey_requests(reservations: list[Reservation]) -> list[tuple[str, str
     """Return historical fingerprint moves for active reservations."""
     requests: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for reservation in reservations:
-        for historical_key in reservation.fingerprint_history:
+    for reservation in sorted(reservations, key=lambda item: item.identity_key):
+        for historical_key in sorted(reservation.fingerprint_history):
             item = (historical_key, reservation.identity_key)
             if historical_key != reservation.identity_key and item not in seen:
                 requests.append(item)

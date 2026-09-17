@@ -203,6 +203,23 @@ async def test_checked_out_reservation_not_active(
     assert allocator.requests[0].active_keys == set()
 
 
+def test_rekey_requests_are_deterministic() -> None:
+    """Historical fingerprint moves use stable reservation and history order."""
+    second = _reservation("identity-b", code="2222")
+    second.fingerprint_history = {"old-b2", "old-b1"}
+    first = _reservation("identity-a", code="1111")
+    first.fingerprint_history = {"old-a2", "old-a1", "identity-a"}
+
+    requests = code_allocation.build_rekey_requests([second, first])
+
+    assert requests == [
+        ("old-a1", "identity-a"),
+        ("old-a2", "identity-a"),
+        ("old-b1", "identity-b"),
+        ("old-b2", "identity-b"),
+    ]
+
+
 async def test_lockless_allocation_applies_checkout(
     monkeypatch: Any,
 ) -> None:

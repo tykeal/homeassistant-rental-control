@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
@@ -13,6 +14,7 @@ import pytest
 from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator import services as services_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
+from custom_components.rental_control.allocator.models import AdoptionRequest
 from custom_components.rental_control.allocator.models import AllocationOrigin
 from custom_components.rental_control.allocator.models import AllocationOwner
 from custom_components.rental_control.allocator.models import AllocationRecord
@@ -365,6 +367,37 @@ async def test_release_guard_requires_slot_coverage() -> None:
     assert report.released == []
     assert report.retained[0].reason == "unverifiable_lock"
     assert allocator._registry.code_for_identity("identity-a") == "1234"
+
+
+async def test_allocator_diagnostics_scrub_codes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Allocator diagnostics expose refs, conflicts, and orphans without codes."""
+    monkeypatch.setattr(allocator_module, "async_create", lambda *args, **kwargs: None)
+    allocator = _allocator()
+    await allocator.async_allocate(_request("identity-alpha", "9876"))
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-b",
+            identity_key="identity-beta",
+            code="9876",
+            code_length=4,
+            lockname="front",
+            slot=2,
+        )
+    )
+
+    snapshot = allocator.diagnostics
+    serialized = json.dumps(snapshot)
+
+    assert snapshot["record_count"] == 1
+    assert snapshot["owner_count"] == 2
+    assert snapshot["conflict_count"] == 1
+    assert snapshot["orphans"] == ["entry-a", "entry-b"]
+    assert snapshot["records"][0]["code_ref"] == allocator.code_ref("9876")
+    assert snapshot["records"][0]["owner_count"] == 2
+    assert snapshot["conflicts"][0]["code_ref"] == allocator.code_ref("9876")
+    assert "9876" not in serialized
 
 
 async def test_rekey_preserves_code_across_identity_change() -> None:
