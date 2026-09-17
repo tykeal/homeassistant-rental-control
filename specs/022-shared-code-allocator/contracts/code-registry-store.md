@@ -245,12 +245,14 @@ class CycleResult:
     unaccounted_slots: frozenset[int]
 ```
 
-`async_resolve_cycle` acquires `_lock` once and runs adopt → rekey → allocate →
-sweep against private, non-locking helpers, so one entry's whole cycle is atomic
-against another's (FR-006). It **must not** call the public phase methods: the
-lock is a plain non-reentrant `asyncio.Lock` and doing so would deadlock. The
-public phase methods exist so tests can exercise one behaviour at a time; they
-are not a supported way to compose a cycle.
+In the final Phase 6 state, `async_resolve_cycle` acquires `_lock` once and runs
+adopt → rekey → allocate → sweep against private, non-locking helpers, so one
+entry's whole cycle is atomic against another's (FR-006). Earlier checkpoints
+use the staged subsets defined in `tasks.md`: Phase 3 adopts only, Phase 4 runs
+adopt → allocate, and Phase 6 adds rekey and sweep. It **must not** call the
+public phase methods: the lock is a plain non-reentrant `asyncio.Lock` and doing
+so would deadlock. The public phase methods exist so tests can exercise one
+behaviour at a time; they are not a supported way to compose a cycle.
 
 `AllocationRequest` fields: `entry_id`, `identity_key`, `preferred_code`,
 `code_length`, `fingerprint_history`, `previously_published: bool` (the

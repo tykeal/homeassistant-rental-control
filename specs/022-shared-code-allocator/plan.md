@@ -54,8 +54,9 @@ test tooling `pytest-homeassistant-custom-component`
 **Storage**: One new Home Assistant `Store` at key
 `rental_control.code_registry`, schema version 1, shared by every config entry,
 holding codes obfuscated at rest. The existing per-entry cache store
-(`rental_control.slot_mappings.<entry_id>`, `STORE_SCHEMA_VERSION`) is unchanged
-and keeps its no-PIN policy.
+(`rental_control.slot_mappings.<entry_id>`, `STORE_SCHEMA_VERSION`) keeps its
+schema and no-PIN policy; it may add backward-compatible metadata such as the
+durable `published_once` boolean, but it must not store PIN material.
 **Testing**: `uv run pytest tests/ -q -p no:randomly` and
 `uv run ruff check custom_components/ tests/`; pre-commit for ruff-format,
 mypy, interrogate, reuse, aislop, gitlint
