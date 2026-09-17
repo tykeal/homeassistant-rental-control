@@ -282,6 +282,7 @@ class CoordinatorRefreshMixin:
         """Allocate codes for entries that do not manage Keymaster slots."""
         try:
             reservations = self._prepare_reservations_for_adoption(new_calendar, [])
+            self._apply_checkin_protection(reservations)
             await code_allocation.async_resolve_codes(
                 self.hass,
                 self._entry_id,

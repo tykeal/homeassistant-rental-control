@@ -16,6 +16,7 @@ import pytest
 
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AllocationOrigin
+from custom_components.rental_control.allocator.store import RegistryStore
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
@@ -99,6 +100,44 @@ async def test_full_code_space_is_shared_not_partitioned() -> None:
     assert second.code == "5678"
     assert allocator._registry.code_for_identity("identity-a") == "1234"
     assert allocator._registry.code_for_identity("identity-b") == "5678"
+
+
+async def test_restart_and_reload_preserve_allocations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persisted preferred and collision-resolved codes survive restart/reload."""
+    allocator = _allocator()
+    monkeypatch.setattr(code_allocation, "get_allocator", lambda _hass: allocator)
+    first = _event("Reserved: Alpha", "Reserved: Same Dates", "uid-a")
+    second = _event("Reserved: Bravo", "Reserved: Same Dates", "uid-a")
+    first_reservations = [_reservation("entry-a", first, "date_based")]
+    second_reservations = [_reservation("entry-b", second, "date_based")]
+
+    await code_allocation.async_resolve_codes(
+        _fake_hass(), "entry-a", "front", 4, [_free_slot(1)], first_reservations
+    )
+    await code_allocation.async_resolve_codes(
+        _fake_hass(), "entry-b", "front", 4, [_free_slot(2)], second_reservations
+    )
+    before = (first_reservations[0].slot_code, second_reservations[0].slot_code)
+
+    payload = RegistryStore(_fake_hass())._payload_from_registry(allocator._registry)
+    restarted = _allocator()
+    restarted._registry = RegistryStore(_fake_hass())._registry_from_payload(payload)
+    monkeypatch.setattr(code_allocation, "get_allocator", lambda _hass: restarted)
+    reloaded_first = [_reservation("entry-a", first, "date_based")]
+    still_loaded_second = [_reservation("entry-b", second, "date_based")]
+
+    await code_allocation.async_resolve_codes(
+        _fake_hass(), "entry-a", "front", 4, [_free_slot(1)], reloaded_first
+    )
+    await code_allocation.async_resolve_codes(
+        _fake_hass(), "entry-b", "front", 4, [_free_slot(2)], still_loaded_second
+    )
+
+    assert before[0] == reloaded_first[0].slot_code
+    assert before[1] == still_loaded_second[0].slot_code
+    assert before[0] != before[1]
 
 
 def _event(summary: str, description: str, uid: str) -> CalendarEvent:

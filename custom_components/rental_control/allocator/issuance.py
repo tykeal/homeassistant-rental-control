@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC
 from datetime import datetime
+import logging
 from typing import TYPE_CHECKING
 
 from .candidates import candidate_codes
@@ -17,10 +18,11 @@ from .models import AllocationResult
 from .models import CycleObservation
 from .models import CycleRequest
 from .models import CycleResult
-from .models import ReleaseReport
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def observed_alias_key(
@@ -52,6 +54,11 @@ def allocate_request(
     if allocator._registry_lost and (
         request.previously_published or not allocator._registry_missing
     ):
+        _LOGGER.warning(
+            "Declined allocation for %s:%s after registry loss",
+            request.entry_id,
+            request.identity_key,
+        )
         return AllocationResult(code=None, reason="recovery_fail_closed")
     if allocator._registry.is_available(
         request.preferred_code,
@@ -65,7 +72,14 @@ def allocate_request(
             allocator.code_ref(request.preferred_code),
             datetime.now(UTC).isoformat(),
         )
+        _LOGGER.info(
+            "Allocated preferred shared code_ref %s for %s:%s",
+            record.code_ref,
+            request.entry_id,
+            request.identity_key,
+        )
         return AllocationResult(code=record.code, origin=AllocationOrigin.PREFERRED)
+    preferred_ref = allocator.code_ref(request.preferred_code)
     for candidate in candidate_codes(request.identity_key, request.code_length):
         if not allocator._registry.is_available(
             candidate,
@@ -80,10 +94,24 @@ def allocate_request(
             allocator.code_ref(candidate),
             datetime.now(UTC).isoformat(),
         )
+        _LOGGER.info(
+            "Allocated collision-resolved shared code_ref %s for %s:%s "
+            "after preferred code_ref %s was unavailable",
+            record.code_ref,
+            request.entry_id,
+            request.identity_key,
+            preferred_ref,
+        )
         return AllocationResult(
             code=record.code,
             origin=AllocationOrigin.COLLISION_RESOLVED,
         )
+    _LOGGER.warning(
+        "Exhausted shared code space for %s:%s; preferred code_ref %s",
+        request.entry_id,
+        request.identity_key,
+        preferred_ref,
+    )
     return AllocationResult(code=None, reason="exhausted")
 
 
@@ -95,6 +123,9 @@ async def resolve_cycle(
         adopted: dict[str, AllocationResult] = {}
         for adoption in request.adoptions:
             adopted[adoption.identity_key] = allocator._adopt_unlocked(adoption)
+
+        for old_key, new_key in request.rekeys:
+            allocator._rekey_unlocked(old_key, new_key)
 
         unaccounted = unaccounted_slots(allocator, request.observation)
         if request.adoption_complete and not unaccounted:
@@ -114,6 +145,7 @@ async def resolve_cycle(
                 issuance_allowed=allocation.issuance_allowed and issuance_allowed,
             )
             allocated[allocation.identity_key] = allocate_request(allocator, allocation)
+        released = allocator._sweep_unlocked(request.observation, request.active_keys)
         recovery_declined = any(
             result.reason == "recovery_fail_closed" for result in allocated.values()
         )
@@ -131,7 +163,7 @@ async def resolve_cycle(
         return CycleResult(
             adopted=adopted,
             allocated=allocated,
-            released=ReleaseReport(),
+            released=released,
             unaccounted_slots=unaccounted,
         )
 

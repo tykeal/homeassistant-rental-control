@@ -28,3 +28,11 @@ set_state:
             - awaiting_checkin
             - checked_in
             - checked_out
+
+clear_orphaned_codes:
+  fields:
+    dry_run:
+      required: false
+      default: false
+      selector:
+        boolean:

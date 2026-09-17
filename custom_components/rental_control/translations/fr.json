@@ -137,6 +137,16 @@
           "description": "État cible pour le capteur d'arrivée."
         }
       }
+    },
+    "clear_orphaned_codes": {
+      "name": "Effacer les codes orphelins",
+      "description": "Libérer les allocations de codes partagés orphelines dont l'absence des verrous gérés est prouvée.",
+      "fields": {
+        "dry_run": {
+          "name": "Simulation",
+          "description": "Signaler ce qui serait effacé sans modifier le registre de codes partagé."
+        }
+      }
     }
   }
 }

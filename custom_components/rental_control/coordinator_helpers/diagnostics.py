@@ -34,6 +34,7 @@ def scrub_codes(value: Any) -> Any:
 def build_reconciliation_diagnostics(
     plan: DesiredPlan | None,
     event_overrides_snapshot: dict[str, Any] | None,
+    allocator_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return the combined, scrubbed reconciliation diagnostics snapshot.
 
@@ -41,6 +42,8 @@ def build_reconciliation_diagnostics(
         plan: The most recently computed desired plan, or ``None``.
         event_overrides_snapshot: The :class:`EventOverrides` diagnostics
             snapshot, or ``None`` when overrides are not configured.
+        allocator_snapshot: The shared allocator diagnostics snapshot, or
+            ``None`` when the allocator is not available.
 
     Returns:
         Combined diagnostics dict with raw codes scrubbed. When no plan
@@ -52,4 +55,6 @@ def build_reconciliation_diagnostics(
         result.update(plan.diagnostics)
     if event_overrides_snapshot is not None:
         result["event_overrides"] = event_overrides_snapshot
+    if allocator_snapshot is not None:
+        result["allocator"] = allocator_snapshot
     return cast("dict[str, Any]", scrub_codes(result))

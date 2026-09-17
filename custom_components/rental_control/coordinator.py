@@ -29,6 +29,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.storage import Store as Store  # noqa: F401
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
+from .allocator import get_allocator
 from .const import DOMAIN
 from .coordinator_helpers import diagnostics
 from .coordinator_helpers import slot_matching
@@ -182,7 +183,13 @@ class RentalControlCoordinator(
             if self.event_overrides is not None
             else None
         )
-        return diagnostics.build_reconciliation_diagnostics(self._latest_plan, snapshot)
+        allocator = get_allocator(self.hass)
+        allocator_snapshot = allocator.diagnostics if allocator is not None else None
+        return diagnostics.build_reconciliation_diagnostics(
+            self._latest_plan,
+            snapshot,
+            allocator_snapshot,
+        )
 
     def get_slot_assignment(self, identity_key: str) -> int | None:
         """Return slot number assigned to identity_key in latest plan, or None."""

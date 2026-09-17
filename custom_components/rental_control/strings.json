@@ -143,6 +143,16 @@
           "description": "Target state for the check-in sensor."
         }
       }
+    },
+    "clear_orphaned_codes": {
+      "name": "Clear orphaned codes",
+      "description": "Release orphaned shared code allocations that are proven absent from managed locks.",
+      "fields": {
+        "dry_run": {
+          "name": "Dry run",
+          "description": "Report what would be cleared without changing the shared code registry."
+        }
+      }
     }
   }
 }

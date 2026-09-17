@@ -19,6 +19,7 @@ from ..allocator.models import AllocationRequest
 from ..allocator.models import AllocationResult
 from ..allocator.models import CycleObservation
 from ..allocator.models import CycleRequest
+from ..allocator.models import CycleResult
 from ..const import DOMAIN
 from ..const import NAME
 from ..reconciliation import SlotStatus
@@ -66,15 +67,16 @@ async def async_resolve_codes(
         CycleRequest(
             observation=observation,
             adoptions=adoptions,
-            rekeys=[],
+            rekeys=build_rekey_requests(reservations),
             allocations=allocations,
-            active_keys={reservation.identity_key for reservation in reservations},
+            active_keys={
+                reservation.identity_key
+                for reservation in select_eligible_reservations(reservations)
+            },
             adoption_complete=adoption_complete,
         )
     )
-    for identity_key, adoption_result in result.adopted.items():
-        if adoption_result.code is not None:
-            _apply_result(reservations, identity_key, adoption_result)
+    _apply_adoption_results(allocator, entry_id, reservations, result)
     if result.unaccounted_slots:
         _LOGGER.warning(
             "Shared code allocator withheld issuance for entry %s because "
@@ -82,15 +84,7 @@ async def async_resolve_codes(
             entry_id,
             sorted(result.unaccounted_slots),
         )
-    exhausted = False
-    for identity_key, allocation_result in result.allocated.items():
-        if identity_key in result.adopted:
-            continue
-        if allocation_result.code is None:
-            exhausted = exhausted or allocation_result.reason == "exhausted"
-            continue
-        _apply_result(reservations, identity_key, allocation_result)
-    if exhausted:
+    if _apply_allocation_results(allocator, entry_id, reservations, result):
         message = (
             f"Shared code allocator exhausted the configured code space for "
             f"entry {entry_id}. New duplicate codes were not issued."
@@ -111,6 +105,50 @@ async def async_resolve_codes(
         reservation.slot_code = None
         reservation.code_source = "unallocated"
     return observation
+
+
+def _apply_adoption_results(
+    allocator: object,
+    entry_id: str,
+    reservations: list[Reservation],
+    result: CycleResult,
+) -> None:
+    """Apply and log adoption results from a cycle."""
+    for identity_key, adoption_result in result.adopted.items():
+        if adoption_result.code is None:
+            continue
+        _LOGGER.info(
+            "Adopted shared code_ref %s for entry %s identity %s",
+            _allocator_code_ref(allocator, adoption_result.code),
+            entry_id,
+            identity_key,
+        )
+        _apply_result(reservations, identity_key, adoption_result)
+
+
+def _apply_allocation_results(
+    allocator: object,
+    entry_id: str,
+    reservations: list[Reservation],
+    result: CycleResult,
+) -> bool:
+    """Apply and log allocation results; return whether space exhausted."""
+    exhausted = False
+    for identity_key, allocation_result in result.allocated.items():
+        if identity_key in result.adopted:
+            continue
+        if allocation_result.code is None:
+            exhausted = exhausted or allocation_result.reason == "exhausted"
+            continue
+        _LOGGER.info(
+            "Resolved shared code_ref %s for entry %s identity %s origin %s",
+            _allocator_code_ref(allocator, allocation_result.code),
+            entry_id,
+            identity_key,
+            allocation_result.origin,
+        )
+        _apply_result(reservations, identity_key, allocation_result)
+    return exhausted
 
 
 def _adoption_complete(
@@ -224,6 +262,19 @@ def build_allocation_requests(
     return requests
 
 
+def build_rekey_requests(reservations: list[Reservation]) -> list[tuple[str, str]]:
+    """Return historical fingerprint moves for active reservations."""
+    requests: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for reservation in sorted(reservations, key=lambda item: item.identity_key):
+        for historical_key in sorted(reservation.fingerprint_history):
+            item = (historical_key, reservation.identity_key)
+            if historical_key != reservation.identity_key and item not in seen:
+                requests.append(item)
+                seen.add(item)
+    return requests
+
+
 def _planned_slots(
     lockname: str | None,
     managed_slots: list[ManagedSlot],
@@ -304,3 +355,11 @@ def _apply_result(
         else:
             reservation.code_source = "unallocated"
         return
+
+
+def _allocator_code_ref(allocator: object, code: str) -> str:
+    """Return a masked allocator code reference for logs."""
+    code_ref = getattr(allocator, "code_ref", None)
+    if callable(code_ref):
+        return str(code_ref(code))
+    return "<unavailable>"
