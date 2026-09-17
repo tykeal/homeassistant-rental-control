@@ -171,6 +171,8 @@ custom_components/rental_control/
 │   │                              #      per-coordinator pending state
 │   ├── reservations.py            # MOD: _resolve_observed_code suppression
 │   ├── checkin_protection.py      # MOD: second manual_observed site
+│   ├── coordinator_checkin_shell.py  # MOD: pass generated code when a
+│   │                              #      protected check-in slot is suppressed
 │   ├── models.py                  # MOD: ReservationBuildContext gains the
 │   │                              #      suppression value object
 │   ├── code_allocation.py         # MOD: skip suppressed adoptions, keep
@@ -178,7 +180,8 @@ custom_components/rental_control/
 │   │                              #      directives, surface outcomes
 │   ├── coordinator_setup_shell.py # MOD: _reservation_build_context passes
 │   │                              #      the pending suppression
-│   └── coordinator_refresh_shell.py  # MOD: consume the pending re-issue once
+│   └── coordinator_refresh_shell.py  # MOD: consume pending re-issues and
+│                                  #      exclude pending targets from ghosts
 ├── services.yaml                  # MOD: force_reissue declaration
 ├── strings.json                   # MOD: name/description/fields
 └── translations/{en,fr}.json      # MOD: service translations
@@ -360,6 +363,11 @@ immediately: the release completes in the same cycle. That is verified against
 `allocator/reissue_service.py` and guarded by `hass.services.has_service` so a
 second config entry does not re-register it, with
 `SupportsResponse.OPTIONAL`.
+`allocator/services.py` currently returns as soon as `clear_orphaned_codes` is
+registered, so the new service registration must use an independent idempotent
+guard before that early return, or the existing guard must be split. A
+multi-entry setup test covers this so later config entries cannot skip
+`force_reissue`.
 
 It is a **domain** service that takes an `entity_id` *field*, not an entity
 platform service. That is a deliberate composition of the two precedents the
@@ -445,17 +453,21 @@ defaulting to an empty value so every existing construction site and every
 existing test keeps working. `_reservation_build_context`
 (`coordinator_helpers/coordinator_setup_shell.py:273`) fills it from the
 coordinator's pending re-issues.
+Identity-backed targets are matched by identity only. Slot matching is reserved
+for identity-less bare slot targets, so a reservation that later lands on the
+same physical slot cannot inherit suppression intended for a different
+identity.
 
 Three retention sites are suppressed for the targeted cycle, and **only** for
 the named target:
 
 1. **`_resolve_observed_code`** (`coordinator_helpers/reservations.py:224`).
-   When the reservation's identity or its matched physical slot is suppressed,
-   the function returns the caller's freshly generated `(slot_code,
-   code_source)` instead of `(observed_code, "manual_observed")`. Everything
-   else about the function is unchanged, so every non-targeted reservation keeps
-   full retention (spec Out of Scope: "Changing the default retention
-   behaviour").
+   When the reservation's identity is suppressed — or, for an identity-less
+   bare slot target only, its matched physical slot is suppressed — the function
+   returns the caller's freshly generated `(slot_code, code_source)` instead of
+   `(observed_code, "manual_observed")`. Everything else about the function is
+   unchanged, so every non-targeted reservation keeps full retention (spec Out
+   of Scope: "Changing the default retention behaviour").
 2. **`checkin_protection.build_protected_reservation`
    (`coordinator_helpers/checkin_protection.py:49`)**. This is the *second*
    `manual_observed` site in the tree — it synthesizes a protected reservation
@@ -552,20 +564,24 @@ with the hold owner, so `AllocationRegistry.is_available` returns `False` for it
 identity). Verified against `registry.is_available`.
 
 For an identity-backed target, exhaustion returns
-`AllocationResult(code=None, reason="exhausted")` as it does today, then the
-forced-reissue step rolls back the staged hold in the same locked cycle: the
-original owner is restored, the hold identity is removed, and the pending
-record is cleared with `terminal_reason="code_space_exhausted"`. FR-008's
-"leave the existing code in place" therefore holds in both the physical lock
-and the registry. The service reports the failure and, in dry-run, refuses up
-front.
+`AllocationResult(code=None, reason="exhausted")` as it does today. The same
+rollback path is also used if the target has no successful allocation because
+adoption completeness, pending recovery, unaccounted-slot, or request-building
+guards blocked issuance after the hold was staged. The original owner is
+restored, the hold identity is removed, and the pending record is cleared with
+the terminal reason. FR-008's "leave the existing code in place" therefore
+holds in both the physical lock and the registry. The service reports the
+failure and, in dry-run, refuses up front.
 
 For a bare lock/slot target with no reservation identity, no allocation request
 is built and no replacement code is possible. The operation is clear-only: the
 targeted slot is allowed to clear through the ordinary plan, and any registry
 owner for that lock and slot is held and released under the same guard. A bare
 slot with no matching registry owner records `no_existing_allocation` as a
-terminal outcome and clears the pending state.
+terminal outcome and clears the pending state. The targeted lock and slot are
+also excluded from persisted ghost hydration before `build_ghost_reservations`
+runs, so the stale mapping cannot recreate a codeless ghost that would turn the
+clear-only operation into a `NOOP code_unavailable` plan.
 
 ### 7. Dry run (FR-007, FR-023)
 
@@ -615,14 +631,18 @@ multiple-owner deferral cannot appear there by construction (FR-021).
 Allocator diagnostics (`allocator/diagnostics.py`) gain a count of outstanding
 forced-release holds and their retention reasons, as `code_ref` only.
 
-`adoption.py` gets one narrow change: while a hold exists for an entry, lock,
-and slot, the identity-mismatch report for that same slot is suppressed. After a
-re-issue, the target identity owns the new code while the slot still reads the
-old one, which is exactly the shape `_report_identity_mismatch` warns about —
-correctly, in general, but here it is the expected intermediate state and would
-fire a warning plus a persistent notification on every cycle until the write is
-confirmed. The mismatch *detection* is unchanged; only the alarm is silenced
-while the state is explained by a hold.
+`adoption.py` gets one narrow change while a hold exists for an entry, lock,
+and slot. The identity-mismatch report for that same slot is suppressed, and
+the matching `_record_mismatched_observed_owner` path is also suppressed or
+collapsed into the existing hold. After a re-issue, the target identity owns the
+new code while the slot still reads the old one, which is exactly the shape
+`_report_identity_mismatch` warns about — correctly, in general, but here it is
+the expected intermediate state and would fire a warning plus a persistent
+notification on every cycle until the write is confirmed. Suppressing the alias
+write prevents a stale `:observed:` owner from remaining beside the hold if the
+target later disappears before confirmation. The mismatch *detection* is
+unchanged; only the alarm and duplicate alias ownership are silenced while the
+state is explained by a hold.
 
 ## Requirements traceability
 
@@ -713,11 +733,12 @@ condition and drives it to completion:
 - one refresh so both sides adopt, producing one registry record with two owners
   and a reported adoption conflict;
 - one `force_reissue` invocation against **one** side's reservation sensor;
-- assert immediately after that cycle: the targeted reservation now holds a
-  different code; the untargeted reservation's code is unchanged; the old
-  record still has two owners (the hold plus the untouched side), so the old
-  code is still unavailable; the plan emitted `OVERWRITE_MANUAL_CHANGE` for the
-  targeted slot only;
+- assert immediately after that cycle: the allocator and desired plan hold a
+  different replacement code for the targeted reservation, while the calendar
+  sensor still publishes the old confirmed code per FR-026; the untargeted
+  reservation's code is unchanged; the old record still has two owners (the
+  hold plus the untouched side), so the old code is still unavailable; the plan
+  emitted `OVERWRITE_MANUAL_CHANGE` for the targeted slot only;
 - advance the simulated lock so the targeted slot reads the new code, run one
   more refresh, and assert the **end state**: two distinct codes on the lock;
   the old record reduced from two owners to exactly one — the untargeted entry;

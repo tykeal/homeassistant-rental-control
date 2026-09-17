@@ -88,12 +88,12 @@ reported reason is the most specific one.
 
 | # | Check | Refusal reason | FR |
 |---|-------|----------------|----|
-| 1 | Exactly one targeting form supplied: `entity_id` XOR (`lockname` and `slot`) | `ambiguous_target` / `missing_target` | FR-002, FR-003 |
-| 2 | `lockname` and `slot` are half-supplied instead of both present or both absent | `incomplete_slot_target` | FR-002 |
+| 1 | `lockname` and `slot` are half-supplied instead of both present or both absent | `incomplete_slot_target` | FR-002 |
+| 2 | Exactly one complete targeting form supplied: `entity_id` XOR (`lockname` and `slot`) | `ambiguous_target` / `missing_target` | FR-002, FR-003 |
 | 3 | Entity is a loaded Rental Control reservation sensor carrying an event | `not_a_reservation_sensor` | FR-002 |
-| 4 | Slot form resolves to exactly one loaded entry whose lockname matches | `unknown_lock` / `ambiguous_lock` | FR-002 |
+| 4 | Slot form resolves to exactly one loaded entry whose lockname matches and whose managed range contains the slot | `unknown_lock` / `ambiguous_lock` | FR-002 |
 | 5 | Slot lies in that entry's managed range | `slot_not_managed` | FR-005 |
-| 6 | Target slot is covered by a current observation and is not `SlotStatus.UNKNOWN` | `slot_unreadable` / `lock_unavailable` | FR-010 |
+| 6 | For lock-backed targets, the target slot is covered by a current observation and is not `SlotStatus.UNKNOWN`; lockless targets skip this check | `slot_unreadable` / `lock_unavailable` | FR-010 |
 | 7 | Target is not checked in, or `force` is true | `checked_in_requires_force` | FR-006 |
 | 8 | No pending re-issue and no outstanding hold for this target | `reissue_already_pending` | FR-009 |
 | 9 | For an identity-backed target, a unique replacement code is obtainable | `code_space_exhausted` | FR-008 |
@@ -194,13 +194,19 @@ def _release_guard_reason(
 ### `DoorCodeAllocator.async_preview_reissue` (new)
 
 ```python
-async def async_preview_reissue(self, request: AllocationRequest) -> ReissuePreview:
+async def async_preview_reissue(
+    self,
+    request: ReissuePreviewRequest,
+) -> ReissuePreview:
 ```
 
 **Contract**: takes `_lock`; performs no registry mutation; never calls
-`_store.async_save`; returns the code that `allocate_request` would return for
-the same registry state with the target's current code excluded. Shares
-`select_code` with the real path so the two cannot diverge.
+`_store.async_save`; and previews either an identity-backed replacement or a
+bare-slot clear. For identity-backed targets it models the post-hold registry
+state first by removing the target identity and collapsing any observed alias
+for the same entry, lock, and slot, then calls the shared `select_code` helper.
+For a bare slot target it returns the clear-only outcome without constructing an
+`AllocationRequest`, because there is no reservation identity or preferred code.
 
 ### `issuance.resolve_cycle` (modified)
 

@@ -67,9 +67,11 @@ which the pending re-issue is held.
   `range(coordinator.start_slot, coordinator.start_slot + coordinator.max_events)`
   for exactly one loaded entry whose `lockname` matches. Outside every range is
   refused (FR-005); inside more than one is refused as ambiguous.
-- The slot's current observation must not be `SlotStatus.UNKNOWN`, and the slot
-  must be covered by a current observation, or the request is refused (FR-010).
-  `SlotStatus.FREE` is known-empty and is **not** unreadable.
+- For lock-backed targets, the slot's current observation must not be
+  `SlotStatus.UNKNOWN`, and the slot must be covered by a current observation,
+  or the request is refused (FR-010). Lockless entity targets skip this check
+  because they have no physical slot to observe. `SlotStatus.FREE` is
+  known-empty and is **not** unreadable.
 - `checked_in` is read from the entry's `CHECKIN_SENSOR` state
   (`CHECKIN_STATE_CHECKED_IN`) matched to this target. When `checked_in` is
   `True` and `force` is `False`, the request is refused (FR-006).
@@ -132,9 +134,10 @@ value is the default, so every existing construction site of
 
 - Consulted by `_resolve_observed_code`,
   `checkin_protection.build_protected_reservation`, and
-  `code_allocation.build_adoption_requests` only. A reservation is suppressed
-  when its `identity_key` is in `identity_keys` **or** its matched physical slot
-  number is in `slots`.
+  `code_allocation.build_adoption_requests` only. Identity-backed re-issues are
+  matched by `identity_key`; the slot set is used only for identity-less bare
+  slot targets. That prevents a new reservation that later occupies the old
+  physical slot from inheriting another target's suppression.
 - Suppression changes which `(code, code_source)` pair is returned. It never
   changes matching, eligibility, dates, or names.
 - Every non-suppressed reservation in the same cycle keeps full `manual_observed`

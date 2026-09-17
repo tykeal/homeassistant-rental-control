@@ -24,6 +24,10 @@ document, or the plan, over the source:
   `_release_moved_observed_alias`, `_report_identity_mismatch`
 - `custom_components/rental_control/coordinator_helpers/reservations.py` —
   `_resolve_observed_code`
+- `custom_components/rental_control/coordinator_helpers/coordinator_checkin_shell.py`
+  — `_synthesize_checkin_reservation`
+- `custom_components/rental_control/coordinator_helpers/coordinator_refresh_shell.py`
+  — `_prepare_reservations_for_adoption`, ghost hydration
 - `custom_components/rental_control/coordinator_helpers/code_allocation.py` —
   `build_adoption_requests`, `_adoption_complete`, `build_cycle_observation`
 - `custom_components/rental_control/coordinator.py` — `get_slot_code`
@@ -48,9 +52,13 @@ Each step is one atomic commit that builds and passes the suite.
 3. **Suppression.** `coordinator_helpers/reissue.py` with `ReissueSuppression`
    and `PendingReissue`; the `ReservationBuildContext` field and its default;
    `_resolve_observed_code`; `build_protected_reservation`;
-   `build_adoption_requests` skip; the `_adoption_complete` exclusion.
+   `_synthesize_checkin_reservation` passing the generated code for suppressed
+   protected slots; `build_adoption_requests` skip; the `_adoption_complete`
+   exclusion; and `_prepare_reservations_for_adoption` filtering pending
+   identities and bare slots before ghost hydration.
 4. **Service.** `allocator/reissue_service.py`, registration from
-   `allocator/services.py`, `services.yaml`, `strings.json`, and both
+   `allocator/services.py` with an independent idempotent guard from
+   `clear_orphaned_codes`, `services.yaml`, `strings.json`, and both
    translations. Target resolution and all nine validation checks.
 5. **Dry run.** `async_preview_reissue` and the separate preview response
    builder.
