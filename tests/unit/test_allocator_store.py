@@ -141,7 +141,7 @@ async def test_missing_and_corrupt_payloads_yield_empty_registry(
     result = await wrapper.async_load()
 
     assert result.registry.records == {}
-    assert result.registry_lost is (payload is not None)
+    assert result.registry_lost is True
     assert patch_store
     assert message in caplog.text
 

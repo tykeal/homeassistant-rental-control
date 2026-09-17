@@ -23,6 +23,7 @@ from ..const import DOMAIN
 from ..const import NAME
 from ..reconciliation import SlotStatus
 from ..reconciliation import compute_desired_plan
+from ..reconciliation.desired import select_eligible_reservations
 from .models import ObservedSlotQuery
 from .slot_matching import find_observed_slot
 
@@ -82,8 +83,12 @@ async def async_resolve_codes(
         )
     exhausted = False
     for identity_key, allocation_result in result.allocated.items():
+        if identity_key in result.adopted:
+            continue
+        if allocation_result.code is None:
+            exhausted = exhausted or allocation_result.reason == "exhausted"
+            continue
         _apply_result(reservations, identity_key, allocation_result)
-        exhausted = exhausted or allocation_result.reason == "exhausted"
     if exhausted:
         message = (
             f"Shared code allocator exhausted the configured code space for "
@@ -99,7 +104,10 @@ async def async_resolve_codes(
     for reservation in reservations:
         if reservation.identity_key in result.adopted or (
             reservation.identity_key in result.allocated
-            and result.allocated[reservation.identity_key].code is not None
+            and (
+                result.allocated[reservation.identity_key].code is not None
+                or (reservation.published_once and reservation.slot_code is not None)
+            )
         ):
             continue
         reservation.slot_code = None
@@ -195,6 +203,8 @@ def build_allocation_requests(
     planned_slots = _planned_slots(lockname, managed_slots, reservations)
     requests: list[AllocationRequest] = []
     for reservation in sorted(reservations, key=lambda item: item.identity_key):
+        if reservation.identity_key not in planned_slots:
+            continue
         planned_slot = planned_slots.get(reservation.identity_key)
         if lockname is not None and planned_slot is None:
             continue
@@ -223,7 +233,10 @@ def _planned_slots(
 ) -> dict[str, int | None]:
     """Return planned physical slots for lock-backed selected reservations."""
     if lockname is None:
-        return {reservation.identity_key: None for reservation in reservations}
+        return {
+            reservation.identity_key: None
+            for reservation in select_eligible_reservations(reservations)
+        }
     if not managed_slots:
         return {}
     plan = compute_desired_plan(

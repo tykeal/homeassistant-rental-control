@@ -14,6 +14,7 @@ from typing import Any
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.core import HomeAssistant
 
+from ..const import CONF_LOCK_ENTRY
 from ..const import DOMAIN
 from ..const import NAME
 from . import issuance
@@ -36,6 +37,18 @@ _LOGGER = logging.getLogger(__name__)
 _ADOPTION_GATE_WARNING_SECONDS = 300.0
 _CONFLICT_NOTIFICATION_ID = f"{DOMAIN}_code_registry_conflict"
 _GATE_NOTIFICATION_ID = f"{DOMAIN}_code_registry_adoption_pending"
+
+
+def _entry_has_lock(data: object) -> bool:
+    """Return whether config entry data references a Keymaster lock."""
+    if not isinstance(data, dict):
+        return False
+    lock_entry = data.get(CONF_LOCK_ENTRY)
+    return (
+        isinstance(lock_entry, str)
+        and bool(lock_entry.strip())
+        and lock_entry.strip() != "(none)"
+    )
 
 
 class DoorCodeAllocator:
@@ -65,7 +78,12 @@ class DoorCodeAllocator:
 
     def _seed_pending_adoption(self) -> set[str]:
         """Return currently configured Rental Control entries awaiting adoption."""
-        return set()
+        return {
+            entry.entry_id
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+            if getattr(entry, "disabled_by", None) is None
+            and _entry_has_lock(getattr(entry, "data", {}))
+        }
 
     async def async_register_entry(self, entry_id: str) -> None:
         """Mark an entry as awaiting its first allocator cycle."""

@@ -29,9 +29,10 @@ from custom_components.rental_control.reconciliation import SlotStatus
 class FakeAllocator:
     """Allocator test double that records cycle ordering."""
 
-    def __init__(self) -> None:
+    def __init__(self, decline_reason: str | None = None) -> None:
         """Initialize recorded calls."""
         self.calls: list[str] = []
+        self.decline_reason = decline_reason
 
     async def async_resolve_cycle(self, request: CycleRequest) -> Any:
         """Record a cycle and echo adoption/allocation results."""
@@ -47,6 +48,13 @@ class FakeAllocator:
             adopted_result = adopted.get(allocation.identity_key)
             if adopted_result is not None:
                 allocated[allocation.identity_key] = adopted_result
+                continue
+            if self.decline_reason is not None:
+                allocated[allocation.identity_key] = SimpleNamespace(
+                    code=None,
+                    origin=None,
+                    reason=self.decline_reason,
+                )
                 continue
             allocated[allocation.identity_key] = SimpleNamespace(
                 code=allocation.preferred_code,
@@ -125,6 +133,31 @@ async def test_phase3_adopts_without_allocation(
     assert reservation.code_source == "adopted"
 
 
+async def test_adoption_result_is_not_overwritten(
+    monkeypatch: Any,
+) -> None:
+    """A stale allocation cannot overwrite observed adoption output."""
+    allocator = FakeAllocator()
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: allocator,
+    )
+    reservation = _reservation("identity-a", code="1111")
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        "front",
+        4,
+        [_slot(1, "2222")],
+        [reservation],
+    )
+
+    assert reservation.slot_code == "2222"
+    assert reservation.code_source == "adopted"
+
+
 async def test_unmatched_reservation_is_held_codeless(
     monkeypatch: Any,
 ) -> None:
@@ -173,6 +206,32 @@ async def test_missing_allocator_holds_reservations_codeless(
 
     assert reservation.slot_code is None
     assert reservation.code_source == "unallocated"
+
+
+async def test_published_decline_preserves_existing_code(
+    monkeypatch: Any,
+) -> None:
+    """A fail-closed decline must not clear a published reservation code."""
+    allocator = FakeAllocator(decline_reason="recovery_fail_closed")
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: allocator,
+    )
+    reservation = _reservation("identity-a", code="1111")
+    reservation.published_once = True
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        None,
+        4,
+        [],
+        [reservation],
+    )
+
+    assert reservation.slot_code == "1111"
+    assert reservation.code_source == "generated"
 
 
 async def test_unmatched_coded_slot_keeps_adoption_gate_pending(
@@ -725,6 +784,31 @@ async def test_adoption_gate_warns_without_opening(
     assert allocator.diagnostics["pending_adoption"] == []
 
 
+async def test_empty_accounted_cycle_opens_gate() -> None:
+    """An entry with no live allocations still completes adoption."""
+    allocator = _allocator()
+    await allocator.async_register_entry("entry-a")
+
+    result = await allocator.async_resolve_cycle(
+        CycleRequest(
+            observation=CycleObservation(
+                entry_id="entry-a",
+                lockname="front",
+                managed_slots=frozenset({1}),
+                observed_codes={},
+                unreadable_slots=frozenset(),
+            ),
+            adoptions=[],
+            rekeys=[],
+            allocations=[],
+            active_keys=set(),
+        )
+    )
+
+    assert result.unaccounted_slots == frozenset()
+    assert allocator.diagnostics["pending_adoption"] == []
+
+
 async def test_allocate_repeats_existing_identity() -> None:
     """Repeating allocation returns the same existing registry owner."""
     allocator = _allocator()
@@ -924,7 +1008,7 @@ async def test_disabled_entries_do_not_hold_adoption_gate() -> None:
 
     allocator = DoorCodeAllocator(hass)
 
-    assert allocator.diagnostics["pending_adoption"] == []
+    assert allocator.diagnostics["pending_adoption"] == ["entry-a"]
 
 
 def _fake_hass(*entry_ids: str) -> Any:

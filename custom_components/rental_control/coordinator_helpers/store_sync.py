@@ -96,7 +96,11 @@ def build_cache_mapping(
             "booking_aliases": sorted(res.booking_aliases),
         },
         "missing_count": 0,
-        "published_once": actual.get("published_once", bool(res.slot_code)),
+        "published_once": (
+            actual.get("published_once") is True
+            or res.published_once
+            or res.slot_code is not None
+        ),
         "pending_set_since": None,
         "pending_clear_since": None,
         "fingerprint_history": sorted(res.fingerprint_history),

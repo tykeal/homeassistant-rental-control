@@ -28,6 +28,7 @@ from ..const import REQUEST_TIMEOUT
 from ..const import SLOT_STATUS_OCCUPIED
 from ..const import STORE_SCHEMA_VERSION
 from ..reconciliation import Reservation as _Reservation
+from ..reconciliation.desired import select_eligible_reservations
 from ..util import OperationResult
 from . import calendar_parsing
 from . import code_allocation
@@ -288,7 +289,8 @@ class CoordinatorRefreshMixin:
                 reservations,
             )
             res_by_key: dict[str, _Reservation] = {
-                reservation.identity_key: reservation for reservation in reservations
+                reservation.identity_key: reservation
+                for reservation in select_eligible_reservations(reservations)
             }
             self._sync_lockless_slot_store(res_by_key)
             self._latest_res_by_key = res_by_key

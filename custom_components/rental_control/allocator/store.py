@@ -84,7 +84,7 @@ class RegistryStore:
             raise ConfigEntryNotReady("Unable to load shared code registry") from err
         if payload is None:
             self._warn_empty("code registry store is absent")
-            return RegistryLoadResult(self._empty_registry(), registry_lost=False)
+            return RegistryLoadResult(self._empty_registry(), registry_lost=True)
         try:
             registry = self._registry_from_payload(payload)
         except ValueError as err:

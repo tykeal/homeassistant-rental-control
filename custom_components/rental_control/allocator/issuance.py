@@ -95,7 +95,7 @@ async def resolve_cycle(
             adopted[adoption.identity_key] = allocator._adopt_unlocked(adoption)
 
         unaccounted = unaccounted_slots(allocator, request.observation)
-        if request.allocations and not unaccounted:
+        if not unaccounted:
             allocator._pending_adoption.discard(request.observation.entry_id)
             if not allocator._pending_adoption:
                 allocator._gate_deadline = 0.0
@@ -105,6 +105,8 @@ async def resolve_cycle(
         issuance_allowed = not unaccounted
         allocated: dict[str, AllocationResult] = {}
         for allocation in request.allocations:
+            if allocation.identity_key in adopted:
+                continue
             allocation = replace(
                 allocation,
                 issuance_allowed=allocation.issuance_allowed and issuance_allowed,
