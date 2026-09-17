@@ -65,6 +65,8 @@ class Reservation:
         missing_count: Consecutive refreshes missing from feed while
             persisted and assigned.  0, 1, or 2 keeps the slot; 3
             makes the reservation clearable unless protected.
+        published_once: True when the per-entry cache has durably recorded
+            that this reservation's code was exposed outside the allocator.
         desired_slot: Slot selected by the current desired plan.
         overflow_reason: Why the reservation is not assigned, e.g.
             ``"capacity"``, ``"blocked_clear"``, or
@@ -87,6 +89,7 @@ class Reservation:
     protected_active: bool = False
     checked_out: bool = False
     missing_count: int = 0
+    published_once: bool = False
     desired_slot: int | None = None
     overflow_reason: str | None = None
     sensor_lookup_keys: set[str] = field(default_factory=set)

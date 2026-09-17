@@ -113,11 +113,11 @@ def test_serialized_code_fields_do_not_store_plaintext() -> None:
 
 
 @pytest.mark.parametrize(
-    ("payload", "message"),
+    ("payload", "message", "registry_missing"),
     [
-        (None, "absent"),
-        ({"schema_version": 99, "records": []}, "schema_version"),
-        ({"schema_version": True, "records": []}, "schema_version"),
+        (None, "absent", True),
+        ({"schema_version": 99, "records": []}, "schema_version", False),
+        ({"schema_version": True, "records": []}, "schema_version", False),
         (
             {
                 "schema_version": CODE_REGISTRY_SCHEMA_VERSION,
@@ -125,6 +125,7 @@ def test_serialized_code_fields_do_not_store_plaintext() -> None:
                 "records": [{"encoded_code": "not base64"}],
             },
             "payload",
+            False,
         ),
     ],
 )
@@ -133,6 +134,7 @@ async def test_missing_and_corrupt_payloads_yield_empty_registry(
     patch_store: list[str],
     payload: dict[str, Any] | None,
     message: str,
+    registry_missing: bool,
 ) -> None:
     """Missing and corrupt payloads fail closed to an empty registry."""
     FakeStore.payload = payload
@@ -141,7 +143,8 @@ async def test_missing_and_corrupt_payloads_yield_empty_registry(
     result = await wrapper.async_load()
 
     assert result.registry.records == {}
-    assert result.registry_lost is (payload is not None)
+    assert result.registry_lost is True
+    assert result.registry_missing is registry_missing
     assert patch_store
     assert message in caplog.text
 

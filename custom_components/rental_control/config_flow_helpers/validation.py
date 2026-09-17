@@ -14,6 +14,7 @@ from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 
+from ..allocator import get_allocator
 from ..const import CONF_CHECKIN
 from ..const import CONF_CHECKOUT
 from ..const import CONF_CODE_GENERATION
@@ -62,6 +63,7 @@ async def validate_submitted_data(
 
     await validate_url(flow, user_input, errors)
     validate_scalar_fields(user_input, errors)
+    validate_code_length_change(flow, user_input, errors)
     convert_code_generator(user_input)
     validate_name_length(user_input, errors)
     validate_name_trimming(user_input, errors)
@@ -144,6 +146,28 @@ def validate_scalar_fields(user_input: dict[str, Any], errors: dict[str, str]) -
         or (user_input[CONF_CODE_LENGTH] % 2) != 0
     ):
         errors[CONF_CODE_LENGTH] = "bad_code_length"
+
+
+def validate_code_length_change(
+    flow: Any, user_input: dict[str, Any], errors: dict[str, str]
+) -> None:
+    """Reject code-length changes while an entry owns active allocations."""
+    if CONF_CODE_LENGTH in errors:
+        return
+    config_entry = getattr(flow, "config_entry", None)
+    entry_id = getattr(config_entry, "entry_id", None)
+    if not isinstance(entry_id, str):
+        return
+    current = getattr(config_entry, "data", {}).get(CONF_CODE_LENGTH)
+    requested = user_input.get(CONF_CODE_LENGTH)
+    if current == requested:
+        return
+    allocator = get_allocator(flow.hass)
+    if allocator is not None and (
+        allocator.diagnostics["registry_lost"]
+        or allocator.has_active_allocations(entry_id)
+    ):
+        errors[CONF_CODE_LENGTH] = "active_allocations"
 
 
 def convert_code_generator(user_input: dict[str, Any]) -> None:

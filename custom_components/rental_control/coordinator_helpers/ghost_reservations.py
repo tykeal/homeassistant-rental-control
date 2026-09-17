@@ -174,6 +174,7 @@ def _ghost_from_mapping(
                 mapping.get("fingerprint_history", [])
             ),
             missing_count=new_mc,
+            published_once=mapping.get("published_once") is True,
         )
     except ValueError:
         _LOGGER.debug("Ghost reservation %s: invalid Reservation fields; skipping", key)
