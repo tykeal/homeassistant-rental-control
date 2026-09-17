@@ -25,7 +25,7 @@ and FR-016 structural rather than aspirational: there is no second code path,
 no second write path, and no generator call outside the reservation builder.
 
 Three mechanisms carry the feature, and each one was verified against live
-source on `main` at `a9b82f9` rather than inferred from a document:
+source on `main` at `581d825` rather than inferred from a document:
 
 1. **One-cycle retention suppression.** `_resolve_observed_code`
    (`coordinator_helpers/reservations.py:224`) returns
@@ -33,9 +33,11 @@ source on `main` at `a9b82f9` rather than inferred from a document:
    the generator would produce. A pending re-issue suppresses that return for
    exactly one target for exactly one cycle, so the freshly generated preferred
    code survives into the allocation step. The same cycle also suppresses the
-   *allocator-side* form of retention: the target's `AdoptionRequest`, which
+   allocator-side forms of retention: the target's `AdoptionRequest`, which
    would otherwise re-adopt the old physical code straight back onto the same
-   identity and make the whole operation a no-op.
+   identity, and `adopt_unlocked`'s `identity_code_mismatch` branch, which
+   would otherwise return the old observed code on the following cycle while
+   the forced-release hold still exists.
 
 2. **A held replaced code, not a released one.** The target identity currently
    owns the old code in the registry, and `AllocationRegistry.by_identity`
@@ -94,9 +96,11 @@ mypy, interrogate, reuse, yamllint, gitlint
 **Target Platform**: Home Assistant custom integration on the HA asyncio event
 loop
 **Project Type**: Single Home Assistant custom integration
-**Performance Goals**: One service invocation performs O(1) registry work under
-the existing `asyncio.Lock`, plus one coordinator refresh that the integration
-would have run anyway. The per-cycle forced-hold release pass is
+**Performance Goals**: One service invocation performs O(1) registry selection
+work under the existing `asyncio.Lock`, plus one coordinator refresh that the
+integration would have run anyway. The dry-run preview computes the preferred
+code from isolated coordinator copies before taking the allocator lock; only
+the allocator selection uses the lock. The per-cycle forced-hold release pass is
 O(records × owners) over a registry that is already walked once per cycle by
 `_sweep_unlocked`, so cycle cost is unchanged in order and negligible in
 constant.
@@ -159,13 +163,15 @@ custom_components/rental_control/
 │   │                              #      ForcedReleaseExemption, ReissuePreview,
 │   │                              #      ReissueOutcome; CycleRequest/CycleResult
 │   ├── allocator.py               # MOD: guard exemption parameter, sweep skip,
-│   │                              #      async_preview_reissue entrypoint
+│   │                              #      async_preview_reissue entrypoint,
+│   │                              #      live-hold orphan reclamation
 │   ├── issuance.py                # MOD: extract select_code(); call the reissue
 │   │                              #      and hold-release steps in resolve_cycle
 │   ├── adoption.py                # MOD: suppress identity-mismatch reporting for
 │   │                              #      a slot that already carries a hold
 │   └── services.py                # MOD: register the new service alongside
-│                                  #      clear_orphaned_codes
+│                                  #      clear_orphaned_codes; report
+│                                  #      forced-hold reclamation candidates
 ├── coordinator_helpers/
 │   ├── reissue.py                 # NEW: PendingReissue, target resolution,
 │   │                              #      per-coordinator pending state
@@ -242,7 +248,7 @@ It has exactly three callers, all in the same file: `_sweep_unlocked`,
 single-element `owners` list.
 
 `AllocationRegistry.release(identity_key)`
-(`allocator/registry.py:146-158`) removes **one** owner from a record,
+(`allocator/registry.py:release`) removes **one** owner from a record,
 pops that identity from `by_identity`, and deletes the record only when no
 owners remain. Releasing one side of a two-owner record therefore leaves the
 other side's ownership — and the code's unavailability — completely intact.
@@ -446,7 +452,7 @@ covers immediate same-runtime retries.
 
 ### 4. Suppressing retention for one cycle
 
-`ReservationBuildContext` (`coordinator_helpers/models.py:90`) gains one field,
+`ReservationBuildContext` (`coordinator_helpers/models.py`) gains one field,
 a frozen `ReissueSuppression` value object holding the suppressed
 `identity_keys: frozenset[str]` and `slots: frozenset[int]` for this cycle,
 defaulting to an empty value so every existing construction site and every
@@ -458,8 +464,9 @@ for identity-less bare slot targets, so a reservation that later lands on the
 same physical slot cannot inherit suppression intended for a different
 identity.
 
-Three retention sites are suppressed for the targeted cycle, and **only** for
-the named target:
+Four retention paths are suppressed for the targeted cycle, and **only** for
+the named target. They are enumerated by behaviour, not by grepping for a
+single `manual_observed` string:
 
 1. **`_resolve_observed_code`** (`coordinator_helpers/reservations.py:224`).
    When the reservation's identity is suppressed — or, for an identity-less
@@ -469,7 +476,7 @@ the named target:
    unchanged, so every non-targeted reservation keeps full retention (spec Out
    of Scope: "Changing the default retention behaviour").
 2. **`checkin_protection.build_protected_reservation`
-   (`coordinator_helpers/checkin_protection.py:49`)**. This is the *second*
+   (`coordinator_helpers/checkin_protection.py:98-102`)**. This is the *second*
    `manual_observed` site in the tree — it synthesizes a protected reservation
    for a checked-in guest whose booking is missing from the feed, pinning
    `slot_code` to the observed code. Its caller,
@@ -487,10 +494,21 @@ the named target:
    in the same cycle, `allocate_request` returns the existing record
    idempotently, and nothing changes. The suppressed target contributes no
    `AdoptionRequest`.
+4. **Allocator identity-mismatch adoption**
+   (`allocator/adoption.py:adopt_unlocked`). On cycle N+1, if the lock still
+   reads the old code while the target identity owns the new code,
+   `adopt_unlocked` would otherwise return
+   `AllocationResult(code=request.code, reason="identity_code_mismatch")`.
+   `_apply_result` would then set the reservation back to the old observed
+   code, causing `classify_matched_desired_slot` to see no code drift and never
+   retry the lock write. While a `:reissued:` hold exists for that entry,
+   lock, and slot, the held identity must not return the observed code as an
+   adoption result; it returns no code with a `reissue_pending` reason, or the
+   `AdoptionRequest` is skipped entirely for that held slot.
 
 **Trap, recorded so it is not rediscovered in production**: skipping an adoption
 request naively breaks `_adoption_complete`
-(`coordinator_helpers/code_allocation.py:151`), which requires
+(`coordinator_helpers/code_allocation.py:154`), which requires
 `readable_coded_slots <= adopted_slots`. A skipped target would leave a readable
 coded slot unadopted, `adoption_complete` would go `False`, `allocations` would
 be emptied, and the re-issue would never be allocated. `_adoption_complete`
@@ -508,12 +526,14 @@ hold** — no new lock, no re-entrancy, and `_lock` is still never acquired twic
 
 ```text
 resolve_cycle(request):
-    apply_forced_reissues(...)    # NEW: first, before adoption
+    apply_forced_reissues(...)    # NEW: before adoption, if registry writable
     adopt ...                     # unchanged
     rekey ...                     # unchanged
     allocate ...                  # unchanged
     sweep ...                     # MOD: skips hold owners
-    release_forced_holds(...)     # NEW: guarded, exempted, reports
+    release_forced_holds(...)     # NEW: after sweep, before store save
+    if not allocator._registry_lost:
+        await allocator._store.async_save(...)
 ```
 
 `apply_forced_reissues` runs first so that adoption and allocation see a
@@ -542,6 +562,13 @@ guard, and releases through `AllocationRegistry.release(hold_key)` when the
 guard returns `None`. Retentions are reported with their reason (FR-021);
 `adoption_conflict` can never appear among them, because it is exempted, which
 is precisely why an exempted deferral is never reported as stuck.
+
+`release_forced_holds` must run after `_sweep_unlocked` and before the existing
+`_store.async_save` block. That lets one save persist both mutations: the
+re-home created by `apply_forced_reissues` and any hold release completed in
+the same cycle. If `allocator._registry_lost` is true, the cycle must fail
+forced re-issue directives closed with `recovery_fail_closed` and must not
+create or release durable holds, because the existing save block will not run.
 
 `_sweep_unlocked` gains one early `continue` for hold-namespace owners. Without
 it the sweep — which sees any non-active identity as sweepable — would evaluate
@@ -597,12 +624,18 @@ building one.
 
 The preferred code handed to the preview comes from the same reservation builder
 the real cycle uses, run against the coordinator's cached calendar with
-suppression applied. The preview runs that preparation against isolated copies
-of the slot mappings and diagnostics, and it carries the same observation,
-adoption-complete, pending-recovery, and unaccounted-slot guards that can block
-the real cycle. If one of those guards would prevent issuance, the preview
-reports that guard instead of returning a speculative code. The service never
-calls a generator itself (FR-011).
+suppression applied. That builder path mutates three places today:
+`_merge_observed_slots_into_mappings` mutates `coordinator._slot_mappings`;
+`slot_matching.remap_observed_mappings_to_physical_reservations` mutates the
+`persisted` mappings in place; and `_hydrate_reservations_from_mappings`
+mutates reservation objects. The preview must therefore run that preparation
+against a deep copy of `_slot_mappings["mappings"]`, observed-slot state, and
+reservation objects, or extract a pure preferred-code computation that does not
+touch coordinator state. It carries the same observation, adoption-complete,
+pending-recovery, and unaccounted-slot guards that can block the real cycle. If
+one of those guards would prevent issuance, the preview reports that guard
+instead of returning a speculative code. The service never calls a generator
+itself (FR-011).
 
 The preview response is the **only** place a raw code appears (FR-023): it
 returns `replacement_code` alongside `replacement_code_ref`. Every other
@@ -627,6 +660,17 @@ A hold whose release has been deferred for more than one cycle is surfaced to
 the operator through the existing persistent-notification mechanism the
 allocator already uses, carrying the retention reason. An exempted
 multiple-owner deferral cannot appear there by construction (FR-021).
+
+If that hold is permanently stuck on a loaded entry because its physical
+lock/slot can never again be observed, `clear_orphaned_codes` provides the
+bounded operator remedy. With its new explicit `force_reissued_holds` flag, the
+service may consider hold-namespace owners on live entries. The flag is an
+operator assertion that the lock/slot is genuinely gone, so it intentionally
+does not wait for `unverifiable_lock` or `code_still_programmed` to clear. The
+default remains exactly today's behaviour: live-entry owners are not orphan
+candidates. The override is limited to `:reissued:` hold owners, reports every
+candidate under `dry_run` with masked `code_ref` and retention reason, and does
+not alter ordinary orphan handling or the `ForcedReleaseExemption` design.
 
 Allocator diagnostics (`allocator/diagnostics.py`) gain a count of outstanding
 forced-release holds and their retention reasons, as `code_ref` only.
@@ -676,6 +720,7 @@ state is explained by a hold.
 | FR-026 | Already satisfied by `get_slot_code`; no attribute change |
 | FR-027 | No config flow or options change of any kind |
 | FR-028 | No automatic invocation path exists; service calls only |
+| FR-029 | `clear_orphaned_codes(force_reissued_holds=True)` reclaims stuck holds only by explicit operator assertion |
 
 ## Test strategy
 
@@ -771,6 +816,10 @@ Unit:
   any lock, or in any sensor state while still returning a raw
   `replacement_code`; every non-dry-run response field asserted not to equal any
   known code.
+- Hold reclamation: `clear_orphaned_codes` ignores live-entry hold owners by
+  default; with `force_reissued_holds=True` it reports hold-namespace live-entry
+  candidates under `dry_run` with masked `code_ref` and retention reason; acting
+  releases only the hold identity and never ordinary owners.
 - Exhaustion: full code space, invocation fails, the existing code is still on
   the lock and still owned.
 
@@ -797,12 +846,12 @@ assertion.
 | Risk | Mitigation |
 |------|------------|
 | The exemption is widened later into a general "force release" flag, releasing a live code | It is a typed value object, not a boolean; it requires a hold-namespace identity; the regression suite asserts exactly one construction site and one call site |
-| A hold outlives its lock forever and quietly pins a code | Every deferral is retried and reported each cycle with its reason (FR-021); `clear_orphaned_codes` remains the operator's escape hatch |
+| A hold outlives its lock forever and quietly pins a code | Every deferral is retried and reported each cycle with its reason (FR-021); `clear_orphaned_codes` can reclaim live-entry hold owners only when `force_reissued_holds=True`, which is an explicit operator assertion that the lock/slot is gone |
 | Home Assistant restarts between invocation and the cycle | Documented and accepted: the suppression lapses and the operator re-invokes (FR-013). The registry hold, if one was already created, is durable and keeps being retried, so no code is lost or double-issued |
 | An entry is removed while it holds a forced-release hold | `async_mark_entry_removed` and `async_clear_orphans` deliberately keep the **full** guard, so such a hold is retained rather than released. It surfaces as an orphan with a reason, and the operator clears it once the code is provably gone. This is the safe direction |
 | The identity-mismatch notification fires every cycle during the intermediate state | Suppressed only while a hold explains that exact entry, lock, and slot; the detection itself is unchanged |
 | Slot targeting picks the wrong config entry on a shared parent lock | Ranges are disjoint by construction; the resolver refuses on ambiguity instead of guessing (FR-005) |
-| A second invocation chains a second rotation | The `PendingReissue` lifecycle, registry hold check, and same-runtime completed fingerprint make a repeat a no-op (FR-009, SC-007) |
+| A second invocation chains a second rotation | The `PendingReissue` lifecycle, registry hold check, and same-runtime completed fingerprint make a repeat a no-op within one runtime or while the hold persists; after hold release plus restart, the same call is a new operator decision (FR-009, SC-007) |
 | Suppressing an adoption silently disables issuance for the whole entry | `_adoption_complete` excludes suppressed slots; a dedicated unit test locks that in |
 
 ## Phase 0 Research Output
@@ -862,7 +911,7 @@ failure directions are conservative.
 - PLAN stage stops here. Do not create `tasks.md` and do not modify production
   code in this PR.
 - Live source on `main` is the truth. Every symbol, signature, and line number
-  cited here was read from the tree at `a9b82f9`. Where a future reading and
+  cited here was read from the tree at `581d825`. Where a future reading and
   this plan disagree, re-read the code and adjust the plan.
 - Settled spec decisions are not reopened. No bulk mode, no code retirement, no
   automatic healing, no new configuration, no operator-supplied replacement

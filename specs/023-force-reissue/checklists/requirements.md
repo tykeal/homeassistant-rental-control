@@ -65,5 +65,5 @@ SPDX-License-Identifier: Apache-2.0
   definition of a duplicate. The physical-state conditions are not exempted,
   the exemption does not reach any other owner of the record, and the ordinary
   release paths keep the full unmodified guard.
-- 28 functional requirements, following the predecessor's discipline of keeping
+- 29 functional requirements, following the predecessor's discipline of keeping
   the count tight and each requirement independently testable.

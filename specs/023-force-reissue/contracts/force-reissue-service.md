@@ -11,6 +11,10 @@ registry store `rental_control.code_registry` keeps schema version 1 and every
 field it has today; see
 [../../022-shared-code-allocator/contracts/code-registry-store.md](../../022-shared-code-allocator/contracts/code-registry-store.md).
 
+The existing `rental_control.clear_orphaned_codes` service also gains one
+explicit override flag for forced-release hold reclamation, described in
+[section 6](#6-clear_orphaned_codes-for-forced-hold-reclamation).
+
 ## 1. Service declaration
 
 Registered once for the domain from `allocator/reissue_service.py`, guarded by
@@ -215,12 +219,14 @@ introduced and `_lock` is still never acquired re-entrantly.
 
 ```text
 resolve_cycle(request):
-    apply_forced_reissues(allocator, request)   # NEW, first
+    apply_forced_reissues(allocator, request)   # NEW, before adoption
     adopt ...                                   # unchanged
     rekey ...                                   # unchanged
     allocate ...                                # unchanged
     sweep ...                                   # MOD: skips hold owners
-    release_forced_holds(allocator, request)    # NEW, last
+    release_forced_holds(allocator, request)    # NEW, after sweep, before save
+    if not allocator._registry_lost:
+        await allocator._store.async_save(...)
 ```
 
 **Contract**:
@@ -231,9 +237,17 @@ resolve_cycle(request):
 - `release_forced_holds` evaluates each of this entry's hold owners under the
   guard with an exemption built from that same owner, and calls
   `AllocationRegistry.release(hold_key)` only when the guard returns `None`.
+- `release_forced_holds` runs after `_sweep_unlocked` and before the existing
+  `_store.async_save` block, so a released hold is included in the save that
+  already persists the cycle's registry mutations.
 - Both steps contribute `ReissueOutcome` rows to `CycleResult.reissues`.
 - The store is saved through the existing `_store.async_save` call in
   `resolve_cycle`; no additional save is introduced.
+- When `allocator._registry_lost` is true, the cycle must not create, release,
+  or otherwise mutate durable forced-release holds because the existing save
+  block will not run. Directives in that state fail closed with
+  `recovery_fail_closed` and outstanding holds remain held and reported until a
+  cycle can persist registry mutations again.
 
 ### `reissue.is_forced_release_hold` / `reissue.forced_release_hold_key` (new)
 
@@ -255,3 +269,43 @@ Assistant imports.
    `last_four` — is unchanged (FR-026).
 7. No new persisted state and no store version change (FR-013).
 8. No new operator configuration option (FR-027).
+
+## 6. `clear_orphaned_codes` for forced-hold reclamation
+
+The existing service keeps its current default behaviour. A hold whose
+`entry_id` is still loaded is not an orphan candidate unless the caller passes
+the explicit override flag:
+
+```yaml
+clear_orphaned_codes:
+  fields:
+    dry_run:
+      required: false
+      default: false
+      selector:
+        boolean:
+    force_reissued_holds:
+      required: false
+      default: false
+      selector:
+        boolean:
+```
+
+**Contract**:
+
+- With `force_reissued_holds: false` or absent, live-entry holds are ignored and
+  ordinary orphan handling is byte-for-byte unchanged.
+- With `force_reissued_holds: true`, the service may consider only
+  hold-namespace owners (`:reissued:`) whose `entry_id` belongs to a loaded
+  config entry. It must not consider ordinary live owners and must not change
+  entry-removed orphan handling.
+- The override is the operator asserting that the lock/slot named by the hold
+  is genuinely gone. It intentionally does not require `unverifiable_lock` or
+  `code_still_programmed` to clear, because those physical conditions are the
+  reason this reclamation path exists.
+- Every candidate appears in `dry_run` before it can be acted on, with
+  `code_ref`, entry id, lockname, slot, and retention reason. Raw codes are
+  never reported.
+- Acting releases only the hold identity. Any other owner on the record remains
+  intact, and `_release_guard_reason` plus `ForcedReleaseExemption` are
+  unchanged.

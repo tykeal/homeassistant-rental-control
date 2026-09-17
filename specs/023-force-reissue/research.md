@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Phase 0 Research: Force Re-Issue of a Door Code
 
-Every decision below was taken against live source on `main` at `a9b82f9`,
+Every decision below was taken against live source on `main` at `581d825`,
 after feature 022 was merged. File and line references were read, not recalled.
 
 ## 1. How does a target stop owning its old code?
@@ -79,23 +79,33 @@ three ordinary callers (`_sweep_unlocked`, `async_mark_entry_removed`,
   outlives a single decision is exactly how an exemption leaks onto the wrong
   owner.
 
-## 4. Which retention sites must be suppressed?
+## 4. Which retention paths must be suppressed?
 
-**Decision**: Three — `_resolve_observed_code`,
-`checkin_protection.build_protected_reservation`, and the target's
-`AdoptionRequest` — all for one target for one cycle.
+**Decision**: Four — `_resolve_observed_code`,
+`checkin_protection.build_protected_reservation`, the target's
+`AdoptionRequest`, and the allocator identity-mismatch adoption branch that
+would otherwise return the old observed code — all for one target for one
+cycle.
 
 **Rationale**: The spec names `_resolve_observed_code`
 (`coordinator_helpers/reservations.py:224`) because that is where the problem is
-described. Reading the tree shows two more places where the same "keep what is
+described. Retention paths must be enumerated by behaviour, not by grepping for
+one `manual_observed` string. Reading the tree shows three more places where the same "keep what is
 on the lock" decision is made: `build_protected_reservation`
-(`coordinator_helpers/checkin_protection.py:49`) sets
+(`coordinator_helpers/checkin_protection.py:98-102`) sets
 `code_source="manual_observed"` for a synthesized checked-in guest, and
 `build_adoption_requests` (`coordinator_helpers/code_allocation.py`) re-adopts
 the observed physical code onto the reservation identity, after which
-`allocate_request` returns it idempotently. Suppressing only the first would
-leave the feature silently ineffective for a checked-in ghost and ineffective
-outright for every lock-backed target.
+`allocate_request` returns it idempotently. Finally,
+`allocator.adoption.adopt_unlocked` returns
+`AllocationResult(code=request.code, reason="identity_code_mismatch")` when the
+identity owns a new code but the same slot still observes the old code on the
+next cycle. That is not a `manual_observed` string site, but it is the same
+retention behaviour: it rewrites the reservation's desired code back to the old
+observed value and prevents the normal overwrite from being retried.
+Suppressing only the first would leave the feature silently ineffective for a
+checked-in ghost and ineffective outright for every lock-backed target whose
+write is not reflected by the next refresh.
 
 **Alternatives considered**: suppressing only `_resolve_observed_code`
 (rejected, above); making adoption skip any reservation whose code the registry
@@ -108,7 +118,7 @@ feature 022 exists precisely to adopt those).
 `readable_coded_slots`.
 
 **Rationale**: `_adoption_complete`
-(`coordinator_helpers/code_allocation.py:151`) returns
+(`coordinator_helpers/code_allocation.py:154`) returns
 `readable_coded_slots <= adopted_slots`. A skipped adoption leaves a readable
 coded slot unadopted, so the predicate goes `False`, `async_resolve_codes`
 passes `allocations=[]`, and no code is issued to anyone in that entry that

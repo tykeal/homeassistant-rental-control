@@ -64,13 +64,15 @@ to the tasks that are story-specific:
   known identity and `by_identity` is one-code-per-identity, so without the hold
   the re-issue is a silent no-op; with the hold but no release path, the
   replaced code is pinned forever.
-- **All three retention-suppression sites land together with the
+- **All four observed-code retention-suppression paths land together with the
   `_adoption_complete` exclusion** (Phase 4). Any subset is either silently
   ineffective on one path or disables issuance for the entire config entry for
   that cycle.
 - **The service (Phase 5) comes last of the behaviour phases**, because it is
   the only thing that can start a re-issue, and it must not exist before the
-  machinery that completes one safely.
+  machinery that completes one safely. FR-021 stuck-hold visibility and
+  FR-029 forced-hold reclamation are completed in Phase 7, not at the MVP
+  checkpoint.
 
 ---
 
@@ -141,9 +143,11 @@ guard.
       SPDX headers and no Home Assistant imports, holding the pure
       `forced_release_hold_key(identity_key, entry_id, lockname, slot)`
       rendering `f"{identity_key}:reissued:{entry_id}:{lockname}:{slot}"` with
-      `none` for a lockless owner, `is_forced_release_hold(key)` recognising the
-      `:reissued:` marker, and `_conflict_exempt(record, owners,
-      forced_release)` returning `True` only when all six conditions in
+      `none` for a lockless owner, `is_forced_release_hold(key)` parsing the key
+      structurally by splitting on `:` and requiring the expected arity plus
+      `parts[1] == "reissued"` rather than a substring match, and
+      `_conflict_exempt(record, owners, forced_release)` returning `True` only
+      when all six conditions in
       [data-model.md](data-model.md#forcedreleaseexemption) hold
       ([plan.md](plan.md) "The mechanism") — **⚠️ ATOMIC A**
 - [ ] T005 Add the keyword-only `forced_release: ForcedReleaseExemption | None =
@@ -186,8 +190,9 @@ guard.
       namespace: `forced_release_hold_key` round-trips through
       `is_forced_release_hold`, renders `none` for a lockless owner, is
       deterministic for one target, and can never collide with a
-      `make_reservation_fingerprint` value or with an
-      `issuance.observed_alias_key` value ([data-model.md](data-model.md)
+      `make_reservation_fingerprint` value built from a real entry id,
+      slot-name, start, and end, or with an `issuance.observed_alias_key` value
+      built from slugified locknames ([data-model.md](data-model.md)
       "Forced-release hold identity") — **⚠️ ATOMIC A**
 
 **Checkpoint**: The guard understands one exemption, refuses every non-matching
@@ -251,12 +256,16 @@ no rollback loses the target's existing allocation when issuance is blocked.
       **⚠️ ATOMIC B**
 - [ ] T013 Splice both steps into `issuance.resolve_cycle` in
       `custom_components/rental_control/allocator/issuance.py` inside the
-      **existing single `allocator._lock` hold** — `apply_forced_reissues`
-      first, before adoption, and `release_forced_holds` last, after the sweep —
+      **existing single `allocator._lock` hold** — when
+      `allocator._registry_lost` is false, `apply_forced_reissues` runs before
+      the adoption loop, and `release_forced_holds` runs after
+      `_sweep_unlocked` but before the existing `_store.async_save` block —
       calling only non-locking helpers so `_lock` is never acquired
-      re-entrantly, reusing the existing `_store.async_save` call rather than
-      adding another, and populating `CycleResult.reissues` (contract §4, plan
-      decision 5) — **⚠️ ATOMIC B**
+      re-entrantly, reusing the existing save call rather than adding another,
+      failing directives closed with `recovery_fail_closed` without creating or
+      releasing durable holds when `_registry_lost` is true, and populating
+      `CycleResult.reissues` (contract §4, plan decision 5) —
+      **⚠️ ATOMIC B**
 - [ ] T014 Implement the exhaustion and blocked-issuance rollback in
       `custom_components/rental_control/allocator/reissue.py`, invoked from
       `issuance.resolve_cycle` within the same lock hold: when a staged hold's
@@ -275,8 +284,11 @@ no rollback loses the target's existing allocation when issuance is blocked.
       `release_forced_holds` releases only on a `None` guard verdict and reports
       `code_still_programmed` or `unverifiable_lock` otherwise, never
       `adoption_conflict`; the ordering inside `resolve_cycle` is
-      re-home → adopt → allocate → sweep → release; and exhaustion restores the
-      original owner and removes the hold (FR-008, FR-014, FR-018, FR-021) —
+      re-home → adopt → allocate → sweep → release → save; the one store save
+      observes both a re-home and a same-cycle hold release; `_registry_lost`
+      prevents durable hold mutation because the save block will not run; and
+      exhaustion restores the original owner and removes the hold (FR-008,
+      FR-014, FR-018, FR-021) —
       **⚠️ ATOMIC B**
 
 **Checkpoint**: A directive can move an identity onto a fresh code while the old
@@ -305,7 +317,7 @@ any other reservation or any other cycle.
 - [ ] T017 Add `reissue_suppression: ReissueSuppression = ReissueSuppression()`
       to `ReservationBuildContext` in
       `custom_components/rental_control/coordinator_helpers/models.py`
-      (live definition at line 90, eleven fields, plain `@dataclass`) and fill
+      (eleven fields, plain `@dataclass`) and fill
       it from the coordinator's pending re-issues in
       `_reservation_build_context` in
       `custom_components/rental_control/coordinator_helpers/coordinator_setup_shell.py`,
@@ -313,12 +325,13 @@ any other reservation or any other cycle.
       unaffected (plan decision 4)
 
 **⚠️ ATOMIC group C** — T018 through T024 ship as ONE commit. The plan
-identified **three** `manual_observed` retention sites; suppressing fewer than
-all three leaves the feature silently ineffective on the unsuppressed path.
-Skipping the target's adoption request without excluding its slot from
+identified **four** observed-code retention paths by behaviour; suppressing
+fewer than all four leaves the feature silently ineffective on the unsuppressed
+path. Skipping the target's adoption request without excluding its slot from
 `_adoption_complete` flips `readable_coded_slots <= adopted_slots` to `False`,
 empties `allocations`, and disables issuance for the **entire config entry** for
-that cycle, so the two changes and their regression may never be separated.
+that cycle, so the suppression changes and their regressions may never be
+separated.
 
 - [ ] T018 Suppress retention in `_resolve_observed_code` in
       `custom_components/rental_control/coordinator_helpers/reservations.py`
@@ -341,14 +354,20 @@ that cycle, so the two changes and their regression may never be separated.
       inside the existing `identity` tuple or snapshot rather than adding a
       seventh (FR-013, plan decision 4 site 2, quickstart "Traps") —
       **⚠️ ATOMIC C**
-- [ ] T020 Suppress the third retention site and keep the adoption gate honest
-      in `custom_components/rental_control/coordinator_helpers/code_allocation.py`:
+- [ ] T020 Suppress the allocator-side retention paths and keep the adoption
+      gate honest in
+      `custom_components/rental_control/coordinator_helpers/code_allocation.py`
+      and `custom_components/rental_control/allocator/adoption.py`:
       `build_adoption_requests` contributes no `AdoptionRequest` for a
-      suppressed target, and `_adoption_complete` (live definition at line 154)
+      suppressed target; `_adoption_complete` (live definition at line 154)
       excludes suppressed slots from `readable_coded_slots` so
       `readable_coded_slots <= adopted_slots` still holds and issuance is not
-      disabled for the whole entry — these two changes are inseparable
-      (FR-013, research §5, plan "Trap") — **⚠️ ATOMIC C**
+      disabled for the whole entry; and, while a `:reissued:` hold exists for
+      the same entry, lock, and slot, `adopt_unlocked` MUST NOT return the old
+      observed code for that held identity on `identity_code_mismatch` — return
+      `AllocationResult(code=None, reason="reissue_pending")` or skip emitting
+      the request entirely for the held slot (FR-013, research §4 and §5, plan
+      "Trap") — **⚠️ ATOMIC C**
 - [ ] T021 Thread the cycle's suppression and forced-reissue directives into
       `code_allocation.async_resolve_codes` in
       `custom_components/rental_control/coordinator_helpers/code_allocation.py`
@@ -368,15 +387,17 @@ that cycle, so the two changes and their regression may never be separated.
       runs, so a reservation that vanished from the feed is dropped rather than
       resurrected as a codeless ghost (FR-013, FR-017, plan decision 6) —
       **⚠️ ATOMIC C**
-- [ ] T023 Add `tests/unit/test_reissue_suppression.py`: all three suppression
-      sites return the generated code for the suppressed target while every
-      other reservation in the same cycle still returns `manual_observed`; the
-      suppression is gone on the following cycle (next-cycle-only); a second
-      target in the same entry is unaffected (this-target-only); slot matching
-      applies only to identity-less bare slot targets so a reservation that
-      later occupies the same physical slot never inherits it; and a simulated
-      restart drops the in-memory suppression entirely (FR-013, spec edge case
-      "Home Assistant restarts") — **⚠️ ATOMIC C**
+- [ ] T023 Add `tests/unit/test_reissue_suppression.py`: all four suppression
+      paths return or preserve the generated code for the suppressed target
+      while every other reservation in the same cycle still returns
+      `manual_observed`; the `adopt_unlocked` identity-mismatch branch returns
+      no code or is skipped while the matching hold exists; the suppression is
+      gone on the following cycle (next-cycle-only); a second target in the same
+      entry is unaffected (this-target-only); slot matching applies only to
+      identity-less bare slot targets so a reservation that later occupies the
+      same physical slot never inherits it; and a simulated restart drops the
+      in-memory suppression entirely (FR-013, spec edge case "Home Assistant
+      restarts") — **⚠️ ATOMIC C**
 - [ ] T024 Add the entry-wide issuance regression to
       `tests/unit/test_code_allocation_step.py`: with the only unadopted
       readable coded slot being the suppressed target, `_adoption_complete`
@@ -477,7 +498,8 @@ entity involved.
       neither-target refusals; a half-supplied slot pair refused; a list of
       entity ids rejected by the schema; an unreadable target slot refused; a
       checked-in target refused without `force` and accepted with it; a repeat
-      invocation producing exactly one rotation; and a field-by-field assertion —
+      invocation producing exactly one rotation within one runtime or while the
+      hold persists; and a field-by-field assertion —
       not a substring search — that no non-dry-run response field equals any
       known code (FR-003, FR-004, FR-006, FR-009, FR-010, FR-022, SC-004,
       SC-006, SC-007)
@@ -513,21 +535,28 @@ derived from it — while nothing changes anywhere.
       contract §4)
 - [ ] T035 [US3] Build the preferred code for the preview from the same
       reservation builder the real cycle uses, run against the coordinator's
-      cached calendar with suppression applied to isolated copies of the slot
-      mappings and diagnostics, carrying the same observation,
-      adoption-complete, pending-recovery, and unaccounted-slot guards so a
-      guard that would block the real cycle is reported instead of a speculative
-      code, and never calling a generator from the service itself (FR-007,
-      FR-011, FR-012, plan decision 7)
+      cached calendar with suppression applied to deep copies of the state that
+      the builder mutates — `_merge_observed_slots_into_mappings` mutates
+      `coordinator._slot_mappings`,
+      `slot_matching.remap_observed_mappings_to_physical_reservations` mutates
+      the `persisted` mappings in place, and
+      `_hydrate_reservations_from_mappings` mutates reservation objects — or to
+      a pure extraction of the preferred-code computation, carrying the same
+      observation, adoption-complete, pending-recovery, and unaccounted-slot
+      guards so a guard that would block the real cycle is reported instead of
+      a speculative code, and never calling a generator from the service itself
+      (FR-007, FR-011, FR-012, plan decision 7)
 - [ ] T036 [US3] Add the separate dry-run response builder in
       `custom_components/rental_control/allocator/reissue_service.py` returning
       `"status": "preview"`, `"dry_run": true`, and the single raw
       `replacement_code` field — the only place in the entire feature where a
       raw code is emitted (FR-023, contract §3)
-- [ ] T037 [P] [US3] Add dry-run coverage to
+- [ ] T037 [US3] Add dry-run coverage to
       `tests/unit/test_reissue_service.py`: a preview leaves the registry, every
-      lock, and every sensor state byte-for-byte unchanged and performs no store
-      save; it still returns the raw `replacement_code`; a collision-resolved
+      lock, and every sensor state byte-for-byte unchanged; asserts before/after
+      deep equality for `coordinator._slot_mappings` and
+      `coordinator._observed_slot_codes`; performs no store save; still returns
+      the raw `replacement_code`; a collision-resolved
       preview reports the resolved code and the collision-resolved origin; a
       preview against an exhausted code space refuses up front; and a bare ghost
       slot preview returns the clear-only outcome with no replacement code
@@ -538,11 +567,11 @@ committing to it.
 
 ---
 
-## Phase 7: Observability, Audit, and Reporting
+## Phase 7: Observability, Audit, Reporting, and Reclamation
 
-**Goal**: Make every forced re-issue reconstructable from the logs alone and
-every stuck hold visible, with no raw code anywhere outside the dry-run
-response.
+**Goal**: Make every forced re-issue reconstructable from the logs alone, make
+every stuck hold visible, and provide an explicit operator reclamation path for
+permanently stuck holds, with no raw code anywhere outside the dry-run response.
 
 - [ ] T038 Emit the three-line audit trail using `code_ref` only: the service's
       acceptance line in
@@ -559,19 +588,25 @@ response.
       the retention reason so an indefinitely stuck release is visible, and
       assert by construction that an exempted multiple-owner deferral can never
       appear there (FR-021)
-- [ ] T040 [P] Suppress the intermediate-state alarm in
-      `custom_components/rental_control/allocator/adoption.py` while a hold
-      explains that exact entry, lock, and slot: silence
-      `_report_identity_mismatch` and suppress or collapse the matching
-      `_record_mismatched_observed_owner` alias write into the existing hold,
-      leaving mismatch **detection** itself unchanged (plan decision 8)
+- [ ] T040 Extend `clear_orphaned_codes` in
+      `custom_components/rental_control/allocator/allocator.py` and
+      `custom_components/rental_control/allocator/services.py` with the
+      fail-closed `force_reissued_holds` service flag: absent the flag,
+      behaviour is exactly today; with the flag, hold-namespace (`:reissued:`)
+      owners on live entries may be reclaimed because the operator asserts the
+      lock/slot is genuinely gone; ordinary live owners are never eligible, the
+      `_release_guard_reason` and `ForcedReleaseExemption` design is not
+      loosened, every candidate is reported under `dry_run` with masked
+      `code_ref` plus retention reason, and acting releases only the hold
+      identity (FR-021, FR-024, FR-029, plan decision 8)
 - [ ] T041 [P] Add outstanding forced-release hold counts and their retention
       reasons to `allocator_diagnostics` in
       `custom_components/rental_control/allocator/diagnostics.py`, as `code_ref`
       values only and never a code in plain or encoded form (FR-024)
 
 **Checkpoint**: Every re-issue is auditable, every stuck hold is visible, and
-the intermediate state no longer fires a warning every cycle.
+permanently stuck forced-release holds have an explicit operator reclamation
+path.
 
 ---
 
@@ -583,7 +618,10 @@ deferral, rollback, and lifecycle edge behaves as specified.
 - [ ] T042 [US1] Add the mandatory end-to-end healing test
       `tests/integration/test_reissue_duplicate_healing.py`: two config entries
       with disjoint carved-out slot ranges on **one shared parent lock**, one
-      reservation each, both slots physically programmed with the **same** code;
+      reservation each, both slots physically programmed with the **same** code,
+      using identical reservation date ranges
+      under the default `date_based` generator so SC-002's deterministic
+      cross-entry collision is exercised;
       one refresh adopts both, producing one record with two owners and a
       reported adoption conflict; one `force_reissue` invocation against one
       side's reservation sensor; assert immediately that the allocator and
@@ -596,12 +634,14 @@ deferral, rollback, and lifecycle edge behaves as specified.
       more refresh, and assert the end state — two **distinct** codes, the old
       record reduced from two owners to exactly one (the untargeted entry), no
       hold remaining, and no duplicate reported for that code any longer
-      (SC-001, FR-019, FR-020, FR-026)
+      (SC-001, SC-002, FR-015, FR-019, FR-020, FR-026)
 - [ ] T043 [P] [US1] Add `tests/integration/test_reissue_deferred_release.py`:
       the lock write does not confirm for two cycles, the hold is retried and
-      reported each cycle with `code_still_programmed`, a third reservation
-      cannot be allocated the old code meanwhile, and the release happens on the
-      cycle after confirmation (FR-020, FR-021, SC-003)
+      reported each cycle with `code_still_programmed`, cycle N+1 still reads
+      the old physical code yet leaves `reservation.slot_code` set to the new
+      allocated code and re-emits `OVERWRITE_MANUAL_CHANGE`, a third
+      reservation cannot be allocated the old code meanwhile, and the release
+      happens on the cycle after confirmation (FR-013, FR-020, FR-021, SC-003)
 - [ ] T044 [P] [US2] Add `tests/integration/test_reissue_lockless.py`: a
       lockless config entry publishes the replacement code immediately and its
       hold — whose owner has `lockname is None`, so `unverifiable_lock` is
@@ -616,12 +656,14 @@ deferral, rollback, and lifecycle edge behaves as specified.
       `NOOP code_unavailable` plan (FR-017, SC-011, plan decision 6)
 - [ ] T046 [P] Add `tests/integration/test_reissue_lifecycle_edges.py`: a
       reservation that disappears from the feed between invocation and the cycle
-      creates or resurrects no slot and drops its pending record; a full code
-      space makes the invocation fail with the existing code still on the lock
-      and still owned by the original identity; and a simulated Home Assistant
-      restart drops the in-memory suppression while the registry hold persists
-      and keeps being retried, so no code is lost or double-issued (FR-008,
-      FR-013, FR-017, SC-010, plan "Complexity Tracking")
+      creates or resurrects no slot and drops its pending record; a reservation
+      whose booking window or guest details change before the consuming cycle
+      reports `no_existing_allocation` and clears the pending record; a full
+      code space makes the invocation fail with the existing code still on the
+      lock and still owned by the original identity; and a simulated Home
+      Assistant restart drops the in-memory suppression while the registry hold
+      persists and keeps being retried, so no code is lost or double-issued
+      (FR-008, FR-013, FR-017, SC-010, plan "Complexity Tracking")
 
 **Checkpoint**: The live production duplicate heals in one invocation, and every
 deferral direction is conservative.
@@ -640,10 +682,12 @@ deferral direction is conservative.
       `uv run ruff check custom_components/ tests/`, and
       `uv run pre-commit run --all-files` — and confirm the 95% coverage floor,
       SPDX headers on every new file, no raw code in any log line or response
-      outside the dry-run `replacement_code`, and the T007, T024, and T042
-      regressions passing, re-running the two known
+      outside the dry-run `replacement_code`, no new operator configuration
+      option, no automatic re-issue trigger outside the explicit service call,
+      and the T007, T024, and T042 regressions passing, re-running the two known
       `tests/integration/test_refresh_cycle.py` flakes in isolation before
-      treating either as a regression (quickstart "Validation gate")
+      treating either as a regression (FR-027, FR-028, SC-009, quickstart
+      "Validation gate")
 
 ---
 
@@ -686,6 +730,8 @@ Phase 1 Setup
 - T034 → T035 → T036 → T037
 - T028, T036 → T038 (all three audit lines exist once both response paths do)
 - T012 → T039 (deferrals can only be reported once holds are evaluated)
+- T039 → T040 (forced-hold reclamation reports the same stuck-hold reasons
+  before allowing an explicit operator assertion to reclaim them)
 - Phases 2-7 → T042, T043, T044, T045, T046
 - Everything → T048
 
@@ -695,7 +741,7 @@ Phase 1 Setup
 |-------|-------|---------------------------|
 | A | T003, T004, T005, T006, T007, T008 | `ForcedReleaseExemption` and its six-condition validation MUST land with the `_release_guard_reason` change that honours it. A guard that accepts an exemption before the validation exists is fail-open and could release a code still physically programmed on a lock. The proof that `_sweep_unlocked`, `async_mark_entry_removed`, and `async_clear_orphans` are unaffected ships with it, because an unproven exemption is indistinguishable from a widened guard. |
 | B | T010, T011, T012, T013, T014, T015 | Re-homing an identity to a new code and creating the `:reissued:` hold are one act: `registry.allocate()` returns the existing record for a known identity and `by_identity` is one-code-per-identity, so without the hold the re-issue is a silent no-op, and a half-landed version could strand or double-issue a code. A hold with no release path pins a code forever; a staged hold with no rollback loses the target's existing allocation when issuance is blocked. |
-| C | T018, T019, T020, T021, T022, T023, T024 | Fewer than all three `manual_observed` suppression sites leaves the feature silently ineffective on the unsuppressed path. Skipping the target's adoption without excluding its slot from `_adoption_complete` flips `readable_coded_slots <= adopted_slots` to `False` and disables issuance for the **entire** config entry for that cycle. |
+| C | T018, T019, T020, T021, T022, T023, T024 | Fewer than all four observed-code retention paths leaves the feature silently ineffective on the unsuppressed path. Skipping the target's adoption without excluding its slot from `_adoption_complete` flips `readable_coded_slots <= adopted_slots` to `False` and disables issuance for the **entire** config entry for that cycle. |
 
 Every other task is sized to stand alone as one coherent commit.
 
@@ -706,9 +752,6 @@ Every other task is sized to stand alone as one coherent commit.
 (`tests/unit/test_reissue_service.py`), and T033
 (`tests/unit/test_allocator_services.py`) are four different file sets and run
 in parallel once T029 is done.
-
-**Phase 7** — T040 (`allocator/adoption.py`) and T041
-(`allocator/diagnostics.py`) are different files and run in parallel.
 
 **Phase 8** — T043, T044, T045, and T046 are four different integration test
 files and run in parallel once T042's fixtures exist.
@@ -757,10 +800,13 @@ T009 and T013 both edit `allocator/issuance.py`; T020 and T021 both edit
 - **Setup**: 2 · **Guard exemption**: 6 · **Cycle mechanics**: 7 ·
   **Suppression**: 9 · **Service surface**: 9 · **Dry run**: 4 ·
   **Observability**: 4 · **End-to-end**: 5 · **Polish**: 2
-- **Parallelizable**: 12 tasks marked `[P]`
+- **Parallelizable**: 10 tasks marked `[P]`
 - **Atomic-commit groups**: 3 (group A: 6 tasks, group B: 6 tasks,
   group C: 7 tasks)
-- **Requirements coverage**: FR-001 to FR-026 each map to at least one task;
-  FR-027 (no new configuration option) and FR-028 (no automatic invocation) are
-  scope constraints with no code of their own and are verified by the Phase 9
-  gate. SC-001 to SC-011 each have at least one asserting test task.
+- **Requirements coverage**: FR-001 to FR-029 each map to at least one task.
+  FR-027 (no new configuration option) and FR-028 (no automatic invocation) map
+  to T048 as negative scope constraints verified by implementation review plus
+  the Phase 9 gate rather than by a dedicated behavioural assertion. SC-001 to
+  SC-008 and SC-010 to SC-011 each have at least one asserting test task; SC-009
+  is the same negative configuration constraint as FR-027 and is review-verified
+  by T048.
