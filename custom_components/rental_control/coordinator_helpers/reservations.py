@@ -233,6 +233,21 @@ def _resolve_observed_code(
     observed_code = matched_physical.actual_code
     if observed_code is None:
         return slot_code, code_source
+    slot_name = get_slot_name(
+        event.summary, event.description or "", ctx.event_prefix or ""
+    )
+    identity_key = (
+        make_reservation_fingerprint(
+            ctx.entry_id,
+            slot_name,
+            _coerce_event_datetime(event.start, ctx),
+            _coerce_event_datetime(event.end, ctx),
+        )
+        if slot_name
+        else None
+    )
+    if identity_key in ctx.reissue_suppression.identity_keys:
+        return slot_code, code_source
     observed_start = matched_physical.actual_start
     observed_end = matched_physical.actual_end
     if observed_start is not None and ctx.code_buffer_before:

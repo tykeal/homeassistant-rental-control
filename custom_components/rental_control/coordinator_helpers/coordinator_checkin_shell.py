@@ -149,17 +149,24 @@ class CoordinatorCheckinMixin:
         identity_key = make_reservation_fingerprint(
             self._entry_id, snapshot.guest_name, start, end
         )
+        generated_code = self._generate_slot_code(start, end, None, None)
+        suppression = self._reservation_build_context().reissue_suppression
+        suppress_observed = identity_key in suppression.identity_keys or (
+            matched_physical is not None and matched_physical.slot in suppression.slots
+        )
         slot_code = (
             matched_physical.actual_code
-            if matched_physical is not None and matched_physical.actual_code
-            else self._generate_slot_code(start, end, None, None)
+            if matched_physical is not None
+            and matched_physical.actual_code
+            and not suppress_observed
+            else generated_code
         )
         return checkin_protection.build_protected_reservation(
             snapshot,
             matched_physical,
             len(same_name_slots),
             (buffered_start, buffered_end),
-            (identity_key, slot_code),
+            (identity_key, slot_code, suppress_observed),
             display_slot_name,
         )
 

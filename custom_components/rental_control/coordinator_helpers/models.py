@@ -23,6 +23,7 @@ from typing import Any
 if TYPE_CHECKING:
     from ..reconciliation import ManagedSlot
     from ..reconciliation import Reservation
+    from .reissue import ReissueSuppression
 
 
 def _store_datetime(value: Any) -> Any:
@@ -101,6 +102,16 @@ class ReservationBuildContext:
     code_generator: str
     code_length: int
     active_windows_for_name: Callable[[str], set[tuple[datetime, datetime]]]
+    reissue_suppression: ReissueSuppression = field(
+        default_factory=lambda: _empty_reissue_suppression()
+    )
+
+
+def _empty_reissue_suppression() -> ReissueSuppression:
+    """Return an empty re-issue suppression without an import cycle."""
+    from .reissue import ReissueSuppression
+
+    return ReissueSuppression()
 
 
 @dataclass
