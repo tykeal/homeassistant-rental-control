@@ -202,19 +202,22 @@ class CycleObservation:
     lockname: str | None          # None for a lockless entry
     managed_slots: frozenset[int]
     observed_codes: dict[str, int]   # plain code -> slot number, readable slots
-    unreadable_slots: frozenset[int] # managed slots whose code could not be read
+    unreadable_slots: frozenset[int] # genuinely indeterminate managed slots
 ```
 
 `code_allocation.py` builds it from what the coordinator already observed via
-`keymaster_observation.py`; `unreadable_slots` is exactly the set that helper
-drops `actual_code` for. A lockless entry supplies empty sets.
+`keymaster_observation.py`; `unreadable_slots` is exactly the set of managed
+slots classified as `SlotStatus.UNKNOWN` with `blocked_reason="unreadable"`.
+A `SlotStatus.FREE` slot is known-empty even though `actual_code` is `None`, so
+it must not be included. A lockless entry supplies empty sets.
 
 From it the allocator derives, without any further input:
 
 - **Release safety (FR-014)**: a record's owner is refreshed to
-  `lock_observed=True` when its code is in `observed_codes`, or when its
-  `(lockname, slot)` is in `unreadable_slots` — an unreadable slot may still
-  hold that code, so it counts as programmed.
+  `lock_observed=True` when its code is in `observed_codes`, or when the
+  owner's `lockname` matches the observation's `lockname` and its `slot` is in
+  `unreadable_slots` — an unreadable slot may still hold that code, so it
+  counts as programmed.
 - **Unaccounted slots (FR-018)**: `unreadable_slots` minus the slots claimed by
   registry owners with the same `entry_id` and `lockname`. A non-empty remainder
   means the entry has a slot whose contents nothing can account for, so a new
@@ -290,9 +293,10 @@ or encoded code.
 - **Release safety**: `async_sweep`, `async_mark_entry_removed`, and
   `async_clear_orphans` all evaluate one shared guard helper, whose only inputs
   are the record's owners and the supplied `CycleObservation` values. A record
-  is retained when any owner has `lock_observed=True` after refresh, when its
-  `(lockname, slot)` is unreadable, or when no supplied observation covers its
-  `lockname` at all. The rule is defined once and not reimplemented per caller
+  is retained when any owner has `lock_observed=True` after refresh, when an
+  observation for the same `lockname` reports that owner's `slot` as
+  unreadable, or when no supplied observation covers its `lockname` at all. The
+  rule is defined once and not reimplemented per caller
   (FR-014).
 - **Entry lifecycle**: `async_register_entry` adds to the adoption pending set;
   `async_unregister_entry` removes an entry that failed setup, was disabled, or

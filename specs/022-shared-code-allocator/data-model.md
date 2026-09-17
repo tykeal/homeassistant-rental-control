@@ -164,14 +164,17 @@ already produced. It exists so the two safety rules above have inputs.
 
 **Fields**: `entry_id`, `lockname: str | None`, `managed_slots: frozenset[int]`,
 `observed_codes: dict[str, int]` mapping a readable plain code to its slot, and
-`unreadable_slots: frozenset[int]` — the managed slots whose code could not be
-read, which is exactly the set `keymaster_observation.py` drops `actual_code`
-for. A lockless entry supplies `lockname=None` and empty sets.
+`unreadable_slots: frozenset[int]` — the managed slots whose observation is
+genuinely indeterminate: `SlotStatus.UNKNOWN` with
+`blocked_reason="unreadable"` from `keymaster_observation.py`. A
+`SlotStatus.FREE` slot is known-empty even though `actual_code` is `None`, so it
+must not be included. A lockless entry supplies `lockname=None` and empty sets.
 
 **Derived by the allocator, not passed in**:
 
 - FR-014 retention — an owner is programmed if its code is in `observed_codes`,
-  or its `(lockname, slot)` is in `unreadable_slots`.
+  or its `lockname` matches the observation's `lockname` and its `slot` is in
+  `unreadable_slots`.
 - `unaccounted_slots` — `unreadable_slots` minus the slots claimed by registry
   owners with the same `entry_id` and `lockname`. Non-empty means the entry has
   a slot nothing accounts for, so no new code can be proven unique.
@@ -245,6 +248,9 @@ records a `reason` of `code_still_programmed`, `unverifiable_lock`, or
   - `None` — no code is available this cycle. The planner must hold the slot.
 - `code_source` gains `"allocated"`, `"collision_resolved"`, `"adopted"`, and
   `"unallocated"`, alongside today's `"generated"` and `"manual_observed"`.
+  `AllocationOrigin.PREFERRED` maps to `"allocated"`,
+  `COLLISION_RESOLVED` maps to `"collision_resolved"`, and `ADOPTED` maps to
+  `"adopted"`.
 - The docstring note "never written to the HA Store" is superseded; the value is
   now persisted in the shared registry, which resolves #736.
 
