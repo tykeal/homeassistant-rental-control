@@ -31,6 +31,7 @@ ICON = "mdi:account-key"
 MAP_ICON = "mdi:map-search"
 
 # hass.data attributes
+ALLOCATOR = "allocator"
 COORDINATOR = "coordinator"
 UNSUB_LISTENERS = "unsub_listeners"
 CHECKIN_SENSOR = "checkin_sensor"
@@ -138,6 +139,8 @@ CHECKIN_STATE_CHECKED_OUT = "checked_out"
 EARLY_CHECKOUT_GRACE_MINUTES = 15
 
 # Store constants
+STORE_CODE_REGISTRY_KEY = "rental_control.code_registry"
+CODE_REGISTRY_SCHEMA_VERSION = 1
 STORE_SLOT_MAPPINGS_KEY = "rental_control.slot_mappings"
 STORE_SCHEMA_VERSION = 1
 
