@@ -1397,8 +1397,8 @@ class TestHandleCoordinatorUpdateOverrides:
         assert attrs["slot_code"].isdigit()
 
     @freeze_time("2025-03-10T12:00:00+00:00")
-    def test_falls_back_to_generated_when_no_reconciliation_code(self, hass) -> None:
-        """Verify code is generated when reconciliation has no code for the event."""
+    def test_keeps_unavailable_reconciliation_code(self, hass) -> None:
+        """Verify reconciliation None stays visible instead of generating a PIN."""
         event = _make_event()
         coordinator = _make_coordinator(
             data=[event],
@@ -1413,8 +1413,7 @@ class TestHandleCoordinatorUpdateOverrides:
         sensor._handle_coordinator_update()
 
         attrs = sensor.extra_state_attributes
-        assert attrs["slot_code"] is not None
-        assert attrs["slot_code"].isdigit()
+        assert attrs["slot_code"] is None
 
     @freeze_time("2025-03-10T12:00:00+00:00")
     def test_no_reconciliation_lookup_when_overrides_none(self, hass) -> None:

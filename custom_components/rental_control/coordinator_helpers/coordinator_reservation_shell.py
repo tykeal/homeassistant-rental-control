@@ -119,7 +119,7 @@ class CoordinatorReservationMixin:
         clearable.
 
         Raw PIN values are never stored in the persisted mapping, so the
-        ghost ``slot_code`` is always an empty string.
+        ghost ``slot_code`` is always ``None``.
 
         Args:
             current_keys: Identity keys already built from the current

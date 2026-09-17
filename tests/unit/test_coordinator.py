@@ -8691,7 +8691,7 @@ class TestCoordinatorPersistenceUpdate:
             summary="Clear Selected",
             slot_name="Clear Selected",
             display_slot_name="Clear Selected",
-            slot_code="",
+            slot_code=None,
         )
         plan = DesiredPlan(plan_id="persist-clear-selected", generated_at=start)
         plan.selected = {identity_key: 10}

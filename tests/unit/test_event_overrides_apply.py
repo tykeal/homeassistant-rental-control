@@ -59,7 +59,9 @@ def _dt(day: int, hour: int = 14) -> datetime:
     return datetime(2026, 2, day, hour, tzinfo=dt_util.UTC)
 
 
-def _reservation(identity_key: str = "res-1") -> Reservation:
+def _reservation(
+    identity_key: str = "res-1", *, slot_code: str | None = "1234"
+) -> Reservation:
     """Return a reservation suitable for apply helper tests."""
     start = _dt(1)
     end = _dt(5)
@@ -72,7 +74,7 @@ def _reservation(identity_key: str = "res-1") -> Reservation:
         summary="Guest",
         slot_name="Guest",
         display_slot_name="RC Guest",
-        slot_code="1234",
+        slot_code=slot_code,
     )
 
 
@@ -248,3 +250,39 @@ class TestApplyHelpers:
         assert results == [OperationResult(kind="set", slot=1, confirmed=True)]
         assert eo.reconciliation_active is False
         snapshot.assert_called_once_with(plan)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            ActionKind.ASSIGN,
+            ActionKind.SET,
+            ActionKind.OVERWRITE_MANUAL_CHANGE,
+            ActionKind.UPDATE_IN_PLACE,
+            ActionKind.UPDATE_TIMES,
+        ],
+    )
+    async def test_async_apply_plan_skips_codeless_write_action(
+        self, kind: ActionKind
+    ) -> None:
+        """async_apply_plan skips write actions with unavailable codes."""
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        now = _dt(1)
+        res = _reservation(slot_code=None)
+        plan = DesiredPlan(plan_id="plan-codeless", generated_at=now)
+        plan.actions = [SlotAction(kind=kind, slot=1, identity_key=res.identity_key)]
+        coordinator = SimpleNamespace(lockname="lock")
+
+        with (
+            patch.object(eo, "_apply_set") as apply_set,
+            patch.object(eo, "_apply_update_times") as apply_update,
+            patch.object(eo, "_apply_overwrite_manual_change") as apply_overwrite,
+        ):
+            results = await eo.async_apply_plan(
+                coordinator, plan, {res.identity_key: res}
+            )
+
+        assert results == []
+        apply_set.assert_not_called()
+        apply_update.assert_not_called()
+        apply_overwrite.assert_not_called()

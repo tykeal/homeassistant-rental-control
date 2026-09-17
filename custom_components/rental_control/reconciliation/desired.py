@@ -10,6 +10,8 @@ import logging
 
 from .action_models import SlotAction
 from .actions import classify_matched_desired_slot
+from .desired_capacity import record_capacity_overflow
+from .desired_capacity import retain_codeless_occupied_holds
 from .diagnostics import _build_plan_diagnostics_snapshot
 from .enums import ActionKind
 from .enums import SlotStatus
@@ -140,22 +142,6 @@ def select_desired_candidates(
     )
 
 
-def record_capacity_overflow(
-    plan: DesiredPlan,
-    overflow: list[Reservation],
-    remaining_capacity: int,
-) -> None:
-    """Record capacity overflow diagnostics exactly as the legacy planner did."""
-    for rank_offset, res in enumerate(overflow):
-        plan.overflow[res.identity_key] = "capacity"
-        plan.diagnostics.setdefault("overflow_details", {})[res.identity_key] = {
-            "rank": remaining_capacity + rank_offset + 1,
-            "reason": "capacity",
-            "start": res.start.isoformat(),
-            "identity_key": res.identity_key,
-        }
-
-
 def group_selected_by_stable_name(
     selected: list[Reservation],
 ) -> dict[str, list[Reservation]]:
@@ -200,6 +186,13 @@ def match_existing_managed_slots(state: DesiredPlanState) -> None:
         if ms.status in {SlotStatus.OCCUPIED, SlotStatus.PHANTOM}
     ]
     for desired_group in group_selected_by_stable_name(state.selected).values():
+        desired_group = [
+            res
+            for res in desired_group
+            if res.identity_key not in state.matched_reservations
+        ]
+        if not desired_group:
+            continue
         physical = managed_physical_group(desired_group, occupied, state.matched_slots)
         if not physical:
             continue
@@ -235,6 +228,13 @@ def assign_unmatched_reservations(state: DesiredPlanState) -> None:
             if slot is not None:
                 state.plan.selected[res.identity_key] = slot
                 continue
+        if res.slot_code is None:
+            state.plan.overflow[res.identity_key] = "code_unavailable"
+            _LOGGER.warning(
+                "Overflow: reservation %s has no available code for assignment",
+                res.identity_key,
+            )
+            continue
         if free_slots:
             slot = free_slots.pop(0)
             state.plan.selected[res.identity_key] = slot
@@ -259,6 +259,16 @@ def _classify_slot(
         return ActionKind.BLOCKED, ms.blocked_reason or "unreadable", None
     if ms.status is SlotStatus.BLOCKED:
         return ActionKind.BLOCKED, ms.blocked_reason or "blocked", None
+    desired_res = state.res_by_key.get(desired_key) if desired_key is not None else None
+    if desired_key is not None:
+        if ms.status is SlotStatus.FREE:
+            if desired_res is not None and desired_res.slot_code is not None:
+                return ActionKind.SET, None, None
+            return ActionKind.NOOP, None, "code_unavailable"
+        if ms.slot in state.occupied_matched_slots:
+            action, reason = classify_matched_desired_slot(ms, desired_res)
+            return action, None, reason
+        return ActionKind.BLOCKED, "desired_slot_not_matched", None
     if ms.slot in state.duplicate_slots and ms.slot not in state.matched_slots:
         return ActionKind.CLEAR, None, "duplicate_non_canonical"
     if desired_key is None:
@@ -269,12 +279,6 @@ def _classify_slot(
             None,
             "phantom" if ms.status is SlotStatus.PHANTOM else "stale",
         )
-    desired_res = state.res_by_key.get(desired_key)
-    if ms.status is SlotStatus.FREE:
-        return ActionKind.SET, None, None
-    if ms.slot in state.occupied_matched_slots and desired_res is not None:
-        action, reason = classify_matched_desired_slot(ms, desired_res)
-        return action, None, reason
     return ActionKind.CLEAR, None, "mis_assigned"
 
 
@@ -344,20 +348,27 @@ def _compute_desired_plan_from_request(req: DesiredPlanRequest) -> DesiredPlan:
     protected, selected_np, overflow, capacity = select_desired_candidates(
         eligible, req.max_events
     )
+    overflow_ranks = {
+        res.identity_key: capacity + rank_offset + 1
+        for rank_offset, res in enumerate(overflow)
+    }
+    selected_np, overflow, retained_holds = retain_codeless_occupied_holds(
+        selected_np, overflow, req.managed_slots
+    )
     selected = sorted(
         [*protected, *selected_np],
         key=lambda res: (0 if res.protected_active else 1, res.start, res.identity_key),
     )
     plan.protected = {res.identity_key for res in protected}
-    record_capacity_overflow(plan, overflow, capacity)
+    record_capacity_overflow(plan, overflow, capacity, overflow_ranks)
     state = DesiredPlanState(
         request=req,
         plan=plan,
         selected=selected,
         res_by_key={res.identity_key: res for res in req.reservations},
         managed_by_slot={ms.slot: ms for ms in req.managed_slots if ms.managed},
-        matched_slots={},
-        matched_reservations=set(),
+        matched_slots=retained_holds.copy(),
+        matched_reservations=set(retained_holds.values()),
         duplicate_slots=set(),
         occupied_matched_slots=set(),
         action_rows=[],
