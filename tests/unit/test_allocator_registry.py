@@ -346,6 +346,27 @@ async def test_release_paths_share_guard_behaviour(
     assert orphan.retained[0].reason == "code_still_programmed"
 
 
+async def test_release_guard_requires_slot_coverage() -> None:
+    """A lock observation that omits the owner's slot is not proof of removal."""
+    allocator = _allocator()
+    await allocator.async_allocate(_request("identity-a"))
+
+    report = await allocator.async_sweep(
+        CycleObservation(
+            entry_id="entry-a",
+            lockname="front",
+            managed_slots=frozenset({2}),
+            observed_codes={},
+            unreadable_slots=frozenset(),
+        ),
+        active_keys=set(),
+    )
+
+    assert report.released == []
+    assert report.retained[0].reason == "unverifiable_lock"
+    assert allocator._registry.code_for_identity("identity-a") == "1234"
+
+
 async def test_rekey_preserves_code_across_identity_change() -> None:
     """Historical fingerprint rekeying keeps the allocation deterministic."""
     allocator = _allocator()

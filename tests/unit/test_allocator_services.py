@@ -63,6 +63,34 @@ async def test_service_dry_run_changes_nothing(
     assert allocator._registry.code_for_identity("identity-a") == "2468"
 
 
+async def test_service_dry_run_preserves_observed_state(
+    hass: HomeAssistant,
+) -> None:
+    """A dry-run cleanup does not mutate lock observation metadata."""
+    allocator = _allocator(hass)
+    await _allocate(allocator, "orphan-entry", "identity-a", "2468", "front", 1)
+    owner = allocator._registry.records["2468"].owners[0]
+    owner.lock_observed = True
+
+    report = await allocator.async_clear_orphans(
+        set(),
+        [
+            CycleObservation(
+                entry_id="live",
+                lockname="front",
+                managed_slots=frozenset({1}),
+                observed_codes={},
+                unreadable_slots=frozenset(),
+            )
+        ],
+        dry_run=True,
+    )
+
+    assert [outcome.identity_key for outcome in report.cleared] == ["identity-a"]
+    assert owner.lock_observed is True
+    assert allocator._registry.code_for_identity("identity-a") == "2468"
+
+
 @pytest.mark.parametrize(
     ("observation", "reason"),
     [

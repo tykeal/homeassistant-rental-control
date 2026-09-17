@@ -13,6 +13,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 import pytest
 
 import custom_components.rental_control as integration
+from custom_components.rental_control import async_remove_entry
 from custom_components.rental_control import async_setup_entry
 from custom_components.rental_control import async_unload_entry
 from custom_components.rental_control.allocator import singleton
@@ -238,6 +239,26 @@ async def test_setup_cancellation_cleans_partial_entry(
     assert hass.test_unsubscribed == ["startup", "listener"]
     assert "entry-cancel" not in allocator.pending
     assert "entry-cancel" not in hass.data[DOMAIN]
+
+
+async def test_remove_entry_skips_missing_allocator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing an uninitialized entry does not create the allocator."""
+    hass = FakeHass()
+    monkeypatch.setattr(
+        integration,
+        "async_get_or_create_allocator",
+        _raise_delete,
+    )
+
+    await async_remove_entry(
+        hass,
+        SimpleNamespace(entry_id="entry-missing", data={"name": "Entry Missing"}),
+    )
+
+    assert hass.data == {}
+    assert FakeAllocator.load_count == 0
 
 
 async def test_setup_failure_keeps_data_when_unload_fails(

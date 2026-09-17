@@ -208,7 +208,9 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
 async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Handle permanent removal of a Rental Control entry."""
-    allocator = await async_get_or_create_allocator(hass)
+    allocator = get_allocator(hass)
+    if allocator is None:
+        return
     report = await allocator.async_mark_entry_removed(config_entry.entry_id)
     if report.retained:
         _LOGGER.warning(

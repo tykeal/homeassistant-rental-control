@@ -245,7 +245,11 @@ class DoorCodeAllocator:
                 if owner.identity_key in active_keys:
                     self._refresh_owner_observed(record, owner, observations)
                     continue
-                reason = self._release_guard_reason(record, [owner], observations)
+                reason = self._release_guard_reason(
+                    record,
+                    [owner],
+                    observations,
+                )
                 outcome = self._outcome(record, owner, reason)
                 if reason is None:
                     self._registry.release(owner.identity_key)
@@ -301,7 +305,12 @@ class DoorCodeAllocator:
                     if owner.entry_id not in known_entry_ids
                 ]
                 for owner in orphan_owners:
-                    reason = self._release_guard_reason(record, [owner], observations)
+                    reason = self._release_guard_reason(
+                        record,
+                        [owner],
+                        observations,
+                        refresh_observed=not dry_run,
+                    )
                     outcome = self._outcome(record, owner, reason)
                     if reason is None:
                         cleared.append(outcome)
@@ -324,16 +333,27 @@ class DoorCodeAllocator:
         record: AllocationRecord,
         owners: list[AllocationOwner],
         observations: list[CycleObservation],
+        *,
+        refresh_observed: bool = True,
     ) -> str | None:
         """Return why owners must be retained, or None when safe to release."""
         if len(record.owners) > 1:
             return "adoption_conflict"
         for owner in owners:
-            if owner.lockname is not None and not any(
-                observation.lockname == owner.lockname for observation in observations
-            ):
+            covered_observations = [
+                observation
+                for observation in observations
+                if observation.lockname == owner.lockname
+                and owner.slot in observation.managed_slots
+            ]
+            if owner.lockname is not None and not covered_observations:
                 return "unverifiable_lock"
-            if self._owner_still_programmed(record, owner, observations):
+            if self._owner_still_programmed(
+                record,
+                owner,
+                covered_observations,
+                refresh_observed=refresh_observed,
+            ):
                 return "code_still_programmed"
         return None
 
@@ -342,10 +362,13 @@ class DoorCodeAllocator:
         record: AllocationRecord,
         owner: AllocationOwner,
         observations: list[CycleObservation],
+        *,
+        refresh_observed: bool = True,
     ) -> bool:
         """Refresh and return whether an owner may still be programmed."""
         if owner.lockname is None:
-            owner.lock_observed = False
+            if refresh_observed:
+                owner.lock_observed = False
             return False
         covered = False
         for observation in observations:
@@ -357,10 +380,13 @@ class DoorCodeAllocator:
                 or owner.slot in observation.unreadable_slots
             )
             if programmed:
-                owner.lock_observed = True
+                if refresh_observed:
+                    owner.lock_observed = True
                 return True
         if covered:
-            owner.lock_observed = False
+            if refresh_observed:
+                owner.lock_observed = False
+            return False
         return owner.lock_observed
 
     def _refresh_owner_observed(
