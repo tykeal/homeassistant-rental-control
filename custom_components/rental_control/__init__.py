@@ -27,9 +27,10 @@ from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_state_change_event
 
+from .allocator import async_get_or_create_allocator
+from .allocator import get_allocator
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_GENERATE
 from .const import COORDINATOR
@@ -73,65 +74,74 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
 
-    coordinator = RentalControlCoordinator(
-        hass=hass,
-        config_entry=config_entry,
-    )
-
-    # Load Store before Keymaster bootstrap (ordering fix for #597)
-    await coordinator.async_load_slot_store()
-
-    # Inject cache-only mappings. Physical Keymaster state is re-read during
-    # every coordinator refresh, so missing cache never triggers adoption.
-    persisted = coordinator.get_persisted_slot_mappings()
-    if persisted and coordinator.event_overrides is not None:
-        coordinator.event_overrides.load_persisted_mappings(persisted)
-
-    # Bootstrap Keymaster slot overrides from current HA state before
-    # first refresh so overrides are checked against the initial data
-    await coordinator.async_setup_keymaster_overrides()
-
-    startup_slots_unreadable, _ = _needs_startup_readability_refresh(hass, coordinator)
-
-    hass.data[DOMAIN][config_entry.entry_id] = {
-        COORDINATOR: coordinator,
-        UNSUB_LISTENERS: [],
-    }
-    coordinator._checkin_restore_pending = True
-
-    # Perform first data refresh before platform setup to guarantee
-    # coordinator.data is populated when entities are created
+    allocator = await async_get_or_create_allocator(hass)
+    registered_allocator_entry = False
     try:
+        await allocator.async_register_entry(config_entry.entry_id)
+        registered_allocator_entry = True
+
+        coordinator = RentalControlCoordinator(
+            hass=hass,
+            config_entry=config_entry,
+        )
+
+        # Load Store before Keymaster bootstrap (ordering fix for #597)
+        await coordinator.async_load_slot_store()
+
+        # Inject cache-only mappings. Physical Keymaster state is re-read during
+        # every coordinator refresh, so missing cache never triggers adoption.
+        persisted = coordinator.get_persisted_slot_mappings()
+        if persisted and coordinator.event_overrides is not None:
+            coordinator.event_overrides.load_persisted_mappings(persisted)
+
+        # Bootstrap Keymaster slot overrides from current HA state before
+        # first refresh so overrides are checked against the initial data
+        await coordinator.async_setup_keymaster_overrides()
+
+        startup_slots_unreadable, _ = _needs_startup_readability_refresh(
+            hass, coordinator
+        )
+
+        hass.data[DOMAIN][config_entry.entry_id] = {
+            COORDINATOR: coordinator,
+            UNSUB_LISTENERS: [],
+        }
+        coordinator._checkin_restore_pending = True
+
+        # Perform first data refresh before platform setup to guarantee
+        # coordinator.data is populated when entities are created
         await coordinator.async_config_entry_first_refresh()
-    except ConfigEntryNotReady:
+
+        async_arm_startup_readability_refresh(
+            hass,
+            config_entry,
+            coordinator,
+            startup_slots_unreadable=startup_slots_unreadable,
+        )
+
+        # Start listeners if needed
+        await async_start_listener(hass, config_entry)
+
+        await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
+        coordinator._checkin_restore_pending = False
+
+        # Register keymaster event bus listener after platform setup
+        # so the checkin sensor reference is available (T024/T026)
+        if coordinator.lockname:
+            async_register_keymaster_listener(hass, config_entry)
+
+        config_entry.add_update_listener(update_listener)
+
+        # remove files if needed
+        if should_generate_package:
+            delete_rc_and_base_folder(hass, config_entry)
+
+        return True
+    except Exception:
+        if registered_allocator_entry:
+            await allocator.async_unregister_entry(config_entry.entry_id)
         hass.data[DOMAIN].pop(config_entry.entry_id, None)
         raise
-
-    async_arm_startup_readability_refresh(
-        hass,
-        config_entry,
-        coordinator,
-        startup_slots_unreadable=startup_slots_unreadable,
-    )
-
-    # Start listeners if needed
-    await async_start_listener(hass, config_entry)
-
-    await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
-    coordinator._checkin_restore_pending = False
-
-    # Register keymaster event bus listener after platform setup
-    # so the checkin sensor reference is available (T024/T026)
-    if coordinator.lockname:
-        async_register_keymaster_listener(hass, config_entry)
-
-    config_entry.add_update_listener(update_listener)
-
-    # remove files if needed
-    if should_generate_package:
-        delete_rc_and_base_folder(hass, config_entry)
-
-    return True
 
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -168,6 +178,13 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
         ):
             unsub_listener()
         hass.data[DOMAIN][config_entry.entry_id].get(UNSUB_LISTENERS, []).clear()
+
+        allocator = get_allocator(hass)
+        if (
+            allocator is not None
+            and config_entry.entry_id in allocator.diagnostics["pending_adoption"]
+        ):
+            await allocator.async_unregister_entry(config_entry.entry_id)
 
         hass.data[DOMAIN].pop(config_entry.entry_id)
 
