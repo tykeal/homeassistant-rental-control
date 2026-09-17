@@ -104,6 +104,51 @@ class AllocationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ForcedReleaseExemption:
+    """Name the single forced-release hold owner exempted from conflict."""
+
+    code: str
+    entry_id: str
+    identity_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class ForcedReissueDirective:
+    """Request one cycle to re-home a target owner onto a release hold."""
+
+    entry_id: str
+    identity_key: str | None
+    lockname: str | None
+    slot: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReissueOutcome:
+    """Report one forced re-issue step without exposing raw codes."""
+
+    entry_id: str
+    identity_key: str | None
+    lockname: str | None
+    slot: int | None
+    replaced_code_ref: str | None
+    replacement_code_ref: str | None
+    origin: AllocationOrigin | None
+    disposition: str
+    retention_reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReissuePreview:
+    """Preview one forced re-issue without mutating allocator state."""
+
+    replacement_code: str | None = field(default=None, repr=False)
+    replacement_code_ref: str | None = None
+    origin: AllocationOrigin | None = None
+    reason: str | None = None
+    replaced_code_ref: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AdoptionRequest:
     """Record an observed lock code as owned by a reservation."""
 

@@ -20,6 +20,7 @@ from ..const import NAME
 from . import adoption
 from . import diagnostics
 from . import issuance
+from . import reissue
 from . import services
 from .models import AdoptionRequest
 from .models import AllocationOwner
@@ -29,6 +30,7 @@ from .models import AllocationResult
 from .models import CycleObservation
 from .models import CycleRequest
 from .models import CycleResult
+from .models import ForcedReleaseExemption
 from .models import OrphanCleanupReport
 from .models import OrphanOutcome
 from .models import ReleaseReport
@@ -242,6 +244,8 @@ class DoorCodeAllocator:
             for owner in list(record.owners):
                 if owner.entry_id != observation.entry_id:
                     continue
+                if reissue.is_forced_release_hold(owner.identity_key):
+                    continue
                 if owner.identity_key in active_keys:
                     self._refresh_owner_observed(record, owner, observations)
                     continue
@@ -335,9 +339,12 @@ class DoorCodeAllocator:
         observations: list[CycleObservation],
         *,
         refresh_observed: bool = True,
+        forced_release: ForcedReleaseExemption | None = None,
     ) -> str | None:
         """Return why owners must be retained, or None when safe to release."""
-        if len(record.owners) > 1:
+        if len(record.owners) > 1 and not reissue._conflict_exempt(
+            record, owners, forced_release
+        ):
             return "adoption_conflict"
         for owner in owners:
             covered_observations = [
