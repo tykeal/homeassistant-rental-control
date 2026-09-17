@@ -1,175 +1,59 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Focused parity tests for calendar sensor generated-code helpers."""
+"""Calendar sensor code-publication parity tests."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from datetime import timezone
-import random
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
-import pytest
+from homeassistant.helpers.entity import EntityCategory
 
-from custom_components.rental_control.coordinator_helpers.codegen import (
-    generate_slot_code,
-)
-from custom_components.rental_control.sensors.calsensor_helpers.codes import (
-    generate_door_code,
-)
-from custom_components.rental_control.sensors.calsensor_helpers.models import (
-    DoorCodeRequest,
-)
+from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import NAME
+from custom_components.rental_control.sensors.calsensor import RentalControlCalSensor
 
-
-@pytest.fixture(autouse=True)
-def restore_random_state():
-    """Restore global RNG state after each generated-code parity test."""
-    state = random.getstate()
-    yield
-    random.setstate(state)
+START = datetime(2026, 9, 17, 16, tzinfo=timezone.utc)
+END = datetime(2026, 9, 20, 11, tzinfo=timezone.utc)
 
 
-def _request(
-    generator: str,
-    code_length: int = 4,
-    uid: str | None = "uid-1",
-    description: str | None = "Reservation details",
-    last_four: str | None = None,
-) -> DoorCodeRequest:
-    """Build a representative door-code request."""
-    return DoorCodeRequest(
-        generator=generator,
-        code_length=code_length,
-        start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
-        end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
-        uid=uid,
-        description=description,
-        last_four=last_four,
-    )
-
-
-def test_date_based_truncation_and_zero_fill() -> None:
-    """Verify date-based code ordering and length behavior."""
-    assert generate_door_code(_request("date_based")) == "1520"
-    assert generate_door_code(_request("date_based", code_length=6)) == "152003"
-
-
-def test_last_four_only_applies_to_four_digit_codes() -> None:
-    """Verify last-four generation is ignored for non-four-digit codes."""
-    assert generate_door_code(_request("last_four", last_four="9876")) == "9876"
-    assert (
-        generate_door_code(_request("last_four", code_length=6, last_four="9876"))
-        == "152003"
-    )
-
-
-def test_last_four_request_none_uses_date_based_fallback() -> None:
-    """Verify explicit missing last-four values are not re-extracted."""
-    assert (
-        generate_door_code(
-            _request(
-                "last_four",
-                description="Last 4 Digits: 9876",
-                last_four=None,
-            )
-        )
-        == "1520"
-    )
-
-
-def test_coordinator_omitted_last_four_extracts_description() -> None:
-    """Verify coordinator generation still extracts last-four values."""
-    request = _request(
-        "last_four",
+def test_sensor_path_never_invokes_code_generation(hass) -> None:
+    """Calendar sensors read coordinator codes instead of generating codes."""
+    event = SimpleNamespace(
+        summary="Reserved - Jane Doe",
         description="Last 4 Digits: 9876",
-        last_four=None,
+        start=START,
+        end=END,
+        location=None,
+        uid="sensor-never-generates",
     )
-
-    assert (
-        generate_slot_code(
-            request.generator,
-            request.code_length,
-            request.start,
-            request.end,
-            request.description,
-            request.uid,
-        )
-        == "9876"
-    )
-
-
-def test_static_random_uid_determinism() -> None:
-    """Verify static-random keeps UID-seeded deterministic behavior."""
-    first = generate_door_code(_request("static_random", uid="same-uid"))
-    second = generate_door_code(_request("static_random", uid="same-uid"))
-    assert first == second
-    assert len(first) == 4
-    assert first.isdigit()
-
-
-def test_static_random_description_fallback() -> None:
-    """Verify static-random falls back to description when UID is absent."""
-    code = generate_door_code(
-        _request("static_random", uid=None, description="Fallback test")
-    )
-    expected = str(
-        random.Random("Fallback test").randrange(1, int("9999".rjust(4, "9")))
-    ).zfill(4)
-    assert code == expected
-
-
-def test_static_random_missing_seed_uses_date_based() -> None:
-    """Verify missing UID and description fall through to date-based code."""
-    assert (
-        generate_door_code(_request("static_random", uid=None, description=None))
-        == "1520"
-    )
-
-
-def test_empty_uid_falls_back_to_description_seed() -> None:
-    """Verify empty UID uses the mutable description fallback as before."""
-    code = generate_door_code(_request("static_random", uid="", description="Fallback"))
-    expected = str(
-        random.Random("Fallback").randrange(1, int("9999".rjust(4, "9")))
-    ).zfill(4)
-    assert code == expected
-
-
-def test_static_random_does_not_perturb_global_rng() -> None:
-    """Verify static-random generation leaves the global RNG untouched."""
-    random.seed("global-seed")
-    expected = random.random()
-    random.seed("global-seed")
-
-    generate_door_code(_request("static_random", uid="local-only-seed"))
-
-    assert random.random() == expected
-
-
-def test_static_random_full_code_space_is_reachable() -> None:
-    """Verify static-random is not limited to one residue class."""
-    residues = {
-        int(generate_door_code(_request("static_random", uid=f"seed-{index}"))) % 4
-        for index in range(100)
+    coordinator = MagicMock()
+    coordinator.name = "Test Rental"
+    coordinator.unique_id = "test_unique_id"
+    coordinator.entry_id = "test_entry_id"
+    coordinator.last_update_success = True
+    coordinator.data = [event]
+    coordinator.event_prefix = ""
+    coordinator.event_overrides = None
+    coordinator.get_slot_assignment.return_value = None
+    coordinator.get_slot_code.return_value = None
+    coordinator.device_info = {
+        "identifiers": {(DOMAIN, "test_unique_id")},
+        "name": f"{NAME} Test Rental",
     }
+    sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
+    sensor.async_write_ha_state = MagicMock()
 
-    assert len(residues) > 1
+    with patch(
+        "custom_components.rental_control.codegen.generate_slot_code",
+        return_value="9876",
+    ) as generate:
+        sensor._handle_coordinator_update()
 
-
-def test_static_random_matches_coordinator_generation() -> None:
-    """Verify sensor and coordinator static-random generation stay in sync."""
-    request = _request(
-        "static_random",
-        uid="shared-static-random-uid",
-        description="Shared reservation details",
-    )
-
-    assert generate_door_code(request) == generate_slot_code(
-        "static_random",
-        request.code_length,
-        request.start,
-        request.end,
-        request.description,
-        request.uid,
-    )
+    assert sensor.entity_category == EntityCategory.DIAGNOSTIC
+    assert sensor.extra_state_attributes["slot_code"] is None
+    generate.assert_not_called()

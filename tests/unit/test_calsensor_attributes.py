@@ -18,9 +18,6 @@ from custom_components.rental_control.sensors.calsensor_helpers.models import (
     CalendarSensorRenderResult,
 )
 from custom_components.rental_control.sensors.calsensor_helpers.models import (
-    DoorCodeRequest,
-)
-from custom_components.rental_control.sensors.calsensor_helpers.models import (
     EtaSnapshot,
 )
 from custom_components.rental_control.sensors.calsensor_helpers.models import (
@@ -94,7 +91,6 @@ def test_context_models_carry_legacy_values() -> None:
     """Verify grouped slot context values keep the legacy fields."""
     start = datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc)
     end = datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc)
-    request = DoorCodeRequest("date_based", 4, start, end, "uid", "desc", None)
     read = SlotReadContext(
         entry_id="entry",
         summary="summary",
@@ -102,13 +98,11 @@ def test_context_models_carry_legacy_values() -> None:
         event_prefix="prefix",
         start=start,
         end=end,
-        event_overrides_present=True,
         get_slot_name=lambda _summary, _description, _prefix: "slot",
         make_reservation_fingerprint=lambda _entry, _slot, _start, _end: "key",
     )
     assignment = SlotAssignmentContext("slot", "1234", start, end, None, "", 5)
 
-    assert request.code_length == 4
     assert read.entry_id == "entry"
     assert assignment.eta_days == 5
 
@@ -156,7 +150,6 @@ def test_read_slot_uses_patchable_dependencies_and_same_key() -> None:
         event_prefix="",
         start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
         end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
-        event_overrides_present=True,
         get_slot_name=MagicMock(return_value="Jane Doe"),
         make_reservation_fingerprint=MagicMock(return_value="identity-key"),
     )
@@ -179,7 +172,6 @@ def test_read_slot_skips_fingerprint_without_overrides_or_slot() -> None:
         event_prefix="",
         start=datetime(2025, 3, 15, 16, 0, tzinfo=timezone.utc),
         end=datetime(2025, 3, 20, 11, 0, tzinfo=timezone.utc),
-        event_overrides_present=False,
         get_slot_name=MagicMock(return_value=None),
         make_reservation_fingerprint=make_fingerprint,
     )
