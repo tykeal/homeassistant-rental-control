@@ -436,3 +436,39 @@ def _allocator() -> DoorCodeAllocator:
     allocator = DoorCodeAllocator(cast(Any, hass))
     allocator._store = cast(Any, SimpleNamespace(async_save=lambda _registry: None))
     return allocator
+
+
+async def test_allocator_diagnostics_reports_forced_holds() -> None:
+    """Allocator diagnostics include outstanding holds with masked refs only."""
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    allocator = _allocator()
+    hold_key = forced_release_hold_key("identity-alpha", "entry-a", "front", 1)
+    await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-a",
+            identity_key=hold_key,
+            preferred_code="1357",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+
+    snapshot = allocator.diagnostics
+    serialized = json.dumps(snapshot)
+
+    assert snapshot["forced_release_hold_count"] == 1
+    assert snapshot["forced_release_holds"] == [
+        {
+            "code_ref": allocator.code_ref("1357"),
+            "entry_id": "entry-a",
+            "identity_key": hold_key,
+            "lockname": "front",
+            "slot": 1,
+            "retention_reason": "unverifiable_lock",
+        }
+    ]
+    assert "1357" not in serialized

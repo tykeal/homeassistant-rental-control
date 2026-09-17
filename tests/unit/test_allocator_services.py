@@ -320,3 +320,131 @@ async def _allocate(
 def _reasons(report: OrphanCleanupReport) -> list[str]:
     """Return cleanup retention reasons."""
     return [outcome.reason or "" for outcome in report.retained]
+
+
+async def test_clear_orphans_ignores_live_holds_by_default(
+    hass: HomeAssistant,
+) -> None:
+    """Live forced-release holds are not cleanup candidates by default."""
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    allocator = _allocator(hass)
+    hold_key = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    await _allocate(allocator, "entry-a", hold_key, "1357", "front", 1)
+
+    report = await allocator.async_clear_orphans(
+        {"entry-a"},
+        [
+            CycleObservation(
+                entry_id="entry-a",
+                lockname="front",
+                managed_slots=frozenset({1}),
+                observed_codes={"1357": 1},
+                unreadable_slots=frozenset(),
+            )
+        ],
+    )
+
+    assert report.cleared == []
+    assert report.retained == []
+    assert allocator._registry.code_for_identity(hold_key) == "1357"
+
+
+async def test_clear_orphans_force_reclaims_live_holds(
+    hass: HomeAssistant,
+) -> None:
+    """The explicit override reclaims only hold-namespace live owners."""
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    allocator = _allocator(hass)
+    hold_key = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    await _allocate(allocator, "entry-a", hold_key, "1357", "front", 1)
+    await _allocate(allocator, "entry-a", "ordinary", "2468", "front", 2)
+
+    report = await allocator.async_clear_orphans(
+        {"entry-a"},
+        [
+            CycleObservation(
+                entry_id="entry-a",
+                lockname="front",
+                managed_slots=frozenset({1, 2}),
+                observed_codes={"1357": 1, "2468": 2},
+                unreadable_slots=frozenset(),
+            )
+        ],
+        dry_run=True,
+        force_reissued_holds=True,
+    )
+
+    assert [
+        (item.identity_key, item.reason, item.lockname, item.slot)
+        for item in report.cleared
+    ] == [(hold_key, "code_still_programmed", "front", 1)]
+    assert allocator._registry.code_for_identity(hold_key) == "1357"
+    assert allocator._registry.code_for_identity("ordinary") == "2468"
+
+    acted = await allocator.async_clear_orphans(
+        {"entry-a"},
+        [
+            CycleObservation(
+                entry_id="entry-a",
+                lockname="front",
+                managed_slots=frozenset({1, 2}),
+                observed_codes={"1357": 1, "2468": 2},
+                unreadable_slots=frozenset(),
+            )
+        ],
+        force_reissued_holds=True,
+    )
+
+    assert [item.identity_key for item in acted.cleared] == [hold_key]
+    assert allocator._registry.code_for_identity(hold_key) is None
+    assert allocator._registry.code_for_identity("ordinary") == "2468"
+
+
+def test_forced_hold_deferral_notification_skips_first_cycle(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only older forced-release hold deferrals create notifications."""
+    from custom_components.rental_control.allocator.models import ForcedReissueDirective
+    from custom_components.rental_control.allocator.models import ReissueOutcome
+
+    created = []
+    dismissed = []
+    monkeypatch.setattr(
+        services_module,
+        "async_create",
+        lambda *_args, **kwargs: created.append((_args, kwargs)),
+    )
+    monkeypatch.setattr(
+        services_module,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+    outcome = ReissueOutcome(
+        "entry-a",
+        "identity-a",
+        "front",
+        1,
+        "abc12345",
+        None,
+        None,
+        "held_pending_release",
+        "code_still_programmed",
+    )
+
+    services_module.report_forced_hold_deferrals(
+        hass,
+        [outcome],
+        (ForcedReissueDirective("entry-a", "identity-a", "front", 1),),
+    )
+    services_module.report_forced_hold_deferrals(hass, [outcome], ())
+
+    assert len(created) == 1
+    assert "abc12345:code_still_programmed" in created[0][0][1]
+    assert "adoption_conflict" not in created[0][0][1]

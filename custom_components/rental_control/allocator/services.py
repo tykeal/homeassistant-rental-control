@@ -20,12 +20,16 @@ from ..const import DOMAIN
 from ..const import NAME
 from . import reissue_service
 from .models import CycleObservation
+from .models import ForcedReissueDirective
 from .models import OrphanCleanupReport
+from .models import ReissueOutcome
 
 SERVICE_CLEAR_ORPHANED_CODES = "clear_orphaned_codes"
 ATTR_DRY_RUN = "dry_run"
+ATTR_FORCE_REISSUED_HOLDS = "force_reissued_holds"
 _LOGGER = logging.getLogger(__name__)
 _ORPHAN_NOTIFICATION_ID = f"{DOMAIN}_code_registry_orphans"
+_FORCED_HOLD_NOTIFICATION_ID = f"{DOMAIN}_forced_reissue_holds"
 
 
 def register_allocator_services(hass: HomeAssistant) -> None:
@@ -40,7 +44,10 @@ def register_allocator_services(hass: HomeAssistant) -> None:
         SERVICE_CLEAR_ORPHANED_CODES,
         _handle_clear_orphaned_codes(hass),
         schema=cv.vol.Schema(
-            {cv.vol.Optional(ATTR_DRY_RUN, default=False): cv.boolean}
+            {
+                cv.vol.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
+                cv.vol.Optional(ATTR_FORCE_REISSUED_HOLDS, default=False): cv.boolean,
+            }
         ),
         supports_response=SupportsResponse.OPTIONAL,
     )
@@ -61,6 +68,7 @@ def _handle_clear_orphaned_codes(hass: HomeAssistant) -> Any:
             known_entry_ids,
             _collect_observations(hass),
             dry_run=bool(call.data[ATTR_DRY_RUN]),
+            force_reissued_holds=bool(call.data[ATTR_FORCE_REISSUED_HOLDS]),
         )
         return {
             "dry_run": report.dry_run,
@@ -90,10 +98,11 @@ def _collect_observations(hass: HomeAssistant) -> list[CycleObservation]:
 
 
 def _outcome_dict(outcome: Any) -> dict[str, Any]:
-    """Return a cleanup outcome response without empty reason fields."""
+    """Return a cleanup outcome response without empty optional fields."""
     data = asdict(outcome)
-    if data.get("reason") is None:
-        data.pop("reason", None)
+    for key in ("reason", "lockname", "slot"):
+        if data.get(key) is None:
+            data.pop(key, None)
     return data
 
 
@@ -121,4 +130,57 @@ def report_orphan_cleanup(hass: HomeAssistant, report: OrphanCleanupReport) -> N
         message,
         title=f"{NAME} code orphan cleanup",
         notification_id=_ORPHAN_NOTIFICATION_ID,
+    )
+
+
+def report_forced_hold_deferrals(
+    hass: HomeAssistant,
+    outcomes: list[ReissueOutcome],
+    current_directives: tuple[ForcedReissueDirective, ...],
+) -> None:
+    """Notify when forced-release holds remain deferred past one cycle."""
+    if not outcomes:
+        return
+    deferred = [
+        outcome
+        for outcome in outcomes
+        if outcome.disposition == "held_pending_release"
+        and outcome.retention_reason not in (None, "adoption_conflict")
+        and not _matches_current_directive(outcome, current_directives)
+    ]
+    if not deferred:
+        if any(
+            not _matches_current_directive(outcome, current_directives)
+            for outcome in outcomes
+        ) and hasattr(hass, "bus"):
+            async_dismiss(hass, _FORCED_HOLD_NOTIFICATION_ID)
+        return
+    message = "Forced re-issue hold releases remain deferred: " + ", ".join(
+        f"{outcome.replaced_code_ref}:{outcome.retention_reason}"
+        for outcome in deferred
+    )
+    _LOGGER.warning(message)
+    if not hasattr(hass, "bus"):
+        return
+    async_create(
+        hass,
+        message,
+        title=f"{NAME} forced re-issue holds",
+        notification_id=_FORCED_HOLD_NOTIFICATION_ID,
+    )
+
+
+def _matches_current_directive(
+    outcome: ReissueOutcome, directives: tuple[ForcedReissueDirective, ...]
+) -> bool:
+    """Return whether a deferral belongs to this cycle's new directive."""
+    return any(
+        outcome.entry_id == directive.entry_id
+        and outcome.lockname == directive.lockname
+        and outcome.slot == directive.slot
+        and (
+            directive.identity_key is None
+            or outcome.identity_key == directive.identity_key
+        )
+        for directive in directives
     )

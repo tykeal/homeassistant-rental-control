@@ -36,6 +36,11 @@ clear_orphaned_codes:
       default: false
       selector:
         boolean:
+    force_reissued_holds:
+      required: false
+      default: false
+      selector:
+        boolean:
 
 force_reissue:
   fields:

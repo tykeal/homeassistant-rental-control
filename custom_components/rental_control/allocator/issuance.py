@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from . import reissue
+from . import services
 from .candidates import candidate_codes
 from .models import AdoptionRequest
 from .models import AllocationOrigin
@@ -190,9 +191,13 @@ async def resolve_cycle(
         )
         released = allocator._sweep_unlocked(request.observation, request.active_keys)
         if not allocator._registry_lost:
+            hold_releases = reissue.release_forced_holds(allocator, request)
+            services.report_forced_hold_deferrals(
+                allocator.hass, hold_releases, request.forced_reissues
+            )
             reissue_outcomes = reissue.merge_release_outcomes(
                 reissue_outcomes,
-                reissue.release_forced_holds(allocator, request),
+                hold_releases,
             )
         recovery_declined = any(
             result.reason == "recovery_fail_closed" for result in allocated.values()

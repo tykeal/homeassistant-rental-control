@@ -151,6 +151,10 @@
         "dry_run": {
           "name": "Dry run",
           "description": "Report what would be cleared without changing the shared code registry."
+        },
+        "force_reissued_holds": {
+          "name": "Force reissued holds",
+          "description": "Explicitly reclaim stuck forced reissue holds on loaded entries. Use only after verifying the lock or slot is genuinely gone."
         }
       }
     },
