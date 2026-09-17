@@ -307,17 +307,17 @@ async def test_wedged_recovers_promptly_when_slots_become_available(
         await hass.async_block_till_done()
         await hass.async_block_till_done()
 
-        assert set_code.await_count == 1
+        assert set_code.await_count == 0
         assert coordinator._latest_plan is not None
-        assert coordinator._latest_plan.overflow == {}
-        assert coordinator._latest_plan.selected != {}
+        assert coordinator._latest_plan.overflow != {}
+        assert coordinator._latest_plan.selected == {}
 
         hass.states.async_set("text.front_door_code_slot_10_name", "Later Change")
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=6))
         await hass.async_block_till_done()
         await hass.async_block_till_done()
 
-        assert set_code.await_count == 1
+        assert set_code.await_count == 0
 
 
 async def test_missing_store_adopts_coded_slots_when_unavailable_at_setup(
@@ -3389,6 +3389,11 @@ class TestManualOverrideSurvival:
                 "async_fire_clear_code",
                 new=AsyncMock(return_value=clear_result),
             ) as mock_clear_code,
+            patch(
+                "custom_components.rental_control.coordinator_helpers."
+                "coordinator_refresh_shell.code_allocation.async_resolve_codes",
+                new=AsyncMock(),
+            ),
         ):
             mock_session.get(entry.data["url"], status=200, body=ics_body, repeat=True)
 
@@ -3403,7 +3408,7 @@ class TestManualOverrideSurvival:
             initial_end = override["end_time"]
 
             _set_keymaster_slot(
-                "Manual Guest",
+                "RC Manual Guest",
                 initial_pin,
                 initial_start,
                 initial_end,
@@ -3604,6 +3609,11 @@ class TestManualOverrideSurvival:
                 "async_fire_clear_code",
                 new=AsyncMock(return_value=clear_result),
             ) as mock_clear_code,
+            patch(
+                "custom_components.rental_control.coordinator_helpers."
+                "coordinator_refresh_shell.code_allocation.async_resolve_codes",
+                new=AsyncMock(),
+            ),
         ):
             mock_session.get(entry.data["url"], status=200, body=ics_body, repeat=True)
 

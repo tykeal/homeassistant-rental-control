@@ -34,6 +34,7 @@ from .allocator import async_get_or_create_allocator
 from .allocator import get_allocator
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_GENERATE
+from .const import CONF_LOCK_ENTRY
 from .const import COORDINATOR
 from .const import DOMAIN
 from .const import NAME
@@ -79,8 +80,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     registered_allocator_entry = False
     remove_update_listener = None
     try:
-        await allocator.async_register_entry(config_entry.entry_id)
-        registered_allocator_entry = True
+        if _entry_has_lock(config_entry):
+            await allocator.async_register_entry(config_entry.entry_id)
+            registered_allocator_entry = True
 
         coordinator = RentalControlCoordinator(
             hass=hass,
@@ -303,4 +305,14 @@ async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -
             list(entities),
             functools.partial(handle_state_change, hass, config_entry),
         )
+    )
+
+
+def _entry_has_lock(config_entry: ConfigEntry) -> bool:
+    """Return whether a config entry should participate in code adoption."""
+    lock_entry = config_entry.data.get(CONF_LOCK_ENTRY)
+    return (
+        isinstance(lock_entry, str)
+        and bool(lock_entry.strip())
+        and lock_entry.strip() != "(none)"
     )

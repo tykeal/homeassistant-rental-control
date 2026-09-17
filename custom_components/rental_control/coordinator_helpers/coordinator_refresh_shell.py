@@ -13,6 +13,7 @@ from datetime import timedelta
 import importlib
 import logging
 from typing import Any
+from typing import cast
 import uuid
 
 from homeassistant.components.calendar import CalendarEvent
@@ -27,6 +28,8 @@ from ..const import REQUEST_TIMEOUT
 from ..reconciliation import Reservation as _Reservation
 from ..util import OperationResult
 from . import calendar_parsing
+from . import code_allocation
+from . import slot_matching
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -205,8 +208,18 @@ class CoordinatorRefreshMixin:
             return
         try:
             observed_slots = self._observe_managed_slots()
-            reservations = self._build_reservations(new_calendar, observed_slots)
+            reservations = self._prepare_reservations_for_adoption(
+                new_calendar, observed_slots
+            )
             self._apply_checkin_protection(reservations, observed_slots)
+            await code_allocation.async_resolve_codes(
+                self.hass,
+                self._entry_id,
+                self.lockname,
+                self.code_length,
+                observed_slots,
+                reservations,
+            )
 
             plan_id = str(uuid.uuid4())
             plan = _coordinator_module().compute_desired_plan(
@@ -256,6 +269,67 @@ class CoordinatorRefreshMixin:
         except Exception:
             _LOGGER.exception(
                 "Reconciliation failed for %s; skipping cycle", self._name
+            )
+
+    def _prepare_reservations_for_adoption(
+        self,
+        new_calendar: list[CalendarEvent],
+        observed_slots: list[Any],
+    ) -> list[_Reservation]:
+        """Hydrate live and ghost reservations before allocator adoption."""
+        self._merge_observed_slots_into_mappings(observed_slots)
+        reservations = cast(
+            "list[_Reservation]",
+            self._build_reservations(new_calendar, observed_slots),
+        )
+        persisted: dict[str, Any] = self._slot_mappings.setdefault("mappings", {})
+        observed_mapping_keys = {
+            slot.persisted_identity_key
+            for slot in observed_slots
+            if slot.persisted_identity_key is not None
+        }
+        actual_slot_names = {
+            slot.slot: slot.actual_name
+            for slot in observed_slots
+            if isinstance(slot.actual_name, str)
+        }
+        observed_mapping_keys = (
+            slot_matching.remap_observed_mappings_to_physical_reservations(
+                persisted,
+                reservations,
+                actual_slot_names,
+                observed_mapping_keys,
+            )
+        )
+        self._hydrate_reservations_from_mappings(reservations, persisted)
+        prefix = f"{self.event_prefix} " if self.event_prefix else ""
+        reservations.extend(
+            self._build_ghost_reservations(
+                {reservation.identity_key for reservation in reservations},
+                persisted,
+                prefix,
+                observed_mapping_keys,
+            )
+        )
+        return reservations
+
+    @staticmethod
+    def _hydrate_reservations_from_mappings(
+        reservations: list[_Reservation], persisted: dict[str, Any]
+    ) -> None:
+        """Copy cache-only mapping continuity fields onto live reservations."""
+        for reservation in reservations:
+            mapping = persisted.get(reservation.identity_key)
+            if not isinstance(mapping, dict):
+                continue
+            history = mapping.get("fingerprint_history", [])
+            if isinstance(history, (list, set, tuple)):
+                reservation.fingerprint_history.update(
+                    item for item in history if isinstance(item, str)
+                )
+            missing_count = mapping.get("missing_count", 0)
+            reservation.missing_count = (
+                missing_count if isinstance(missing_count, int) else 0
             )
 
     async def _ical_parser(

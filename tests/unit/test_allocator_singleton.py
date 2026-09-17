@@ -321,6 +321,7 @@ class FailingCoordinator:
     """Coordinator test double that fails after allocator registration."""
 
     event_overrides = None
+    lockname = "front"
 
     def __init__(self, **_kwargs: Any) -> None:
         """Accept the production constructor shape."""
