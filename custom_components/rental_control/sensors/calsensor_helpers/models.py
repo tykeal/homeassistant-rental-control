@@ -89,19 +89,6 @@ class ParsedReservationAttributes:
 
 
 @dataclass(frozen=True, slots=True)
-class DoorCodeRequest:
-    """Inputs needed for behavior-compatible generated door codes."""
-
-    generator: str
-    code_length: int
-    start: datetime
-    end: datetime
-    uid: str | None
-    description: str | None
-    last_four: str | None
-
-
-@dataclass(frozen=True, slots=True)
 class SlotReadContext:
     """Inputs for read-only reconciliation slot lookup."""
 
@@ -111,7 +98,6 @@ class SlotReadContext:
     event_prefix: str
     start: datetime
     end: datetime
-    event_overrides_present: bool
     get_slot_name: Callable[[str, Any, str], str | None]
     make_reservation_fingerprint: Callable[[str, str, datetime, datetime], str]
 

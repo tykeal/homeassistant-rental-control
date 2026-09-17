@@ -20,7 +20,7 @@ def read_slot(context: SlotReadContext, coordinator: Any) -> SlotReadResult:
     )
     slot_number: int | None = None
     slot_code: str | None = None
-    if context.event_overrides_present and slot_name is not None:
+    if slot_name is not None:
         identity_key = context.make_reservation_fingerprint(
             context.entry_id,
             slot_name,

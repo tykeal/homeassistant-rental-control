@@ -245,6 +245,8 @@ class CoordinatorRefreshMixin:
             for v in violations:
                 _LOGGER.warning("Plan %s invariant violation: %s", plan_id, v)
 
+            self._record_observed_slot_codes(plan, res_by_key, observed_slots)
+
             if self._must_defer_for_checkin_restore(reservations, observed_slots):
                 _LOGGER.info(
                     "Deferring reconciliation for %s until check-in state is "

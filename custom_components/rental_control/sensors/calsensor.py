@@ -22,12 +22,10 @@ from ..reconciliation import make_reservation_fingerprint
 from ..util import gen_uuid
 from ..util import get_slot_name
 from .calsensor_helpers import attributes
-from .calsensor_helpers import codes
 from .calsensor_helpers import descriptions
 from .calsensor_helpers import slots
 from .calsensor_helpers import state as render_state
 from .calsensor_helpers.models import CalendarSensorRenderResult
-from .calsensor_helpers.models import DoorCodeRequest
 from .calsensor_helpers.models import SlotAssignmentContext
 from .calsensor_helpers.models import SlotReadContext
 
@@ -68,8 +66,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         summary = attributes.build_no_reservation_summary(coordinator.event_prefix)
         self._attr_has_entity_name = True
         self._attr_name = f"{NAME} Event {event_number}"
-        self._code_generator = coordinator.code_generator
-        self._code_length = coordinator.code_length
         self._entity_category = EntityCategory.DIAGNOSTIC
         self._event_attributes: dict[str, Any] = (
             attributes.build_no_reservation_attributes(coordinator.event_prefix)
@@ -127,26 +123,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         """Extract unrecognised 'Field: Value' lines from description."""
         return descriptions.extract_dynamic_attributes(self._description())
 
-    def _generate_door_code(self) -> str:
-        """Generate a door code based upon the selected type."""
-        last_four = None
-        if (
-            self._code_generator == "last_four"
-            and self._code_length == 4
-            and self._event_attributes["description"] is not None
-        ):
-            last_four = self._extract_last_four()
-        request = DoorCodeRequest(
-            generator=self._code_generator,
-            code_length=self._code_length,
-            start=self._event_attributes["start"],
-            end=self._event_attributes["end"],
-            uid=self._event_attributes.get("uid"),
-            description=self._event_attributes["description"],
-            last_four=last_four,
-        )
-        return codes.generate_door_code(request)
-
     @property
     def device_info(self) -> DeviceInfo:
         """Return the device info block."""
@@ -189,18 +165,12 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             self.async_write_ha_state()
             return
 
-        self._refresh_code_settings()
         event = render_state.select_event(self.coordinator.data, self._event_number)
         if event is None:
             self._handle_no_reservation_update()
         else:
             self._handle_event_update(event)
         self.async_write_ha_state()
-
-    def _refresh_code_settings(self) -> None:
-        """Refresh generated-code settings from the coordinator."""
-        self._code_generator = self.coordinator.code_generator
-        self._code_length = self.coordinator.code_length
 
     def _handle_no_reservation_update(self) -> None:
         """Apply the legacy no-reservation render result."""
@@ -225,11 +195,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         )
         event_attributes = self._build_event_attributes(event)
         self._event_attributes.update(event_attributes)
-        if (
-            self._event_attributes["slot_code"] is None
-            and self.coordinator.event_overrides is None
-        ):
-            self._event_attributes["slot_code"] = self._generate_door_code()
         result = render_state.render_event_result(
             event,
             self._event_attributes,
@@ -252,7 +217,6 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             event_prefix=self.coordinator.event_prefix or "",
             start=event.start,
             end=event.end,
-            event_overrides_present=self.coordinator.event_overrides is not None,
             get_slot_name=get_slot_name,
             make_reservation_fingerprint=make_reservation_fingerprint,
         )

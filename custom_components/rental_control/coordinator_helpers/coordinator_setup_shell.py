@@ -183,6 +183,7 @@ class CoordinatorSetupMixin:
         # Reconciliation state (T022/T031/T033)
         self._latest_plan: _DesiredPlan | None = None
         self._latest_res_by_key: dict[str, _Reservation] = {}
+        self._observed_slot_codes: dict[str, tuple[int, str]] = {}
         self._checkin_restore_pending = False
 
     def _register_keymaster_device(self, hass: HomeAssistant) -> None:
