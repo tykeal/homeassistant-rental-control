@@ -377,6 +377,9 @@ generates nothing of its own; when no allocation exists it reports no code.
 code differing from its generator's preferred code, then read the sensor's
 `slot_code` attribute and confirm it matches the allocated code.
 
+Execution follows the hard edges below: complete T037 before landing the
+ATOMIC C display-path removal in T035/T036.
+
 - [ ] T035 [US2] Delete `_generate_door_code` and the `slot_code is None`
       backfill in `_handle_event_update`, along with the now-unused
       `DoorCodeRequest` construction, in
@@ -517,8 +520,9 @@ Phase 1 Setup
 
 ### Hard task-level edges
 
-- T004 → T007, T011 (the registry and allocator consume the models; T005 and
-  T006 are independent candidate-walk work)
+- T004 → T007, T011 (the registry and allocator consume the models; T005 is
+  independent candidate-walk work)
+- T005 → T006 (candidate-walk tests require `candidates.py`)
 - T007 → T009 (the store serializes what the registry holds)
 - T009, T010 → T011 → T012 → T014 (registry and its round-trip land before any
   consumer, per the safety constraint)

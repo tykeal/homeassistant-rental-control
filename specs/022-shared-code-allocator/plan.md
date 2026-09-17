@@ -262,9 +262,10 @@ fail-closed decisions use durable inputs rather than the current check-in window
 For entries with no managed lock (`event_overrides is None`), `_async_update_data`
 gains a small branch that builds reservations with `managed_slots=None`,
 including the same ghost reservations, missing-count state, and durable
-`published_once` flag, and runs phases 2 through 4 only (there is nothing to
-adopt), then sets `self._latest_res_by_key` so `get_slot_code` works. It
-computes no plan, emits no actions, and calls no services (FR-023).
+`published_once` flag. In Phase 4 it runs allocation only (there is nothing to
+adopt); Phase 6 extends the branch with rekey and sweep. It then sets
+`self._latest_res_by_key` so `get_slot_code` works, computes no plan, emits no
+actions, and calls no services (FR-023).
 
 ### 3. Preferred code, collision resolution, determinism (FR-009 to FR-011)
 

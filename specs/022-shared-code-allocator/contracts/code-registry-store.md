@@ -149,8 +149,10 @@ payload in place.
 There is no prior version to migrate, and nothing has shipped, so the schema
 stays at version 1 including the at-rest encoding. A downgrade leaves the file
 in place unread. The per-entry cache store
-`rental_control.slot_mappings.<entry_id>` at `STORE_SCHEMA_VERSION` is untouched
-by this feature and keeps its rule that raw PINs are never stored.
+`rental_control.slot_mappings.<entry_id>` at `STORE_SCHEMA_VERSION` keeps its
+schema version and its rule that raw PINs are never stored. The allocator may
+add backward-compatible metadata such as `published_once` there because it is
+state about whether a value was exposed, not PIN material.
 
 ## 2. Allocator API
 
