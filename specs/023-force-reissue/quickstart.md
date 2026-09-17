@@ -81,6 +81,11 @@ Each step is one atomic commit that builds and passes the suite.
   guard. Hold owners are skipped by the sweep, not exempted within it.
 - **Letting the raw code into the non-dry-run response.** Use two response
   builders, not one with a conditional field removal.
+- **Changing `build_protected_reservation` but not its caller.**
+  `_synthesize_checkin_reservation` currently chooses the observed
+  `matched_physical.actual_code` before calling the helper. For a suppressed
+  slot it must pass the generated replacement instead, or the checked-in ghost
+  path remains a no-op.
 
 ## Validation gate
 

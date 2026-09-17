@@ -9,7 +9,7 @@ This contract covers the Home Assistant service surface and the internal
 allocator API changes. **There is no persisted schema change.** The feature 022
 registry store `rental_control.code_registry` keeps schema version 1 and every
 field it has today; see
-[../022-shared-code-allocator/contracts/code-registry-store.md](../022-shared-code-allocator/contracts/code-registry-store.md).
+[../../022-shared-code-allocator/contracts/code-registry-store.md](../../022-shared-code-allocator/contracts/code-registry-store.md).
 
 ## 1. Service declaration
 
@@ -62,12 +62,17 @@ vol.Schema(
     {
         vol.Optional(ATTR_ENTITY_ID): cv.entity_id,
         vol.Optional(ATTR_LOCKNAME): cv.string,
-        vol.Optional(ATTR_SLOT): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Optional(ATTR_SLOT): vol.All(_positive_slot, vol.Range(min=1)),
         vol.Optional(ATTR_FORCE, default=False): cv.boolean,
         vol.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
     }
 )
 ```
+
+`_positive_slot` accepts only an integral value and rejects booleans,
+fractional numbers such as `2.5`, and other lossy coercions before the range
+check runs, so the service can never silently operate on a different slot than
+the caller selected.
 
 `cv.entity_id` — not `cv.entity_ids` — is what makes single-target structural:
 a list, an `area_id`, a `device_id`, or `all` fails schema validation before any
@@ -75,21 +80,23 @@ handler code runs (FR-004).
 
 ## 2. Validation order
 
-Every refusal raises `ServiceValidationError` with an operator-readable message,
-changes nothing on any lock, nothing in the registry, and nothing in any sensor
-state. The order is fixed so that the reported reason is the most specific one.
+Every refusal reports an operator-readable message, changes nothing on any
+lock, nothing in the registry, and nothing in any sensor state. Handler-level
+refusals return a structured refusal when a response is requested; schema
+failures still raise `ServiceValidationError`. The order is fixed so that the
+reported reason is the most specific one.
 
 | # | Check | Refusal reason | FR |
 |---|-------|----------------|----|
-| 1 | Exactly one targeting form supplied | `ambiguous_target` / `missing_target` | FR-002, FR-003 |
-| 2 | `lockname` and `slot` supplied together | `incomplete_slot_target` | FR-002 |
+| 1 | Exactly one targeting form supplied: `entity_id` XOR (`lockname` and `slot`) | `ambiguous_target` / `missing_target` | FR-002, FR-003 |
+| 2 | `lockname` and `slot` are half-supplied instead of both present or both absent | `incomplete_slot_target` | FR-002 |
 | 3 | Entity is a loaded Rental Control reservation sensor carrying an event | `not_a_reservation_sensor` | FR-002 |
 | 4 | Slot form resolves to exactly one loaded entry whose lockname matches | `unknown_lock` / `ambiguous_lock` | FR-002 |
 | 5 | Slot lies in that entry's managed range | `slot_not_managed` | FR-005 |
 | 6 | Target slot is covered by a current observation and is not `SlotStatus.UNKNOWN` | `slot_unreadable` / `lock_unavailable` | FR-010 |
 | 7 | Target is not checked in, or `force` is true | `checked_in_requires_force` | FR-006 |
 | 8 | No pending re-issue and no outstanding hold for this target | `reissue_already_pending` | FR-009 |
-| 9 | A unique replacement code is obtainable | `code_space_exhausted` | FR-008 |
+| 9 | For an identity-backed target, a unique replacement code is obtainable | `code_space_exhausted` | FR-008 |
 
 Check 8 returns the original outcome rather than an error when the repeat is
 identical, so a retried automation is a benign no-op (SC-007).
@@ -137,11 +144,18 @@ produced by a separate response builder from the non-dry-run one, not by a
 conditional `pop()` on a shared builder, so a future edit cannot leak it by
 omission.
 
+For a bare lock/slot target with no reservation identity, no replacement code
+is allocated. The operation is clear-only: it clears the observed orphaned slot
+through the normal reconcile path and handles any registry owner for that slot
+under the same guarded hold lifecycle.
+
 ### Refusal response
 
-When invoked with a response requested, a refusal returns
-`{"status": "refused", "reason": "<reason>", "dry_run": <bool>}` alongside the
-raised `ServiceValidationError` message. Nothing else is populated.
+When invoked with a response requested, a handler-level refusal returns
+`{"status": "refused", "reason": "<reason>", "dry_run": <bool>}` and raises no
+exception, so the caller can receive the structured result. Schema failures
+that happen before the handler still raise `ServiceValidationError` and return
+no service response. Either path changes nothing.
 
 ## 4. Allocator API delta
 

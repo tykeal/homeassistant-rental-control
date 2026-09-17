@@ -86,7 +86,7 @@ Assistant restart (FR-013).
 **Fields**: `target_key`, `identity_key: str | None`, `lockname: str | None`,
 `slot: int | None`, `suppress_pending: bool`, `phase: ReissuePhase`,
 `replaced_code_ref: str | None`, `replacement_code_ref: str | None`,
-`requested_at`, `invoker: str | None`.
+`requested_at`, `invoker: str | None`, `terminal_reason: str | None`.
 
 **State transitions**:
 
@@ -96,18 +96,27 @@ ACCEPTED ──cycle consumes suppression, new code allocated──► ISSUED
                                           (suppress_pending=False)
 ISSUED ──hold released by the guard──► (absent)
 ACCEPTED ──target gone from feed (FR-017)──► (absent)
+ACCEPTED ──allocation exhausted, rollback complete──► (absent)
+ACCEPTED ──bare ghost slot cleared or nothing to clear──► (absent)
 ACCEPTED/ISSUED ──Home Assistant restart──► (absent, hold persists)
 ```
 
 **Validation rules**:
 
 - `suppress_pending` is `True` for exactly one reconcile cycle. The cycle that
-  builds reservations with it clears it, whether or not allocation succeeded.
+  builds reservations with it clears it after a terminal outcome: successful
+  allocation, explicit rollback after exhaustion, or a clear-only ghost result.
   It is never re-armed without a new invocation (FR-013).
 - At most one `PendingReissue` per `target_key`. A repeat invocation while one
   exists returns the existing outcome and performs no second rotation (FR-009).
 - A `PendingReissue` never causes a slot to be created for a reservation that no
-  longer exists; it only suppresses retention (FR-017).
+  longer exists. Pending identities are excluded before persisted ghost
+  hydration, so a disappeared booking is dropped instead of reconstructed as a
+  codeless ghost allocation candidate (FR-017).
+- If the allocator cannot obtain a unique replacement after a hold was staged,
+  the same locked cycle restores the original owner and removes the hold before
+  the pending record is cleared. Exhaustion therefore leaves the existing
+  allocation and physical code in place (FR-008).
 
 ### ReissueSuppression
 
@@ -121,10 +130,11 @@ value is the default, so every existing construction site of
 
 **Validation rules**:
 
-- Consulted by `_resolve_observed_code` and
-  `checkin_protection.build_protected_reservation` only. A reservation is
-  suppressed when its `identity_key` is in `identity_keys` **or** its matched
-  physical slot number is in `slots`.
+- Consulted by `_resolve_observed_code`,
+  `checkin_protection.build_protected_reservation`, and
+  `code_allocation.build_adoption_requests` only. A reservation is suppressed
+  when its `identity_key` is in `identity_keys` **or** its matched physical slot
+  number is in `slots`.
 - Suppression changes which `(code, code_source)` pair is returned. It never
   changes matching, eligibility, dates, or names.
 - Every non-suppressed reservation in the same cycle keeps full `manual_observed`
@@ -146,8 +156,11 @@ One cycle's instruction to re-home one owner. Frozen, slotted.
 - Applies to at most one owner: the one owning the record the target identity
   currently owns, or the one whose `lockname` and `slot` match for a bare slot
   target. Never to a whole record and never to another owner of the same record.
-- A directive whose target owns nothing produces the outcome
-  `no_existing_allocation` and is otherwise a no-op; allocation still proceeds.
+- An identity-backed directive whose target owns nothing produces
+  `no_existing_allocation` and is otherwise a no-op; allocation still proceeds
+  for that reservation identity. A bare slot directive with no matching owner is
+  terminal and clears the pending record, because there is no reservation
+  identity for which a replacement could be allocated.
 
 ### Forced-release hold identity
 
@@ -214,7 +227,8 @@ Result of `async_preview_reissue`. Mutates nothing.
 `replaced_code_ref: str | None`.
 
 `replacement_code` is the single deliberate raw-code carve-out (FR-023) and may
-appear only in a dry-run service response.
+appear only in a dry-run service response for a target that would receive a
+replacement. It is `None` for a clear-only bare slot target.
 
 ### ReissueOutcome
 

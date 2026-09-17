@@ -410,6 +410,10 @@ keyed by `identity_key` or by `f"slot:{lockname}:{slot}"`. It is a plain
 attribute on a live object: **in memory only, never written to any store, and
 gone after a Home Assistant restart**, exactly as FR-013 requires and as the
 spec's edge case documents. The operator simply invokes the service again.
+A second in-memory dictionary keeps completed target fingerprints for the same
+runtime so an immediate automation retry after the hold has been released still
+returns the prior outcome instead of rotating again. This is not persisted
+suppression state and lapses on restart with the rest of the service state.
 
 It carries `suppress_pending: bool`, cleared by the first reconcile cycle that
 consumes it — that is the "next cycle only, this target only" guarantee — and a
@@ -422,12 +426,15 @@ is what makes FR-009 enforceable:
 - A repeat call while a forced-release hold still exists for that entry, lock,
   and slot is refused for the same reason, which covers the case where the
   in-memory record was lost to a restart but the registry hold was not.
-- Once the hold is released and the record cleared, the target is in a normal
-  steady state and a later invocation is a *new* operator decision, which the
-  spec explicitly permits and which is not "a repeat of the original call".
+- Once the hold is released and the record cleared, an identical invocation in
+  the same runtime is matched against the completed fingerprint and reported as
+  already completed. A later invocation after the target's observed code,
+  reservation window, or Home Assistant runtime has changed is a new operator
+  decision.
 
-There is no timer and no persisted marker; the lifecycle of the replaced code
-is the idempotency key.
+There is no timer and no persisted marker. While the hold exists it is the
+durable idempotency key; after release, the in-memory completed fingerprint
+covers immediate same-runtime retries.
 
 ### 4. Suppressing retention for one cycle
 
@@ -453,11 +460,16 @@ the named target:
    (`coordinator_helpers/checkin_protection.py:49`)**. This is the *second*
    `manual_observed` site in the tree — it synthesizes a protected reservation
    for a checked-in guest whose booking is missing from the feed, pinning
-   `slot_code` to the observed code. It only fires when the calendar match
-   failed, so it is reachable only by slot targeting, but leaving it unsuppressed
-   would silently defeat a forced re-issue against exactly the kind of stuck
-   target this feature exists for. The suppression is threaded to it through the
-   same value object.
+   `slot_code` to the observed code. Its caller,
+   `_synthesize_checkin_reservation`, currently chooses
+   `matched_physical.actual_code` before the helper runs, so the suppression is
+   checked at the caller as well: when the matched physical slot is suppressed,
+   the caller passes the freshly generated code into
+   `build_protected_reservation` instead of the observed code. It only fires
+   when the calendar match failed, so it is reachable only by slot targeting,
+   but leaving it unsuppressed would silently defeat a forced re-issue against
+   exactly the kind of stuck target this feature exists for. The suppression is
+   threaded to it through the same value object.
 3. **The adoption request** (`code_allocation.build_adoption_requests`). Without
    this, the allocator re-adopts the observed old code onto the target identity
    in the same cycle, `allocate_request` returns the existing record
@@ -495,15 +507,21 @@ resolve_cycle(request):
 `apply_forced_reissues` runs first so that adoption and allocation see a
 registry in which the target owns nothing. For each directive it:
 
-1. finds the record the target identity currently owns; if there is none, the
-   target simply has nothing to replace and the directive records
-   `no_existing_allocation` and continues to allocation;
-2. collapses any pre-existing observed alias owner for that same entry, lock,
-   and slot into the hold so one physical slot is represented by exactly one
-   owner;
-3. renames that single owner's `identity_key` to the hold identity, preserving
-   `entry_id`, `lockname`, `slot`, `origin`, `lock_observed`, and timestamps,
-   and updates `by_identity` accordingly;
+1. finds the record the target identity currently owns, or for a bare lock/slot
+   target the owner whose `entry_id`, `lockname`, and `slot` match the target;
+   if there is none, an identity-backed target records `no_existing_allocation`
+   and continues to allocation, while a bare slot target is terminal because
+   there is no reservation identity for a replacement allocation;
+2. determines the replaced physical code. If an observed-alias owner for the
+   same entry, lock, and slot exists on a different record, that observed code
+   is the replaced code: the observed-alias owner is collapsed into the hold and
+   the target identity is removed from its stale non-physical record. If both
+   owners are on the same record, they are collapsed there. In either case no
+   physical code is left unheld and the registry still enforces one code per
+   identity;
+3. renames that single retained owner's `identity_key` to the hold identity,
+   preserving `entry_id`, `lockname`, `slot`, `origin`, `lock_observed`, and
+   timestamps, and updates `by_identity` accordingly;
 4. records the replaced code's `code_ref` in the directive outcome.
 
 `release_forced_holds` walks this entry's hold owners, builds one
@@ -533,18 +551,28 @@ with the hold owner, so `AllocationRegistry.is_available` returns `False` for it
 (the record's single remaining owner is the hold identity, not the requesting
 identity). Verified against `registry.is_available`.
 
-Exhaustion returns `AllocationResult(code=None, reason="exhausted")` as it does
-today. The reservation then has no code, the existing hazard-1 guards hold the
-slot and emit no action, the old code is still physically on the lock, and the
-hold is retained by `code_still_programmed` — so FR-008's "leave the existing
-code in place" is the natural outcome, not a special case. The service reports
-the failure and, in dry-run, refuses up front.
+For an identity-backed target, exhaustion returns
+`AllocationResult(code=None, reason="exhausted")` as it does today, then the
+forced-reissue step rolls back the staged hold in the same locked cycle: the
+original owner is restored, the hold identity is removed, and the pending
+record is cleared with `terminal_reason="code_space_exhausted"`. FR-008's
+"leave the existing code in place" therefore holds in both the physical lock
+and the registry. The service reports the failure and, in dry-run, refuses up
+front.
+
+For a bare lock/slot target with no reservation identity, no allocation request
+is built and no replacement code is possible. The operation is clear-only: the
+targeted slot is allowed to clear through the ordinary plan, and any registry
+owner for that lock and slot is held and released under the same guard. A bare
+slot with no matching registry owner records `no_existing_allocation` as a
+terminal outcome and clears the pending state.
 
 ### 7. Dry run (FR-007, FR-023)
 
 `DoorCodeAllocator.async_preview_reissue(request) -> ReissuePreview` takes the
 lock, performs **no** mutation and **no** `_store.async_save`, and answers "what
-would be issued". To avoid two divergent selection implementations, the
+would be issued" for identity-backed targets or "what would be cleared" for a
+bare ghost slot. To avoid two divergent selection implementations, the
 candidate-selection body of `issuance.allocate_request` is extracted into a pure
 `select_code(registry, preferred_code, code_length, identity_key, *, exclude)`
 helper that both the real path and the preview call. `exclude` carries the
@@ -553,7 +581,12 @@ building one.
 
 The preferred code handed to the preview comes from the same reservation builder
 the real cycle uses, run against the coordinator's cached calendar with
-suppression applied. The service never calls a generator itself (FR-011).
+suppression applied. The preview runs that preparation against isolated copies
+of the slot mappings and diagnostics, and it carries the same observation,
+adoption-complete, pending-recovery, and unaccounted-slot guards that can block
+the real cycle. If one of those guards would prevent issuance, the preview
+reports that guard instead of returning a speculative code. The service never
+calls a generator itself (FR-011).
 
 The preview response is the **only** place a raw code appears (FR-023): it
 returns `replacement_code` alongside `replacement_code_ref`. Every other
@@ -602,7 +635,7 @@ while the state is explained by a hold.
 | FR-005 | Managed range check against `start_slot` / `max_events` |
 | FR-006 | Check-in guard via `CHECKIN_SENSOR` state; `force` opt-in |
 | FR-007 | `async_preview_reissue`, no mutation, no store save |
-| FR-008 | `select_code` exhaustion → refuse; hold retains the old code |
+| FR-008 | `select_code` exhaustion → refuse; rollback restores old owner |
 | FR-009 | `PendingReissue` lifecycle + existing hold check; decision 3 |
 | FR-010 | Refuse at invocation on `SlotStatus.UNKNOWN`; defer under guard after |
 | FR-011 | Replacement comes only from `issuance`; service calls no generator |
@@ -611,7 +644,7 @@ while the state is explained by a hold.
 | FR-014 | `registry.allocate` records the new owner before any lock write |
 | FR-015 | Existing `OVERWRITE_MANUAL_CHANGE` path; no code change needed |
 | FR-016 | Lockless hold releases immediately; `get_slot_code` publishes at once |
-| FR-017 | A vanished reservation is never built, so no directive and no plan |
+| FR-017 | Pending targets are excluded before ghost hydration |
 | FR-018 | `registry.release` returns the code to the pool; no retire flag |
 | FR-019 | [The FR-019 guard exemption](#the-fr-019-guard-exemption) |
 | FR-020 | Hold owner keeps the record alive; `is_available` stays `False` |
@@ -698,9 +731,10 @@ Unit:
   `is_forced_release_hold`, and can never collide with a reservation fingerprint
   or with an `observed_alias_key`.
 - Directive application: identity freed, owner re-homed with `lockname`, `slot`,
-  and `lock_observed` preserved; observed alias for the same slot collapsed; a
-  target with no existing allocation yields `no_existing_allocation` and still
-  allocates.
+  and `lock_observed` preserved; observed alias for the same slot collapsed even
+  when it lives on a different record; an identity target with no existing
+  allocation yields `no_existing_allocation` and still allocates; a bare slot
+  target with no owner is terminal and does not allocate.
 - Suppression: `_resolve_observed_code` returns the generated code for the
   suppressed target and `manual_observed` for every other reservation in the
   same cycle; the suppression is gone on the next cycle; a restart drops it.
@@ -747,7 +781,7 @@ assertion.
 | An entry is removed while it holds a forced-release hold | `async_mark_entry_removed` and `async_clear_orphans` deliberately keep the **full** guard, so such a hold is retained rather than released. It surfaces as an orphan with a reason, and the operator clears it once the code is provably gone. This is the safe direction |
 | The identity-mismatch notification fires every cycle during the intermediate state | Suppressed only while a hold explains that exact entry, lock, and slot; the detection itself is unchanged |
 | Slot targeting picks the wrong config entry on a shared parent lock | Ranges are disjoint by construction; the resolver refuses on ambiguity instead of guessing (FR-005) |
-| A second invocation chains a second rotation | The `PendingReissue` lifecycle plus the registry hold check make a repeat a no-op until the replaced code is fully disposed of (FR-009, SC-007) |
+| A second invocation chains a second rotation | The `PendingReissue` lifecycle, registry hold check, and same-runtime completed fingerprint make a repeat a no-op (FR-009, SC-007) |
 | Suppressing an adoption silently disables issuance for the whole entry | `_adoption_complete` excludes suppressed slots; a dedicated unit test locks that in |
 
 ## Phase 0 Research Output
