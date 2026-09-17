@@ -14,15 +14,17 @@ from typing import Any
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.core import HomeAssistant
 
-from ..const import CONF_LOCK_ENTRY
 from ..const import DOMAIN
 from ..const import NAME
+from . import issuance
 from .models import AdoptionRequest
 from .models import AllocationOrigin
 from .models import AllocationOwner
 from .models import AllocationRecord
+from .models import AllocationRequest
 from .models import AllocationResult
 from .models import CycleObservation
+from .models import CycleRequest
 from .models import CycleResult
 from .models import OrphanCleanupReport
 from .models import ReleaseReport
@@ -85,6 +87,14 @@ class DoorCodeAllocator:
         """Return a masked diagnostic reference for a plain code."""
         return code_ref_for(code, self._registry.code_ref_salt)
 
+    def has_active_allocations(self, entry_id: str) -> bool:
+        """Return whether an entry currently owns registry allocations."""
+        return any(
+            owner.entry_id == entry_id
+            for record in self._registry.records.values()
+            for owner in record.owners
+        )
+
     @property
     def diagnostics(self) -> dict[str, Any]:
         """Return allocator diagnostics without exposing any door codes."""
@@ -99,15 +109,12 @@ class DoorCodeAllocator:
             "registry_lost": self._registry_lost,
         }
 
-    async def async_resolve_cycle(self, request: object) -> CycleResult:
-        """Resolve a refresh cycle in a later implementation phase."""
-        del request
-        return CycleResult(
-            adopted={},
-            allocated={},
-            released=ReleaseReport(),
-            unaccounted_slots=frozenset(),
-        )
+    async def async_resolve_cycle(self, request: CycleRequest) -> CycleResult:
+        """Resolve one refresh cycle atomically under the allocator lock."""
+        if not isinstance(request, CycleRequest):
+            msg = "async_resolve_cycle requires a CycleRequest"
+            raise TypeError(msg)
+        return await issuance.resolve_cycle(self, request)
 
     async def async_adopt(self, request: object) -> AllocationResult:
         """Adopt an observed lock code into the shared registry."""
@@ -180,7 +187,7 @@ class DoorCodeAllocator:
         now: str,
     ) -> None:
         """Record observed-code ownership without moving the primary identity."""
-        alias_key = _observed_alias_key(request)
+        alias_key = issuance.observed_alias_key(request)
         self._release_moved_observed_alias(request)
         owner = AllocationOwner(
             entry_id=request.entry_id,
@@ -214,7 +221,7 @@ class DoorCodeAllocator:
 
     def _release_moved_observed_alias(self, request: AdoptionRequest) -> None:
         """Remove this slot's observed alias when it points at another code."""
-        alias_key = _observed_alias_key(request)
+        alias_key = issuance.observed_alias_key(request)
         owned_code = self._registry.code_for_identity(alias_key)
         if owned_code is not None and owned_code != request.code:
             self._registry.release(alias_key)
@@ -270,7 +277,7 @@ class DoorCodeAllocator:
         historical_key: str,
     ) -> None:
         """Remove a historical identity's observed alias for this physical slot."""
-        alias_key = _observed_alias_key(request, identity_key=historical_key)
+        alias_key = issuance.observed_alias_key(request, identity_key=historical_key)
         if self._registry.code_for_identity(alias_key) is not None:
             self._registry.release(alias_key)
 
@@ -323,11 +330,20 @@ class DoorCodeAllocator:
         return False
 
     async def async_allocate(self, request: object) -> AllocationResult:
-        """Allocate new codes in a later implementation phase."""
-        del request
+        """Allocate a unique code for one reservation identity."""
+        if not isinstance(request, AllocationRequest):
+            msg = "async_allocate requires an AllocationRequest"
+            raise TypeError(msg)
         async with self._lock:
             self._warn_if_gate_expired()
-        return AllocationResult(code=None, reason="adoption_pending")
+            result = self._allocate_unlocked(request)
+            if result.code is not None:
+                self._store.async_save(self._registry)
+            return result
+
+    def _allocate_unlocked(self, request: AllocationRequest) -> AllocationResult:
+        """Allocate a code while the allocator lock is already held."""
+        return issuance.allocate_request(self, request)
 
     def _warn_if_gate_expired(self) -> None:
         """Warn once when the adoption gate remains closed past its deadline."""
@@ -373,26 +389,3 @@ class DoorCodeAllocator:
         """Clear orphaned allocations in a later implementation phase."""
         del known_entry_ids, observations
         return OrphanCleanupReport(dry_run=dry_run)
-
-
-def _entry_has_lock(entry: object) -> bool:
-    """Return whether a config entry can run lock-code adoption."""
-    data = getattr(entry, "data", None)
-    if not isinstance(data, dict):
-        return False
-    lock_entry = data.get(CONF_LOCK_ENTRY)
-    return (
-        isinstance(lock_entry, str)
-        and bool(lock_entry.strip())
-        and lock_entry.strip() != "(none)"
-    )
-
-
-def _observed_alias_key(
-    request: AdoptionRequest,
-    *,
-    identity_key: str | None = None,
-) -> str:
-    """Return the stable observed-code alias for one physical slot."""
-    owner_key = request.identity_key if identity_key is None else identity_key
-    return f"{owner_key}:observed:{request.entry_id}:{request.lockname}:{request.slot}"
