@@ -636,11 +636,7 @@ deferral direction is conservative.
       sensor lag until the lock write is confirmed (FR-026), and the documented
       restart behaviour that an unconsumed re-issue lapses and is simply invoked
       again (FR-013)
-- [ ] T048 [P] Add the CHANGELOG entry for the force re-issue service
-      referencing #735, creating `CHANGELOG.md` with its SPDX header pair in the
-      Keep a Changelog format if the repository still has no such file at
-      implementation time
-- [ ] T049 Run the full gate — `uv run pytest tests/ -q -p no:randomly`,
+- [ ] T048 Run the full gate — `uv run pytest tests/ -q -p no:randomly`,
       `uv run ruff check custom_components/ tests/`, and
       `uv run pre-commit run --all-files` — and confirm the 95% coverage floor,
       SPDX headers on every new file, no raw code in any log line or response
@@ -691,7 +687,7 @@ Phase 1 Setup
 - T028, T036 → T038 (all three audit lines exist once both response paths do)
 - T012 → T039 (deferrals can only be reported once holds are evaluated)
 - Phases 2-7 → T042, T043, T044, T045, T046
-- Everything → T049
+- Everything → T048
 
 ### Atomic-commit groups
 
@@ -717,7 +713,9 @@ in parallel once T029 is done.
 **Phase 8** — T043, T044, T045, and T046 are four different integration test
 files and run in parallel once T042's fixtures exist.
 
-**Phase 9** — T047 (`README.md`) and T048 (`CHANGELOG.md`) are different files.
+**Phase 9** — T047 (`README.md`) touches no file any other task touches, so it
+runs in parallel with the Phase 8 integration test tasks. T048 is the final gate
+and runs alone, after everything else.
 
 **Not parallel, despite looking it**: T003 and T010 both edit
 `allocator/models.py`; T004, T011, T012, and T014 all edit
@@ -743,19 +741,23 @@ T009 and T013 both edit `allocator/issuance.py`; T020 and T021 both edit
    reconstructable from logs (SC-008) and every stuck hold visible (FR-021).
 5. **Scope discipline throughout.** No bulk or "fix all collisions" mode, no
    code retirement or blacklisting, no automatic healing, no new sensor
-   attribute, no new operator configuration option, and no persisted
-   suppression. Pre-existing oversized modules unrelated to this feature —
+   attribute, no new operator configuration option, no persisted suppression,
+   and **no hand-maintained changelog file** — this repository generates its
+   release notes automatically from merged pull requests through
+   release-drafter (`.github/release-drafter.yml`), has never carried a
+   `CHANGELOG.md`, and must not gain one as a side effect of a feature PR.
+   Pre-existing oversized modules unrelated to this feature —
    `coordinator_refresh_shell.py`, `reconciliation/desired.py`,
    `async_setup_entry`, `_ghost_from_mapping` — are known tech debt and stay out
    of this PR. An adjacent defect gets an issue, not a wider PR.
 
 ## Task summary
 
-- **Total tasks**: 49
+- **Total tasks**: 48
 - **Setup**: 2 · **Guard exemption**: 6 · **Cycle mechanics**: 7 ·
   **Suppression**: 9 · **Service surface**: 9 · **Dry run**: 4 ·
-  **Observability**: 4 · **End-to-end**: 5 · **Polish**: 3
-- **Parallelizable**: 13 tasks marked `[P]`
+  **Observability**: 4 · **End-to-end**: 5 · **Polish**: 2
+- **Parallelizable**: 12 tasks marked `[P]`
 - **Atomic-commit groups**: 3 (group A: 6 tasks, group B: 6 tasks,
   group C: 7 tasks)
 - **Requirements coverage**: FR-001 to FR-026 each map to at least one task;
