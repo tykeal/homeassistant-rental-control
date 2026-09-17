@@ -48,6 +48,7 @@ from .coordinator_helpers.models import (
 from .coordinator_helpers.models import normalize_event_override_update
 from .reconciliation import DesiredPlan as _DesiredPlan
 from .reconciliation import ManagedSlot as _ManagedSlot
+from .reconciliation import Reservation as _Reservation
 from .reconciliation import compute_desired_plan as compute_desired_plan  # noqa: F401
 
 _LOGGER = logging.getLogger(__name__)
@@ -189,9 +190,35 @@ class RentalControlCoordinator(
         return self._latest_plan.selected.get(identity_key)
 
     def get_slot_code(self, identity_key: str) -> str | None:
-        """Return slot_code for identity_key from latest reconciliation, or None."""
+        """Return the code safe for the sensor to publish for identity_key."""
         res = self._latest_res_by_key.get(identity_key)
-        return res.slot_code if res is not None else None
+        if res is None:
+            return None
+        if self.event_overrides is None:
+            return res.slot_code
+        observed_code = self._observed_slot_codes.get(identity_key)
+        if observed_code == res.slot_code:
+            return res.slot_code
+        return observed_code
+
+    def _record_observed_slot_codes(
+        self,
+        plan: _DesiredPlan,
+        res_by_key: dict[str, _Reservation],
+        observed_slots: list[_ManagedSlot],
+    ) -> None:
+        """Record physically observed selected-slot codes for sensor display."""
+        selected_keys = set(plan.selected)
+        for identity_key in list(self._observed_slot_codes):
+            if identity_key not in selected_keys:
+                self._observed_slot_codes.pop(identity_key, None)
+        observed_by_slot = {slot.slot: slot for slot in observed_slots}
+        for identity_key, slot_number in plan.selected.items():
+            if identity_key not in res_by_key:
+                continue
+            observed = observed_by_slot.get(slot_number)
+            if observed is not None and observed.actual_code is not None:
+                self._observed_slot_codes[identity_key] = observed.actual_code
 
     def get_overflow_reason(self, identity_key: str) -> str | None:
         """Return overflow reason for identity_key in latest plan, or None."""
