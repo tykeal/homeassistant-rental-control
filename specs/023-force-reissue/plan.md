@@ -808,7 +808,7 @@ assertion.
 ## Phase 0 Research Output
 
 See [research.md](research.md). All planning questions are resolved; no
-`[NEEDS CLARIFICATION]` markers remain.
+clarification markers remain.
 
 ## Phase 1 Design Output
 
