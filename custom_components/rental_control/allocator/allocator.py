@@ -17,9 +17,11 @@ from homeassistant.core import HomeAssistant
 from ..const import CONF_LOCK_ENTRY
 from ..const import DOMAIN
 from ..const import NAME
+from . import adoption
+from . import diagnostics
 from . import issuance
+from . import services
 from .models import AdoptionRequest
-from .models import AllocationOrigin
 from .models import AllocationOwner
 from .models import AllocationRecord
 from .models import AllocationRequest
@@ -28,6 +30,7 @@ from .models import CycleObservation
 from .models import CycleRequest
 from .models import CycleResult
 from .models import OrphanCleanupReport
+from .models import OrphanOutcome
 from .models import ReleaseReport
 from .registry import AllocationRegistry
 from .store import RegistryStore
@@ -118,17 +121,7 @@ class DoorCodeAllocator:
     @property
     def diagnostics(self) -> dict[str, Any]:
         """Return allocator diagnostics without exposing any door codes."""
-        return {
-            "record_count": len(self._registry.records),
-            "owner_count": sum(
-                len(record.owners) for record in self._registry.records.values()
-            ),
-            "conflict_count": len(self._registry.conflicts()),
-            "pending_adoption": sorted(self._pending_adoption),
-            "gate_deadline": self._gate_deadline,
-            "registry_lost": self._registry_lost,
-            "registry_missing": self._registry_missing,
-        }
+        return diagnostics.allocator_diagnostics(self)
 
     async def async_resolve_cycle(self, request: CycleRequest) -> CycleResult:
         """Resolve one refresh cycle atomically under the allocator lock."""
@@ -150,205 +143,39 @@ class DoorCodeAllocator:
 
     def _adopt_unlocked(self, request: AdoptionRequest) -> AllocationResult:
         """Adopt an observed code while the allocator lock is already held."""
-        now = datetime.now(UTC).isoformat()
-        self._coalesce_fingerprint_owner(request)
-        existing = self._registry.record_for_identity(request.identity_key)
-        if existing is not None and existing.code != request.code:
-            observed_ref = self.code_ref(request.code)
-            _LOGGER.warning(
-                "Identity %s already owns code_ref %s; observed code_ref %s "
-                "will be retained on the lock and not rotated",
-                request.identity_key,
-                existing.code_ref,
-                observed_ref,
-            )
-            self._record_mismatched_observed_owner(request, observed_ref, now)
-            self._report_identity_mismatch(request, existing, observed_ref)
-            return AllocationResult(
-                code=request.code,
-                origin=AllocationOrigin.ADOPTED,
-                reason="identity_code_mismatch",
-            )
-
-        self._release_moved_observed_alias(request)
-        owner = AllocationOwner(
-            entry_id=request.entry_id,
-            identity_key=request.identity_key,
-            origin=AllocationOrigin.ADOPTED,
-            lockname=request.lockname,
-            slot=request.slot,
-            lock_observed=True,
-            first_seen=now,
-            last_seen=now,
-        )
-        before = self._registry.records.get(request.code)
-        before_identities = (
-            {owner.identity_key for owner in before.owners}
-            if before is not None
-            else set()
-        )
-        record = self._registry.add_owner(
-            request.code,
-            request.code_length,
-            owner,
-            self.code_ref(request.code),
-            now,
-        )
-        if (
-            before is not None
-            and request.identity_key not in before_identities
-            and len(record.owners) > 1
-        ):
-            self._report_adoption_conflict(record)
-        return AllocationResult(code=request.code, origin=AllocationOrigin.ADOPTED)
-
-    def _record_mismatched_observed_owner(
-        self,
-        request: AdoptionRequest,
-        observed_ref: str,
-        now: str,
-    ) -> None:
-        """Record observed-code ownership without moving the primary identity."""
-        alias_key = issuance.observed_alias_key(request)
-        self._release_moved_observed_alias(request)
-        owner = AllocationOwner(
-            entry_id=request.entry_id,
-            identity_key=alias_key,
-            origin=AllocationOrigin.ADOPTED,
-            lockname=request.lockname,
-            slot=request.slot,
-            lock_observed=True,
-            first_seen=now,
-            last_seen=now,
-        )
-        before = self._registry.records.get(request.code)
-        before_identities = (
-            {owner.identity_key for owner in before.owners}
-            if before is not None
-            else set()
-        )
-        record = self._registry.add_owner(
-            request.code,
-            request.code_length,
-            owner,
-            observed_ref,
-            now,
-        )
-        if (
-            before is not None
-            and alias_key not in before_identities
-            and len(record.owners) > 1
-        ):
-            self._report_adoption_conflict(record)
-
-    def _release_moved_observed_alias(self, request: AdoptionRequest) -> None:
-        """Remove this slot's observed alias when it points at another code."""
-        alias_key = issuance.observed_alias_key(request)
-        owned_code = self._registry.code_for_identity(alias_key)
-        if owned_code is not None and owned_code != request.code:
-            self._registry.release(alias_key)
-
-    def _coalesce_fingerprint_owner(self, request: AdoptionRequest) -> None:
-        """Re-key a historical owner before adoption conflict detection."""
-        historical_keys = set(request.fingerprint_history)
-        if not historical_keys:
-            return
-        if request.identity_key in self._registry.by_identity:
-            return
-        for historical_key in historical_keys:
-            code = self._registry.by_identity.get(historical_key)
-            if code is None:
-                continue
-            record = self._registry.records.get(code)
-            if record is None:
-                self._registry.by_identity.pop(historical_key, None)
-                continue
-            self._release_historical_observed_alias(request, historical_key)
-            self._rekey_historical_owner(
-                record,
-                historical_key,
-                request.identity_key,
-                request.code,
-            )
-            return
-
-    def _rekey_historical_owner(
-        self,
-        record: AllocationRecord,
-        historical_key: str,
-        identity_key: str,
-        new_code: str,
-    ) -> None:
-        """Move or remove one historical owner while preserving other owners."""
-        for owner in list(record.owners):
-            if owner.identity_key != historical_key:
-                continue
-            self._registry.by_identity.pop(historical_key, None)
-            if record.code == new_code:
-                owner.identity_key = identity_key
-                self._registry.by_identity[identity_key] = record.code
-                return
-            record.owners.remove(owner)
-            if not record.owners:
-                self._registry.records.pop(record.code, None)
-            return
-
-    def _release_historical_observed_alias(
-        self,
-        request: AdoptionRequest,
-        historical_key: str,
-    ) -> None:
-        """Remove a historical identity's observed alias for this physical slot."""
-        alias_key = issuance.observed_alias_key(request, identity_key=historical_key)
-        if self._registry.code_for_identity(alias_key) is not None:
-            self._registry.release(alias_key)
-
-    def _report_adoption_conflict(self, record: AllocationRecord) -> None:
-        """Log and notify that an observed code has multiple owners."""
-        owners = ", ".join(
-            f"{owner.entry_id}:{owner.identity_key}@{owner.lockname}:{owner.slot}"
-            for owner in record.owners
-        )
-        message = (
-            f"Shared code registry adoption conflict for code_ref "
-            f"{record.code_ref}: {owners}. No code was rotated."
-        )
-        _LOGGER.warning(message)
-        async_create(
-            self.hass,
-            message,
-            title=f"{NAME} code registry conflict",
-            notification_id=_CONFLICT_NOTIFICATION_ID,
-        )
-
-    def _report_identity_mismatch(
-        self,
-        request: AdoptionRequest,
-        existing: AllocationRecord,
-        observed_ref: str,
-    ) -> None:
-        """Log and notify that one identity has conflicting observed code refs."""
-        mismatch = (request.entry_id, request.identity_key, observed_ref)
-        if mismatch in self._reported_identity_mismatches:
-            return
-        self._reported_identity_mismatches.add(mismatch)
-        message = (
-            f"Shared code registry identity mismatch for {request.entry_id}:"
-            f"{request.identity_key}: registry code_ref {existing.code_ref}, "
-            f"observed code_ref {observed_ref}. The observed lock code was "
-            "retained and no code was rotated."
-        )
-        _LOGGER.warning(message)
-        async_create(
-            self.hass,
-            message,
-            title=f"{NAME} code registry identity mismatch",
-            notification_id=f"{_CONFLICT_NOTIFICATION_ID}_identity",
-        )
+        return adoption.adopt_unlocked(self, request)
 
     async def async_rekey(self, old_key: str, new_key: str) -> bool:
-        """Re-key allocations in a later implementation phase."""
-        del old_key, new_key
+        """Move an existing allocation identity to a new stable key."""
+        async with self._lock:
+            changed = self._rekey_unlocked(old_key, new_key)
+            if changed:
+                self._store.async_save(self._registry)
+            return changed
+
+    def _rekey_unlocked(self, old_key: str, new_key: str) -> bool:
+        """Move an allocation identity while the lock is already held."""
+        if not old_key or not new_key or old_key == new_key:
+            return False
+        if new_key in self._registry.by_identity:
+            return False
+        record = self._registry.record_for_identity(old_key)
+        if record is None:
+            return False
+        for owner in record.owners:
+            if owner.identity_key != old_key:
+                continue
+            owner.identity_key = new_key
+            record.updated_at = datetime.now(UTC).isoformat()
+            self._registry.by_identity.pop(old_key, None)
+            self._registry.by_identity[new_key] = record.code
+            _LOGGER.info(
+                "Re-keyed shared allocation code_ref %s from %s to %s",
+                record.code_ref,
+                old_key,
+                new_key,
+            )
+            return True
         return False
 
     async def async_allocate(self, request: object) -> AllocationResult:
@@ -397,14 +224,65 @@ class DoorCodeAllocator:
     async def async_sweep(
         self, observation: CycleObservation, active_keys: set[str]
     ) -> ReleaseReport:
-        """Sweep releasable allocations in a later implementation phase."""
-        del observation, active_keys
-        return ReleaseReport()
+        """Release inactive allocations proven absent from the observed lock."""
+        async with self._lock:
+            report = self._sweep_unlocked(observation, active_keys)
+            if report.released:
+                self._store.async_save(self._registry)
+            return report
+
+    def _sweep_unlocked(
+        self, observation: CycleObservation, active_keys: set[str]
+    ) -> ReleaseReport:
+        """Sweep inactive owners while the allocator lock is already held."""
+        released = []
+        retained = []
+        observations = [observation]
+        for record in list(self._registry.records.values()):
+            for owner in list(record.owners):
+                if owner.entry_id != observation.entry_id:
+                    continue
+                if owner.identity_key in active_keys:
+                    self._refresh_owner_observed(record, owner, observations)
+                    continue
+                reason = self._release_guard_reason(record, [owner], observations)
+                outcome = self._outcome(record, owner, reason)
+                if reason is None:
+                    self._registry.release(owner.identity_key)
+                    released.append(outcome)
+                    _LOGGER.info(
+                        "Released shared allocation code_ref %s for %s:%s",
+                        record.code_ref,
+                        owner.entry_id,
+                        owner.identity_key,
+                    )
+                else:
+                    retained.append(outcome)
+        return ReleaseReport(released=released, retained=retained)
 
     async def async_mark_entry_removed(self, entry_id: str) -> ReleaseReport:
-        """Handle entry removal in a later implementation phase."""
-        await self.async_unregister_entry(entry_id)
-        return ReleaseReport()
+        """Release lockless removed owners and retain unverifiable lock owners."""
+        async with self._lock:
+            self._pending_adoption.discard(entry_id)
+            if not self._pending_adoption:
+                self._gate_deadline = 0.0
+                self._gate_warning_sent = False
+            released = []
+            retained = []
+            for record in list(self._registry.records.values()):
+                for owner in list(record.owners):
+                    if owner.entry_id != entry_id:
+                        continue
+                    reason = self._release_guard_reason(record, [owner], [])
+                    outcome = self._outcome(record, owner, reason)
+                    if reason is None:
+                        self._registry.release(owner.identity_key)
+                        released.append(outcome)
+                    else:
+                        retained.append(outcome)
+            if released or retained:
+                self._store.async_save(self._registry)
+            return ReleaseReport(released=released, retained=retained)
 
     async def async_clear_orphans(
         self,
@@ -412,6 +290,98 @@ class DoorCodeAllocator:
         observations: list[CycleObservation],
         dry_run: bool = False,
     ) -> OrphanCleanupReport:
-        """Clear orphaned allocations in a later implementation phase."""
-        del known_entry_ids, observations
-        return OrphanCleanupReport(dry_run=dry_run)
+        """Clear orphaned allocations that the shared guard proves safe."""
+        async with self._lock:
+            cleared = []
+            retained = []
+            for record in list(self._registry.records.values()):
+                orphan_owners = [
+                    owner
+                    for owner in list(record.owners)
+                    if owner.entry_id not in known_entry_ids
+                ]
+                for owner in orphan_owners:
+                    reason = self._release_guard_reason(record, [owner], observations)
+                    outcome = self._outcome(record, owner, reason)
+                    if reason is None:
+                        cleared.append(outcome)
+                        if not dry_run:
+                            self._registry.release(owner.identity_key)
+                    else:
+                        retained.append(outcome)
+            if cleared and not dry_run:
+                self._store.async_save(self._registry)
+            report = OrphanCleanupReport(
+                dry_run=dry_run,
+                cleared=cleared,
+                retained=retained,
+            )
+            services.report_orphan_cleanup(self.hass, report)
+            return report
+
+    def _release_guard_reason(
+        self,
+        record: AllocationRecord,
+        owners: list[AllocationOwner],
+        observations: list[CycleObservation],
+    ) -> str | None:
+        """Return why owners must be retained, or None when safe to release."""
+        if len(record.owners) > 1:
+            return "adoption_conflict"
+        for owner in owners:
+            if owner.lockname is not None and not any(
+                observation.lockname == owner.lockname for observation in observations
+            ):
+                return "unverifiable_lock"
+            if self._owner_still_programmed(record, owner, observations):
+                return "code_still_programmed"
+        return None
+
+    def _owner_still_programmed(
+        self,
+        record: AllocationRecord,
+        owner: AllocationOwner,
+        observations: list[CycleObservation],
+    ) -> bool:
+        """Refresh and return whether an owner may still be programmed."""
+        if owner.lockname is None:
+            owner.lock_observed = False
+            return False
+        covered = False
+        for observation in observations:
+            if observation.lockname != owner.lockname:
+                continue
+            covered = True
+            programmed = (
+                record.code in observation.observed_codes
+                or owner.slot in observation.unreadable_slots
+            )
+            if programmed:
+                owner.lock_observed = True
+                return True
+        if covered:
+            owner.lock_observed = False
+        return owner.lock_observed
+
+    def _refresh_owner_observed(
+        self,
+        record: AllocationRecord,
+        owner: AllocationOwner,
+        observations: list[CycleObservation],
+    ) -> None:
+        """Refresh observed state without making a release decision."""
+        self._owner_still_programmed(record, owner, observations)
+
+    @staticmethod
+    def _outcome(
+        record: AllocationRecord,
+        owner: AllocationOwner,
+        reason: str | None,
+    ) -> OrphanOutcome:
+        """Build a release or cleanup report row."""
+        return OrphanOutcome(
+            code_ref=record.code_ref,
+            entry_id=owner.entry_id,
+            identity_key=owner.identity_key,
+            reason=reason,
+        )

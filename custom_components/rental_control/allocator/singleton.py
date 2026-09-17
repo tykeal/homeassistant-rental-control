@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from ..const import ALLOCATOR
 from ..const import DOMAIN
 from .allocator import DoorCodeAllocator
+from .services import register_allocator_services
 
 _CREATE_LOCK = asyncio.Lock()
 
@@ -29,12 +30,15 @@ async def async_get_or_create_allocator(hass: HomeAssistant) -> DoorCodeAllocato
     hass.data.setdefault(DOMAIN, {})
     existing = get_allocator(hass)
     if existing is not None:
+        register_allocator_services(hass)
         return existing
     async with _CREATE_LOCK:
         existing = get_allocator(hass)
         if existing is not None:
+            register_allocator_services(hass)
             return existing
         allocator = DoorCodeAllocator(hass)
         await allocator.async_load()
         hass.data[DOMAIN][ALLOCATOR] = allocator
+        register_allocator_services(hass)
         return allocator

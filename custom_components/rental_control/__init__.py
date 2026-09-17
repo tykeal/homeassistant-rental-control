@@ -206,6 +206,21 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     return unload_ok
 
 
+async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+    """Handle permanent removal of a Rental Control entry."""
+    allocator = await async_get_or_create_allocator(hass)
+    report = await allocator.async_mark_entry_removed(config_entry.entry_id)
+    if report.retained:
+        _LOGGER.warning(
+            "Retained orphaned shared code allocations for removed entry %s: %s",
+            config_entry.entry_id,
+            [
+                {"code_ref": outcome.code_ref, "reason": outcome.reason}
+                for outcome in report.retained
+            ],
+        )
+
+
 async def _async_cleanup_entry_setup_failure(
     hass: HomeAssistant, config_entry: ConfigEntry
 ) -> None:
