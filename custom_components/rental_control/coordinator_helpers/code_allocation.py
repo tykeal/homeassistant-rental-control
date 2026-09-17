@@ -69,6 +69,7 @@ async def async_resolve_codes(
             rekeys=[],
             allocations=allocations,
             active_keys={reservation.identity_key for reservation in reservations},
+            adoption_complete=adoption_complete,
         )
     )
     for identity_key, adoption_result in result.adopted.items():
@@ -104,10 +105,7 @@ async def async_resolve_codes(
     for reservation in reservations:
         if reservation.identity_key in result.adopted or (
             reservation.identity_key in result.allocated
-            and (
-                result.allocated[reservation.identity_key].code is not None
-                or (reservation.published_once and reservation.slot_code is not None)
-            )
+            and result.allocated[reservation.identity_key].code is not None
         ):
             continue
         reservation.slot_code = None

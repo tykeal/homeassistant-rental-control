@@ -141,7 +141,8 @@ class DoorCodeAllocator:
             raise TypeError(msg)
         async with self._lock:
             result = self._adopt_unlocked(request)
-            self._store.async_save(self._registry)
+            if not self._registry_lost:
+                self._store.async_save(self._registry)
             return result
 
     def _adopt_unlocked(self, request: AdoptionRequest) -> AllocationResult:
@@ -355,7 +356,7 @@ class DoorCodeAllocator:
         async with self._lock:
             self._warn_if_gate_expired()
             result = self._allocate_unlocked(request)
-            if result.code is not None:
+            if result.code is not None and not self._registry_lost:
                 self._store.async_save(self._registry)
             return result
 

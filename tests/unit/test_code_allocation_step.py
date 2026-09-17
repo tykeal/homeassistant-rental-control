@@ -208,10 +208,10 @@ async def test_missing_allocator_holds_reservations_codeless(
     assert reservation.code_source == "unallocated"
 
 
-async def test_published_decline_preserves_existing_code(
+async def test_published_decline_clears_unproven_code(
     monkeypatch: Any,
 ) -> None:
-    """A fail-closed decline must not clear a published reservation code."""
+    """A fail-closed decline clears regenerated, unproven code."""
     allocator = FakeAllocator(decline_reason="recovery_fail_closed")
     monkeypatch.setattr(
         code_allocation,
@@ -230,8 +230,8 @@ async def test_published_decline_preserves_existing_code(
         [reservation],
     )
 
-    assert reservation.slot_code == "1111"
-    assert reservation.code_source == "generated"
+    assert reservation.slot_code is None
+    assert reservation.code_source == "unallocated"
 
 
 async def test_unmatched_coded_slot_keeps_adoption_gate_pending(

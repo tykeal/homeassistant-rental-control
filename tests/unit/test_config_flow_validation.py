@@ -27,6 +27,9 @@ from custom_components.rental_control.config_flow_helpers.validation import (
     normalize_lock_entry,
 )
 from custom_components.rental_control.config_flow_helpers.validation import (
+    validate_code_length_change,
+)
+from custom_components.rental_control.config_flow_helpers.validation import (
     validate_name_length,
 )
 from custom_components.rental_control.config_flow_helpers.validation import (
@@ -276,6 +279,51 @@ async def test_options_reject_code_length_with_allocations(
         result = await validate_submitted_data(flow, user_input)
 
     assert result.errors[CONF_CODE_LENGTH] == "active_allocations"
+
+
+def test_bad_code_length_error_is_not_overwritten(
+    hass: "HomeAssistant",
+) -> None:
+    """Test invalid code length remains the primary validation error."""
+    flow = _OptionsFlow(hass)
+    flow.config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH},
+        entry_id="entry-a",
+    )
+    allocator = DoorCodeAllocator(hass)
+    allocator._registry_lost = True
+    hass.data.setdefault(DOMAIN, {})[ALLOCATOR] = allocator
+    user_input = _valid_input()
+    user_input[CONF_CODE_LENGTH] = DEFAULT_CODE_LENGTH + 1
+    errors: dict[str, str] = {}
+
+    validate_scalar_fields(user_input, errors)
+    validate_code_length_change(flow, user_input, errors)
+
+    assert errors[CONF_CODE_LENGTH] == "bad_code_length"
+
+
+def test_registry_loss_blocks_code_length_change(
+    hass: "HomeAssistant",
+) -> None:
+    """Test lost registry state blocks code-length changes."""
+    flow = _OptionsFlow(hass)
+    flow.config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH},
+        entry_id="entry-a",
+    )
+    allocator = DoorCodeAllocator(hass)
+    allocator._registry_lost = True
+    hass.data.setdefault(DOMAIN, {})[ALLOCATOR] = allocator
+    user_input = _valid_input()
+    user_input[CONF_CODE_LENGTH] = DEFAULT_CODE_LENGTH + 2
+    errors: dict[str, str] = {}
+
+    validate_code_length_change(flow, user_input, errors)
+
+    assert errors[CONF_CODE_LENGTH] == "active_allocations"
 
 
 async def test_successful_lock_and_metadata_conversion(

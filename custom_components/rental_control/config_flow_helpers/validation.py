@@ -152,6 +152,8 @@ def validate_code_length_change(
     flow: Any, user_input: dict[str, Any], errors: dict[str, str]
 ) -> None:
     """Reject code-length changes while an entry owns active allocations."""
+    if CONF_CODE_LENGTH in errors:
+        return
     config_entry = getattr(flow, "config_entry", None)
     entry_id = getattr(config_entry, "entry_id", None)
     if not isinstance(entry_id, str):
@@ -161,7 +163,10 @@ def validate_code_length_change(
     if current == requested:
         return
     allocator = get_allocator(flow.hass)
-    if allocator is not None and allocator.has_active_allocations(entry_id):
+    if allocator is not None and (
+        allocator.diagnostics["registry_lost"]
+        or allocator.has_active_allocations(entry_id)
+    ):
         errors[CONF_CODE_LENGTH] = "active_allocations"
 
 

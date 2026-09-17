@@ -95,7 +95,7 @@ async def resolve_cycle(
             adopted[adoption.identity_key] = allocator._adopt_unlocked(adoption)
 
         unaccounted = unaccounted_slots(allocator, request.observation)
-        if not unaccounted:
+        if request.adoption_complete and not unaccounted:
             allocator._pending_adoption.discard(request.observation.entry_id)
             if not allocator._pending_adoption:
                 allocator._gate_deadline = 0.0
@@ -112,7 +112,8 @@ async def resolve_cycle(
                 issuance_allowed=allocation.issuance_allowed and issuance_allowed,
             )
             allocated[allocation.identity_key] = allocate_request(allocator, allocation)
-        allocator._store.async_save(allocator._registry)
+        if not allocator._registry_lost:
+            allocator._store.async_save(allocator._registry)
         return CycleResult(
             adopted=adopted,
             allocated=allocated,

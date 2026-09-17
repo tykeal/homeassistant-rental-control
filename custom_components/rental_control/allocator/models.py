@@ -141,6 +141,7 @@ class CycleRequest:
     rekeys: list[tuple[str, str]]
     allocations: list[AllocationRequest]
     active_keys: set[str]
+    adoption_complete: bool = True
 
 
 @dataclass(frozen=True, slots=True)

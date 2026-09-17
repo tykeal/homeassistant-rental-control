@@ -410,10 +410,7 @@ class CoordinatorRefreshMixin:
                 reservation.fingerprint_history.update(
                     item for item in history if isinstance(item, str)
                 )
-            missing_count = mapping.get("missing_count", 0)
-            reservation.missing_count = (
-                missing_count if isinstance(missing_count, int) else 0
-            )
+            reservation.missing_count = 0
             reservation.published_once = mapping.get("published_once") is True
 
     async def _ical_parser(

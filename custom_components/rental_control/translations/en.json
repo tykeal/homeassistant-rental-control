@@ -12,7 +12,8 @@
       "invalid_url": "URL is malformed or invalid",
       "same_name": "Name already in use",
       "unknown": "Unexpected error, check logs for more details",
-      "prefix_too_long_for_trim": "Event prefix too long for max name length"
+      "prefix_too_long_for_trim": "Event prefix too long for max name length",
+      "active_allocations": "Code length cannot be changed while this entry has active code allocations"
     },
     "step": {
       "user": {
@@ -59,7 +60,8 @@
       "invalid_url": "URL is malformed or invalid",
       "same_name": "Name already in use",
       "unknown": "Unexpected error, check logs for more details",
-      "prefix_too_long_for_trim": "Event prefix too long for max name length"
+      "prefix_too_long_for_trim": "Event prefix too long for max name length",
+      "active_allocations": "Code length cannot be changed while this entry has active code allocations"
     },
     "step": {
       "init": {
@@ -94,7 +96,6 @@
           "code_buffer_before": "Minutes before check-in time to activate the lock code (0 = no buffer)",
           "code_buffer_after": "Minutes after checkout time to deactivate the lock code (0 = no buffer)",
           "date_only": "Displays each reservation as a single all-day block. Guest arrival and departure times are hidden from the calendar."
-
         }
       }
     }
