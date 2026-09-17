@@ -300,9 +300,10 @@ record handled under the same release guard.
   currently checked in, unless the caller passes an explicit force flag. The
   default MUST be to refuse. This guard exists because a re-issue revokes a
   credential the guest is holding at that moment.
-- **FR-007**: The service MUST support a dry-run mode that reports exactly what
-  would happen — including the guards that would apply and the code that would
-  be issued — while changing nothing on any lock and nothing in the registry.
+- **FR-007**: The service MUST support a dry-run mode whose service response
+  reports exactly what would happen — including the guards that would apply and
+  the code that would be issued — while changing nothing on any lock and
+  nothing in the registry.
 - **FR-008**: When no unique replacement code can be obtained, the service MUST
   fail, MUST report why, and MUST leave the target's existing code in place.
   It MUST NOT issue a duplicate.
@@ -389,7 +390,7 @@ record handled under the same release guard.
   identify the outcome using the masked code reference and MUST NOT contain the
   raw replacement code. The operator reads the real code from the reservation
   sensor as usual.
-- **FR-023**: The dry-run response MAY contain the raw code that would be
+- **FR-023**: The dry-run response MUST contain the raw code that would be
   issued. This is the single deliberate carve-out from masked reporting,
   because a preview without the code is not a useful preview. It MUST apply to
   dry-run responses only.
