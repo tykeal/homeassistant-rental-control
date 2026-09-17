@@ -37,6 +37,9 @@ async def async_resolve_codes(
     observation = build_cycle_observation(entry_id, lockname, managed_slots)
     allocator = get_allocator(hass)
     if allocator is None:
+        for reservation in reservations:
+            reservation.slot_code = None
+            reservation.code_source = "unallocated"
         return observation
     adoptions = build_adoption_requests(
         entry_id, lockname, code_length, managed_slots, reservations
@@ -47,13 +50,25 @@ async def async_resolve_codes(
         adopted[request.identity_key] = result
         if result.code is not None:
             _apply_adoption_result(reservations, request.identity_key, result)
-    await allocator.async_unregister_entry(entry_id)
+    if _adoption_complete(observation, adoptions):
+        await allocator.async_unregister_entry(entry_id)
     for reservation in reservations:
         if reservation.identity_key in adopted:
             continue
         reservation.slot_code = None
         reservation.code_source = "unallocated"
     return observation
+
+
+def _adoption_complete(
+    observation: CycleObservation,
+    adoptions: list[AdoptionRequest],
+) -> bool:
+    """Return whether all readable managed codes were accounted for."""
+    if observation.unreadable_slots:
+        return False
+    adopted_slots = {request.slot for request in adoptions}
+    return set(observation.observed_codes.values()) <= adopted_slots
 
 
 def build_cycle_observation(
@@ -127,6 +142,7 @@ def _matched_code_slot(
             slot.managed
             and slot.persisted_identity_key == reservation.identity_key
             and slot.actual_code
+            and slot.status is not SlotStatus.UNKNOWN
             and slot.slot not in consumed_slots
         ):
             consumed_slots.add(slot.slot)
@@ -142,7 +158,11 @@ def _matched_code_slot(
             event_prefix="",
         )
     )
-    if matched is not None and matched.actual_code:
+    if (
+        matched is not None
+        and matched.actual_code
+        and matched.status is not SlotStatus.UNKNOWN
+    ):
         return matched
     return None
 

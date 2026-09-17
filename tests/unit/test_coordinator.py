@@ -5909,7 +5909,7 @@ class TestStaleStorePhysicalReconciliation:
         set_mock.assert_not_awaited()
         assert coordinator._latest_plan is not None
         assert coordinator._latest_plan.selected.get(new_key) is None
-        assert coordinator._latest_plan.overflow[new_key] == "no_empty_slot"
+        assert coordinator._latest_plan.overflow[new_key] == "code_unavailable"
 
     async def test_exact_store_identity_yields_to_conflicting_physical_slot(
         self, hass: HomeAssistant
@@ -6090,7 +6090,8 @@ class TestStaleStorePhysicalReconciliation:
         set_slots = [call.args[1] for call in set_mock.await_args_list]
         assert 6 not in set_slots
         assert coordinator._latest_plan is not None
-        assert coordinator._latest_plan.selected[alice_key] == 7
+        assert coordinator._latest_plan.selected.get(alice_key) is None
+        assert coordinator._latest_plan.overflow[alice_key] == "code_unavailable"
         assert all(
             not key.startswith("observed.")
             for key in coordinator._slot_mappings["mappings"]

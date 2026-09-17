@@ -3389,6 +3389,11 @@ class TestManualOverrideSurvival:
                 "async_fire_clear_code",
                 new=AsyncMock(return_value=clear_result),
             ) as mock_clear_code,
+            patch(
+                "custom_components.rental_control.coordinator_helpers."
+                "coordinator_refresh_shell.code_allocation.async_resolve_codes",
+                new=AsyncMock(),
+            ),
         ):
             mock_session.get(entry.data["url"], status=200, body=ics_body, repeat=True)
 
@@ -3403,7 +3408,7 @@ class TestManualOverrideSurvival:
             initial_end = override["end_time"]
 
             _set_keymaster_slot(
-                "Manual Guest",
+                "RC Manual Guest",
                 initial_pin,
                 initial_start,
                 initial_end,
@@ -3604,6 +3609,11 @@ class TestManualOverrideSurvival:
                 "async_fire_clear_code",
                 new=AsyncMock(return_value=clear_result),
             ) as mock_clear_code,
+            patch(
+                "custom_components.rental_control.coordinator_helpers."
+                "coordinator_refresh_shell.code_allocation.async_resolve_codes",
+                new=AsyncMock(),
+            ),
         ):
             mock_session.get(entry.data["url"], status=200, body=ics_body, repeat=True)
 

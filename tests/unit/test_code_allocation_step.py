@@ -129,6 +129,141 @@ async def test_unmatched_reservation_is_held_codeless(
     assert reservation.code_source == "unallocated"
 
 
+async def test_missing_allocator_holds_reservations_codeless(
+    monkeypatch: Any,
+) -> None:
+    """Allocator-unavailable fallback never leaves generated codes issuable."""
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: None,
+    )
+    reservation = _reservation("identity-a", code="1111")
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        "front",
+        4,
+        [],
+        [reservation],
+    )
+
+    assert reservation.slot_code is None
+    assert reservation.code_source == "unallocated"
+
+
+async def test_unmatched_coded_slot_keeps_adoption_gate_pending(
+    monkeypatch: Any,
+) -> None:
+    """Readable coded slots must be accounted before adoption completes."""
+    allocator = FakeAllocator()
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: allocator,
+    )
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        "front",
+        4,
+        [_slot(1, "2222")],
+        [],
+    )
+
+    assert allocator.calls == []
+
+
+async def test_unreadable_slots_keep_adoption_gate_pending(
+    monkeypatch: Any,
+) -> None:
+    """Incomplete physical reads do not complete allocator adoption."""
+    allocator = FakeAllocator()
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: allocator,
+    )
+    reservation = _reservation("identity-a", code="1111")
+    unreadable = ManagedSlot(
+        slot=1,
+        managed=True,
+        status=SlotStatus.UNKNOWN,
+        actual_name=None,
+        actual_code=None,
+        actual_code_present=False,
+    )
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        "front",
+        4,
+        [unreadable],
+        [reservation],
+    )
+
+    assert allocator.calls == []
+    assert reservation.slot_code is None
+    assert reservation.code_source == "unallocated"
+
+
+async def test_invalid_code_length_keeps_adoption_gate_pending(
+    monkeypatch: Any,
+) -> None:
+    """Skipped readable codes leave adoption pending for a later cycle."""
+    allocator = FakeAllocator()
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: allocator,
+    )
+    reservation = _reservation("identity-a", code="1111")
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        "front",
+        4,
+        [_slot(1, "22222")],
+        [reservation],
+    )
+
+    assert allocator.calls == []
+    assert reservation.slot_code is None
+    assert reservation.code_source == "unallocated"
+
+
+async def test_unknown_slot_with_stale_code_is_not_adopted(
+    monkeypatch: Any,
+) -> None:
+    """UNKNOWN status is unreadable even if stale code data remains."""
+    allocator = FakeAllocator()
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: allocator,
+    )
+    reservation = _reservation("identity-a", code="1111")
+    unreadable = _slot(1, "2222")
+    unreadable.status = SlotStatus.UNKNOWN
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        "front",
+        4,
+        [unreadable],
+        [reservation],
+    )
+
+    assert allocator.calls == []
+    assert reservation.slot_code is None
+    assert reservation.code_source == "unallocated"
+
+
 async def test_repeated_adoption_is_idempotent() -> None:
     """Repeating the same adoption does not duplicate registry owners."""
     allocator = _allocator()
@@ -179,6 +314,64 @@ async def test_fingerprint_history_is_not_self_conflict() -> None:
     assert allocator._registry.conflicts() == []
 
 
+async def test_identity_mismatch_keeps_observed_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Observed lock code wins when registry has stale code for identity."""
+    notifications: list[str] = []
+    monkeypatch.setattr(
+        allocator_module,
+        "async_create",
+        lambda _hass, message, **_kwargs: notifications.append(message),
+    )
+    allocator = _allocator()
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            code="1111",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+    request = AdoptionRequest(
+        entry_id="entry-a",
+        identity_key="identity-a",
+        code="2222",
+        code_length=4,
+        lockname="front",
+        slot=1,
+    )
+
+    first = await allocator.async_adopt(request)
+    second = await allocator.async_adopt(request)
+
+    assert first.code == second.code == "2222"
+    assert first.reason == second.reason == "identity_code_mismatch"
+    assert allocator._registry.code_for_identity("identity-a") == "1111"
+    assert len(notifications) == 1
+
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-b",
+            identity_key="identity-b",
+            code="2222",
+            code_length=4,
+            lockname="front",
+            slot=2,
+        )
+    )
+
+    observed = allocator._registry.records["2222"]
+    assert len(observed.owners) == 2
+    assert any(
+        owner.identity_key.startswith("identity-a:observed:")
+        for owner in observed.owners
+    )
+    assert len(notifications) == 2
+
+
 async def test_adoption_gate_warns_without_opening(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -203,6 +396,19 @@ async def test_adoption_gate_warns_without_opening(
     assert notifications
     await allocator.async_unregister_entry("entry-a")
     assert allocator.diagnostics["pending_adoption"] == []
+
+
+async def test_disabled_entries_do_not_hold_adoption_gate() -> None:
+    """Disabled entries are not seeded because they will not run adoption."""
+    hass = _fake_hass("entry-a")
+    hass.config_entries.async_entries = lambda _domain=None: [
+        SimpleNamespace(entry_id="entry-a", disabled_by=None),
+        SimpleNamespace(entry_id="entry-disabled", disabled_by="user"),
+    ]
+
+    allocator = DoorCodeAllocator(hass)
+
+    assert allocator.diagnostics["pending_adoption"] == ["entry-a"]
 
 
 def _fake_hass(*entry_ids: str) -> Any:

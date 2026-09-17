@@ -52,6 +52,7 @@ class DoorCodeAllocator:
         )
         self._registry_lost = False
         self._gate_warning_sent = False
+        self._reported_identity_mismatches: set[tuple[str, str, str]] = set()
 
     async def async_load(self) -> None:
         """Load the persisted registry before the allocator is used."""
@@ -73,6 +74,7 @@ class DoorCodeAllocator:
             entry.entry_id
             for entry in entries
             if getattr(entry, "entry_id", None) is not None
+            and getattr(entry, "disabled_by", None) is None
         }
 
     async def async_register_entry(self, entry_id: str) -> None:
@@ -135,16 +137,20 @@ class DoorCodeAllocator:
         self._coalesce_fingerprint_owner(request)
         existing = self._registry.record_for_identity(request.identity_key)
         if existing is not None and existing.code != request.code:
+            observed_ref = self.code_ref(request.code)
             _LOGGER.warning(
                 "Identity %s already owns code_ref %s; observed code_ref %s "
                 "will be retained on the lock and not rotated",
                 request.identity_key,
                 existing.code_ref,
-                self.code_ref(request.code),
+                observed_ref,
             )
+            self._record_mismatched_observed_owner(request, observed_ref, now)
+            self._report_identity_mismatch(request, existing, observed_ref)
             return AllocationResult(
-                code=existing.code,
-                origin=existing.owners[0].origin,
+                code=request.code,
+                origin=AllocationOrigin.ADOPTED,
+                reason="identity_code_mismatch",
             )
 
         owner = AllocationOwner(
@@ -177,6 +183,47 @@ class DoorCodeAllocator:
         ):
             self._report_adoption_conflict(record)
         return AllocationResult(code=request.code, origin=AllocationOrigin.ADOPTED)
+
+    def _record_mismatched_observed_owner(
+        self,
+        request: AdoptionRequest,
+        observed_ref: str,
+        now: str,
+    ) -> None:
+        """Record observed-code ownership without moving the primary identity."""
+        alias_key = (
+            f"{request.identity_key}:observed:{request.entry_id}:"
+            f"{request.lockname}:{request.slot}"
+        )
+        owner = AllocationOwner(
+            entry_id=request.entry_id,
+            identity_key=alias_key,
+            origin=AllocationOrigin.ADOPTED,
+            lockname=request.lockname,
+            slot=request.slot,
+            lock_observed=True,
+            first_seen=now,
+            last_seen=now,
+        )
+        before = self._registry.records.get(request.code)
+        before_identities = (
+            {owner.identity_key for owner in before.owners}
+            if before is not None
+            else set()
+        )
+        record = self._registry.add_owner(
+            request.code,
+            request.code_length,
+            owner,
+            observed_ref,
+            now,
+        )
+        if (
+            before is not None
+            and alias_key not in before_identities
+            and len(record.owners) > 1
+        ):
+            self._report_adoption_conflict(record)
 
     def _coalesce_fingerprint_owner(self, request: AdoptionRequest) -> None:
         """Re-key a historical owner before adoption conflict detection."""
@@ -211,6 +258,31 @@ class DoorCodeAllocator:
             message,
             title=f"{NAME} code registry conflict",
             notification_id=_CONFLICT_NOTIFICATION_ID,
+        )
+
+    def _report_identity_mismatch(
+        self,
+        request: AdoptionRequest,
+        existing: AllocationRecord,
+        observed_ref: str,
+    ) -> None:
+        """Log and notify that one identity has conflicting observed code refs."""
+        mismatch = (request.entry_id, request.identity_key, observed_ref)
+        if mismatch in self._reported_identity_mismatches:
+            return
+        self._reported_identity_mismatches.add(mismatch)
+        message = (
+            f"Shared code registry identity mismatch for {request.entry_id}:"
+            f"{request.identity_key}: registry code_ref {existing.code_ref}, "
+            f"observed code_ref {observed_ref}. The observed lock code was "
+            "retained and no code was rotated."
+        )
+        _LOGGER.warning(message)
+        async_create(
+            self.hass,
+            message,
+            title=f"{NAME} code registry identity mismatch",
+            notification_id=f"{_CONFLICT_NOTIFICATION_ID}_identity",
         )
 
     async def async_rekey(self, old_key: str, new_key: str) -> bool:
