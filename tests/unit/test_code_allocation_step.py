@@ -478,11 +478,29 @@ async def test_adoption_gate_warns_without_opening(
 
 
 async def test_disabled_entries_do_not_hold_adoption_gate() -> None:
-    """Disabled entries are not seeded because they will not run adoption."""
+    """Entries that will not adopt are not seeded into the gate."""
     hass = _fake_hass("entry-a")
     hass.config_entries.async_entries = lambda _domain=None: [
-        SimpleNamespace(entry_id="entry-a", disabled_by=None),
-        SimpleNamespace(entry_id="entry-disabled", disabled_by="user"),
+        SimpleNamespace(
+            entry_id="entry-a",
+            disabled_by=None,
+            data={"keymaster_entry_id": "front"},
+        ),
+        SimpleNamespace(
+            entry_id="entry-disabled",
+            disabled_by="user",
+            data={"keymaster_entry_id": "front"},
+        ),
+        SimpleNamespace(
+            entry_id="entry-lockless",
+            disabled_by=None,
+            data={"keymaster_entry_id": None},
+        ),
+        SimpleNamespace(
+            entry_id="entry-none",
+            disabled_by=None,
+            data={"keymaster_entry_id": "(none)"},
+        ),
     ]
 
     allocator = DoorCodeAllocator(hass)

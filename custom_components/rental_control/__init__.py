@@ -79,13 +79,13 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     registered_allocator_entry = False
     remove_update_listener = None
     try:
-        await allocator.async_register_entry(config_entry.entry_id)
-        registered_allocator_entry = True
-
         coordinator = RentalControlCoordinator(
             hass=hass,
             config_entry=config_entry,
         )
+        if coordinator.lockname:
+            await allocator.async_register_entry(config_entry.entry_id)
+            registered_allocator_entry = True
 
         # Load Store before Keymaster bootstrap (ordering fix for #597)
         await coordinator.async_load_slot_store()

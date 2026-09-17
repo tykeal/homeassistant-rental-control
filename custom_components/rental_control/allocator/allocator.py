@@ -14,6 +14,7 @@ from typing import Any
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.core import HomeAssistant
 
+from ..const import CONF_LOCK_ENTRY
 from ..const import DOMAIN
 from ..const import NAME
 from .models import AdoptionRequest
@@ -75,6 +76,7 @@ class DoorCodeAllocator:
             for entry in entries
             if getattr(entry, "entry_id", None) is not None
             and getattr(entry, "disabled_by", None) is None
+            and _entry_has_lock(entry)
         }
 
     async def async_register_entry(self, entry_id: str) -> None:
@@ -344,3 +346,16 @@ class DoorCodeAllocator:
         """Clear orphaned allocations in a later implementation phase."""
         del known_entry_ids, observations
         return OrphanCleanupReport(dry_run=dry_run)
+
+
+def _entry_has_lock(entry: object) -> bool:
+    """Return whether a config entry can run lock-code adoption."""
+    data = getattr(entry, "data", None)
+    if not isinstance(data, dict):
+        return False
+    lock_entry = data.get(CONF_LOCK_ENTRY)
+    return (
+        isinstance(lock_entry, str)
+        and bool(lock_entry.strip())
+        and lock_entry.strip() != "(none)"
+    )
