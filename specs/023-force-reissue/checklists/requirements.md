@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Requirement Completeness
 
-- [ ] No live clarification markers remain
+- [x] No live clarification markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -42,25 +42,28 @@ SPDX-License-Identifier: Apache-2.0
   remedy for identified behaviour in identified code, and it composes guarantees
   that a merged predecessor already established. They anchor requirements to
   existing behaviour rather than prescribing new implementation structure.
-- Five design questions were settled by the maintainer before specification and
-  are stated as requirements rather than marked for clarification: dual
-  entity-or-slot targeting (FR-002), single-target only (FR-004), the
-  fail-closed checked-in guard with explicit override (FR-006), release of the
-  replaced code rather than retirement (FR-018 plus the Known Limitation
-  section), and raw-code visibility restricted to dry-run responses (FR-022,
-  FR-023).
-- Two clarification markers remain, both genuine open questions rather than
-  settled decisions:
-  - **FR-013** — whether an accepted-but-unconsumed pending re-issue must
-    survive a Home Assistant restart. Both answers are defensible: persisting it
-    is more robust for an operator who restarts before the next cycle, while
-    letting it lapse keeps the suppression strictly transient and avoids storing
-    an override that could later fire unexpectedly. The choice affects whether
-    any new persisted state is required, so it is a scope question rather than
-    a detail.
-  - **FR-026** — whether the calendar sensor should advertise that a forced
-    re-issue is in flight. This affects the downstream captive-portal contract
-    and any operator automation reading sensor attributes, so it should not be
-    guessed.
+- Seven design questions were settled by the maintainer and are stated as
+  requirements rather than marked for clarification: dual entity-or-slot
+  targeting (FR-002), single-target only (FR-004), the fail-closed checked-in
+  guard with explicit override (FR-006), release of the replaced code rather
+  than retirement (FR-018 plus the Known Limitation section), raw-code
+  visibility restricted to dry-run responses (FR-022, FR-023), the narrow
+  multiple-owner exemption to the release guard (FR-019), and an unchanged
+  sensor attribute surface (FR-026).
+- No clarification markers remain. Two were raised in the first draft and
+  resolved by the maintainer:
+  - **FR-013** — a pending re-issue lapses across a Home Assistant restart. The
+    suppression is in-memory only and adds no persisted state; the operator
+    invokes the service again. Documented under Edge Cases so the silently
+    dropped pending re-issue is expected behaviour rather than a surprise.
+  - **FR-026** — no attribute is added to advertise an in-flight re-issue. The
+    sensor attribute surface is unchanged, so the downstream captive-portal
+    contract is untouched. Recorded in Out of Scope.
+- The release guard's multiple-owner condition is deliberately exempted for the
+  one owner a forced re-issue re-homes. Blocking on it would forbid the only
+  action that heals a duplicate, since multiple ownership of one code is the
+  definition of a duplicate. The physical-state conditions are not exempted,
+  the exemption does not reach any other owner of the record, and the ordinary
+  release paths keep the full unmodified guard.
 - 28 functional requirements, following the predecessor's discipline of keeping
   the count tight and each requirement independently testable.

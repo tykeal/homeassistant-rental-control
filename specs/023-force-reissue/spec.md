@@ -146,6 +146,11 @@ registry no longer records a conflict for that code.
 4. **Given** the operator targets a reservation that is not part of any
    duplicate, **When** the re-issue runs, **Then** it succeeds normally; the
    service is not restricted to conflict participants.
+5. **Given** two reservations colliding on one code on one shared parent lock,
+   **When** the operator forces a re-issue on one side and the replacement code
+   has been written and confirmed on that side's slot, **Then** the end state is
+   two distinct codes, the registry record for the old code has been reduced
+   from two owners to one, and no duplicate is reported for it any longer.
 
 ---
 
@@ -264,7 +269,9 @@ record handled under the same release guard.
   that is over.
 - **Target entity is not a Rental Control reservation sensor**: refused.
 - **Home Assistant restarts between invocation and the next reconcile cycle**:
-  see **FR-013**.
+  the pending re-issue is in-memory only and is silently dropped. This is
+  documented behaviour rather than a fault: the operator invokes the service
+  again after the restart. See **FR-013**.
 
 ## Requirements *(mandatory)*
 
@@ -322,10 +329,11 @@ record handled under the same release guard.
 - **FR-013**: A forced re-issue MUST suppress the `manual_observed` retention
   in `_resolve_observed_code` for the addressed target for the next reconcile
   cycle only. It MUST NOT disable that protection permanently, for other
-  targets, or for the same target on subsequent cycles.
-  [NEEDS CLARIFICATION: must a forced re-issue that has been accepted but not
-  yet consumed by a reconcile cycle survive a Home Assistant restart, or is it
-  acceptable for the operator to reissue the service call after a restart?]
+  targets, or for the same target on subsequent cycles. The suppression MUST be
+  held in memory only and MUST introduce no new persisted state; a forced
+  re-issue that has been accepted but not yet consumed by a reconcile cycle
+  therefore lapses on a Home Assistant restart, and the operator invokes the
+  service again.
 - **FR-014**: The replacement code MUST be recorded in the shared registry as
   owned by the addressed reservation identity before or at the moment it is
   written to the lock, so no other entry can be issued the same value.
@@ -344,20 +352,36 @@ record handled under the same release guard.
   it becomes available for future allocation. It MUST NOT be retired,
   blacklisted, or otherwise permanently withheld.
 - **FR-019**: Release of the replaced code MUST pass through the existing
-  allocator release guard. The code MUST NOT be released while the guard
-  reports that the record has more than one owner, that the owner's lock and
-  specific slot are not covered by a current observation, or that the code may
-  still be programmed. Releasing a code that is still physically on the lock
-  would allow another entry to be issued that same value and would recreate the
-  exact duplicate this feature exists to fix.
-- **FR-020**: Because the guard can defer release, the system MUST support and
-  correctly represent the intermediate state in which the new code has been
-  issued and recorded while the old code is still pending release. In that
-  state the old code MUST remain unavailable to any other allocation.
+  allocator release guard, with one narrow exemption for forced re-issue. The
+  physical-state conditions MUST apply in full and MUST NOT be exempted: the
+  replaced code MUST NOT be released while the targeted owner's lock and that
+  specific slot are not covered by a current observation, nor while the code
+  may still be programmed. Releasing a code that is still physically on the
+  lock would allow another entry to be issued that same value and would
+  recreate the exact duplicate this feature exists to fix. The exemption is
+  that the multiple-owner condition MUST NOT block release of the one owner
+  that this forced re-issue deliberately re-homed. That condition exists to
+  prevent releasing when it is ambiguous which physical code belongs to which
+  owner; a forced re-issue removes that ambiguity for that one owner by
+  definition, because the system has just moved it to a new code on purpose.
+  Without this exemption the feature could never heal a duplicate, since
+  multiple ownership of one code is precisely what a duplicate is. The
+  exemption MUST be strictly limited to the targeted owner of that forced
+  re-issue: it MUST NOT release any other owner of the same record, and it
+  MUST NOT apply to any ordinary, non-forced release path; routine sweeps,
+  config entry removal, and orphan cleanup MUST continue to apply the full
+  unmodified guard.
+- **FR-020**: Because the physical-state conditions still defer release — the
+  replaced code will normally remain programmed until the new code overwrites
+  the slot — the system MUST support and correctly represent the intermediate
+  state in which the new code has been issued and recorded while the old code
+  is still pending release. In that state the old code MUST remain unavailable
+  to any other allocation.
 - **FR-021**: A replaced code whose release remains deferred MUST be retried on
   subsequent reconcile cycles and MUST be reported to the operator with its
   retention reason, so an indefinitely stuck release is visible rather than
-  silent.
+  silent. A deferral caused solely by the exempted multiple-owner condition
+  MUST NOT be reported as stuck.
 
 #### Observability
 
@@ -383,9 +407,9 @@ record handled under the same release guard.
   new code's lock write is physically confirmed, and MUST then publish the new
   code. It MUST NOT publish an unconfirmed replacement code, so the downstream
   captive portal never authenticates on a value the lock does not yet hold.
-  [NEEDS CLARIFICATION: should the sensor expose an attribute indicating that a
-  forced re-issue is in flight, so the captive portal and operator automations
-  can distinguish "this code is about to change" from steady state?]
+  This feature MUST NOT add, remove, or change any calendar sensor attribute;
+  the attribute surface consumed downstream — `slot_code`, `slot_name`, and
+  `last_four` — stays exactly as it is.
 
 #### Scope constraints
 
@@ -430,8 +454,10 @@ record handled under the same release guard.
   two entries whose reservations share identical dates under the default
   `date_based` generator.
 - **SC-003**: Zero replaced codes are released back to the pool while still
-  programmed on a managed lock or while the release guard reports any retention
-  reason.
+  programmed on a managed lock or while the lock and slot cannot be observed.
+  Zero owners other than the deliberately re-homed target are released by a
+  forced re-issue, and the ordinary release paths behave identically to before
+  this feature.
 - **SC-004**: One hundred percent of invocations against a currently checked-in
   reservation are refused when the force flag is absent, and succeed when it is
   present.
@@ -479,9 +505,10 @@ configured code length. No retirement flag is to be added to this service.
 - The shared allocator and its persisted registry from feature 022 are present
   and are the sole source of issued codes. This feature adds no new code
   generation path.
-- The existing release guard is a sufficient and correct safety condition for
-  returning a replaced code to the pool; this feature reuses it unchanged
-  rather than defining its own.
+- The existing release guard's physical-state conditions are a sufficient and
+  correct safety condition for returning a replaced code to the pool; this
+  feature reuses them unchanged rather than defining its own, and narrows only
+  the multiple-owner condition, and only for the deliberately re-homed owner.
 - The integration's existing reconciliation path is the correct vehicle for
   writing the replacement code to a lock, so the service does not need its own
   write path.
@@ -501,6 +528,10 @@ configured code length. No retirement flag is to be added to this service.
   022's detection and reporting of adoption conflicts stays as it is; this
   feature does not convert it into an automatic action.
 - **New configuration options**: none, per feature 022's FR-024.
+- **An in-flight re-issue indicator on the sensor**: no attribute is added to
+  signal that a forced re-issue is pending. The calendar sensor's attribute
+  surface is unchanged by this feature, so the downstream captive-portal
+  contract over `slot_code`, `slot_name`, and `last_four` is untouched.
 - **Changing the default retention behaviour**: `_resolve_observed_code`
   continues to retain `manual_observed` codes for every target that has not
   been explicitly force-re-issued. This feature suppresses retention narrowly
