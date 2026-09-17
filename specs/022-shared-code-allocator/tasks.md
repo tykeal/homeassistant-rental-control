@@ -175,15 +175,20 @@ round-trip and no-plaintext assertions is not a store this feature can rely on.
 ### 2d. Fail-closed reconciliation guards
 
 **⚠️ ATOMIC group B** — T015 through T020 ship as ONE commit. Making
-`slot_code` optional without the guards turns an absent code into `code_drift`
-at `reconciliation/actions.py:35` and yields `OVERWRITE_MANUAL_CHANGE`, which
-is the guest-lockout path. These tasks must never be merged independently of
-each other.
+`slot_code` optional without the guards preserves today's unsafe behaviour:
+`slot_code` is never persisted (`reconciliation/plan_models.py:31`, #736), so a
+ghost reservation cannot restore the real code. If that missing code is modeled
+as the current `""` sentinel, it compares unequal to every real PIN at
+`reconciliation/actions.py:35` and yields `OVERWRITE_MANUAL_CHANGE`, which is
+the guest-lockout path. These tasks fix that existing defect and must never be
+merged independently of each other.
 
 - [ ] T015 Change `Reservation.slot_code` to `str | None` in
       `custom_components/rental_control/reconciliation/plan_models.py`, extend
       `code_source` with `"allocated"`, `"collision_resolved"`, `"adopted"`,
-      and `"unallocated"`, add the `"code_unavailable"` overflow reason, replace
+      and `"unallocated"` (`AllocationOrigin.PREFERRED` → `"allocated"`,
+      `COLLISION_RESOLVED` → `"collision_resolved"`, `ADOPTED` → `"adopted"`),
+      add the `"code_unavailable"` overflow reason, replace
       the superseded #736 "never written to the HA Store" docstring note, and
       change ghost reservations from `""` to `None` in
       `custom_components/rental_control/coordinator_helpers/ghost_reservations.py`
@@ -255,17 +260,24 @@ reservation holding it.
       `custom_components/rental_control/coordinator_helpers/code_allocation.py`
       with `async_resolve_codes`: build the entry's `CycleObservation` from what
       `keymaster_observation.py` already produced (`managed_slots`,
-      `observed_codes`, `unreadable_slots`), build `AdoptionRequest`s from
+      `observed_codes`, `unreadable_slots` containing all slots whose observed
+      `status is SlotStatus.UNKNOWN`, including missing/unavailable entity state
+      and `blocked_reason="unreadable"`; known-empty `SlotStatus.FREE` slots are
+      not unreadable), build `AdoptionRequest`s from
       `_resolve_observed_code` results in
-      `coordinator_helpers/reservations.py`, and call the allocator through a
-      single `async_resolve_cycle` invocation (FR-020, contract §2, plan
+      `coordinator_helpers/reservations.py`, and call the allocator through the
+      adopt path only for the safe Phase 3 checkpoint (FR-020, contract §2, plan
       decision 2)
 - [ ] T024 [US3] Splice the step into
       `custom_components/rental_control/coordinator_helpers/coordinator_refresh_shell.py`
       `_run_reconciliation`, between `_apply_checkin_protection` and
       `compute_desired_plan`, hydrating `fingerprint_history`, `missing_count`,
-      `published_once`, and ghost reservations from the persisted mapping store
-      first, and preserving the existing cycle-skipping `try/except`
+      and ghost reservations from the persisted mapping store first, treating
+      `published_once` as absent/`False` until T031 records it durably, and
+      holding any reservation that was not adopted this pass at
+      `slot_code=None`/`code_source="unallocated"` so the planner cannot emit a
+      generated `SET` before T029 consumes allocator results, while preserving
+      the existing cycle-skipping `try/except`
       (FR-020, plan decision 2)
 - [ ] T025 [P] [US3] Add adoption coverage to
       `tests/unit/test_code_allocation_step.py`: adopt-before-allocate ordering
@@ -275,7 +287,8 @@ reservation holding it.
 - [ ] T026 [P] [US3] Add `tests/integration/test_allocator_adoption.py`: an
       empty registry with coded slots adopts every code and rotates none
       (SC-004), a pre-existing duplicate records both owners, reports the
-      conflict, and leaves the code unavailable to new allocations (FR-022),
+      conflict to the operator (SC-008), and leaves the code unavailable to new
+      allocations (FR-022),
       and a missing or unreadable registry warns and rebuilds by adoption
       (FR-018)
 
@@ -303,25 +316,28 @@ codes and both codes are recorded in the shared registry.
       FR-007, FR-008, FR-009, FR-010, FR-011)
 - [ ] T028 [US1] Implement `async_resolve_cycle` in
       `custom_components/rental_control/allocator/allocator.py`: acquire `_lock`
-      once for the whole cycle, drive adopt → rekey → allocate → sweep through
-      private helpers only (never the public phase methods), derive
-      `unaccounted_slots` from the `CycleObservation`, and set
-      `issuance_allowed` from it so an entry with unaccounted unreadable slots
-      returns `reason="unaccounted_slots"` (FR-006, FR-018, contract §2)
+      once for the whole Phase 4 cycle, convert T023's adoption-only call site
+      to this batch entrypoint, drive adopt → allocate through private helpers
+      only (never the public phase methods), derive `unaccounted_slots` from the
+      `CycleObservation`, and set `issuance_allowed` from it so an entry with
+      unaccounted unreadable slots returns `reason="unaccounted_slots"`; T040 and
+      T041 later add the rekey and sweep phases (FR-006, FR-018, contract §2)
 - [ ] T029 [US1] Consume the results in
       `custom_components/rental_control/coordinator_helpers/code_allocation.py`:
       build `AllocationRequest`s sorted by `identity_key` with the planned
       `lockname`/`slot`, set `Reservation.slot_code` and `code_source` from each
-      result, and report `exhausted`/`unaccounted_slots` once per cycle per
-      entry through a warning and a persistent notification using `code_ref`
-      only (FR-008, FR-025, contract "AllocationResult.reason values")
+      result (`PREFERRED` → `"allocated"`, `COLLISION_RESOLVED` →
+      `"collision_resolved"`, `ADOPTED` → `"adopted"`), notify only for
+      `exhausted`, and log `unaccounted_slots` as warn-only once per cycle per
+      entry using `code_ref` only (FR-008, FR-025, SC-008 operator surfacing,
+      contract "AllocationResult.reason values")
 - [ ] T030 [US1] Add the lockless branch for `event_overrides is None` in
       `custom_components/rental_control/coordinator_helpers/coordinator_refresh_shell.py`
       `_async_update_data`: build reservations with `managed_slots=None`
       including ghost reservations, missing-count state, and the durable
-      `published_once` flag, run rekey/allocate/sweep only, set
-      `_latest_res_by_key`, compute no plan, emit no action, and call no
-      service (FR-023)
+      `published_once` flag from T031, run allocation only until T040 and T041
+      add rekey and sweep, set `_latest_res_by_key`, compute no plan, emit no
+      action, and call no service (FR-023)
 - [ ] T031 [US1] Implement the `recovery_fail_closed` path across
       `custom_components/rental_control/allocator/allocator.py` and
       `custom_components/rental_control/coordinator_helpers/store_sync.py`:
@@ -361,17 +377,21 @@ generates nothing of its own; when no allocation exists it reports no code.
 code differing from its generator's preferred code, then read the sensor's
 `slot_code` attribute and confirm it matches the allocated code.
 
+Execution follows the hard edges below: complete T037 before landing the
+ATOMIC C display-path removal in T035/T036.
+
 - [ ] T035 [US2] Delete `_generate_door_code` and the `slot_code is None`
       backfill in `_handle_event_update`, along with the now-unused
       `DoorCodeRequest` construction, in
       `custom_components/rental_control/sensors/calsensor.py` (FR-019, plan
-      decision 5)
+      decision 5) — **⚠️ ATOMIC C**
 - [ ] T036 [US2] Replace the `event_overrides_present` gate in
       `custom_components/rental_control/sensors/calsensor_helpers/slots.py`
       with an unconditional confirmed-code lookup through the coordinator, and
       remove the display path's import of
       `custom_components/rental_control/sensors/calsensor_helpers/codes.py`
-      while leaving `last_four` parsing untouched (FR-019, FR-023)
+      while leaving `last_four` parsing untouched (FR-019, FR-023) —
+      **⚠️ ATOMIC C**
 - [ ] T037 [US2] Give `get_slot_code` in
       `custom_components/rental_control/coordinator.py` its confirmation
       semantics: for lock-backed entries expose the allocated code only after
@@ -411,17 +431,19 @@ it held before.
 - [ ] T041 [US4] Implement `async_sweep` plus the single shared FR-014 release
       guard helper in
       `custom_components/rental_control/allocator/allocator.py`: refresh
-      `lock_observed` from `observed_codes` and `unreadable_slots`, release only
-      allocations whose reservation is inactive and whose code the guard proves
+      `lock_observed` from `observed_codes` and from unreadable slots only when
+      the owner `lockname` matches the observation and
+      `slot in unreadable_slots`; release only allocations whose reservation is
+      inactive and whose code the guard proves
       is not programmed, apply the same booking-end, cancellation, and
       disappearance-grace rules for lockless entries, and make a released code
       immediately available again (FR-013, FR-014, FR-015, SC-006)
 - [ ] T042 [US4] Implement `async_mark_entry_removed` in
-      `custom_components/rental_control/allocator/allocator.py` and call it
-      from the entry-removal path in
-      `custom_components/rental_control/__init__.py`: abort pending adoption for
-      the removed entry and mark its allocations orphaned without releasing any
-      code (FR-004)
+      `custom_components/rental_control/allocator/allocator.py`, create
+      `async_remove_entry` in `custom_components/rental_control/__init__.py`,
+      and call it from that entry-removal path: abort pending adoption for the
+      removed entry and mark its allocations orphaned without releasing any code
+      (FR-004)
 - [ ] T043 [US4] Implement `async_clear_orphans` in
       `custom_components/rental_control/allocator/allocator.py` and the
       `rental_control.clear_orphaned_codes` handler in
@@ -466,7 +488,7 @@ leaks, and orphans have a guarded operator remedy.
       `custom_components/rental_control/coordinator_helpers/diagnostics.py`,
       exposing record counts, conflicts, orphans, pending-adoption entries, and
       `code_ref` values only — never a code in plain or encoded form (FR-025)
-- [ ] T048 [P] Audit logging across the `allocator/` package and
+- [ ] T048 Audit logging across the `allocator/` package and
       `coordinator_helpers/code_allocation.py` so allocation, collision
       resolution, release, adoption, adoption conflicts, and exhaustion are each
       logged with enough detail to attribute a `code_ref` to a reservation, and
@@ -498,7 +520,9 @@ Phase 1 Setup
 
 ### Hard task-level edges
 
-- T004 → T005, T007, T011 (every module consumes the models)
+- T004 → T007, T011 (the registry and allocator consume the models; T005 is
+  independent candidate-walk work)
+- T005 → T006 (candidate-walk tests require `candidates.py`)
 - T007 → T009 (the store serializes what the registry holds)
 - T009, T010 → T011 → T012 → T014 (registry and its round-trip land before any
   consumer, per the safety constraint)
@@ -506,12 +530,21 @@ Phase 1 Setup
   (ATOMIC B). `slot_code` nullability is never merged without the guards.
 - T011, T014 → T021, T022 (adoption needs the allocator and the registered
   entry set)
-- T021, T022, T023 → T024 (the step exists before it is spliced into the
-  refresh)
+- T021 → T023 (the helper calls the allocator's adopt path)
+- T021, T022, T023 → T024 (the adoption-only step exists before it is spliced
+  into the refresh)
 - T016-T018 → T029, T030 (results may set `slot_code = None`, which is only
   safe once the guards exist)
-- T027, T028 → T029 → T030, T031
+- T023, T027 → T028 (Phase 4 converts the adoption-only step to the batch
+  adopt+allocate entrypoint)
+- T027, T028 → T029
+- T028, T029, T031 → T030 (the lockless path consumes the batch entrypoint,
+  allocation-result consumer, and durable `published_once`)
+- T028, T030 → T040, T041 (Phase 6 extends the existing batch and lockless
+  paths with rekey and sweep; Phase 4 does not call missing behaviours)
 - T029 → T037 (the sensor can only display a code the coordinator holds)
+- T037 → T035, T036 (ATOMIC C removes generated display only after
+  `get_slot_code` has confirmation semantics)
 - T004 (`lockname`/`slot` on the owner), T023 (`CycleObservation`), T021
   (adoption) → T041 → T042, T043 — release and cleanup behaviour comes after
   adoption, never before
@@ -524,7 +557,8 @@ Phase 1 Setup
 | Group | Tasks | Why it must be one commit |
 |-------|-------|---------------------------|
 | A | T009, T010 | A persisted code format without its round-trip and no-plaintext assertions is unverifiable. |
-| B | T015, T016, T017, T018, T019, T020 | `slot_code: str \| None` without the guards makes an absent code read as `code_drift` at `actions.py:35` and emit `OVERWRITE_MANUAL_CHANGE` — the guest-lockout path. |
+| B | T015, T016, T017, T018, T019, T020 | `slot_code: str \| None` without the guards leaves the existing missing-code drift path able to emit `OVERWRITE_MANUAL_CHANGE` — the guest-lockout path. |
+| C | T035, T036 | T035 alone leaves lockless entries publishing no code until T036 removes the `event_overrides_present` gate in `calsensor_helpers/slots.py:23`. |
 
 Every other task is sized to stand alone as one coherent commit.
 
@@ -583,7 +617,8 @@ edit `allocator/allocator.py`; T023, T029, and T040 all edit
 - **Total tasks**: 49
 - **Setup**: 3 · **Foundational**: 17 · **US3**: 6 · **US1**: 8 · **US2**: 5 ·
   **US4**: 7 · **Polish**: 3
-- **Parallelizable**: 16 tasks marked `[P]`
-- **Atomic-commit groups**: 2 (group A: 2 tasks, group B: 6 tasks)
+- **Parallelizable**: 15 tasks marked `[P]`
+- **Atomic-commit groups**: 3 (group A: 2 tasks, group B: 6 tasks,
+  group C: 2 tasks)
 - **Requirements coverage**: FR-001 to FR-025 all mapped; SC-001 to SC-008 each
   have at least one asserting test task

@@ -149,8 +149,10 @@ payload in place.
 There is no prior version to migrate, and nothing has shipped, so the schema
 stays at version 1 including the at-rest encoding. A downgrade leaves the file
 in place unread. The per-entry cache store
-`rental_control.slot_mappings.<entry_id>` at `STORE_SCHEMA_VERSION` is untouched
-by this feature and keeps its rule that raw PINs are never stored.
+`rental_control.slot_mappings.<entry_id>` at `STORE_SCHEMA_VERSION` keeps its
+schema version and its rule that raw PINs are never stored. The allocator may
+add backward-compatible metadata such as `published_once` there because it is
+state about whether a value was exposed, not PIN material.
 
 ## 2. Allocator API
 
@@ -202,19 +204,24 @@ class CycleObservation:
     lockname: str | None          # None for a lockless entry
     managed_slots: frozenset[int]
     observed_codes: dict[str, int]   # plain code -> slot number, readable slots
-    unreadable_slots: frozenset[int] # managed slots whose code could not be read
+    unreadable_slots: frozenset[int] # genuinely indeterminate managed slots
 ```
 
 `code_allocation.py` builds it from what the coordinator already observed via
-`keymaster_observation.py`; `unreadable_slots` is exactly the set that helper
-drops `actual_code` for. A lockless entry supplies empty sets.
+`keymaster_observation.py`; `unreadable_slots` is exactly the set of managed
+slots whose observed `status is SlotStatus.UNKNOWN`. That includes missing or
+unavailable entity state and slots with `blocked_reason="unreadable"`;
+`blocked_reason` is diagnostic detail, not the discriminator. A
+`SlotStatus.FREE` slot is known-empty even though `actual_code` is `None`, so it
+must not be included. A lockless entry supplies empty sets.
 
 From it the allocator derives, without any further input:
 
 - **Release safety (FR-014)**: a record's owner is refreshed to
-  `lock_observed=True` when its code is in `observed_codes`, or when its
-  `(lockname, slot)` is in `unreadable_slots` — an unreadable slot may still
-  hold that code, so it counts as programmed.
+  `lock_observed=True` when its code is in `observed_codes`, or when the
+  owner's `lockname` matches the observation's `lockname` and its `slot` is in
+  `unreadable_slots` — an unreadable slot may still hold that code, so it
+  counts as programmed.
 - **Unaccounted slots (FR-018)**: `unreadable_slots` minus the slots claimed by
   registry owners with the same `entry_id` and `lockname`. A non-empty remainder
   means the entry has a slot whose contents nothing can account for, so a new
@@ -240,12 +247,14 @@ class CycleResult:
     unaccounted_slots: frozenset[int]
 ```
 
-`async_resolve_cycle` acquires `_lock` once and runs adopt → rekey → allocate →
-sweep against private, non-locking helpers, so one entry's whole cycle is atomic
-against another's (FR-006). It **must not** call the public phase methods: the
-lock is a plain non-reentrant `asyncio.Lock` and doing so would deadlock. The
-public phase methods exist so tests can exercise one behaviour at a time; they
-are not a supported way to compose a cycle.
+In the final Phase 6 state, `async_resolve_cycle` acquires `_lock` once and runs
+adopt → rekey → allocate → sweep against private, non-locking helpers, so one
+entry's whole cycle is atomic against another's (FR-006). Earlier checkpoints
+use the staged subsets defined in `tasks.md`: Phase 3 adopts only, Phase 4 runs
+adopt → allocate, and Phase 6 adds rekey and sweep. It **must not** call the
+public phase methods: the lock is a plain non-reentrant `asyncio.Lock` and doing
+so would deadlock. The public phase methods exist so tests can exercise one
+behaviour at a time; they are not a supported way to compose a cycle.
 
 `AllocationRequest` fields: `entry_id`, `identity_key`, `preferred_code`,
 `code_length`, `fingerprint_history`, `previously_published: bool` (the
@@ -290,9 +299,12 @@ or encoded code.
 - **Release safety**: `async_sweep`, `async_mark_entry_removed`, and
   `async_clear_orphans` all evaluate one shared guard helper, whose only inputs
   are the record's owners and the supplied `CycleObservation` values. A record
-  is retained when any owner has `lock_observed=True` after refresh, when its
-  `(lockname, slot)` is unreadable, or when no supplied observation covers its
-  `lockname` at all. The rule is defined once and not reimplemented per caller
+  is retained when any owner has `lock_observed=True` after refresh, when an
+  observation for the same `lockname` reports that owner's `slot` as
+  unreadable, or when no supplied observation covers its lock-backed
+  `lockname` at all. Lockless owners (`lockname=None`) have no physical
+  observation requirement and are immediately releasable once removed. The rule
+  is defined once and not reimplemented per caller
   (FR-014).
 - **Entry lifecycle**: `async_register_entry` adds to the adoption pending set;
   `async_unregister_entry` removes an entry that failed setup, was disabled, or
