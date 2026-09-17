@@ -13,7 +13,7 @@
       "unknown": "Erreur inattendue, vérifiez les journaux pour plus de détails",
       "bad_max_name_length": "La longueur maximale du nom doit être de 4 ou plus",
       "prefix_too_long_for_trim": "Le préfixe d'événement est trop long pour la longueur maximale du nom",
-      "active_allocations": "La longueur du code ne peut pas être modifiée tant que cette entrée a des allocations de code actives"
+      "active_allocations": "La longueur du code ne peut pas être modifiée tant que cette entrée a des allocations de code actives ou que le registre de codes partagé récupère"
     },
     "step": {
       "user": {
@@ -59,7 +59,7 @@
       "unknown": "Erreur inattendue, vérifiez les journaux pour plus de détails",
       "bad_max_name_length": "La longueur maximale du nom doit être de 4 ou plus",
       "prefix_too_long_for_trim": "Le préfixe d'événement est trop long pour la longueur maximale du nom",
-      "active_allocations": "La longueur du code ne peut pas être modifiée tant que cette entrée a des allocations de code actives"
+      "active_allocations": "La longueur du code ne peut pas être modifiée tant que cette entrée a des allocations de code actives ou que le registre de codes partagé récupère"
     },
     "step": {
       "init": {

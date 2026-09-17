@@ -13,7 +13,7 @@
       "same_name": "Name already in use",
       "unknown": "Unexpected error, check logs for more details",
       "prefix_too_long_for_trim": "Event prefix too long for max name length",
-      "active_allocations": "Code length cannot be changed while this entry has active code allocations"
+      "active_allocations": "Code length cannot be changed while this entry has active allocations or the shared code registry is recovering"
     },
     "step": {
       "user": {
@@ -63,7 +63,7 @@
       "same_name": "Name already in use",
       "unknown": "Unexpected error, check logs for more details",
       "prefix_too_long_for_trim": "Event prefix too long for max name length",
-      "active_allocations": "Code length cannot be changed while this entry has active code allocations"
+      "active_allocations": "Code length cannot be changed while this entry has active allocations or the shared code registry is recovering"
     },
     "step": {
       "init": {

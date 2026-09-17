@@ -67,6 +67,7 @@ class DoorCodeAllocator:
             else 0.0
         )
         self._registry_lost = False
+        self._registry_missing = False
         self._gate_warning_sent = False
         self._reported_identity_mismatches: set[tuple[str, str, str]] = set()
 
@@ -75,6 +76,7 @@ class DoorCodeAllocator:
         result = await self._store.async_load()
         self._registry = result.registry
         self._registry_lost = result.registry_lost
+        self._registry_missing = result.registry_missing
 
     def _seed_pending_adoption(self) -> set[str]:
         """Return currently configured Rental Control entries awaiting adoption."""
@@ -125,6 +127,7 @@ class DoorCodeAllocator:
             "pending_adoption": sorted(self._pending_adoption),
             "gate_deadline": self._gate_deadline,
             "registry_lost": self._registry_lost,
+            "registry_missing": self._registry_missing,
         }
 
     async def async_resolve_cycle(self, request: CycleRequest) -> CycleResult:
@@ -356,8 +359,12 @@ class DoorCodeAllocator:
         async with self._lock:
             self._warn_if_gate_expired()
             result = self._allocate_unlocked(request)
-            if result.code is not None and not self._registry_lost:
+            if result.code is not None and (
+                not self._registry_lost or self._registry_missing
+            ):
                 self._store.async_save(self._registry)
+                self._registry_lost = False
+                self._registry_missing = False
             return result
 
     def _allocate_unlocked(self, request: AllocationRequest) -> AllocationResult:

@@ -49,7 +49,9 @@ def allocate_request(
         return AllocationResult(code=None, reason="unaccounted_slots")
     if allocator._pending_adoption:
         return AllocationResult(code=None, reason="adoption_pending")
-    if allocator._registry_lost and request.previously_published:
+    if allocator._registry_lost and (
+        request.previously_published or not allocator._registry_missing
+    ):
         return AllocationResult(code=None, reason="recovery_fail_closed")
     if allocator._registry.is_available(
         request.preferred_code,
@@ -112,8 +114,20 @@ async def resolve_cycle(
                 issuance_allowed=allocation.issuance_allowed and issuance_allowed,
             )
             allocated[allocation.identity_key] = allocate_request(allocator, allocation)
+        recovery_declined = any(
+            result.reason == "recovery_fail_closed" for result in allocated.values()
+        )
         if not allocator._registry_lost:
             allocator._store.async_save(allocator._registry)
+        elif (
+            allocator._registry_missing
+            and request.adoption_complete
+            and not unaccounted
+            and not recovery_declined
+        ):
+            allocator._store.async_save(allocator._registry)
+            allocator._registry_lost = False
+            allocator._registry_missing = False
         return CycleResult(
             adopted=adopted,
             allocated=allocated,

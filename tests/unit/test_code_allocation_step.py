@@ -980,6 +980,53 @@ async def test_recovery_fail_closed_for_published_identity() -> None:
     assert result.reason == "recovery_fail_closed"
 
 
+async def test_corrupt_registry_fails_closed_for_new_identity() -> None:
+    """Corrupt registry recovery blocks all new issuance."""
+    allocator = _allocator()
+    allocator._registry_lost = True
+    allocator._registry_missing = False
+
+    result = await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            preferred_code="1111",
+            code_length=4,
+            previously_published=False,
+        )
+    )
+
+    assert result.code is None
+    assert result.reason == "recovery_fail_closed"
+
+
+async def test_missing_registry_bootstraps_new_identity() -> None:
+    """Missing first-run registry can persist never-published allocations."""
+    saves: list[object] = []
+
+    allocator = DoorCodeAllocator(_fake_hass())
+    allocator._store = cast(
+        Any,
+        SimpleNamespace(async_save=lambda registry: saves.append(registry)),
+    )
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+
+    result = await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            preferred_code="1111",
+            code_length=4,
+            previously_published=False,
+        )
+    )
+
+    assert result.code == "1111"
+    assert len(saves) == 1
+    assert allocator.diagnostics["registry_lost"] is False
+
+
 async def test_disabled_entries_do_not_hold_adoption_gate() -> None:
     """Entries that will not adopt are not seeded into the gate."""
     hass = _fake_hass("entry-a")
