@@ -372,6 +372,85 @@ async def test_identity_mismatch_keeps_observed_code(
     assert len(notifications) == 2
 
 
+async def test_mismatched_alias_rekeys_on_manual_code_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Manual code changes move only the observed alias bookkeeping."""
+    notifications: list[str] = []
+    monkeypatch.setattr(
+        allocator_module,
+        "async_create",
+        lambda _hass, message, **_kwargs: notifications.append(message),
+    )
+    allocator = _allocator()
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            code="1111",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            code="2222",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-c",
+            identity_key="identity-c",
+            code="2222",
+            code_length=4,
+            lockname="front",
+            slot=3,
+        )
+    )
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-b",
+            identity_key="identity-b",
+            code="3333",
+            code_length=4,
+            lockname="front",
+            slot=2,
+        )
+    )
+    changed = AdoptionRequest(
+        entry_id="entry-a",
+        identity_key="identity-a",
+        code="3333",
+        code_length=4,
+        lockname="front",
+        slot=1,
+    )
+
+    result = await allocator.async_adopt(changed)
+    repeated = await allocator.async_adopt(changed)
+
+    alias_key = "identity-a:observed:entry-a:front:1"
+    assert result.code == repeated.code == "3333"
+    assert allocator._registry.code_for_identity(alias_key) == "3333"
+    assert allocator._registry.code_for_identity("identity-a") == "1111"
+    assert [
+        owner.identity_key for owner in allocator._registry.records["2222"].owners
+    ] == ["identity-c"]
+    assert {
+        owner.identity_key for owner in allocator._registry.records["3333"].owners
+    } == {
+        "identity-b",
+        alias_key,
+    }
+    assert len(notifications) == 4
+
+
 async def test_adoption_gate_warns_without_opening(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

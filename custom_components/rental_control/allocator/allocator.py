@@ -195,6 +195,9 @@ class DoorCodeAllocator:
             f"{request.identity_key}:observed:{request.entry_id}:"
             f"{request.lockname}:{request.slot}"
         )
+        owned_code = self._registry.code_for_identity(alias_key)
+        if owned_code is not None and owned_code != request.code:
+            self._registry.release(alias_key)
         owner = AllocationOwner(
             entry_id=request.entry_id,
             identity_key=alias_key,
