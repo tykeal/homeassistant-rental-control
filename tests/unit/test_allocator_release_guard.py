@@ -321,8 +321,8 @@ async def test_two_owner_record_still_retained_by_ordinary_paths() -> None:
     ]
 
 
-def test_no_phase_two_production_exemption_activation() -> None:
-    """Phase two adds the guard shape without enabling an ordinary call path."""
+def test_only_forced_hold_release_constructs_exemption() -> None:
+    """Only forced hold release activates the production exemption path."""
     production = Path("custom_components/rental_control")
     sources = {
         path: path.read_text(encoding="utf-8")
@@ -340,8 +340,10 @@ def test_no_phase_two_production_exemption_activation() -> None:
         and path != Path("custom_components/rental_control/allocator/allocator.py")
     ]
 
-    assert constructor_sites == []
-    assert call_sites == []
+    assert constructor_sites == [
+        Path("custom_components/rental_control/allocator/reissue.py")
+    ]
+    assert call_sites == [Path("custom_components/rental_control/allocator/reissue.py")]
 
 
 def _allocator() -> DoorCodeAllocator:
