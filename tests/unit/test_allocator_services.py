@@ -19,6 +19,9 @@ from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import OrphanCleanupReport
 from custom_components.rental_control.allocator.models import OrphanOutcome
+from custom_components.rental_control.allocator.reissue_service import (
+    SERVICE_FORCE_REISSUE,
+)
 from custom_components.rental_control.allocator.services import (
     SERVICE_CLEAR_ORPHANED_CODES,
 )
@@ -35,6 +38,20 @@ async def test_service_registers_once(hass: HomeAssistant) -> None:
     register_allocator_services(hass)
 
     assert hass.services.has_service(DOMAIN, SERVICE_CLEAR_ORPHANED_CODES)
+
+
+async def test_force_reissue_survives_clear_orphan_guard(
+    hass: HomeAssistant,
+) -> None:
+    """The force-reissue service has an idempotent guard before cleanup return."""
+    register_allocator_services(hass)
+    register_allocator_services(hass)
+
+    domain_services = hass.services.async_services()[DOMAIN]
+
+    assert hass.services.has_service(DOMAIN, SERVICE_CLEAR_ORPHANED_CODES)
+    assert hass.services.has_service(DOMAIN, SERVICE_FORCE_REISSUE)
+    assert list(domain_services).count(SERVICE_FORCE_REISSUE) == 1
 
 
 async def test_service_dry_run_changes_nothing(

@@ -149,6 +149,19 @@ class ReissuePreview:
 
 
 @dataclass(frozen=True, slots=True)
+class ReissuePreviewRequest:
+    """Request a read-only preview of one forced re-issue."""
+
+    entry_id: str
+    identity_key: str | None
+    preferred_code: str | None
+    code_length: int
+    lockname: str | None
+    slot: int | None
+    observed_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AdoptionRequest:
     """Record an observed lock code as owned by a reservation."""
 

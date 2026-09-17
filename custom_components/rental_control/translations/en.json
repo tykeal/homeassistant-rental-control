@@ -151,6 +151,32 @@
           "description": "Report what would be cleared without changing the shared code registry."
         }
       }
+    },
+    "force_reissue": {
+      "name": "Force reissue code",
+      "description": "Force one reservation or managed lock slot to receive a new code through the shared registry.",
+      "fields": {
+        "entity_id": {
+          "name": "Entity",
+          "description": "Single Rental Control reservation sensor to reissue."
+        },
+        "lockname": {
+          "name": "Lock name",
+          "description": "Managed lock name for direct slot targeting."
+        },
+        "slot": {
+          "name": "Slot",
+          "description": "Managed slot number to reissue or clear."
+        },
+        "force": {
+          "name": "Force",
+          "description": "Explicitly allow reissue when the reservation is currently checked in."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "Preview the code that would be issued without changing locks, sensors, or the shared registry."
+        }
+      }
     }
   }
 }

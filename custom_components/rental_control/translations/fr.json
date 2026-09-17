@@ -147,6 +147,32 @@
           "description": "Signaler ce qui serait effacé sans modifier le registre de codes partagé."
         }
       }
+    },
+    "force_reissue": {
+      "name": "Forcer la réémission du code",
+      "description": "Forcer une réservation ou un créneau de verrou géré à recevoir un nouveau code via le registre partagé.",
+      "fields": {
+        "entity_id": {
+          "name": "Entité",
+          "description": "Capteur de réservation Rental Control unique à réémettre."
+        },
+        "lockname": {
+          "name": "Nom du verrou",
+          "description": "Nom du verrou géré pour un ciblage direct par créneau."
+        },
+        "slot": {
+          "name": "Créneau",
+          "description": "Numéro de créneau géré à réémettre ou effacer."
+        },
+        "force": {
+          "name": "Forcer",
+          "description": "Autoriser explicitement la réémission lorsque la réservation est actuellement arrivée."
+        },
+        "dry_run": {
+          "name": "Simulation",
+          "description": "Prévisualiser le code qui serait émis sans modifier les verrous, capteurs ou registre partagé."
+        }
+      }
     }
   }
 }
