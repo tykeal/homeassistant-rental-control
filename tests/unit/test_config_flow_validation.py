@@ -14,6 +14,8 @@ from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
+from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.config_flow import _start_config_flow
 from custom_components.rental_control.config_flow_helpers.models import (
     ConfigFormContext,
@@ -37,6 +39,7 @@ from custom_components.rental_control.config_flow_helpers.validation import (
     validate_submitted_data,
 )
 from custom_components.rental_control.config_flow_helpers.validation import validate_url
+from custom_components.rental_control.const import ALLOCATOR
 from custom_components.rental_control.const import CONF_CHECKIN
 from custom_components.rental_control.const import CONF_CHECKOUT
 from custom_components.rental_control.const import CONF_CODE_GENERATION
@@ -60,6 +63,7 @@ from custom_components.rental_control.const import DEFAULT_DAYS
 from custom_components.rental_control.const import DEFAULT_MAX_EVENTS
 from custom_components.rental_control.const import DEFAULT_REFRESH_FREQUENCY
 from custom_components.rental_control.const import DEFAULT_START_SLOT
+from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import LOCK_MANAGER
 from custom_components.rental_control.const import MIN_NAME_LENGTH
 
@@ -92,6 +96,7 @@ class _OptionsFlow(_Flow):
     def __init__(self, hass: "HomeAssistant") -> None:
         """Initialize the options-flow stub."""
         self.hass = hass
+        self.config_entry: Any = None
 
 
 def _valid_input(url: str = "https://example.com/calendar.ics") -> dict[str, Any]:
@@ -230,6 +235,47 @@ async def test_generator_conversion_before_error_rerender(
 
     assert result.errors[CONF_DAYS] == "bad_minimum"
     assert result.user_input[CONF_CODE_GENERATION] == "date_based"
+
+
+async def test_options_reject_code_length_with_allocations(
+    hass: "HomeAssistant",
+) -> None:
+    """Test options cannot change code length while allocations exist."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={**_valid_input(), CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH},
+        entry_id="entry-a",
+    )
+    flow = _OptionsFlow(hass)
+    flow.config_entry = entry
+    allocator = DoorCodeAllocator(hass)
+    allocator._store = type(
+        "StoreStub",
+        (),
+        {"async_save": staticmethod(lambda _registry: None)},
+    )()
+    hass.data.setdefault(DOMAIN, {})[ALLOCATOR] = allocator
+    await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            preferred_code="1234",
+            code_length=DEFAULT_CODE_LENGTH,
+        )
+    )
+
+    user_input = _valid_input()
+    user_input[CONF_CODE_LENGTH] = DEFAULT_CODE_LENGTH + 2
+    with aioresponses() as mock_aiohttp:
+        mock_aiohttp.get(
+            user_input[CONF_URL],
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+        )
+        result = await validate_submitted_data(flow, user_input)
+
+    assert result.errors[CONF_CODE_LENGTH] == "active_allocations"
 
 
 async def test_successful_lock_and_metadata_conversion(
