@@ -22,6 +22,8 @@ import voluptuous as vol
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AllocationOrigin
 from custom_components.rental_control.allocator.models import AllocationRequest
+from custom_components.rental_control.allocator.models import CycleObservation
+from custom_components.rental_control.allocator.models import CycleRequest
 from custom_components.rental_control.allocator.reissue_service import ATTR_DRY_RUN
 from custom_components.rental_control.allocator.reissue_service import ATTR_FORCE
 from custom_components.rental_control.allocator.reissue_service import ATTR_LOCKNAME
@@ -40,6 +42,7 @@ from custom_components.rental_control.const import CHECKIN_SENSOR
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.coordinator_helpers import reissue
 from custom_components.rental_control.coordinator_helpers.models import (
     ReservationBuildContext,
 )
@@ -124,6 +127,69 @@ async def test_repeat_invocation_does_not_rotate_twice(
     assert first["status"] == "accepted"
     assert second["status"] == "accepted"
     assert coordinator.async_request_refresh.await_count == 1
+
+
+async def test_repeat_after_deferred_release_does_not_rotate(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A completed deferred-release target remains idempotent."""
+    coordinator = _install_service(hass)
+    identity = next(iter(coordinator._latest_res_by_key))
+    replacement = "5678"
+    current_code = _MutableCode("1234")
+    monkeypatch.setattr(
+        "custom_components.rental_control.coordinator_helpers.reservations."
+        "generate_slot_code",
+        lambda *_args: replacement,
+    )
+    monkeypatch.setattr(
+        "custom_components.rental_control.allocator.reissue_preview."
+        "observe_managed_slots_without_mutation",
+        lambda _coordinator: [_slot(code=current_code.value)],
+    )
+
+    first = await _call(hass, {ATTR_ENTITY_ID: "sensor.guest"})
+    first_cycle = await coordinator.allocator.async_resolve_cycle(
+        _cycle(
+            current_code.value,
+            forced_reissues=reissue.forced_reissue_directives(coordinator),
+            allocations=[_allocation(identity, replacement)],
+        )
+    )
+    reissue.consume_cycle_result(
+        coordinator,
+        reissue.CodeResolutionResult(
+            _observation(current_code.value),
+            first_cycle.reissues,
+            (identity,),
+        ),
+    )
+    current_code.value = replacement
+    coordinator._observed_slot_codes[identity] = (10, replacement)
+
+    final_cycle = await coordinator.allocator.async_resolve_cycle(
+        _cycle(
+            current_code.value,
+            allocations=[_allocation(identity, replacement)],
+        )
+    )
+    reissue.consume_cycle_result(
+        coordinator,
+        reissue.CodeResolutionResult(
+            _observation(current_code.value), final_cycle.reissues
+        ),
+    )
+    repeated = await _call(hass, {ATTR_ENTITY_ID: "sensor.guest"})
+
+    completed = reissue.completed_reissues(coordinator)[identity]
+    assert first["status"] == "accepted"
+    assert first_cycle.reissues[0].retention_reason == "code_still_programmed"
+    assert final_cycle.reissues[0].disposition == "released"
+    assert final_cycle.reissues[0].identity_key == identity
+    assert completed.replacement_code_ref == coordinator.allocator.code_ref(replacement)
+    assert repeated["status"] == "accepted"
+    assert coordinator.async_request_refresh.await_count == 1
+    assert coordinator.allocator._registry.code_for_identity(identity) == replacement
 
 
 async def test_dry_run_after_pending_still_returns_preview(
@@ -263,6 +329,13 @@ class ServiceHarness:
         return getattr(self.coordinator, name)
 
 
+@dataclass(slots=True)
+class _MutableCode:
+    """Mutable current-code holder for patched lock observations."""
+
+    value: str
+
+
 def _install_service(
     hass: HomeAssistant,
     *,
@@ -357,6 +430,18 @@ async def _allocate(
             lockname=lockname,
             slot=slot,
         )
+    )
+
+
+def _allocation(identity_key: str, preferred_code: str) -> AllocationRequest:
+    """Build an allocation request for one service test cycle."""
+    return AllocationRequest(
+        entry_id="entry-a",
+        identity_key=identity_key,
+        preferred_code=preferred_code,
+        code_length=len(preferred_code),
+        lockname="front",
+        slot=10,
     )
 
 
@@ -480,6 +565,34 @@ def _slot(
         actual_name="Guest",
         actual_code=code,
         actual_code_present=code is not None,
+    )
+
+
+def _observation(code: str) -> CycleObservation:
+    """Build the service harness cycle observation for slot 10."""
+    return CycleObservation(
+        "entry-a",
+        "front",
+        frozenset({10}),
+        {code: 10},
+        frozenset(),
+    )
+
+
+def _cycle(
+    code: str,
+    *,
+    allocations: list[AllocationRequest],
+    forced_reissues: tuple[Any, ...] = (),
+) -> CycleRequest:
+    """Build an allocator cycle request for the service harness."""
+    return CycleRequest(
+        observation=_observation(code),
+        adoptions=[],
+        rekeys=[],
+        allocations=allocations,
+        active_keys={allocation.identity_key for allocation in allocations},
+        forced_reissues=forced_reissues,
     )
 
 

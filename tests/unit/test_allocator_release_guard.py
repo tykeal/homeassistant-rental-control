@@ -341,9 +341,11 @@ def test_only_forced_hold_release_constructs_exemption() -> None:
     ]
 
     assert constructor_sites == [
-        Path("custom_components/rental_control/allocator/reissue.py")
+        Path("custom_components/rental_control/allocator/reissue_holds.py")
     ]
-    assert call_sites == [Path("custom_components/rental_control/allocator/reissue.py")]
+    assert call_sites == [
+        Path("custom_components/rental_control/allocator/reissue_holds.py")
+    ]
 
 
 def _allocator() -> DoorCodeAllocator:
