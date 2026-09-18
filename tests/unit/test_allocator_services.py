@@ -11,6 +11,7 @@ from typing import cast
 
 from homeassistant.core import HomeAssistant
 import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rental_control.allocator import services as services_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
@@ -84,6 +85,89 @@ async def test_service_dry_run_changes_nothing(
         }
     ]
     assert allocator._registry.code_for_identity("identity-a") == "2468"
+
+
+async def test_service_ordinary_orphan_response_omits_lock_fields(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ordinary cleanup responses keep the legacy lockless shape."""
+    monkeypatch.setattr(services_module, "async_create", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        services_module, "async_dismiss", lambda *_args, **_kwargs: None
+    )
+    allocator = _allocator(hass)
+    await _allocate(allocator, "orphan-entry", "identity-a", "2468", "front", 1)
+    hass.data.setdefault(DOMAIN, {})[ALLOCATOR] = allocator
+    register_allocator_services(hass)
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        SERVICE_CLEAR_ORPHANED_CODES,
+        {"dry_run": True},
+        blocking=True,
+        return_response=True,
+    )
+
+    assert response["retained"] == [
+        {
+            "code_ref": allocator.code_ref("2468"),
+            "entry_id": "orphan-entry",
+            "identity_key": "identity-a",
+            "reason": "unverifiable_lock",
+        }
+    ]
+
+
+async def test_service_forced_hold_response_keeps_lock_fields(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Forced-hold cleanup responses keep lock context for operators."""
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    allocator = _allocator(hass)
+    hold_key = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    await _allocate(allocator, "entry-a", hold_key, "2468", "front", 1)
+    monkeypatch.setattr(services_module, "async_create", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        services_module, "async_dismiss", lambda *_args, **_kwargs: None
+    )
+    MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-a",
+        unique_id="entry-a",
+        data={},
+        options={},
+        title="Entry A",
+    ).add_to_hass(hass)
+    hass.data.setdefault(DOMAIN, {})[ALLOCATOR] = allocator
+    hass.data[DOMAIN]["entry-a"] = {
+        COORDINATOR: SimpleNamespace(
+            lockname="front", _observe_managed_slots=lambda: []
+        )
+    }
+    register_allocator_services(hass)
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        SERVICE_CLEAR_ORPHANED_CODES,
+        {"dry_run": True, "force_reissued_holds": True},
+        blocking=True,
+        return_response=True,
+    )
+
+    assert response["cleared"] == [
+        {
+            "code_ref": allocator.code_ref("2468"),
+            "entry_id": "entry-a",
+            "identity_key": hold_key,
+            "reason": "unverifiable_lock",
+            "lockname": "front",
+            "slot": 1,
+        }
+    ]
 
 
 async def test_service_dry_run_preserves_observed_state(
@@ -490,3 +574,78 @@ def test_forced_hold_deferral_notification_skips_first_cycle(
     assert len(created) == 1
     assert "abc12345:unverifiable_lock" in created[0][0][1]
     assert "adoption_conflict" not in created[0][0][1]
+
+
+def test_forced_hold_report_scopes_current_observation(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shared-lock report does not judge other entries by this entry's slots."""
+    from custom_components.rental_control.allocator.models import ForcedReissueDirective
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    created = []
+    dismissed = []
+    monkeypatch.setattr(
+        services_module,
+        "async_create",
+        lambda *_args, **kwargs: created.append((_args, kwargs)),
+    )
+    monkeypatch.setattr(
+        services_module,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+    allocator = _allocator(hass)
+    hold_a = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    hold_b = forced_release_hold_key("identity-b", "entry-b", "front", 11)
+    allocator._registry.records["1357"] = AllocationRecord(
+        code="1357",
+        code_ref="ref-a",
+        encoding_salt_value="entry-a",
+        owners=[
+            AllocationOwner(
+                "entry-a",
+                hold_a,
+                AllocationOrigin.PREFERRED,
+                lockname="front",
+                slot=1,
+                lock_observed=True,
+            )
+        ],
+    )
+    allocator._registry.records["2468"] = AllocationRecord(
+        code="2468",
+        code_ref="ref-b",
+        encoding_salt_value="entry-b",
+        owners=[
+            AllocationOwner(
+                "entry-b",
+                hold_b,
+                AllocationOrigin.PREFERRED,
+                lockname="front",
+                slot=11,
+                lock_observed=True,
+            )
+        ],
+    )
+    allocator._registry.rebuild_index()
+
+    services_module.report_forced_hold_deferrals(
+        allocator,
+        (ForcedReissueDirective("entry-a", "identity-a", "front", 1),),
+        [
+            CycleObservation(
+                "entry-a",
+                "front",
+                frozenset({1}),
+                {"1357": 1},
+                frozenset(),
+            )
+        ],
+    )
+
+    assert created == []
+    assert dismissed == []
