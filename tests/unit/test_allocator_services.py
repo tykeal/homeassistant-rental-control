@@ -11,6 +11,7 @@ from typing import cast
 
 from homeassistant.core import HomeAssistant
 import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rental_control.allocator import services as services_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
@@ -84,6 +85,89 @@ async def test_service_dry_run_changes_nothing(
         }
     ]
     assert allocator._registry.code_for_identity("identity-a") == "2468"
+
+
+async def test_service_ordinary_orphan_response_omits_lock_fields(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ordinary cleanup responses keep the legacy lockless shape."""
+    monkeypatch.setattr(services_module, "async_create", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        services_module, "async_dismiss", lambda *_args, **_kwargs: None
+    )
+    allocator = _allocator(hass)
+    await _allocate(allocator, "orphan-entry", "identity-a", "2468", "front", 1)
+    hass.data.setdefault(DOMAIN, {})[ALLOCATOR] = allocator
+    register_allocator_services(hass)
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        SERVICE_CLEAR_ORPHANED_CODES,
+        {"dry_run": True},
+        blocking=True,
+        return_response=True,
+    )
+
+    assert response["retained"] == [
+        {
+            "code_ref": allocator.code_ref("2468"),
+            "entry_id": "orphan-entry",
+            "identity_key": "identity-a",
+            "reason": "unverifiable_lock",
+        }
+    ]
+
+
+async def test_service_forced_hold_response_keeps_lock_fields(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Forced-hold cleanup responses keep lock context for operators."""
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    allocator = _allocator(hass)
+    hold_key = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    await _allocate(allocator, "entry-a", hold_key, "2468", "front", 1)
+    monkeypatch.setattr(services_module, "async_create", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        services_module, "async_dismiss", lambda *_args, **_kwargs: None
+    )
+    MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-a",
+        unique_id="entry-a",
+        data={},
+        options={},
+        title="Entry A",
+    ).add_to_hass(hass)
+    hass.data.setdefault(DOMAIN, {})[ALLOCATOR] = allocator
+    hass.data[DOMAIN]["entry-a"] = {
+        COORDINATOR: SimpleNamespace(
+            lockname="front", _observe_managed_slots=lambda: []
+        )
+    }
+    register_allocator_services(hass)
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        SERVICE_CLEAR_ORPHANED_CODES,
+        {"dry_run": True, "force_reissued_holds": True},
+        blocking=True,
+        return_response=True,
+    )
+
+    assert response["cleared"] == [
+        {
+            "code_ref": allocator.code_ref("2468"),
+            "entry_id": "entry-a",
+            "identity_key": hold_key,
+            "reason": "unverifiable_lock",
+            "lockname": "front",
+            "slot": 1,
+        }
+    ]
 
 
 async def test_service_dry_run_preserves_observed_state(

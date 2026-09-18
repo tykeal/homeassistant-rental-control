@@ -113,6 +113,9 @@ def _collect_observations(hass: HomeAssistant) -> list[CycleObservation]:
 def _outcome_dict(outcome: Any) -> dict[str, Any]:
     """Return a cleanup outcome response without empty optional fields."""
     data = asdict(outcome)
+    if not allocator_reissue.is_forced_release_hold(data["identity_key"]):
+        data.pop("lockname", None)
+        data.pop("slot", None)
     for key in ("reason", "lockname", "slot"):
         if data.get(key) is None:
             data.pop(key, None)
