@@ -490,3 +490,78 @@ def test_forced_hold_deferral_notification_skips_first_cycle(
     assert len(created) == 1
     assert "abc12345:unverifiable_lock" in created[0][0][1]
     assert "adoption_conflict" not in created[0][0][1]
+
+
+def test_forced_hold_report_scopes_current_observation(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shared-lock report does not judge other entries by this entry's slots."""
+    from custom_components.rental_control.allocator.models import ForcedReissueDirective
+    from custom_components.rental_control.allocator.reissue import (
+        forced_release_hold_key,
+    )
+
+    created = []
+    dismissed = []
+    monkeypatch.setattr(
+        services_module,
+        "async_create",
+        lambda *_args, **kwargs: created.append((_args, kwargs)),
+    )
+    monkeypatch.setattr(
+        services_module,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+    allocator = _allocator(hass)
+    hold_a = forced_release_hold_key("identity-a", "entry-a", "front", 1)
+    hold_b = forced_release_hold_key("identity-b", "entry-b", "front", 11)
+    allocator._registry.records["1357"] = AllocationRecord(
+        code="1357",
+        code_ref="ref-a",
+        encoding_salt_value="entry-a",
+        owners=[
+            AllocationOwner(
+                "entry-a",
+                hold_a,
+                AllocationOrigin.PREFERRED,
+                lockname="front",
+                slot=1,
+                lock_observed=True,
+            )
+        ],
+    )
+    allocator._registry.records["2468"] = AllocationRecord(
+        code="2468",
+        code_ref="ref-b",
+        encoding_salt_value="entry-b",
+        owners=[
+            AllocationOwner(
+                "entry-b",
+                hold_b,
+                AllocationOrigin.PREFERRED,
+                lockname="front",
+                slot=11,
+                lock_observed=True,
+            )
+        ],
+    )
+    allocator._registry.rebuild_index()
+
+    services_module.report_forced_hold_deferrals(
+        allocator,
+        (ForcedReissueDirective("entry-a", "identity-a", "front", 1),),
+        [
+            CycleObservation(
+                "entry-a",
+                "front",
+                frozenset({1}),
+                {"1357": 1},
+                frozenset(),
+            )
+        ],
+    )
+
+    assert created == []
+    assert dismissed == []

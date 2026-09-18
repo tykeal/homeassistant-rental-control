@@ -162,19 +162,27 @@ def report_forced_hold_deferrals(
 ) -> None:
     """Reconcile notifications for all outstanding forced-release holds."""
     hass = allocator.hass
-    hold_rows = [
+    all_hold_rows = [
         (record, owner)
         for record in allocator._registry.records.values()
         for owner in record.owners
         if allocator_reissue.is_forced_release_hold(owner.identity_key)
     ]
-    if not hold_rows:
+    if not all_hold_rows:
         if hasattr(hass, "bus"):
             async_dismiss(hass, _FORCED_HOLD_NOTIFICATION_ID)
         return
     observations = (
         observations if observations is not None else _collect_observations(hass)
     )
+    observed_entry_ids = {observation.entry_id for observation in observations}
+    hold_rows = [
+        (record, owner)
+        for record, owner in all_hold_rows
+        if not observed_entry_ids or owner.entry_id in observed_entry_ids
+    ]
+    if not hold_rows:
+        return
     deferred = []
     for record, owner in hold_rows:
         outcome = ReissueOutcome(
@@ -195,7 +203,7 @@ def report_forced_hold_deferrals(
         if not _matches_current_directive(outcome, current_directives):
             deferred.append(outcome)
     if not deferred:
-        if hasattr(hass, "bus"):
+        if len(hold_rows) == len(all_hold_rows) and hasattr(hass, "bus"):
             async_dismiss(hass, _FORCED_HOLD_NOTIFICATION_ID)
         return
     message = "Forced re-issue hold releases remain deferred: " + ", ".join(
