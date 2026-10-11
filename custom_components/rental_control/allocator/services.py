@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.core import ServiceCall
 from homeassistant.core import SupportsResponse
 from homeassistant.helpers import config_validation as cv
+import voluptuous as vol
 
 from ..const import COORDINATOR
 from ..const import DOMAIN
@@ -28,6 +29,8 @@ from .models import ReissueOutcome
 SERVICE_CLEAR_ORPHANED_CODES = "clear_orphaned_codes"
 ATTR_DRY_RUN = "dry_run"
 ATTR_FORCE_REISSUED_HOLDS = "force_reissued_holds"
+# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
+
 _LOGGER = logging.getLogger(__name__)
 _ORPHAN_NOTIFICATION_ID = f"{DOMAIN}_code_registry_orphans"
 _FORCED_HOLD_NOTIFICATION_ID = f"{DOMAIN}_forced_reissue_holds"
@@ -44,10 +47,10 @@ def register_allocator_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_CLEAR_ORPHANED_CODES,
         _handle_clear_orphaned_codes(hass),
-        schema=cv.vol.Schema(
+        schema=vol.Schema(
             {
-                cv.vol.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
-                cv.vol.Optional(ATTR_FORCE_REISSUED_HOLDS, default=False): cv.boolean,
+                vol.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
+                vol.Optional(ATTR_FORCE_REISSUED_HOLDS, default=False): cv.boolean,
             }
         ),
         supports_response=SupportsResponse.OPTIONAL,
