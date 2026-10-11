@@ -226,7 +226,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: 'python-build'
     if: ${{ !cancelled() && needs.python-build.result == 'success' }}
-    timeout-minutes: 10
+    # grpcio and orjson have no cp314 wheels yet, so SBOM generation
+    # compiles them from source and overruns a 10 minute budget.
+    # Lower this again once upstream publishes cp314 wheels; see
+    # https://github.com/tykeal/homeassistant-rental-control/issues/779
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
