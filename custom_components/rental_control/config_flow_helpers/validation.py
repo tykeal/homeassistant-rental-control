@@ -13,6 +13,7 @@ from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 
 from ..allocator import get_allocator
 from ..const import CONF_CHECKIN
@@ -37,6 +38,8 @@ from .models import FlowValidationResult
 from .models import URLValidationResult
 from .schemas import generator_convert
 from .schemas import lock_entry_convert
+
+# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
 
 _LOGGER = logging.getLogger("custom_components.rental_control.config_flow")
 
@@ -108,7 +111,7 @@ async def validate_url(
         if "text/calendar" not in resp.content_type:
             errors[CONF_URL] = "bad_ics"
             return URLValidationResult(error="bad_ics", content_type=resp.content_type)
-    except cv.vol.Invalid as err:
+    except vol.Invalid as err:
         _LOGGER.exception(err.msg)
         errors[CONF_URL] = "invalid_url"
         return URLValidationResult(error="invalid_url")
@@ -125,13 +128,13 @@ def validate_scalar_fields(user_input: dict[str, Any], errors: dict[str, str]) -
 
     try:
         cv.time(user_input[CONF_CHECKIN])
-    except cv.vol.Invalid as err:
+    except vol.Invalid as err:
         _LOGGER.exception(err.msg)
         errors[CONF_CHECKIN] = "bad_time"
 
     try:
         cv.time(user_input[CONF_CHECKOUT])
-    except cv.vol.Invalid as err:
+    except vol.Invalid as err:
         _LOGGER.exception(err.msg)
         errors[CONF_CHECKOUT] = "bad_time"
 

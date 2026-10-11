@@ -19,6 +19,7 @@ from homeassistant.helpers.selector import SelectSelector
 from homeassistant.helpers.selector import SelectSelectorConfig
 from homeassistant.helpers.selector import SelectSelectorMode
 from homeassistant.util import dt
+import voluptuous as vol
 
 from ..const import CODE_GENERATORS
 from ..const import CONF_CHECKIN
@@ -63,6 +64,8 @@ from ..const import DEFAULT_TRIM_NAMES
 from ..const import LOCK_MANAGER
 from ..const import MIN_NAME_LENGTH
 from .models import SchemaBuildContext
+
+# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
 
 _LOGGER = logging.getLogger("custom_components.rental_control.config_flow")
 SORTED_TZ = sorted(available_timezones())
@@ -140,7 +143,7 @@ def build_config_schema(
     fields = _base_fields(context)
     if entry_id is not None:
         fields.update(_options_fields(context))
-    return cv.vol.Schema(fields, extra=cv.vol.schema_builder.ALLOW_EXTRA)
+    return vol.Schema(fields, extra=vol.schema_builder.ALLOW_EXTRA)
 
 
 def _normalize_defaults(
@@ -188,32 +191,32 @@ def _base_fields(context: SchemaBuildContext) -> dict[Any, Any]:
 def _identity_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build name and URL schema fields."""
     return {
-        cv.vol.Required(CONF_NAME, default=_get_default(context, CONF_NAME)): cv.string,
-        cv.vol.Required(CONF_URL, default=_get_default(context, CONF_URL)): cv.string,
+        vol.Required(CONF_NAME, default=_get_default(context, CONF_NAME)): cv.string,
+        vol.Required(CONF_URL, default=_get_default(context, CONF_URL)): cv.string,
     }
 
 
 def _refresh_time_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build refresh, timezone, prefix, and time schema fields."""
     return {
-        cv.vol.Optional(
+        vol.Optional(
             CONF_REFRESH_FREQUENCY,
             default=_get_default(
                 context, CONF_REFRESH_FREQUENCY, DEFAULT_REFRESH_FREQUENCY
             ),
         ): cv.positive_int,
-        cv.vol.Optional(
+        vol.Optional(
             CONF_TIMEZONE,
             default=_get_default(context, CONF_TIMEZONE, str(dt.DEFAULT_TIME_ZONE)),
-        ): cv.vol.In(SORTED_TZ),
-        cv.vol.Optional(
+        ): vol.In(SORTED_TZ),
+        vol.Optional(
             CONF_EVENT_PREFIX,
             default=_get_default(context, CONF_EVENT_PREFIX, DEFAULT_EVENT_PREFIX),
         ): cv.string,
-        cv.vol.Required(
+        vol.Required(
             CONF_CHECKIN, default=_get_default(context, CONF_CHECKIN, DEFAULT_CHECKIN)
         ): cv.string,
-        cv.vol.Required(
+        vol.Required(
             CONF_CHECKOUT,
             default=_get_default(context, CONF_CHECKOUT, DEFAULT_CHECKOUT),
         ): cv.string,
@@ -223,10 +226,10 @@ def _refresh_time_fields(context: SchemaBuildContext) -> dict[Any, Any]:
 def _day_lock_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build day count and lock selector schema fields."""
     return {
-        cv.vol.Optional(
+        vol.Optional(
             CONF_DAYS, default=_get_default(context, CONF_DAYS, DEFAULT_DAYS)
         ): cv.positive_int,
-        cv.vol.Optional(
+        vol.Optional(
             CONF_LOCK_ENTRY, default=_get_default(context, CONF_LOCK_ENTRY, "(none)")
         ): SelectSelector(
             SelectSelectorConfig(
@@ -243,19 +246,19 @@ def _day_lock_fields(context: SchemaBuildContext) -> dict[Any, Any]:
 def _slot_code_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build slot, event, code, generator, and update schema fields."""
     return {
-        cv.vol.Required(
+        vol.Required(
             CONF_START_SLOT,
             default=_get_default(context, CONF_START_SLOT, DEFAULT_START_SLOT),
         ): cv.positive_int,
-        cv.vol.Required(
+        vol.Required(
             CONF_MAX_EVENTS,
             default=_get_default(context, CONF_MAX_EVENTS, DEFAULT_MAX_EVENTS),
         ): cv.positive_int,
-        cv.vol.Required(
+        vol.Required(
             CONF_CODE_LENGTH,
             default=_get_default(context, CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH),
         ): cv.positive_int,
-        cv.vol.Optional(
+        vol.Optional(
             CONF_CODE_GENERATION,
             default=generator_convert(
                 ident=str(
@@ -263,8 +266,8 @@ def _slot_code_fields(context: SchemaBuildContext) -> dict[Any, Any]:
                 ),
                 to_type=False,
             ),
-        ): cv.vol.In(code_generators()),
-        cv.vol.Optional(
+        ): vol.In(code_generators()),
+        vol.Optional(
             CONF_SHOULD_UPDATE_CODE,
             default=_get_default(
                 context, CONF_SHOULD_UPDATE_CODE, DEFAULT_SHOULD_UPDATE_CODE
@@ -276,52 +279,52 @@ def _slot_code_fields(context: SchemaBuildContext) -> dict[Any, Any]:
 def _behavior_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build behavior toggle schema fields."""
     return {
-        cv.vol.Optional(
+        vol.Optional(
             CONF_HONOR_EVENT_TIMES,
             default=_get_default(
                 context, CONF_HONOR_EVENT_TIMES, DEFAULT_HONOR_EVENT_TIMES
             ),
         ): cv.boolean,
-        cv.vol.Optional(
+        vol.Optional(
             CONF_DATE_ONLY,
             default=_get_default(context, CONF_DATE_ONLY, DEFAULT_DATE_ONLY),
         ): cv.boolean,
-        cv.vol.Optional(
+        vol.Optional(
             CONF_IGNORE_NON_RESERVED,
             default=_get_default(context, CONF_IGNORE_NON_RESERVED, True),
         ): cv.boolean,
-        cv.vol.Optional(
+        vol.Optional(
             CONF_VERIFY_SSL, default=_get_default(context, CONF_VERIFY_SSL, True)
         ): cv.boolean,
-        cv.vol.Optional(
+        vol.Optional(
             CONF_CLEANING_WINDOW,
             default=_get_default(
                 context, CONF_CLEANING_WINDOW, DEFAULT_CLEANING_WINDOW
             ),
-        ): cv.vol.All(cv.vol.Coerce(float), cv.vol.Range(min=0.5, max=48.0)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=48.0)),
     }
 
 
 def _trim_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build trim-name schema fields."""
     return {
-        cv.vol.Optional(
+        vol.Optional(
             CONF_TRIM_NAMES,
             default=_get_default(context, CONF_TRIM_NAMES, DEFAULT_TRIM_NAMES),
         ): cv.boolean,
-        cv.vol.Optional(
+        vol.Optional(
             CONF_MAX_NAME_LENGTH,
             default=_get_default(
                 context, CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH
             ),
-        ): cv.vol.All(cv.vol.Coerce(int), cv.vol.Range(min=MIN_NAME_LENGTH)),
+        ): vol.All(vol.Coerce(int), vol.Range(min=MIN_NAME_LENGTH)),
     }
 
 
 def _options_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build options-only schema fields."""
     return {
-        cv.vol.Optional(
+        vol.Optional(
             CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
             default=_get_default(
                 context,
@@ -329,16 +332,16 @@ def _options_fields(context: SchemaBuildContext) -> dict[Any, Any]:
                 DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
             ),
         ): cv.boolean,
-        cv.vol.Optional(
+        vol.Optional(
             CONF_CODE_BUFFER_BEFORE,
             default=_get_default(
                 context, CONF_CODE_BUFFER_BEFORE, DEFAULT_CODE_BUFFER_BEFORE
             ),
-        ): cv.vol.All(cv.vol.Coerce(int), cv.vol.Range(min=0)),
-        cv.vol.Optional(
+        ): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        vol.Optional(
             CONF_CODE_BUFFER_AFTER,
             default=_get_default(
                 context, CONF_CODE_BUFFER_AFTER, DEFAULT_CODE_BUFFER_AFTER
             ),
-        ): cv.vol.All(cv.vol.Coerce(int), cv.vol.Range(min=0)),
+        ): vol.All(vol.Coerce(int), vol.Range(min=0)),
     }

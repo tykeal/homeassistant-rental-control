@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.core import ServiceCall
 from homeassistant.core import SupportsResponse
 from homeassistant.helpers import config_validation as cv
+import voluptuous as vol
 
 from ..const import COORDINATOR
 from ..const import DOMAIN
@@ -28,6 +29,8 @@ ATTR_LOCKNAME = "lockname"
 ATTR_SLOT = "slot"
 ATTR_FORCE = "force"
 ATTR_DRY_RUN = "dry_run"
+# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
+
 _LOGGER = logging.getLogger(__name__)
 _PREVIEW_REFUSALS = {
     "exhausted",
@@ -53,25 +56,25 @@ class ReissueRequest:
 def _positive_slot(value: Any) -> int:
     """Return a positive integer slot, rejecting bools and fractional values."""
     if isinstance(value, bool):
-        raise cv.vol.Invalid("slot must be a positive integer")
+        raise vol.Invalid("slot must be a positive integer")
     if isinstance(value, int):
         return value
     if isinstance(value, float):
         if not value.is_integer():
-            raise cv.vol.Invalid("slot must be a positive integer")
+            raise vol.Invalid("slot must be a positive integer")
         return int(value)
     if isinstance(value, str) and value.isdecimal():
         return int(value)
-    raise cv.vol.Invalid("slot must be a positive integer")
+    raise vol.Invalid("slot must be a positive integer")
 
 
-FORCE_REISSUE_SCHEMA = cv.vol.Schema(
+FORCE_REISSUE_SCHEMA = vol.Schema(
     {
-        cv.vol.Optional(ATTR_ENTITY_ID): cv.entity_id,
-        cv.vol.Optional(ATTR_LOCKNAME): cv.string,
-        cv.vol.Optional(ATTR_SLOT): cv.vol.All(_positive_slot, cv.vol.Range(min=1)),
-        cv.vol.Optional(ATTR_FORCE, default=False): cv.boolean,
-        cv.vol.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
+        vol.Optional(ATTR_ENTITY_ID): cv.entity_id,
+        vol.Optional(ATTR_LOCKNAME): cv.string,
+        vol.Optional(ATTR_SLOT): vol.All(_positive_slot, vol.Range(min=1)),
+        vol.Optional(ATTR_FORCE, default=False): cv.boolean,
+        vol.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
     }
 )
 
