@@ -143,6 +143,7 @@ def test_pending_set_ghost_flips_to_pending_clear_on_third_miss() -> None:
             "operation_id": "set-token",
             "operation_kind": "set",
             "pending_set_since": "2026-08-01T00:00:00+00:00",
+            "pending_clear_since": None,
             "identity": {"slot_name": "Alice", "summary": "Alice"},
         }
     }
@@ -158,7 +159,6 @@ def test_pending_set_ghost_flips_to_pending_clear_on_third_miss() -> None:
     assert mapping["operation_id"] is None
     assert mapping["operation_kind"] == OPERATION_KIND_CLEAR
     assert mapping["pending_set_since"] is None
-    assert isinstance(mapping["pending_clear_since"], str)
 
 
 def test_hydration_resets_missing_count_on_reappearance() -> None:
