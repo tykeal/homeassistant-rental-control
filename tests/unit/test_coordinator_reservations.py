@@ -7,14 +7,25 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timezone
 
+from custom_components.rental_control.const import OPERATION_KIND_CLEAR
 from custom_components.rental_control.const import SLOT_STATUS_OCCUPIED
+from custom_components.rental_control.const import SLOT_STATUS_PENDING_CLEAR
+from custom_components.rental_control.const import SLOT_STATUS_PENDING_SET
 from custom_components.rental_control.coordinator_helpers import reservations
+from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
+    CoordinatorRefreshMixin,
+)
 from custom_components.rental_control.coordinator_helpers.models import (
     GhostReservationResult,
 )
 from custom_components.rental_control.coordinator_helpers.models import (
     ReservationBuildContext,
 )
+from custom_components.rental_control.reconciliation import ActionKind
+from custom_components.rental_control.reconciliation import ManagedSlot
+from custom_components.rental_control.reconciliation import Reservation
+from custom_components.rental_control.reconciliation import SlotStatus
+from custom_components.rental_control.reconciliation import compute_desired_plan
 
 
 def _ctx() -> ReservationBuildContext:
@@ -121,3 +132,86 @@ def test_build_ghost_reservations_handles_mixed_datetime_awareness() -> None:
 
     assert result.reservations == []
     assert persisted["mixed-dates"]["missing_count"] == 1
+
+
+def test_pending_set_ghost_flips_to_pending_clear_on_third_miss() -> None:
+    """A vanished pending-set mapping becomes pending-clear on the third miss."""
+    persisted: dict[str, dict[str, object]] = {
+        "pending-key": {
+            "status": SLOT_STATUS_PENDING_SET,
+            "missing_count": 2,
+            "operation_id": "set-token",
+            "operation_kind": "set",
+            "pending_set_since": "2026-08-01T00:00:00+00:00",
+            "identity": {"slot_name": "Alice", "summary": "Alice"},
+        }
+    }
+
+    result = reservations.build_ghost_reservations(
+        set(), persisted, "RC ", None, _ctx()
+    )
+
+    mapping = persisted["pending-key"]
+    assert result.reservations == []
+    assert mapping["missing_count"] == 3
+    assert mapping["status"] == SLOT_STATUS_PENDING_CLEAR
+    assert mapping["operation_id"] is None
+    assert mapping["operation_kind"] == OPERATION_KIND_CLEAR
+    assert mapping["pending_set_since"] is None
+    assert isinstance(mapping["pending_clear_since"], str)
+
+
+def test_hydration_resets_missing_count_on_reappearance() -> None:
+    """A reservation back in the feed is reset to zero misses and retained."""
+    start = datetime(2026, 8, 15, 16, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 22, 11, 0, tzinfo=timezone.utc)
+    reservation = Reservation(
+        identity_key="reappear-key",
+        start=start,
+        end=end,
+        buffered_start=start,
+        buffered_end=end,
+        summary="Reappear Guest",
+        slot_name="Reappear Guest",
+        display_slot_name="RC Reappear Guest",
+        slot_code="1234",
+        missing_count=3,
+    )
+    persisted: dict[str, object] = {
+        "reappear-key": {
+            "status": SLOT_STATUS_OCCUPIED,
+            "missing_count": 3,
+        }
+    }
+
+    CoordinatorRefreshMixin._hydrate_reservations_from_mappings(
+        [reservation], persisted
+    )
+
+    assert reservation.missing_count == 0
+
+    plan = compute_desired_plan(
+        [reservation],
+        [
+            ManagedSlot(
+                slot=10,
+                managed=True,
+                status=SlotStatus.OCCUPIED,
+                actual_name="RC Reappear Guest",
+                actual_code_present=True,
+                persisted_identity_key="reappear-key",
+                actual_start=start,
+                actual_end=end,
+            )
+        ],
+        max_events=1,
+        plan_id="reappear",
+        generated_at=start,
+    )
+
+    assert plan.selected["reappear-key"] == 10
+    assert not [
+        action
+        for action in plan.actions
+        if action.kind is ActionKind.CLEAR and action.slot == 10
+    ]
