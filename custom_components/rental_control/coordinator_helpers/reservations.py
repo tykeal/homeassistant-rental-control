@@ -21,9 +21,7 @@ from ..util import apply_buffer
 from ..util import get_slot_name
 from ..util import normalize_uid
 from .codegen import generate_slot_code
-from .ghost_reservations import (
-    build_ghost_reservations as build_ghost_reservations,  # noqa: F401
-)
+from .ghost_reservations import build_ghost_reservations as build_ghost_reservations
 from .models import ObservedSlotQuery
 from .models import _format_display_slot_name
 from .slot_matching import find_observed_slot
