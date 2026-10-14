@@ -8,37 +8,46 @@ change-template: "- $TITLE @$AUTHOR (#$NUMBER)"
 sort-direction: ascending
 categories:
   - title: "💥 Breaking Change 💥"
-    labels:
-      - "breaking-change"
+    semver-increment: major
+    when:
+      label: "breaking-change"
   - title: "✨ New Features ✨"
-    labels:
-      - "enhancement"
-      - "feature"
+    semver-increment: minor
+    when:
+      labels:
+        - "enhancement"
+        - "feature"
   - title: "🐛 Bug Fixes 🐛"
-    labels:
-      - "fix"
-      - "bugfix"
-      - "bug"
+    semver-increment: patch
+    when:
+      label: "bug"
   - title: "⚡ Performance ⚡"
-    labels:
-      - "performance"
+    semver-increment: patch
+    when:
+      label: "performance"
   - title: "🔧 Maintenance 🔧"
-    labels:
-      - "chore"
-      - "documentation"
-      - "maintenance"
-      - "repo"
-      - "dependencies"
-      - "github_actions"
-      - "refactor"
-      - "style"
-      - "build"
-      - "revert"
+    collapse-after: 3
+    semver-increment: patch
+    when:
+      labels:
+        - "chore"
+        - "documentation"
+        - "dependencies"
+        - "github_actions"
+        - "refactor"
+        - "build"
+        - "revert"
   - title: "🎓 Code Quality 🎓"
-    labels:
-      - "code-quality"
-      - "CI"
-      - "test"
+    collapse-after: 3
+    semver-increment: patch
+    when:
+      labels:
+        - "code-quality"
+        - "CI"
+  # Fallback: anything not matched above still resolves to a patch bump,
+  # replacing the deprecated top-level 'version-resolver.default'.
+  - type: version-resolver
+    semver-increment: patch
 autolabeler:
   - label: "breaking-change"
     title:
@@ -52,9 +61,12 @@ autolabeler:
   - label: "refactor"
     title:
       - '/^refactor(\([^)]+\))?:/i'
+  # 'test:' and 'style:' share the 'code-quality' label; this repository
+  # has no 'test' or 'style' label and adding one would be redundant.
   - label: "code-quality"
     title:
       - '/^test(\([^)]+\))?:/i'
+      - '/^style(\([^)]+\))?:/i'
   - label: "CI"
     title:
       - '/^ci(\([^)]+\))?:/i'
@@ -64,9 +76,6 @@ autolabeler:
   - label: "documentation"
     title:
       - '/^docs(\([^)]+\))?:/i'
-  - label: "style"
-    title:
-      - '/^style(\([^)]+\))?:/i'
   - label: "performance"
     title:
       - '/^perf(\([^)]+\))?:/i'
@@ -76,30 +85,6 @@ autolabeler:
   - label: "build"
     title:
       - '/^build(\([^)]+\))?:/i'
-version-resolver:
-  major:
-    labels:
-      - "breaking-change"
-  minor:
-    labels:
-      - "feature"
-      - "enhancement"
-  patch:
-    labels:
-      - "bug"
-      - "fix"
-      - "bugfix"
-      - "performance"
-      - "refactor"
-      - "style"
-      - "build"
-      - "chore"
-      - "documentation"
-      - "CI"
-      - "test"
-      - "code-quality"
-      - "revert"
-  default: patch
 # yamllint disable rule:line-length
 template: |
   [![Downloads for this release](https://img.shields.io/github/downloads/$OWNER/$REPOSITORY/v$RESOLVED_VERSION/total.svg)](https://github.com/$OWNER/$REPOSITORY/releases/v$RESOLVED_VERSION)
