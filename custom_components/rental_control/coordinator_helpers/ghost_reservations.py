@@ -81,8 +81,8 @@ def _build_one_ghost(
     if status == SLOT_STATUS_PENDING_SET and new_mc >= 3:
         mapping["status"] = SLOT_STATUS_PENDING_CLEAR
         mapping["pending_set_since"] = None
-        mapping["pending_clear_since"] = mapping.get(
-            "pending_clear_since", _dt.now().isoformat()
+        mapping["pending_clear_since"] = (
+            mapping.get("pending_clear_since") or _dt.now().isoformat()
         )
         mapping["operation_id"] = None
         mapping["operation_kind"] = OPERATION_KIND_CLEAR
