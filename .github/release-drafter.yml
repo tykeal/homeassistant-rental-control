@@ -61,9 +61,12 @@ autolabeler:
   - label: "refactor"
     title:
       - '/^refactor(\([^)]+\))?:/i'
+  # 'test:' and 'style:' share the 'code-quality' label; this repository
+  # has no 'test' or 'style' label and adding one would be redundant.
   - label: "code-quality"
     title:
       - '/^test(\([^)]+\))?:/i'
+      - '/^style(\([^)]+\))?:/i'
   - label: "CI"
     title:
       - '/^ci(\([^)]+\))?:/i'
@@ -73,9 +76,6 @@ autolabeler:
   - label: "documentation"
     title:
       - '/^docs(\([^)]+\))?:/i'
-  - label: "style"
-    title:
-      - '/^style(\([^)]+\))?:/i'
   - label: "performance"
     title:
       - '/^perf(\([^)]+\))?:/i'
