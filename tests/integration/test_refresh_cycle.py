@@ -322,7 +322,13 @@ async def test_wedged_recovers_promptly_when_slots_become_available(
 async def test_missing_store_adopts_coded_slots_when_unavailable_at_setup(
     hass: HomeAssistant,
 ) -> None:
-    """Adopt a coded slot that was unreadable during empty-store setup."""
+    """Adopt a coded slot that was unreadable during empty-store setup.
+
+    Like :func:`test_deleted_store_reenable_recovers_coded_slots`, this test
+    keeps ``dt_util.now`` aligned with the event loop clock so the check-in
+    sensor cannot cascade through ``checked_out`` and clear the adopted slot
+    mid-refresh (#798).
+    """
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Readable Adoption Rental",
@@ -389,13 +395,11 @@ async def test_missing_store_adopts_coded_slots_when_unavailable_at_setup(
                 return_value=OperationResult(kind="set", slot=10, confirmed=True)
             ),
         ) as set_code,
-        patch.object(dt_util, "now", return_value=FROZEN_TIME),
-        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             entry.data["url"],
             status=200,
-            body=future_ics(summary="Current Guest"),
+            body=future_ics(summary="Current Guest", base_time=dt_util.utcnow()),
             repeat=True,
         )
 
@@ -414,6 +418,7 @@ async def test_missing_store_adopts_coded_slots_when_unavailable_at_setup(
 
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))
         await hass.async_block_till_done()
+        await coordinator.async_refresh()
         await hass.async_block_till_done()
 
         mappings = coordinator.get_persisted_slot_mappings()
@@ -443,7 +448,17 @@ async def test_missing_store_adopts_coded_slots_when_unavailable_at_setup(
 async def test_deleted_store_reenable_recovers_coded_slots(
     hass: HomeAssistant,
 ) -> None:
-    """Recover existing coded slots after disable, Store delete, re-enable."""
+    """Recover existing coded slots after disable, Store delete, re-enable.
+
+    The calendar is built relative to the real clock and ``dt_util.now`` is
+    left unpatched so that the check-in sensor's auto-checkin/auto-checkout
+    timers are scheduled in the future, as they would be in a real runtime.
+    Freezing ``dt_util.now`` in the past while the event loop runs on real
+    time makes those timers immediately due, which cascades the sensor
+    through ``checked_out`` and lets a refresh observe the transient state
+    and clear the adopted slot (#798).  The final observation is taken from
+    an explicitly awaited refresh rather than from a drained timer tick.
+    """
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Deleted Store Rental",
@@ -503,13 +518,11 @@ async def test_deleted_store_reenable_recovers_coded_slots(
                 return_value=OperationResult(kind="set", slot=10, confirmed=True)
             ),
         ) as set_code,
-        patch.object(dt_util, "now", return_value=FROZEN_TIME),
-        patch.object(dt_util, "start_of_local_day", return_value=FROZEN_START_OF_DAY),
     ):
         mock_session.get(
             entry.data["url"],
             status=200,
-            body=future_ics(summary="Reenabled Guest"),
+            body=future_ics(summary="Reenabled Guest", base_time=dt_util.utcnow()),
             repeat=True,
         )
 
@@ -526,6 +539,7 @@ async def test_deleted_store_reenable_recovers_coded_slots(
 
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))
         await hass.async_block_till_done()
+        await coordinator.async_refresh()
         await hass.async_block_till_done()
 
         mappings = coordinator.get_persisted_slot_mappings()
