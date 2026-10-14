@@ -1745,11 +1745,13 @@ class TestAsyncFireSetCode:
         coordinator.hass.states.get.return_value = MagicMock(state="Old Guest")
         monkeypatch.setattr(util_module, "_SET_CODE_CONFIRMATION_TIMEOUT", 0.5)
         callbacks = []
+        registered = asyncio.Event()
         unsub = MagicMock()
 
         def track_state_change(hass, entity_ids, action):
             """Capture the targeted listener registered by the wait helper."""
             callbacks.append((entity_ids, action))
+            registered.set()
             return unsub
 
         monkeypatch.setattr(
@@ -1759,8 +1761,8 @@ class TestAsyncFireSetCode:
         )
 
         async def update_name() -> None:
-            """Fire the captured listener after the wait helper is armed."""
-            await asyncio.sleep(0.01)
+            """Fire the captured listener once the wait helper is armed."""
+            await asyncio.wait_for(registered.wait(), timeout=5)
             _entity_ids, action = callbacks[0]
             coordinator.hass.states.get.return_value = MagicMock(state="Guest")
             event = MagicMock()
@@ -1791,10 +1793,12 @@ class TestAsyncFireSetCode:
         coordinator.hass.states.get.return_value = MagicMock(state="Old Guest")
         monkeypatch.setattr(util_module, "_SET_CODE_CONFIRMATION_TIMEOUT", 0.5)
         callbacks = []
+        registered = asyncio.Event()
 
         def track_state_change(hass, entity_ids, action):
             """Capture the targeted listener registered by the wait helper."""
             callbacks.append(action)
+            registered.set()
             return MagicMock()
 
         monkeypatch.setattr(
@@ -1805,7 +1809,7 @@ class TestAsyncFireSetCode:
 
         async def update_name() -> None:
             """Fire a stale matching event while current state is mismatched."""
-            await asyncio.sleep(0.01)
+            await asyncio.wait_for(registered.wait(), timeout=5)
             coordinator.hass.states.get.return_value = MagicMock(state="Other")
             event = MagicMock()
             event.data = {"new_state": MagicMock(state="Guest")}
