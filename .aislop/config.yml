@@ -12,3 +12,25 @@ version: 1
 # The whole tree is at 100/100; this prevents silent regressions.
 ci:
   failBelow: 100
+
+  # No enabled engine shells out to an external binary, so a missing tool
+  # is never expected and must be loud rather than silently dropped.
+  failOnMissingTools: true
+
+# aislop's format and lint engines are ruff, pinned to a version that
+# trails the dedicated ruff pre-commit hook. Running both invites the two
+# releases to disagree: that is what deadlocked #713, where each rejected
+# the import layout the other demanded. The dedicated hook is the single
+# authority for Python lint and format.
+#
+# They are disabled explicitly rather than left to skip when ruff is
+# absent. aislop resolves ruff from the project virtualenv or PATH before
+# its own bundled copy, so a contributor with ruff installed would run
+# these engines while CI did not, reintroducing exactly the version-
+# dependent divergence this avoids. Disabling them pins the behaviour to
+# the same result everywhere.
+#
+# What remains are pure-JS engines that need no external binaries.
+engines:
+  format: false
+  lint: false

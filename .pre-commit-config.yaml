@@ -64,8 +64,10 @@ repos:
         name: aislop ci (full repo)
         entry: aislop ci
         language: node
+        # `pre-commit autoupdate` does not touch additional_dependencies;
+        # this pin must be bumped by hand.
         additional_dependencies:
-          - aislop@0.12.0
+          - aislop@0.18.1
         pass_filenames: false
         require_serial: true
 
