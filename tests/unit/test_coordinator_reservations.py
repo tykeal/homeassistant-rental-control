@@ -159,6 +159,9 @@ def test_pending_set_ghost_flips_to_pending_clear_on_third_miss() -> None:
     assert mapping["operation_id"] is None
     assert mapping["operation_kind"] == OPERATION_KIND_CLEAR
     assert mapping["pending_set_since"] is None
+    pending_clear_since = mapping["pending_clear_since"]
+    assert isinstance(pending_clear_since, str)
+    assert datetime.fromisoformat(pending_clear_since)
 
 
 def test_hydration_resets_missing_count_on_reappearance() -> None:
