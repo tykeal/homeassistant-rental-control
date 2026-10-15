@@ -39,7 +39,7 @@ corrections, and they may drift again.
 |------|-------|
 | `unaccounted_slots`, `resolve_cycle`, `allocate_request`, `_track_pending_adoption_slots` | `custom_components/rental_control/allocator/issuance.py` |
 | `_release_guard_reason`, `_owner_still_programmed` | `custom_components/rental_control/allocator/allocator.py` |
-| `preview_request_and_result` | `custom_components/rental_control/allocator/reissue_preview.py` |
+| `preview_request_and_result`, `_adoption_would_complete` | `custom_components/rental_control/allocator/reissue_preview.py` |
 | `register_allocator_services`, `_collect_observations`, `report_forced_hold_deferrals` | `custom_components/rental_control/allocator/services.py` |
 | `allocator_diagnostics` | `custom_components/rental_control/allocator/diagnostics.py` |
 | `CycleRequest`, `CycleObservation` | `custom_components/rental_control/allocator/models.py` |
@@ -63,15 +63,21 @@ convenience one: see [tasks.md](tasks.md) for why.
    service share one definition.
 3. `Feat(allocator): Exclude slots from the issuance gate` — all three gate
    members together, plus the two dataclass fields that carry the set, plus the
+   **read-only** `slot_exclusions.load` the preview member needs, plus the
    release-evidence regression. **These ship as one commit**; a tree with one
    or two of the three is a tree where `force_reissue` or adoption behaves
-   inconsistently with issuance for the same slot.
-4. `Feat(coordinator): Revalidate slot exclusions per cycle` —
-   `coordinator_helpers/slot_exclusions.py` load, re-validate, persist, and the
+   inconsistently with issuance for the same slot. Only the loader comes
+   forward from commit 4 — reading a stored set is safe in a way that writing
+   or trusting one is not.
+4. `Feat(coordinator): Revalidate slot exclusions per cycle` — re-validate and
+   persist in `coordinator_helpers/slot_exclusions.py`, and the
    `async_resolve_codes` wiring, including narrowing the existing
-   unreadable-slot notification to the gated set.
-5. `Feat(allocator): Add set_slot_exclusion service` — resolver, handler,
-   schema, `services.yaml`, `strings.json`, both translations.
+   unreadable-slot notification to the gated set. Re-validation and
+   persistence never land apart.
+5. `Feat(allocator): Add set_slot_exclusion service` — resolver, handler
+   **including its inert `dry_run` branch**, schema, `services.yaml`,
+   `strings.json`, both translations. The branch is written before the service
+   is registered, so no released state accepts `dry_run` and ignores it.
 6. `Feat(allocator): Report excluded slots to operators` — the standing
    notification, the dismissals in `__init__.py`, and the diagnostics key.
 7. `Test(exclusion): Add end-to-end recovery coverage` — the US1→US3 arc, the
@@ -85,10 +91,15 @@ and it must not exist before the machinery that honours and retires one.
 
 1. **Filtering in `build_cycle_observation`.** See above. Everything else on
    this list is a bug; this one is a security incident.
-2. **Forgetting the third gate member.** `allocator/reissue_preview.py:111-112`
-   rejects any non-empty raw unreadable set *before* it calls
-   `unaccounted_slots` at line 113. Fixing the helper does not fix the preview.
-   SC-011 is the test that catches this.
+2. **Forgetting the third gate member — or its hidden fourth call site.**
+   `allocator/reissue_preview.py:111-112` rejects any non-empty raw unreadable
+   set *before* it calls `unaccounted_slots` at line 113. Fixing the helper does
+   not fix the preview. Then, at line 115, the preview calls
+   `_adoption_would_complete`, which calls `_adoption_complete` at `:176-178`;
+   leave that call on the new empty default and an excluded slot still returns
+   `adoption_pending` after both narrowed checks have passed. Drive the whole
+   `preview_request_and_result` path in the regression, never the two checks on
+   their own. SC-011 is the test that catches this.
 3. **Writing the key to `options`.** `update_listener` (`__init__.py:256-281`)
    rebuilds `data` from `options.copy()` and then clears `options`. A key in
    `options` gets promoted into `data` and erased from `options` on the next

@@ -36,13 +36,25 @@ also records the specification citations that had drifted):
    feature and the one most likely to be implemented wrongly; see
    [Why the filter is not in the observation](#why-the-filter-is-not-in-the-observation).
 
-2. **Three gate members, not one.** `unaccounted_slots`
-   (`allocator/issuance.py:239-253`), the unreadability branch of
-   `_adoption_complete` (`coordinator_helpers/code_allocation.py:249-250`), and
-   the re-issue preview's own independent raw rejection
+2. **Three gate members, not one — across four call sites.**
+   `unaccounted_slots` (`allocator/issuance.py:239-253`), the unreadability
+   branch of `_adoption_complete`
+   (`coordinator_helpers/code_allocation.py:249-250`), and the re-issue
+   preview's own independent raw rejection
    (`allocator/reissue_preview.py:111-112`). The third is a separate check that
    runs *before* the preview consults `unaccounted_slots` at line 113, so
    fixing the first two leaves `force_reissue` blocked and FR-019 unmet.
+
+   G2 has **two** call sites, and both must forward the excluded set. Besides
+   the coordinator path, the preview calls `_adoption_would_complete`
+   (`allocator/reissue_preview.py:115`), which in turn calls
+   `_adoption_complete` at `:176-178`. If only the coordinator call site is
+   threaded, that call silently takes the new empty default and an excluded
+   unreadable slot still yields `adoption_pending`, so `force_reissue` stays
+   blocked even after G1 and G3 pass. FR-019 and SC-011 are unmet in exactly
+   the same way as if G3 had been missed, and the failure is harder to see.
+   The preview regression must drive the **whole** preview path, not the two
+   narrowed checks in isolation.
 
 3. **Persistence in config-entry `data`, re-validated every cycle.** A new
    `CONF_EXCLUDED_SLOTS` key written through
@@ -274,7 +286,7 @@ the raw observation and is byte-for-byte unaffected. Concretely:
 | Consumer | Receives | Why |
 |----------|----------|-----|
 | `unaccounted_slots` (G1) | raw observation + `excluded` | Gate member. |
-| `_adoption_complete` (G2) | raw observation + `excluded` | Gate member. |
+| `_adoption_complete` (G2) | raw observation + `excluded` | Gate member. Reached from **both** the coordinator and `_adoption_would_complete`; both call sites pass `excluded`. |
 | `reissue_preview` raw check (G3) | raw observation + `excluded` | Gate member (FR-019). |
 | `_track_pending_adoption_slots` | gated set | Diagnostic only; an excluded slot no longer blocks adoption, so reporting it as blocking would be false. |
 | `report_unreadable_slots` | gated set | Its message says issuance is withheld; for an excluded slot that is untrue. |
@@ -488,8 +500,15 @@ and, independently, for the preview:
 slot_exclusions.load
         └─► reissue_preview.preview_request_and_result
                  ├─► if observation.unreadable_slots - excluded:  [G3]
-                 └─► issuance.unaccounted_slots(…, excluded=…)    [G1]
+                 ├─► issuance.unaccounted_slots(…, excluded=…)    [G1]
+                 └─► _adoption_would_complete(…, excluded=…)
+                          └─► code_allocation._adoption_complete(
+                                  …, excluded=excluded)           [G2]
 ```
+
+The last edge is the one most easily dropped, because `_adoption_would_complete`
+is a local helper rather than a gate in its own name. Leaving it on the empty
+default re-blocks `force_reissue` after G1 and G3 have been narrowed.
 
 Both new dataclass fields default to `frozenset()`, which keeps every existing
 construction site compiling unchanged and makes the fail-closed value the
@@ -562,7 +581,7 @@ No log line contains a code (FR-028).
 | FR-016, SC-006, SC-014 | Gate-only threading; [Why the filter is not in the observation](#why-the-filter-is-not-in-the-observation); `test_exclusion_release_evidence.py` |
 | FR-017, SC-004 | Already satisfied by `reconciliation/desired.py:258-259`; asserted, not modified |
 | FR-018 | Raw observation reaches `_owner_still_programmed` and orphan cleanup unchanged |
-| FR-019, SC-011 | G3: `reissue_preview.py:111-112` narrowed, plus `excluded` passed at line 113 |
+| FR-019, SC-011 | G3: `reissue_preview.py:111-112` narrowed, `excluded` passed to `unaccounted_slots` at line 113, and forwarded through `_adoption_would_complete` (`:115`) to `_adoption_complete` (`:176-178`) |
 | FR-020, FR-021, SC-003 | `slot_exclusions.revalidate`, called unconditionally every cycle |
 | FR-022, FR-027 | INFO log plus notification reconcile on every auto-clear |
 | FR-023, FR-032, SC-010 | `revalidate` drops unmanaged slots; the parser never raises |

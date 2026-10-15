@@ -217,11 +217,35 @@ def _adoption_complete(
 Only the unreadability branch changes. The `readable_coded_slots <=
 adopted_slots` condition is untouched, which is FR-015 and SC-015.
 
+Both call sites must pass `excluded`: the coordinator path, and
+`reissue_preview._adoption_would_complete` (`:176-178`). The defaulted
+parameter means a missed call site fails silently rather than loudly.
+
+### `reissue_preview._adoption_would_complete` (modified)
+
+```python
+def _adoption_would_complete(
+    coordinator: Any,
+    target: coordinator_reissue.ReissueTarget,
+    observed_slots: list[Any] | None,
+    observation: CycleObservation,
+    *,
+    excluded: frozenset[int] = frozenset(),
+) -> bool:
+```
+
+Forwards `excluded` verbatim to `_adoption_complete`. It performs no exclusion
+logic of its own.
+
 ### `reissue_preview.preview_request_and_result` (modified)
 
 Loads the addressed entry's excluded set and applies it to **both** consecutive
-checks at `allocator/reissue_preview.py:111-114`. Narrowing only the second
-leaves `force_reissue` blocked and FR-019 unmet (SC-011).
+checks at `allocator/reissue_preview.py:111-114`, and forwards the same set to
+`_adoption_would_complete` at `:115`. Narrowing only the second check leaves
+`force_reissue` blocked and FR-019 unmet (SC-011); so does leaving the
+`_adoption_would_complete` call on its empty default, since an excluded
+unreadable slot then still returns `adoption_pending`. The regression must
+exercise the complete preview path rather than the narrowed checks alone.
 
 ### `slot_exclusions` (new module API)
 
