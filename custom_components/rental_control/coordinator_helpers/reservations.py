@@ -182,6 +182,11 @@ def _build_one_reservation(
         )
     else:
         rotation_pending = False
+    rotation_origin = (
+        (matched_physical.slot, matched_physical.actual_code)
+        if rotation_pending and matched_physical and matched_physical.actual_code
+        else None
+    )
 
     try:
         res = _Reservation(
@@ -200,6 +205,7 @@ def _build_one_reservation(
             missing_count=0,
             code_source=code_source,
             code_rotation_pending=rotation_pending,
+            code_rotation_origin=rotation_origin,
         )
     except ValueError:
         _LOGGER.warning(

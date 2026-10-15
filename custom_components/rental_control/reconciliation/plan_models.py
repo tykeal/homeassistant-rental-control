@@ -75,6 +75,9 @@ class Reservation:
             date-based code must rotate because the booking window
             moved and the physically observed code still matches the
             code generated from the previously programmed dates.
+        code_rotation_origin: The ``(slot, code)`` the rotation signal
+            was derived from, so the allocator can confirm it is
+            suppressing adoption of that exact physical PIN.
     """
 
     identity_key: str
@@ -99,6 +102,7 @@ class Reservation:
     sensor_lookup_keys: set[str] = field(default_factory=set)
     code_source: str = "generated"
     code_rotation_pending: bool = False
+    code_rotation_origin: tuple[int, str] | None = None
 
     def __post_init__(self) -> None:
         """Validate Reservation field invariants.

@@ -312,7 +312,7 @@ def _slot(
     name: str,
     start: datetime,
     end: datetime,
-    identity: str,
+    identity: str | None,
 ) -> ManagedSlot:
     """Build one occupied managed slot."""
     return ManagedSlot(
@@ -676,3 +676,84 @@ async def test_unconfirmed_replacement_hides_cleared_code() -> None:
     )
 
     assert coordinator.get_slot_code(reservation.identity_key) is None
+
+
+async def test_reordered_same_name_stays_keep_manual_pin() -> None:
+    """Reordering same-name stays must not expose an unrelated manual PIN.
+
+    The reservation builder pairs same-name stays by date order while
+    the allocator matches by identity, so the shifted stay can derive
+    its rotation signal from one physical slot and then be matched to a
+    different one.  Suppressing adoption of that other slot would let a
+    manually set PIN be overwritten.
+    """
+    manual_start = _OLD_START
+    manual_end = _OLD_END
+    later_start = _OLD_START + timedelta(days=10)
+    later_end = _OLD_END + timedelta(days=10)
+    later_code = generate_slot_code(
+        "date_based", _CODE_LENGTH, later_start, later_end, "", None
+    )
+    manual_identity = make_reservation_fingerprint(
+        _ENTRY, "Same Guest", manual_start, manual_end
+    )
+    later_identity = make_reservation_fingerprint(
+        _ENTRY, "Same Guest", later_start, later_end
+    )
+
+    allocator = _allocator()
+    for identity, code, slot in (
+        (manual_identity, _MANUAL_PIN, 1),
+        (later_identity, later_code, 2),
+    ):
+        await allocator.async_adopt(
+            AdoptionRequest(
+                entry_id=_ENTRY,
+                identity_key=identity,
+                code=code,
+                code_length=_CODE_LENGTH,
+                lockname=_LOCK,
+                slot=slot,
+            )
+        )
+
+    managed_slots = [
+        _slot(1, _MANUAL_PIN, "RC Same Guest", manual_start, manual_end, None),
+        _slot(2, later_code, "RC Same Guest", later_start, later_end, None),
+    ]
+    # The earlier stay moves past the later one, swapping their order.
+    moved_start = later_start + timedelta(days=5)
+    moved_end = later_end + timedelta(days=5)
+    reservations = build_reservations(
+        [
+            _event("Same Guest", moved_start, moved_end),
+            _event("Same Guest", later_start, later_end),
+        ],
+        managed_slots,
+        _ctx(True),
+    )
+
+    with (
+        patch.object(code_allocation, "get_allocator", return_value=allocator),
+        patch.object(code_allocation, "async_create"),
+        patch(
+            "custom_components.rental_control.allocator.allocator.async_create",
+            create=True,
+        ),
+    ):
+        await code_allocation.async_resolve_codes(
+            reissue.CodeResolutionRequest(
+                hass=cast(Any, SimpleNamespace()),
+                entry_id=_ENTRY,
+                lockname=_LOCK,
+                code_length=_CODE_LENGTH,
+                managed_slots=managed_slots,
+                reservations=reservations,
+            )
+        )
+
+    # The manual PIN must still be published by whichever stay holds it.
+    assert _MANUAL_PIN in {item.slot_code for item in reservations}
+    for reservation in reservations:
+        if reservation.slot_code == _MANUAL_PIN:
+            assert reservation.code_rotation_pending is False

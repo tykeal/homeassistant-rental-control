@@ -72,7 +72,11 @@ def require_owned_code_for_rotation(
         slot = match_slot(reservation, target.managed_slots, consumed)
         if not reservation.code_rotation_pending:
             continue
-        if slot is not None and _owned_by_slot(records, target, slot):
+        if (
+            slot is not None
+            and _is_rotation_origin(reservation, slot)
+            and _owned_by_slot(records, target, slot)
+        ):
             continue
         reservation.code_rotation_pending = False
         _LOGGER.warning(
@@ -90,6 +94,20 @@ def _registry_records(allocator: object) -> dict[str, Any]:
     registry = getattr(allocator, "_registry", None)
     records = getattr(registry, "records", None)
     return records if isinstance(records, dict) else {}
+
+
+def _is_rotation_origin(reservation: Reservation, slot: ManagedSlot) -> bool:
+    """Return whether the allocator matched the slot the signal came from.
+
+    The builder pairs same-name stays by date order while the allocator
+    matches by identity, so a reordered pair can hand a reservation a
+    different physical slot than the one whose code produced the
+    rotation signal.  Suppressing adoption of that other slot could
+    overwrite an unrelated PIN, so rotation only survives when both
+    agree on the slot and the code.
+    """
+    origin = reservation.code_rotation_origin
+    return origin is not None and origin == (slot.slot, slot.actual_code)
 
 
 def _owned_by_slot(
