@@ -269,11 +269,34 @@ class RentalControlCoordinator(
                     continue
                 if result.kind == "clear":
                     self._observed_slot_codes.pop(identity_key, None)
-                elif result.kind == "set" and reservation.slot_code:
-                    self._observed_slot_codes[identity_key] = (
-                        slot_number,
-                        reservation.slot_code,
+                elif result.kind == "set":
+                    self._cache_confirmed_set(
+                        identity_key, slot_number, reservation.slot_code
                     )
+
+    def _cache_confirmed_set(
+        self, identity_key: str, slot_number: int, slot_code: str | None
+    ) -> None:
+        """Cache a written code only once the lock reports that PIN.
+
+        Set confirmation only verifies the slot name, so the requested
+        PIN is not evidence that it reached the lock.  Publishing an
+        unverified code would let guest-message automations advertise a
+        PIN that is absent, different, or unavailable, so the cached
+        observation is dropped instead and the next refresh re-reads
+        the lock.
+        """
+        if not slot_code or self._observed_pin(slot_number) != slot_code:
+            self._observed_slot_codes.pop(identity_key, None)
+            return
+        self._observed_slot_codes[identity_key] = (slot_number, slot_code)
+
+    def _observed_pin(self, slot_number: int) -> str | None:
+        """Return the PIN the lock currently reports for a slot."""
+        state = self.hass.states.get(
+            f"text.{self.lockname}_code_slot_{slot_number}_pin"
+        )
+        return state.state if state is not None else None
 
     def get_overflow_reason(self, identity_key: str) -> str | None:
         """Return overflow reason for identity_key in latest plan, or None."""
