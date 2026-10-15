@@ -20,6 +20,7 @@ from custom_components.rental_control.allocator.models import AllocationOrigin
 from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import CycleRequest
+from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
     CoordinatorRefreshMixin,
@@ -1231,3 +1232,265 @@ def _allocator() -> DoorCodeAllocator:
     allocator = DoorCodeAllocator(_fake_hass())
     allocator._store = cast(Any, SimpleNamespace(async_save=lambda _registry: None))
     return allocator
+
+
+class _UnaccountedAllocator(FakeAllocator):
+    """Allocator double that reports a fixed unaccounted slot set."""
+
+    def __init__(self, unaccounted: frozenset[int]) -> None:
+        """Initialize with the slots to report as unaccounted."""
+        super().__init__()
+        self.unaccounted = unaccounted
+
+    async def async_resolve_cycle(self, request: CycleRequest) -> Any:
+        """Echo the base result with the configured unaccounted slots."""
+        result = await super().async_resolve_cycle(request)
+        return SimpleNamespace(
+            adopted=result.adopted,
+            allocated=result.allocated,
+            unaccounted_slots=self.unaccounted,
+        )
+
+
+def _notifying_hass() -> Any:
+    """Build a hass double that looks capable of persistent notifications."""
+    hass = _fake_hass()
+    hass.bus = SimpleNamespace()
+    return hass
+
+
+def _unreadable_slot(slot: int) -> ManagedSlot:
+    """Build a managed slot that reports no readable state."""
+    return ManagedSlot(
+        slot=slot,
+        managed=True,
+        status=SlotStatus.UNKNOWN,
+        actual_name=None,
+        actual_code=None,
+        actual_code_present=False,
+    )
+
+
+async def test_unreadable_slots_raise_notification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unreadable managed slots notify the operator by slot number."""
+    created: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        code_allocation,
+        "async_create",
+        lambda _hass, message, **kwargs: created.append((message, kwargs)),
+    )
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: _UnaccountedAllocator(frozenset({5, 3})),
+    )
+
+    await code_allocation.async_resolve_codes(
+        _notifying_hass(),
+        "entry-a",
+        "front",
+        4,
+        [_unreadable_slot(3), _unreadable_slot(5)],
+        [_reservation("identity-a", code="1111")],
+    )
+
+    assert len(created) == 1
+    message, kwargs = created[0]
+    assert "slots 3, 5" in message
+    assert "entry-a" in message
+    assert "front" in message
+    assert "withheld" in message
+    assert "ALL Rental Control entries" in message
+    assert "restore readable Keymaster entities" in message
+    assert kwargs["notification_id"] == f"{DOMAIN}_unreadable_slots_entry-a"
+
+
+async def test_owned_unreadable_slot_keeps_notification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreadable slot owned in the registry still blocks and still warns."""
+    created: list[tuple[str, dict[str, Any]]] = []
+    dismissed: list[str] = []
+    monkeypatch.setattr(
+        code_allocation,
+        "async_create",
+        lambda _hass, message, **kwargs: created.append((message, kwargs)),
+    )
+    monkeypatch.setattr(
+        code_allocation,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+    allocator = _allocator()
+    monkeypatch.setattr(code_allocation, "get_allocator", lambda _hass: allocator)
+    await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            preferred_code="1111",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+
+    await code_allocation.async_resolve_codes(
+        _notifying_hass(),
+        "entry-a",
+        "front",
+        4,
+        [_unreadable_slot(1)],
+        [_reservation("identity-a", code="1111")],
+    )
+
+    assert dismissed == []
+    assert len(created) == 1
+    assert "slot 1" in created[0][0]
+    assert allocator._pending_adoption_slots == {"entry-a": frozenset({1})}
+
+
+async def test_unreadable_notification_dismissed_when_clear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repaired slot dismisses the stale unreadable-slot notification."""
+    dismissed: list[str] = []
+    monkeypatch.setattr(
+        code_allocation,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: _UnaccountedAllocator(frozenset()),
+    )
+
+    await code_allocation.async_resolve_codes(
+        _notifying_hass(),
+        "entry-a",
+        "front",
+        4,
+        [],
+        [_reservation("identity-a", code="1111")],
+    )
+
+    assert dismissed == [f"{DOMAIN}_unreadable_slots_entry-a"]
+
+
+async def test_unreadable_notification_skipped_without_bus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-Home-Assistant callers never touch the notification platform."""
+    calls: list[str] = []
+    monkeypatch.setattr(
+        code_allocation,
+        "async_create",
+        lambda *_args, **_kwargs: calls.append("create"),
+    )
+    monkeypatch.setattr(
+        code_allocation,
+        "async_dismiss",
+        lambda *_args, **_kwargs: calls.append("dismiss"),
+    )
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: _UnaccountedAllocator(frozenset({1})),
+    )
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        "front",
+        4,
+        [_unreadable_slot(1)],
+        [_reservation("identity-a", code="1111")],
+    )
+
+    assert calls == []
+
+
+def test_dismiss_unreadable_slots_uses_entry_notification_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Entry teardown clears the entry's own unreadable-slot notification."""
+    dismissed: list[str] = []
+    monkeypatch.setattr(
+        code_allocation,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+
+    code_allocation.dismiss_unreadable_slots(_notifying_hass(), "entry-a")
+    code_allocation.dismiss_unreadable_slots(SimpleNamespace(), "entry-b")
+
+    assert dismissed == [f"{DOMAIN}_unreadable_slots_entry-a"]
+
+
+async def test_adoption_gate_message_names_blocking_slots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The adoption gate warning reports the slots blocking each entry."""
+    notifications: list[str] = []
+    monkeypatch.setattr(
+        allocator_module,
+        "async_create",
+        lambda _hass, message, **_kwargs: notifications.append(message),
+    )
+    allocator = _allocator()
+    await allocator.async_register_entry("entry-a")
+
+    await allocator.async_resolve_cycle(
+        CycleRequest(
+            observation=CycleObservation(
+                entry_id="entry-a",
+                lockname="front",
+                managed_slots=frozenset({1, 2}),
+                observed_codes={},
+                unreadable_slots=frozenset({2, 1}),
+            ),
+            adoptions=[],
+            rekeys=[],
+            allocations=[],
+            active_keys=set(),
+        )
+    )
+
+    assert allocator._pending_adoption_slots == {"entry-a": frozenset({1, 2})}
+
+    allocator._gate_deadline = 1.0
+    allocator._gate_warning_sent = False
+    allocator._warn_if_gate_expired()
+
+    assert notifications == [
+        "Shared code allocator is still waiting for adoption from entries: "
+        "entry-a (unreadable slots 1, 2). New code issuance remains disabled."
+    ]
+
+
+async def test_adopted_entry_clears_blocking_slot_tracking() -> None:
+    """A clean cycle drops the entry's recorded blocking slots."""
+    allocator = _allocator()
+    allocator._pending_adoption_slots["entry-a"] = frozenset({1})
+
+    await allocator.async_resolve_cycle(
+        CycleRequest(
+            observation=CycleObservation(
+                entry_id="entry-a",
+                lockname="front",
+                managed_slots=frozenset({1}),
+                observed_codes={},
+                unreadable_slots=frozenset(),
+            ),
+            adoptions=[],
+            rekeys=[],
+            allocations=[],
+            active_keys=set(),
+            adoption_complete=True,
+        )
+    )
+
+    assert allocator._pending_adoption_slots == {}
+    assert allocator._describe_pending_entry("entry-a") == "entry-a"

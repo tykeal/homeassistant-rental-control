@@ -66,6 +66,7 @@ class DoorCodeAllocator:
         self._store = RegistryStore(hass)
         self._lock = asyncio.Lock()
         self._pending_adoption = self._seed_pending_adoption()
+        self._pending_adoption_slots: dict[str, frozenset[int]] = {}
         self._gate_deadline = (
             monotonic() + _ADOPTION_GATE_WARNING_SECONDS
             if self._pending_adoption
@@ -104,6 +105,7 @@ class DoorCodeAllocator:
         """Remove an entry from the pending adoption gate."""
         async with self._lock:
             self._pending_adoption.discard(entry_id)
+            self._pending_adoption_slots.pop(entry_id, None)
             if not self._pending_adoption:
                 self._gate_deadline = 0.0
                 self._gate_warning_sent = False
@@ -221,7 +223,10 @@ class DoorCodeAllocator:
             or monotonic() < self._gate_deadline
         ):
             return
-        pending = ", ".join(sorted(self._pending_adoption))
+        pending = ", ".join(
+            self._describe_pending_entry(entry_id)
+            for entry_id in sorted(self._pending_adoption)
+        )
         message = (
             "Shared code allocator is still waiting for adoption from "
             f"entries: {pending}. New code issuance remains disabled."
@@ -234,6 +239,14 @@ class DoorCodeAllocator:
             notification_id=_GATE_NOTIFICATION_ID,
         )
         self._gate_warning_sent = True
+
+    def _describe_pending_entry(self, entry_id: str) -> str:
+        """Return a pending entry label annotated with its blocking slots."""
+        slots = sorted(self._pending_adoption_slots.get(entry_id, ()))
+        if not slots:
+            return entry_id
+        label = "slots" if len(slots) > 1 else "slot"
+        return f"{entry_id} (unreadable {label} {', '.join(map(str, slots))})"
 
     async def async_sweep(
         self, observation: CycleObservation, active_keys: set[str]
@@ -284,6 +297,7 @@ class DoorCodeAllocator:
         """Release lockless removed owners and retain unverifiable lock owners."""
         async with self._lock:
             self._pending_adoption.discard(entry_id)
+            self._pending_adoption_slots.pop(entry_id, None)
             if not self._pending_adoption:
                 self._gate_deadline = 0.0
                 self._gate_warning_sent = False
