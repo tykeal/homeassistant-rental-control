@@ -35,6 +35,7 @@ from datetime import timedelta
 from datetime import timezone
 from types import SimpleNamespace
 
+from freezegun import freeze_time
 import pytest
 
 from custom_components.rental_control.codegen import generate_slot_code
@@ -2283,6 +2284,7 @@ class TestUidMatchDateShift:
         assert result.date_shifted is True
 
     @pytest.mark.parametrize("should_update_code", [True, False])
+    @freeze_time("2026-07-01 12:00:00+00:00")
     def test_date_shift_rotation_follows_should_update_code(
         self, should_update_code: bool
     ) -> None:

@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from freezegun import freeze_time
 from homeassistant.util import dt as dt_util
 import pytest
 
@@ -44,12 +45,21 @@ from custom_components.rental_control.reconciliation import make_reservation_fin
 _ENTRY = "entry-a"
 _LOCK = "front_door"
 _CODE_LENGTH = 4
+_BEFORE_CHECKIN = "2024-12-01 12:00:00+00:00"
 _OLD_START = datetime(2024, 12, 25, 16, tzinfo=dt_util.UTC)
 _OLD_END = datetime(2024, 12, 30, 11, tzinfo=dt_util.UTC)
 _NEW_START = _OLD_START - timedelta(days=1)
 _NEW_END = _OLD_END
 _PEER_START = datetime(2025, 1, 5, 16, tzinfo=dt_util.UTC)
 _PEER_END = datetime(2025, 1, 9, 11, tzinfo=dt_util.UTC)
+
+
+@pytest.fixture(autouse=True)
+def _freeze_before_checkin() -> Any:
+    """Run every cycle well before any reservation starts."""
+    with freeze_time(_BEFORE_CHECKIN):
+        yield
+
 
 _OLD_CODE = generate_slot_code(
     "date_based", _CODE_LENGTH, _OLD_START, _OLD_END, "", None
@@ -107,7 +117,10 @@ async def test_date_shift_rotation_leaves_peer_untouched(
 
 
 async def _run_cycle(
-    should_update_code: bool, manual_pin: str | None
+    should_update_code: bool,
+    manual_pin: str | None,
+    new_start: datetime = _NEW_START,
+    new_end: datetime = _NEW_END,
 ) -> dict[str, Any]:
     """Run one full refresh cycle and capture the commands sent to the lock."""
     observed_code = manual_pin or _OLD_CODE
@@ -139,7 +152,7 @@ async def _run_cycle(
     ]
     reservations = build_reservations(
         [
-            _event("Target Guest", _NEW_START, _NEW_END),
+            _event("Target Guest", new_start, new_end),
             _event("Peer Guest", _PEER_START, _PEER_END),
         ],
         managed_slots,
@@ -173,6 +186,7 @@ async def _run_cycle(
         start_slot=1,
     )
     commands = await _apply(plan, reservations, observed_code)
+    commands["target"] = target
     commands["target_code"] = target.slot_code
     commands["peer_code"] = peer.slot_code
     return commands
@@ -527,3 +541,26 @@ async def test_rotation_requires_registry_owned_observed_code() -> None:
     assert reservations[0].code_source == "allocated"
     assert intruder.code is not None
     assert intruder.code != _OLD_CODE
+
+
+@pytest.mark.asyncio
+async def test_started_stay_keeps_code_and_updates_dates_only() -> None:
+    """Extending checkout mid-stay must not replace the working PIN.
+
+    ``should_update_code`` only promises to follow date changes on future
+    events, so a stay that has already begun keeps its programmed code and
+    receives a dates-only update.
+    """
+    with freeze_time(_OLD_START + timedelta(days=1)):
+        result = await _run_cycle(
+            should_update_code=True,
+            manual_pin=None,
+            new_start=_OLD_START,
+            new_end=_OLD_END + timedelta(days=2),
+        )
+
+    assert result["target"].code_rotation_pending is False
+    assert result["target_code"] == _OLD_CODE
+    assert result["set_codes"] == []
+    assert result["clears"] == []
+    assert result["update_times"] == [(1, _OLD_CODE)]
