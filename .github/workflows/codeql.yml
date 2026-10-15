@@ -25,10 +25,22 @@ permissions: {}
 jobs:
   scan:
     name: 'Audit Repository'
+    # Migrated from lfit/releng-reusable-workflows, which is retiring,
+    # to the security lane in lfreleng-actions/security-workflows.
+    # The rename from reuse-python-codeql.yaml also renamed the config
+    # input: 'codeql_config' is now 'config_file'. The lane builds its
+    # matrix from the 'languages' input, which defaults to 'python',
+    # so this caller keeps the previous single-language behaviour
+    # without passing it.
+    #
+    # Check runs change name with the lane: 'CodeQL Scan: python'
+    # becomes 'Analyze (python)', alongside a new 'Validate Workflow
+    # Inputs' job. No ruleset or required status check names either,
+    # so nothing gating a merge is affected.
     # yamllint disable-line rule:line-length
-    uses: lfit/releng-reusable-workflows/.github/workflows/reuse-python-codeql.yaml@fb907909b12bbaf262de6b24fcafd181cabe6b24  # v0.10.4
+    uses: lfreleng-actions/security-workflows/.github/workflows/codeql.yaml@179b57cc41fbdae90d68237b418539d33e5ba091  # v0.9.4
     with:
-      codeql_config: .github/codeql/codeql-config.yml
+      config_file: .github/codeql/codeql-config.yml
     permissions:
       security-events: write  # Upload CodeQL results to code scanning.
       # required to fetch internal or private CodeQL packs

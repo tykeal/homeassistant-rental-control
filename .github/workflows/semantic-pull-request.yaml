@@ -23,8 +23,17 @@ jobs:
     # Delegate to the shared reusable workflow, which tolerates Dependabot's
     # truncated single-commit subjects for long dependency names that
     # otherwise trip validateSingleCommitMatchesPrTitle.
+    #
+    # Migrated from lfit/releng-reusable-workflows, which is retiring.
+    # The reusable's job is still named 'Semantic Pull Request', so the
+    # check run stays 'Semantic Pull Request / Semantic Pull Request'
+    # and the ruleset naming it keeps matching.
+    #
+    # Every input is optional and defaults to the organisation's
+    # Conventional Commits policy, so this caller passes none. See
+    # generic-workflows' docs/semantic-pull-request.md.
     # yamllint disable-line rule:line-length
-    uses: lfit/releng-reusable-workflows/.github/workflows/reuse-semantic-pull-request.yaml@fb907909b12bbaf262de6b24fcafd181cabe6b24  # v0.10.4
+    uses: lfreleng-actions/generic-workflows/.github/workflows/semantic-pull-request.yaml@0ed9c16d59a3ff92afad23a7c1aba3ab61238b87  # v0.4.3
     permissions:
       contents: read
       pull-requests: read  # Gate step queries the PR API (avoids 403)
