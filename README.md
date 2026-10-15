@@ -227,8 +227,45 @@ unknown, which keeps the freeze in place. When the slot disappears permanently,
 reconfigure this entry's start slot or event count so that the managed range
 no longer covers it. Once the slot reads correctly, or leaves the
 managed range, the next refresh resumes issuance and clears the notification.
-Home Assistant currently offers no control that excludes a permanently dead
-slot from an otherwise unchanged managed range.
+When the slot is permanently dead and you cannot reshape the managed range,
+exclude it with the slot exclusion action described below.
+
+### Slot Exclusion Action
+
+The `rental_control.set_slot_exclusion` service action tells one entry to stop
+counting one unreadable slot against the issuance gate, which restores door
+code issuance without reshaping the managed range. Target the entry with
+`entity_id` or with `lockname`, and name the slot with `slot`. Pass
+`excluded: false` to withdraw an exclusion, `reason` to record why you made
+it, and `dry_run: true` to see what the action would decide before it decides
+it.
+
+The action refuses, and tells you why, when:
+
+- the slot sits outside the entry's managed range,
+- the slot currently reads correctly, or
+- the entry's own allocator records already claim the slot.
+
+No override exists for any of these refusals. The readable-slot refusal is
+what keeps you from excluding a slot that holds a working guest credential.
+
+An exclusion is a standing statement about one slot on one entry, and the
+integration re-checks it every refresh. When the slot reads correctly again,
+or leaves the managed range, the integration drops the exclusion and dismisses
+its notification; nothing you need to remember to undo. While an exclusion
+stands, the integration raises a persistent notification naming the entry, the
+lock, the slot, and your recorded reason, in place of the unreadable-slot
+notification for that slot.
+
+Accept the residual risk before you use it: an excluded slot may still hold a
+code the integration cannot read, so a newly issued code could duplicate it.
+The integration keeps treating the slot as blocked and never writes to it or
+clears it.
+
+Exclusions live in the config entry's stored data rather than in its options,
+so **saving the options flow for an entry drops every exclusion it holds** and
+returns that entry to the fail-closed behaviour. Invoke the action again if
+the slot is still dead.
 
 ### Home Assistant Events
 

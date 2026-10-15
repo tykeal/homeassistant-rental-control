@@ -201,6 +201,7 @@ class CycleRequest:
     active_keys: set[str]
     adoption_complete: bool = True
     forced_reissues: tuple[ForcedReissueDirective, ...] = ()
+    excluded_slots: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)

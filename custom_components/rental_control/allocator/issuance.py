@@ -154,11 +154,13 @@ async def resolve_cycle(
         for old_key, new_key in request.rekeys:
             allocator._rekey_unlocked(old_key, new_key)
 
-        unaccounted = unaccounted_slots(allocator, request.observation)
+        unaccounted = unaccounted_slots(
+            allocator, request.observation, excluded=request.excluded_slots
+        )
         _track_pending_adoption_slots(
             allocator,
             request.observation.entry_id,
-            request.observation.unreadable_slots,
+            request.observation.unreadable_slots - request.excluded_slots,
         )
         if request.adoption_complete and not unaccounted:
             allocator._pending_adoption.discard(request.observation.entry_id)
@@ -236,21 +238,31 @@ def _track_pending_adoption_slots(
         tracked.pop(entry_id, None)
 
 
-def unaccounted_slots(
-    allocator: DoorCodeAllocator, observation: CycleObservation
+def claimed_slots(
+    allocator: DoorCodeAllocator, entry_id: str, lockname: str
 ) -> frozenset[int]:
-    """Return unreadable slots not claimed by this entry's registry owners."""
-    if observation.lockname is None:
-        return frozenset()
-    claimed = {
+    """Return slots on one lock claimed by one entry's registry owners."""
+    return frozenset(
         owner.slot
         for record in allocator._registry.records.values()
         for owner in record.owners
-        if owner.entry_id == observation.entry_id
-        and owner.lockname == observation.lockname
+        if owner.entry_id == entry_id
+        and owner.lockname == lockname
         and owner.slot is not None
-    }
-    return frozenset(observation.unreadable_slots - claimed)
+    )
+
+
+def unaccounted_slots(
+    allocator: DoorCodeAllocator,
+    observation: CycleObservation,
+    *,
+    excluded: frozenset[int] = frozenset(),
+) -> frozenset[int]:
+    """Return unreadable slots not claimed by owners and not excluded."""
+    if observation.lockname is None:
+        return frozenset()
+    claimed = claimed_slots(allocator, observation.entry_id, observation.lockname)
+    return frozenset(observation.unreadable_slots - claimed - excluded)
 
 
 def _release_and_report_holds(

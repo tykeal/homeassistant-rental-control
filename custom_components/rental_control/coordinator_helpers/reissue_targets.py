@@ -34,7 +34,7 @@ def resolve_entity_target(
     registry_entry = er.async_get(hass).async_get(entity_id)
     entry_id = getattr(registry_entry, "config_entry_id", None)
     if entry_id is None:
-        entry_id = _entry_from_sensor_state(hass, state.attributes)
+        entry_id = entry_id_for_entity_attributes(hass, state.attributes)
     if not isinstance(entry_id, str):
         return None, "not_a_reservation_sensor"
     coordinator = _coordinator_for_entry(hass, entry_id)
@@ -124,8 +124,8 @@ def _coordinator_for_entry(hass: Any, entry_id: str | None) -> Any | None:
     return entry_data.get(COORDINATOR)
 
 
-def _entry_from_sensor_state(hass: Any, attributes: dict[str, Any]) -> str | None:
-    """Best-effort entry lookup for unit tests without entity registry rows."""
+def entry_id_for_entity_attributes(hass: Any, attributes: dict[str, Any]) -> str | None:
+    """Best-effort entry lookup when the entity registry has no row."""
     slot_name = attributes.get("slot_name")
     start = _coerce_datetime(attributes.get("start"))
     end = _coerce_datetime(attributes.get("end"))

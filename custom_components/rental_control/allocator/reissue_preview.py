@@ -12,6 +12,7 @@ from ..coordinator_helpers import code_allocation
 from ..coordinator_helpers import keymaster_observation
 from ..coordinator_helpers import reissue as coordinator_reissue
 from ..coordinator_helpers import reservations as reservations_helper
+from ..coordinator_helpers import slot_exclusions
 from ..coordinator_helpers import slot_matching
 from . import issuance
 from . import reissue_state
@@ -108,11 +109,14 @@ async def preview_request_and_result(
     observation = code_allocation.build_cycle_observation(
         target.entry_id, target.lockname, observed_slots
     )
-    if observation.unreadable_slots:
+    excluded = frozenset(slot_exclusions.load(coordinator.hass, target.entry_id))
+    if observation.unreadable_slots - excluded:
         return request, ReissuePreview(reason="unaccounted_slots")
-    if issuance.unaccounted_slots(allocator, observation):
+    if issuance.unaccounted_slots(allocator, observation, excluded=excluded):
         return request, ReissuePreview(reason="unaccounted_slots")
-    if not _adoption_would_complete(coordinator, target, observed_slots, observation):
+    if not _adoption_would_complete(
+        coordinator, target, observed_slots, observation, excluded=excluded
+    ):
         return request, ReissuePreview(reason="adoption_pending")
     return request, await allocator.async_preview_reissue(request)
 
@@ -155,6 +159,8 @@ def _adoption_would_complete(
     target: coordinator_reissue.ReissueTarget,
     observed_slots: list[Any],
     observation: Any,
+    *,
+    excluded: frozenset[int] = frozenset(),
 ) -> bool:
     """Return whether preview state would pass the cycle adoption gate."""
     if target.lockname is None:
@@ -175,7 +181,7 @@ def _adoption_would_complete(
         suppression,
     )
     return code_allocation._adoption_complete(
-        observation, adoptions, observed_slots, suppression
+        observation, adoptions, observed_slots, suppression, excluded=excluded
     )
 
 

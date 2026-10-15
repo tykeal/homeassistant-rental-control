@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 from typing import TYPE_CHECKING
 import uuid
@@ -26,6 +27,7 @@ from ..reconciliation import SlotStatus
 from ..reconciliation import compute_desired_plan
 from ..reconciliation.desired import select_eligible_reservations
 from . import reissue
+from . import slot_exclusions
 from .models import ObservedSlotQuery
 from .reissue import CodeResolutionRequest
 from .reissue import CodeResolutionResult
@@ -66,6 +68,9 @@ async def async_resolve_codes(
         for directive in request.forced_reissues
     )
     observation = build_cycle_observation(entry_id, lockname, managed_slots)
+    exclusions = _revalidated_exclusions(hass, entry_id, lockname, observation)
+    slot_exclusions.report_excluded_slots(hass, entry_id, lockname, exclusions)
+    request = replace(request, excluded_slots=frozenset(exclusions))
     allocator = get_allocator(hass)
     if allocator is None:
         for reservation in reservations:
@@ -86,7 +91,11 @@ async def async_resolve_codes(
         request.suppression,
     )
     adoption_complete = _adoption_complete(
-        observation, adoptions, managed_slots, request.suppression
+        observation,
+        adoptions,
+        managed_slots,
+        request.suppression,
+        excluded=request.excluded_slots,
     )
     allocations = (
         build_allocation_requests(
@@ -107,6 +116,7 @@ async def async_resolve_codes(
             },
             adoption_complete=adoption_complete,
             forced_reissues=request.forced_reissues,
+            excluded_slots=request.excluded_slots,
         )
     )
     _apply_adoption_results(allocator, entry_id, reservations, result)
@@ -118,7 +128,10 @@ async def async_resolve_codes(
             sorted(result.unaccounted_slots),
         )
     report_unreadable_slots(
-        hass, entry_id, lockname, sorted(observation.unreadable_slots)
+        hass,
+        entry_id,
+        lockname,
+        sorted(observation.unreadable_slots - request.excluded_slots),
     )
     if _apply_allocation_results(allocator, entry_id, reservations, result):
         message = (
@@ -143,6 +156,34 @@ async def async_resolve_codes(
     return CodeResolutionResult(
         observation, getattr(result, "reissues", ()), consumed_target_keys
     )
+
+
+def _revalidated_exclusions(
+    hass: object,
+    entry_id: str,
+    lockname: str | None,
+    observation: CycleObservation,
+) -> dict[int, str | None]:
+    """Re-derive an entry's exclusions from the observation this cycle used."""
+    stored = slot_exclusions.load(hass, entry_id)
+    if not stored:
+        return {}
+    kept, cleared = slot_exclusions.revalidate(stored, observation)
+    for slot, reason in sorted(cleared.items()):
+        _LOGGER.info(
+            "Cleared the slot exclusion for entry %s slot %s on lock %s "
+            "because the slot is %s (recorded reason: %s)",
+            entry_id,
+            slot,
+            lockname or "unknown lock",
+            "no longer in the managed range"
+            if slot not in observation.managed_slots
+            else "readable again",
+            reason or "none given",
+        )
+    if cleared:
+        slot_exclusions.persist_excluded_slots(hass, entry_id, kept)
+    return kept
 
 
 def unreadable_slots_notification_id(entry_id: str) -> str:
@@ -184,7 +225,8 @@ def report_unreadable_slots(
         "help, because the slots stay in the managed range and report as "
         "unknown. If the slots are gone for good, reconfigure this entry's "
         "start slot or event count so that the managed range no longer "
-        "covers them."
+        "covers them, or call the rental_control.set_slot_exclusion action "
+        "to exclude each dead slot from the issuance gate."
     )
     async_create(
         hass,
@@ -243,10 +285,12 @@ def _adoption_complete(
     adoptions: list[AdoptionRequest],
     managed_slots: list[ManagedSlot],
     suppression: ReissueSuppression | None = None,
+    *,
+    excluded: frozenset[int] = frozenset(),
 ) -> bool:
     """Return whether all readable managed codes were accounted for."""
     suppression = suppression or ReissueSuppression()
-    if observation.unreadable_slots:
+    if observation.unreadable_slots - excluded:
         return False
     adopted_slots = {request.slot for request in adoptions}
     readable_coded_slots = {

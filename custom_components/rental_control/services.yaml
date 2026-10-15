@@ -70,3 +70,36 @@ force_reissue:
       default: false
       selector:
         boolean:
+
+set_slot_exclusion:
+  fields:
+    entity_id:
+      required: false
+      selector:
+        entity:
+          integration: rental_control
+          domain: sensor
+    lockname:
+      required: false
+      selector:
+        text:
+    slot:
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    excluded:
+      required: false
+      default: true
+      selector:
+        boolean:
+    reason:
+      required: false
+      selector:
+        text:
+    dry_run:
+      required: false
+      default: false
+      selector:
+        boolean:
