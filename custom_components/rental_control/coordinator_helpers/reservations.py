@@ -204,6 +204,7 @@ def _build_one_reservation(
             fingerprint_history=set(),
             missing_count=0,
             code_source=code_source,
+            code_provenance=code_source,
             code_rotation_pending=rotation_pending,
             code_rotation_origin=rotation_origin,
         )

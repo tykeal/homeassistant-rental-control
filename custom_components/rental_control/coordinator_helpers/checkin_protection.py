@@ -87,6 +87,11 @@ def build_protected_reservation(
     identity_key = identity[0]
     slot_code = identity[1]
     suppress_observed = len(identity) > 2 and identity[2]
+    code_provenance = (
+        "manual_observed"
+        if matched_physical.actual_code is not None and not suppress_observed
+        else "generated"
+    )
     protected = Reservation(
         identity_key=identity_key,
         start=snapshot.start,
@@ -98,11 +103,8 @@ def build_protected_reservation(
         display_slot_name=display_slot_name,
         slot_code=slot_code,
         protected_active=True,
-        code_source=(
-            "manual_observed"
-            if matched_physical.actual_code is not None and not suppress_observed
-            else "generated"
-        ),
+        code_source=code_provenance,
+        code_provenance=code_provenance,
     )
     protected.sensor_lookup_keys.add(identity_key)
     return protected

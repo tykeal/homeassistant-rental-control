@@ -4529,6 +4529,25 @@ class TestComputeDesiredPlanDiagnostics:
         )
         assert plan.diagnostics["reservations"]["r-src"]["code_source"] == code_source
 
+    @pytest.mark.parametrize("code_provenance", ["generated", "manual_observed"])
+    def test_per_reservation_code_provenance_in_diagnostics(
+        self, code_provenance: str
+    ) -> None:
+        """code_provenance survives the allocator's code_source overwrite."""
+        r = _res("r-prov", 1)
+        r.code_provenance = code_provenance
+        r.code_source = "adopted"
+        plan = compute_desired_plan(
+            [r],
+            [_free_slot(5)],
+            max_events=3,
+            plan_id="p",
+            generated_at=_dt(2026, 7, 1),
+        )
+        diag = plan.diagnostics["reservations"]["r-prov"]
+        assert diag["code_provenance"] == code_provenance
+        assert diag["code_source"] == "adopted"
+
     def test_code_source_diagnostics_do_not_leak_the_code(self) -> None:
         """Publishing code_source never exposes the door code itself."""
         r = _res("r-src-leak", 1, slot_code="SECRETPIN")
