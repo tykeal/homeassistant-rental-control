@@ -318,3 +318,23 @@ async def test_persisting_to_data_does_not_reload_the_entry() -> None:
     hass.config_entries.async_update_entry = _unexpected_update
 
     await update_listener(hass, entry)
+
+
+def test_loading_falls_back_to_scanning_the_entry_list() -> None:
+    """A hass without async_get_entry still finds the entry by id."""
+    entry = SimpleNamespace(
+        entry_id="entry-a",
+        data={CONF_EXCLUDED_SLOTS: [{"slot": 11, "reason": "dead"}]},
+        options={},
+    )
+    hass = SimpleNamespace(
+        config_entries=SimpleNamespace(async_entries=lambda _domain=None: [entry])
+    )
+
+    assert slot_exclusions.load(hass, "entry-a") == {11: "dead"}
+    assert slot_exclusions.load(hass, "entry-z") == {}
+
+
+def test_loading_without_config_entries_is_empty() -> None:
+    """A hass stand-in with no config entry registry yields nothing."""
+    assert slot_exclusions.load(SimpleNamespace(), "entry-a") == {}

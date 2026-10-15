@@ -178,3 +178,74 @@ def test_unknown_entities_are_refused(entity_id: str) -> None:
 
     assert target is None
     assert refusal == exclusion_targets.REFUSAL_UNKNOWN_ENTITY
+
+
+def _entity_hass(
+    entries: dict[str, SimpleNamespace], attributes: dict[str, Any] | None = None
+) -> Any:
+    """Extend the hass stand-in with a readable sensor state."""
+    hass = _hass(entries)
+    hass.states = SimpleNamespace(
+        get=lambda _entity_id: SimpleNamespace(attributes=attributes or {})
+    )
+    return hass
+
+
+def test_an_entity_resolves_through_the_entity_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The registry's config entry id identifies the owning entry."""
+    hass = _entity_hass({"entry-a": _coordinator("front", 1, 5)})
+    monkeypatch.setattr(
+        exclusion_targets.er,
+        "async_get",
+        lambda _hass: SimpleNamespace(
+            async_get=lambda _entity_id: SimpleNamespace(config_entry_id="entry-a")
+        ),
+    )
+
+    target, reason = _resolve(hass, entity_id="sensor.rc_guest", slot=3)
+
+    assert reason == ""
+    assert target.entry_id == "entry-a"
+    assert target.lockname == "front"
+    assert target.slot == 3
+
+
+def test_an_entity_falls_back_to_its_state_attributes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a registry entry the sensor attributes name the entry."""
+    hass = _entity_hass({"entry-a": _coordinator("front", 1, 5)})
+    monkeypatch.setattr(
+        exclusion_targets.er,
+        "async_get",
+        lambda _hass: SimpleNamespace(async_get=lambda _entity_id: None),
+    )
+    monkeypatch.setattr(
+        exclusion_targets, "entry_id_for_entity_attributes", lambda *_args: "entry-a"
+    )
+
+    target, reason = _resolve(hass, entity_id="sensor.rc_guest", slot=3)
+
+    assert reason == ""
+    assert target.entry_id == "entry-a"
+
+
+def test_an_entity_without_a_loaded_coordinator_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resolved entry with no coordinator cannot be targeted."""
+    hass = _entity_hass({"entry-a": _coordinator("front", 1, 5)})
+    monkeypatch.setattr(
+        exclusion_targets.er,
+        "async_get",
+        lambda _hass: SimpleNamespace(
+            async_get=lambda _entity_id: SimpleNamespace(config_entry_id="entry-z")
+        ),
+    )
+
+    target, reason = _resolve(hass, entity_id="sensor.rc_guest", slot=3)
+
+    assert target is None
+    assert reason == exclusion_targets.REFUSAL_UNKNOWN_ENTITY

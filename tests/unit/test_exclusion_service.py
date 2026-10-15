@@ -136,6 +136,17 @@ def test_schema_requires_a_scalar_slot() -> None:
         SET_SLOT_EXCLUSION_SCHEMA({"lockname": "front", "slot": [1, 2]})
     with pytest.raises(vol.Invalid):
         SET_SLOT_EXCLUSION_SCHEMA({"lockname": "front", "slot": True})
+    with pytest.raises(vol.Invalid):
+        SET_SLOT_EXCLUSION_SCHEMA({"lockname": "front", "slot": 11.5})
+
+
+def test_schema_accepts_the_scalar_slot_forms_a_dashboard_sends() -> None:
+    """Numbers arrive as integers, whole floats, or decimal strings."""
+    for value in (11, 11.0, "11"):
+        assert (
+            SET_SLOT_EXCLUSION_SCHEMA({"lockname": "front", "slot": value})["slot"]
+            == 11
+        )
 
 
 async def test_excluding_a_dead_slot_persists_it(
