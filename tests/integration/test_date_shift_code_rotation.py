@@ -393,3 +393,137 @@ async def test_missing_registry_keeps_code_and_completes_recovery() -> None:
 
     assert followup[0].slot_code == _OLD_CODE
     assert allocator._registry_lost is False
+
+
+async def test_second_entry_recovery_keeps_unowned_pin_reserved() -> None:
+    """A later entry in a recovery pass still protects its unowned PIN.
+
+    ``resolve_cycle`` clears the registry-lost flag as soon as the first
+    entry completes its adoption gate, so a second, date-shifted entry
+    sees a healthy allocator while its own physical code is still
+    absent from the registry.  Rotation must give way to adoption there,
+    otherwise a failed replacement write would leave the programmed code
+    unreserved and issuable to another booking.
+    """
+    allocator = _allocator()
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+
+    # Entry A recovers first and clears the shared registry-lost flag.
+    first_identity = make_reservation_fingerprint(
+        "entry-first", "First Guest", _PEER_START, _PEER_END
+    )
+    first_slots = [
+        _slot(1, _PEER_CODE, "RC First Guest", _PEER_START, _PEER_END, first_identity)
+    ]
+    first_reservations = build_reservations(
+        [_event("First Guest", _PEER_START, _PEER_END)], first_slots, _ctx(True)
+    )
+    with patch.object(code_allocation, "get_allocator", return_value=allocator):
+        await code_allocation.async_resolve_codes(
+            reissue.CodeResolutionRequest(
+                hass=cast(Any, SimpleNamespace()),
+                entry_id="entry-first",
+                lockname="first_door",
+                code_length=_CODE_LENGTH,
+                managed_slots=first_slots,
+                reservations=first_reservations,
+            )
+        )
+    assert allocator._registry_lost is False
+
+    # Entry B is date-shifted and its programmed code is still unowned.
+    old_identity = make_reservation_fingerprint(
+        _ENTRY, "Target Guest", _OLD_START, _OLD_END
+    )
+    second_slots = [
+        _slot(1, _OLD_CODE, "RC Target Guest", _OLD_START, _OLD_END, old_identity)
+    ]
+    second_reservations = build_reservations(
+        [_event("Target Guest", _NEW_START, _NEW_END)], second_slots, _ctx(True)
+    )
+    target = second_reservations[0]
+    target.fingerprint_history.add(old_identity)
+    with patch.object(code_allocation, "get_allocator", return_value=allocator):
+        await code_allocation.async_resolve_codes(
+            reissue.CodeResolutionRequest(
+                hass=cast(Any, SimpleNamespace()),
+                entry_id=_ENTRY,
+                lockname=_LOCK,
+                code_length=_CODE_LENGTH,
+                managed_slots=second_slots,
+                reservations=second_reservations,
+            )
+        )
+
+    # Simulate a failed replacement write: the old code is still programmed.
+    intruder = await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-c",
+            identity_key="identity-c",
+            preferred_code=_OLD_CODE,
+            code_length=_CODE_LENGTH,
+            lockname="other_door",
+            slot=9,
+        )
+    )
+
+    assert target.code_rotation_pending is False
+    assert target.slot_code == _OLD_CODE
+    assert intruder.code is not None
+    assert intruder.code != _OLD_CODE
+
+
+async def test_rotation_requires_registry_owned_observed_code() -> None:
+    """Rotation proceeds once the registry owns the programmed code."""
+    old_identity = make_reservation_fingerprint(
+        _ENTRY, "Target Guest", _OLD_START, _OLD_END
+    )
+    allocator = _allocator()
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id=_ENTRY,
+            identity_key=old_identity,
+            code=_OLD_CODE,
+            code_length=_CODE_LENGTH,
+            lockname=_LOCK,
+            slot=1,
+        )
+    )
+    managed_slots = [
+        _slot(1, _OLD_CODE, "RC Target Guest", _OLD_START, _OLD_END, old_identity)
+    ]
+    reservations = build_reservations(
+        [_event("Target Guest", _NEW_START, _NEW_END)], managed_slots, _ctx(True)
+    )
+    reservations[0].fingerprint_history.add(old_identity)
+
+    with patch.object(code_allocation, "get_allocator", return_value=allocator):
+        await code_allocation.async_resolve_codes(
+            reissue.CodeResolutionRequest(
+                hass=cast(Any, SimpleNamespace()),
+                entry_id=_ENTRY,
+                lockname=_LOCK,
+                code_length=_CODE_LENGTH,
+                managed_slots=managed_slots,
+                reservations=reservations,
+            )
+        )
+
+    # The replaced code stays reserved by its stale owner while it is still
+    # physically programmed, so no other booking can be issued it.
+    intruder = await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-c",
+            identity_key="identity-c",
+            preferred_code=_OLD_CODE,
+            code_length=_CODE_LENGTH,
+            lockname="other_door",
+            slot=9,
+        )
+    )
+
+    assert reservations[0].slot_code == _NEW_CODE
+    assert reservations[0].code_source == "allocated"
+    assert intruder.code is not None
+    assert intruder.code != _OLD_CODE
