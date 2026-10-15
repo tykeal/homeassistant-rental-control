@@ -34,10 +34,25 @@ concurrency:
 jobs:
   openssf-scorecard:
     name: 'OpenSSF Scorecard'
+    # Migrated from lfit/releng-reusable-workflows, which is retiring,
+    # to the security lane in lfreleng-actions/security-workflows.
+    #
+    # Every input is optional and the defaults reproduce the previous
+    # behaviour: publish_results and upload_sarif are both true, so the
+    # badge and the code-scanning dashboard keep updating. This caller
+    # therefore passes none.
+    #
+    # The lane keeps the predecessor's 'Scan' and 'Link' jobs and adds
+    # 'Validate Workflow Inputs'. No ruleset names any of them and
+    # there is no pull_request trigger, so none gates a merge.
     # yamllint disable-line rule:line-length
-    uses: lfit/releng-reusable-workflows/.github/workflows/reuse-openssf-scorecard.yaml@fb907909b12bbaf262de6b24fcafd181cabe6b24  # v0.10.4
+    uses: lfreleng-actions/security-workflows/.github/workflows/openssf-scorecard.yaml@179b57cc41fbdae90d68237b418539d33e5ba091  # v0.9.4
     permissions:
+      contents: read  # Check out the repository to analyze.
       # Needed to upload the results to code-scanning dashboard.
       security-events: write  # Upload Scorecard results to code scanning.
       # Needed to publish results and get a badge (see publish_results).
       id-token: write  # Publish results and mint the badge.
+      # The lane's scan job declares this for upload-sarif, and a
+      # called workflow cannot hold more permission than its caller.
+      actions: read  # upload-sarif reads run info on private repos.
