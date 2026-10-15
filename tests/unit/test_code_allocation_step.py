@@ -1259,7 +1259,19 @@ def _notifying_hass() -> Any:
     return hass
 
 
-async def test_unaccounted_slots_raise_notification(
+def _unreadable_slot(slot: int) -> ManagedSlot:
+    """Build a managed slot that reports no readable state."""
+    return ManagedSlot(
+        slot=slot,
+        managed=True,
+        status=SlotStatus.UNKNOWN,
+        actual_name=None,
+        actual_code=None,
+        actual_code_present=False,
+    )
+
+
+async def test_unreadable_slots_raise_notification(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Unreadable managed slots notify the operator by slot number."""
@@ -1280,7 +1292,7 @@ async def test_unaccounted_slots_raise_notification(
         "entry-a",
         "front",
         4,
-        [],
+        [_unreadable_slot(3), _unreadable_slot(5)],
         [_reservation("identity-a", code="1111")],
     )
 
@@ -1291,11 +1303,55 @@ async def test_unaccounted_slots_raise_notification(
     assert "front" in message
     assert "withheld" in message
     assert "ALL Rental Control entries" in message
-    assert "Keymaster" in message
-    assert kwargs["notification_id"] == f"{DOMAIN}_unaccounted_slots_entry-a"
+    assert "restore readable Keymaster entities" in message
+    assert kwargs["notification_id"] == f"{DOMAIN}_unreadable_slots_entry-a"
 
 
-async def test_unaccounted_notification_dismissed_when_clear(
+async def test_owned_unreadable_slot_keeps_notification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreadable slot owned in the registry still blocks and still warns."""
+    created: list[tuple[str, dict[str, Any]]] = []
+    dismissed: list[str] = []
+    monkeypatch.setattr(
+        code_allocation,
+        "async_create",
+        lambda _hass, message, **kwargs: created.append((message, kwargs)),
+    )
+    monkeypatch.setattr(
+        code_allocation,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+    allocator = _allocator()
+    monkeypatch.setattr(code_allocation, "get_allocator", lambda _hass: allocator)
+    await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-a",
+            identity_key="identity-a",
+            preferred_code="1111",
+            code_length=4,
+            lockname="front",
+            slot=1,
+        )
+    )
+
+    await code_allocation.async_resolve_codes(
+        _notifying_hass(),
+        "entry-a",
+        "front",
+        4,
+        [_unreadable_slot(1)],
+        [_reservation("identity-a", code="1111")],
+    )
+
+    assert dismissed == []
+    assert len(created) == 1
+    assert "slot 1" in created[0][0]
+    assert allocator._pending_adoption_slots == {"entry-a": frozenset({1})}
+
+
+async def test_unreadable_notification_dismissed_when_clear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A repaired slot dismisses the stale unreadable-slot notification."""
@@ -1320,10 +1376,10 @@ async def test_unaccounted_notification_dismissed_when_clear(
         [_reservation("identity-a", code="1111")],
     )
 
-    assert dismissed == [f"{DOMAIN}_unaccounted_slots_entry-a"]
+    assert dismissed == [f"{DOMAIN}_unreadable_slots_entry-a"]
 
 
-async def test_unaccounted_notification_skipped_without_bus(
+async def test_unreadable_notification_skipped_without_bus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Non-Home-Assistant callers never touch the notification platform."""
@@ -1349,11 +1405,28 @@ async def test_unaccounted_notification_skipped_without_bus(
         "entry-a",
         "front",
         4,
-        [],
+        [_unreadable_slot(1)],
         [_reservation("identity-a", code="1111")],
     )
 
     assert calls == []
+
+
+def test_dismiss_unreadable_slots_uses_entry_notification_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Entry teardown clears the entry's own unreadable-slot notification."""
+    dismissed: list[str] = []
+    monkeypatch.setattr(
+        code_allocation,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+
+    code_allocation.dismiss_unreadable_slots(_notifying_hass(), "entry-a")
+    code_allocation.dismiss_unreadable_slots(SimpleNamespace(), "entry-b")
+
+    assert dismissed == [f"{DOMAIN}_unreadable_slots_entry-a"]
 
 
 async def test_adoption_gate_message_names_blocking_slots(

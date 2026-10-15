@@ -156,7 +156,9 @@ async def resolve_cycle(
 
         unaccounted = unaccounted_slots(allocator, request.observation)
         _track_pending_adoption_slots(
-            allocator, request.observation.entry_id, unaccounted
+            allocator,
+            request.observation.entry_id,
+            request.observation.unreadable_slots,
         )
         if request.adoption_complete and not unaccounted:
             allocator._pending_adoption.discard(request.observation.entry_id)
@@ -222,14 +224,14 @@ async def resolve_cycle(
 
 
 def _track_pending_adoption_slots(
-    allocator: DoorCodeAllocator, entry_id: str, unaccounted: frozenset[int]
+    allocator: DoorCodeAllocator, entry_id: str, unreadable: frozenset[int]
 ) -> None:
     """Record the unreadable slots blocking an entry's adoption, if any."""
     tracked = getattr(allocator, "_pending_adoption_slots", None)
     if tracked is None:
         return
-    if unaccounted:
-        tracked[entry_id] = unaccounted
+    if unreadable:
+        tracked[entry_id] = unreadable
     else:
         tracked.pop(entry_id, None)
 

@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _EXHAUSTED_NOTIFICATION_ID = f"{DOMAIN}_code_registry_exhausted"
-_UNACCOUNTED_NOTIFICATION_ID = f"{DOMAIN}_unaccounted_slots"
+_UNREADABLE_NOTIFICATION_ID = f"{DOMAIN}_unreadable_slots"
 
 
 async def async_resolve_codes(
@@ -117,7 +117,9 @@ async def async_resolve_codes(
             entry_id,
             sorted(result.unaccounted_slots),
         )
-    report_unaccounted_slots(hass, entry_id, lockname, sorted(result.unaccounted_slots))
+    report_unreadable_slots(
+        hass, entry_id, lockname, sorted(observation.unreadable_slots)
+    )
     if _apply_allocation_results(allocator, entry_id, reservations, result):
         message = (
             f"Shared code allocator exhausted the configured code space for "
@@ -143,39 +145,52 @@ async def async_resolve_codes(
     )
 
 
-def report_unaccounted_slots(
+def unreadable_slots_notification_id(entry_id: str) -> str:
+    """Return the persistent notification id for an entry's unreadable slots."""
+    return f"{_UNREADABLE_NOTIFICATION_ID}_{entry_id}"
+
+
+def dismiss_unreadable_slots(hass: object, entry_id: str) -> None:
+    """Clear an entry's unreadable-slot notification."""
+    if not hasattr(hass, "bus"):
+        return
+    async_dismiss(hass, unreadable_slots_notification_id(entry_id))
+
+
+def report_unreadable_slots(
     hass: object,
     entry_id: str,
     lockname: str | None,
     slots: list[int],
 ) -> None:
-    """Reconcile the persistent notification for unaccounted managed slots."""
+    """Reconcile the persistent notification for unreadable managed slots."""
     if not hasattr(hass, "bus"):
         return
-    notification_id = f"{_UNACCOUNTED_NOTIFICATION_ID}_{entry_id}"
     if not slots:
-        async_dismiss(hass, notification_id)
+        dismiss_unreadable_slots(hass, entry_id)
         return
     slot_list = ", ".join(str(slot) for slot in slots)
+    label = "slots" if len(slots) > 1 else "slot"
     lock_label = lockname or "unknown lock"
     message = (
-        f"Rental Control entry {entry_id} cannot read managed "
-        f"{'slots' if len(slots) > 1 else 'slot'} {slot_list} on lock "
-        f"{lock_label}. Door code issuance is withheld while those slots "
-        "are unreadable, because an unreadable slot may still hold a code "
-        "the integration cannot see. If this condition is present when "
-        "Home Assistant starts, issuance is withheld for ALL Rental "
-        "Control entries, not just this one, because the shared code "
-        "space must be fully adopted before any code is issued. To "
-        "recover, repair or remove "
-        f"{'slots' if len(slots) > 1 else 'slot'} {slot_list} in Keymaster "
-        "so they report their state again."
+        f"Rental Control entry {entry_id} cannot read managed {label} "
+        f"{slot_list} on lock {lock_label}. Door code issuance is withheld "
+        "while those slots stay unreadable, because an unreadable slot may "
+        "still hold a code the integration cannot see. If this condition is "
+        "present when Home Assistant starts, issuance is withheld for ALL "
+        "Rental Control entries, not just this one, because every entry "
+        "shares one door code space. To recover, restore readable Keymaster "
+        f"entities for {label} {slot_list}; deleting those entities does not "
+        "help, because the slots stay in the managed range and report as "
+        "unknown. If the slots are gone for good, reconfigure this entry's "
+        "start slot or event count so that the managed range no longer "
+        "covers them."
     )
     async_create(
         hass,
         message,
         title=f"{NAME} unreadable lock slots",
-        notification_id=notification_id,
+        notification_id=unreadable_slots_notification_id(entry_id),
     )
 
 

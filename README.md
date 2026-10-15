@@ -196,10 +196,9 @@ refresh retries it until the allocator can safely release it.
 ### Unreadable Lock Slots
 
 The integration refuses to issue new door codes while any managed Keymaster
-slot stays unreadable and unaccounted for — a slot that reports `unavailable`
-or `unknown` and that does not belong to a code this integration already owns.
-Such a slot may still hold a working guest credential that the integration
-cannot see, so issuing into that uncertainty risks a code collision or
+slot stays unreadable — a slot whose Keymaster PIN or name entity reports
+`unavailable` or `unknown`, or no longer exists at all. Such a slot may still
+hold a working guest credential that the integration cannot see, so issuing into that uncertainty risks a code collision or
 clobbers a credential a guest relies on. The behaviour deliberately fails
 closed.
 
@@ -220,11 +219,16 @@ Watch the scope:
 - When a slot goes unreadable later, after that entry already adopted its
   codes cleanly, only that entry stops receiving codes.
 
-**Remedy:** repair or remove the named slot in Keymaster so that it reports
-its state again. Once the slot reads correctly, or disappears from the managed
-set, the next refresh resumes issuance and clears the notification. Home
-Assistant currently offers no control that excludes a permanently dead slot
-from management.
+**Remedy:** restore readable Keymaster entities for the named slot, so that
+its PIN and name entities report a real state again. Deleting those Keymaster
+entities does **not** clear the condition: Rental Control still watches every
+slot in its configured range and treats a slot with missing entities as
+unknown, which keeps the freeze in place. When the slot disappears permanently,
+reconfigure this entry's start slot or event count so that the managed range
+no longer covers it. Once the slot reads correctly, or leaves the
+managed range, the next refresh resumes issuance and clears the notification.
+Home Assistant currently offers no control that excludes a permanently dead
+slot from an otherwise unchanged managed range.
 
 ### Home Assistant Events
 

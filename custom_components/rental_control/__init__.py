@@ -41,6 +41,7 @@ from .const import NAME
 from .const import PLATFORMS
 from .const import UNSUB_LISTENERS
 from .coordinator import RentalControlCoordinator
+from .coordinator_helpers.code_allocation import dismiss_unreadable_slots
 from .listeners import (
     async_register_keymaster_listener as async_register_keymaster_listener,
 )
@@ -199,6 +200,8 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
         ):
             await allocator.async_unregister_entry(config_entry.entry_id)
 
+        dismiss_unreadable_slots(hass, config_entry.entry_id)
+
         hass.data[DOMAIN].pop(config_entry.entry_id)
 
     async_dismiss(hass, notification_id)
@@ -208,6 +211,7 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
 async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Handle permanent removal of a Rental Control entry."""
+    dismiss_unreadable_slots(hass, config_entry.entry_id)
     allocator = get_allocator(hass)
     if allocator is None:
         return
