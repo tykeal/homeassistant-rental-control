@@ -6,16 +6,27 @@ name: 'Autolabeler'
 
 # yamllint disable-line rule:truthy
 on:
+  # 'edited' is load-bearing. Every autolabeler rule in
+  # .github/release-drafter.yml matches on the pull request TITLE, so
+  # a title corrected after opening needs a fresh run to earn its
+  # label. Without it, the common sequence of opening without a
+  # Conventional Commits prefix, failing the semantic pull request
+  # check, then fixing the title, leaves the pull request unlabelled
+  # for good: no release-note category and no version increment.
+  # 'synchronize' does not cover this, firing on a push rather than on
+  # a metadata edit.
   pull_request:
     types:
       - opened
       - synchronize
       - reopened
+      - edited
   pull_request_target:
     types:
       - opened
       - synchronize
       - reopened
+      - edited
 
 permissions: {}
 
