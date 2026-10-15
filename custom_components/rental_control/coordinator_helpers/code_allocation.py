@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import uuid
 
 from homeassistant.components.persistent_notification import async_create
+from homeassistant.components.persistent_notification import async_dismiss
 from homeassistant.util import dt
 
 from ..allocator import get_allocator
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _EXHAUSTED_NOTIFICATION_ID = f"{DOMAIN}_code_registry_exhausted"
+_UNACCOUNTED_NOTIFICATION_ID = f"{DOMAIN}_unaccounted_slots"
 
 
 async def async_resolve_codes(
@@ -115,6 +117,7 @@ async def async_resolve_codes(
             entry_id,
             sorted(result.unaccounted_slots),
         )
+    report_unaccounted_slots(hass, entry_id, lockname, sorted(result.unaccounted_slots))
     if _apply_allocation_results(allocator, entry_id, reservations, result):
         message = (
             f"Shared code allocator exhausted the configured code space for "
@@ -137,6 +140,42 @@ async def async_resolve_codes(
         reservation.code_source = "unallocated"
     return CodeResolutionResult(
         observation, getattr(result, "reissues", ()), consumed_target_keys
+    )
+
+
+def report_unaccounted_slots(
+    hass: object,
+    entry_id: str,
+    lockname: str | None,
+    slots: list[int],
+) -> None:
+    """Reconcile the persistent notification for unaccounted managed slots."""
+    if not hasattr(hass, "bus"):
+        return
+    notification_id = f"{_UNACCOUNTED_NOTIFICATION_ID}_{entry_id}"
+    if not slots:
+        async_dismiss(hass, notification_id)
+        return
+    slot_list = ", ".join(str(slot) for slot in slots)
+    lock_label = lockname or "unknown lock"
+    message = (
+        f"Rental Control entry {entry_id} cannot read managed "
+        f"{'slots' if len(slots) > 1 else 'slot'} {slot_list} on lock "
+        f"{lock_label}. Door code issuance is withheld while those slots "
+        "are unreadable, because an unreadable slot may still hold a code "
+        "the integration cannot see. If this condition is present when "
+        "Home Assistant starts, issuance is withheld for ALL Rental "
+        "Control entries, not just this one, because the shared code "
+        "space must be fully adopted before any code is issued. To "
+        "recover, repair or remove "
+        f"{'slots' if len(slots) > 1 else 'slot'} {slot_list} in Keymaster "
+        "so they report their state again."
+    )
+    async_create(
+        hass,
+        message,
+        title=f"{NAME} unreadable lock slots",
+        notification_id=notification_id,
     )
 
 

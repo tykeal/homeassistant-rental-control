@@ -193,6 +193,39 @@ consumes it, the in-memory request lapses; invoke the service again.
 Any already-created replaced-code hold remains in the registry, and each
 refresh retries it until the allocator can safely release it.
 
+### Unreadable Lock Slots
+
+The integration refuses to issue new door codes while any managed Keymaster
+slot stays unreadable and unaccounted for — a slot that reports `unavailable`
+or `unknown` and that does not belong to a code this integration already owns.
+Such a slot may still hold a working guest credential that the integration
+cannot see, so issuing into that uncertainty risks a code collision or
+clobbers a credential a guest relies on. The behaviour deliberately fails
+closed.
+
+In that situation the integration raises a persistent notification naming the
+config entry, the lock, and the offending slot numbers, and logs a matching
+warning. The integration dismisses that notification as soon as every managed
+slot reports its state again.
+
+Watch the scope:
+
+- When a slot goes unreadable before Home Assistant starts, or before the
+  affected entry finishes one clean adoption cycle, the integration withholds
+  codes for **all** Rental Control entries, not just the affected one. Every
+  entry shares one door code space, so the integration must account for every
+  entry before it can safely issue any code. You may then also see a
+  `code adoption pending` notification that lists the entries still waiting,
+  annotated with their unreadable slot numbers.
+- When a slot goes unreadable later, after that entry already adopted its
+  codes cleanly, only that entry stops receiving codes.
+
+**Remedy:** repair or remove the named slot in Keymaster so that it reports
+its state again. Once the slot reads correctly, or disappears from the managed
+set, the next refresh resumes issuance and clears the notification. Home
+Assistant currently offers no control that excludes a permanently dead slot
+from management.
+
 ### Home Assistant Events
 
 The integration fires events on the Home Assistant event bus for use in
