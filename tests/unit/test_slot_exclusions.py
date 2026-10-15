@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from custom_components.rental_control.allocator import exclusions
+from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
 from custom_components.rental_control.coordinator_helpers import slot_exclusions
 
@@ -146,6 +147,11 @@ def test_guards_import_no_home_assistant() -> None:
     assert "homeassistant" not in source
 
 
+def _unexpected_update(*args: Any, **kwargs: Any) -> None:
+    """Fail if an entry rebuild is attempted."""
+    raise AssertionError("config entry was rebuilt")
+
+
 def _hass(entries: list[Any]) -> Any:
     """Build a Home Assistant stand-in exposing config entries."""
     by_id = {entry.entry_id: entry for entry in entries}
@@ -205,3 +211,110 @@ def test_load_scopes_to_the_requested_entry() -> None:
     )
 
     assert slot_exclusions.load(hass, "entry-b") == {9: None}
+
+
+def _observation(
+    *,
+    managed: frozenset[int] = frozenset({1, 2, 3}),
+    unreadable: frozenset[int] = frozenset({2}),
+) -> CycleObservation:
+    """Build the observation re-validation is derived from."""
+    return CycleObservation(
+        entry_id="entry-a",
+        lockname="front",
+        managed_slots=managed,
+        observed_codes={},
+        unreadable_slots=unreadable,
+    )
+
+
+def test_revalidate_keeps_a_still_unreadable_slot() -> None:
+    """An exclusion survives while its slot stays dead and managed."""
+    kept, cleared = slot_exclusions.revalidate({2: "dead relay"}, _observation())
+
+    assert kept == {2: "dead relay"}
+    assert cleared == {}
+
+
+def test_revalidate_clears_a_slot_that_became_readable() -> None:
+    """Recovery of the slot retires the exclusion within the same cycle."""
+    kept, cleared = slot_exclusions.revalidate(
+        {2: "dead relay"}, _observation(unreadable=frozenset())
+    )
+
+    assert kept == {}
+    assert cleared == {2: "dead relay"}
+
+
+def test_revalidate_clears_a_slot_outside_the_managed_range() -> None:
+    """Narrowing the managed range retires exclusions it no longer covers."""
+    kept, cleared = slot_exclusions.revalidate(
+        {2: None}, _observation(managed=frozenset({1}), unreadable=frozenset({2}))
+    )
+
+    assert kept == {}
+    assert cleared == {2: None}
+
+
+def test_persist_writes_a_new_exclusion() -> None:
+    """A changed set is written into the entry's data, not its options."""
+    entry = _entry("entry-a", {"name": "Entry A"})
+    hass = _hass([entry])
+    updates: list[dict[str, Any]] = []
+    hass.config_entries.async_update_entry = lambda _entry, **kwargs: updates.append(
+        kwargs
+    )
+
+    assert slot_exclusions.persist_excluded_slots(hass, "entry-a", {2: "dead"}) is True
+    assert updates == [
+        {
+            "data": {
+                "name": "Entry A",
+                CONF_EXCLUDED_SLOTS: [{"slot": 2, "reason": "dead"}],
+            }
+        }
+    ]
+
+
+def test_persist_is_a_no_op_when_unchanged() -> None:
+    """An unchanged set never rewrites the entry."""
+    entry = _entry("entry-a", {CONF_EXCLUDED_SLOTS: [{"slot": 2, "reason": "dead"}]})
+    hass = _hass([entry])
+    updates: list[dict[str, Any]] = []
+    hass.config_entries.async_update_entry = lambda _entry, **kwargs: updates.append(
+        kwargs
+    )
+
+    assert slot_exclusions.persist_excluded_slots(hass, "entry-a", {2: "dead"}) is False
+    assert updates == []
+
+
+def test_persist_removes_the_key_when_the_set_empties() -> None:
+    """Clearing the last exclusion removes the key rather than storing []."""
+    entry = _entry("entry-a", {CONF_EXCLUDED_SLOTS: [{"slot": 2}], "name": "Entry A"})
+    hass = _hass([entry])
+    updates: list[dict[str, Any]] = []
+    hass.config_entries.async_update_entry = lambda _entry, **kwargs: updates.append(
+        kwargs
+    )
+
+    assert slot_exclusions.persist_excluded_slots(hass, "entry-a", {}) is True
+    assert updates == [{"data": {"name": "Entry A"}}]
+
+
+def test_persist_tolerates_a_missing_entry() -> None:
+    """Persisting for an unloaded entry reports no write instead of raising."""
+    assert (
+        slot_exclusions.persist_excluded_slots(_hass([]), "entry-a", {2: None}) is False
+    )
+
+
+async def test_persisting_to_data_does_not_reload_the_entry() -> None:
+    """Writing data while options are empty leaves update_listener inert."""
+    from custom_components.rental_control import update_listener
+
+    entry = _entry("entry-a", {CONF_EXCLUDED_SLOTS: [{"slot": 2}]})
+    hass = _hass([entry])
+    hass.config_entries.async_update_entry = _unexpected_update
+
+    await update_listener(hass, entry)

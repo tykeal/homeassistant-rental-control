@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 from typing import TYPE_CHECKING
 import uuid
@@ -26,6 +27,7 @@ from ..reconciliation import SlotStatus
 from ..reconciliation import compute_desired_plan
 from ..reconciliation.desired import select_eligible_reservations
 from . import reissue
+from . import slot_exclusions
 from .models import ObservedSlotQuery
 from .reissue import CodeResolutionRequest
 from .reissue import CodeResolutionResult
@@ -66,6 +68,12 @@ async def async_resolve_codes(
         for directive in request.forced_reissues
     )
     observation = build_cycle_observation(entry_id, lockname, managed_slots)
+    request = replace(
+        request,
+        excluded_slots=frozenset(
+            _revalidated_exclusions(hass, entry_id, lockname, observation)
+        ),
+    )
     allocator = get_allocator(hass)
     if allocator is None:
         for reservation in reservations:
@@ -123,7 +131,10 @@ async def async_resolve_codes(
             sorted(result.unaccounted_slots),
         )
     report_unreadable_slots(
-        hass, entry_id, lockname, sorted(observation.unreadable_slots)
+        hass,
+        entry_id,
+        lockname,
+        sorted(observation.unreadable_slots - request.excluded_slots),
     )
     if _apply_allocation_results(allocator, entry_id, reservations, result):
         message = (
@@ -148,6 +159,34 @@ async def async_resolve_codes(
     return CodeResolutionResult(
         observation, getattr(result, "reissues", ()), consumed_target_keys
     )
+
+
+def _revalidated_exclusions(
+    hass: object,
+    entry_id: str,
+    lockname: str | None,
+    observation: CycleObservation,
+) -> dict[int, str | None]:
+    """Re-derive an entry's exclusions from the observation this cycle used."""
+    stored = slot_exclusions.load(hass, entry_id)
+    if not stored:
+        return {}
+    kept, cleared = slot_exclusions.revalidate(stored, observation)
+    for slot, reason in sorted(cleared.items()):
+        _LOGGER.info(
+            "Cleared the slot exclusion for entry %s slot %s on lock %s "
+            "because the slot is %s (recorded reason: %s)",
+            entry_id,
+            slot,
+            lockname or "unknown lock",
+            "no longer in the managed range"
+            if slot not in observation.managed_slots
+            else "readable again",
+            reason or "none given",
+        )
+    if cleared:
+        slot_exclusions.persist_excluded_slots(hass, entry_id, kept)
+    return kept
 
 
 def unreadable_slots_notification_id(entry_id: str) -> str:
