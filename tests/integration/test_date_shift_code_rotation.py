@@ -308,14 +308,14 @@ def _slot(
     )
 
 
-async def test_missing_registry_defers_rotation_until_recovery() -> None:
+async def test_missing_registry_keeps_code_and_completes_recovery() -> None:
     """A lost registry keeps the observed PIN owned instead of rotating it.
 
-    Rotation deliberately yields to recovery: the observed code is
+    Rotation is given up rather than retried: the observed code is
     re-adopted so the physically programmed PIN cannot be handed to
-    another booking, and the cycle is able to complete registry
-    recovery instead of fail-closing a previously published booking.
-    The pre-existing code is retained for that degraded cycle.
+    another booking, and the cycle completes registry recovery instead
+    of fail-closing a previously published booking.  The pre-existing
+    code is retained, matching the behaviour before this fix.
     """
     old_identity = make_reservation_fingerprint(
         _ENTRY, "Target Guest", _OLD_START, _OLD_END
@@ -369,7 +369,8 @@ async def test_missing_registry_defers_rotation_until_recovery() -> None:
     assert allocator._registry_lost is False
 
     # Recovery completed in the same cycle because the reconstructed adoption
-    # satisfied the issuance gate, so no further refresh is fail-closed.
+    # satisfied the issuance gate, so no further refresh is fail-closed.  The
+    # code is not rotated later: adoption bound it to the shifted identity.
     followup = build_reservations(
         [_event("Target Guest", _NEW_START, _NEW_END)],
         managed_slots,

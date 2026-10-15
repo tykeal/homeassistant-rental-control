@@ -68,7 +68,7 @@ async def async_resolve_codes(
             reservation.slot_code = None
             reservation.code_source = "unallocated"
         return CodeResolutionResult(observation, (), consumed_target_keys)
-    _defer_rotation_during_recovery(allocator, entry_id, reservations)
+    _decline_rotation_during_recovery(allocator, entry_id, reservations)
     adoptions = build_adoption_requests(
         entry_id,
         lockname,
@@ -134,19 +134,30 @@ async def async_resolve_codes(
     )
 
 
-def _defer_rotation_during_recovery(
+def _decline_rotation_during_recovery(
     allocator: object,
     entry_id: str,
     reservations: list[Reservation],
 ) -> None:
-    """Keep date-shift rotation off a lost or recovering registry.
+    """Give up date-shift rotation on a lost or recovering registry.
 
     Skipping adoption also stops the observed code from being rebuilt as
-    an owned allocation.  While the registry is lost that reconstruction
-    is the only record of the physically programmed code, so rotating
-    now could hand the still-programmed code to another reservation and
-    would leave this cycle unable to complete recovery.  Rotation is
-    deferred until a healthy cycle instead.
+    an owned allocation, and while the registry is lost that
+    reconstruction is the only record of the physically programmed code.
+    Rotating anyway could hand the still-programmed code to another
+    booking, and a previously published booking would instead be
+    declined as ``recovery_fail_closed``, which keeps the registry lost
+    and repeats the same degraded cycle.
+
+    Recovery wins, and the rotation is given up rather than retried:
+    adoption binds the observed code to the shifted identity and the
+    cycle pushes the new window to the lock, after which the observed
+    code reads as a manual PIN.  Retrying would need rotation intent to
+    outlive the cycle, and durable cross-cycle slot state is exactly
+    what the 3.5.0 regression established as unsafe here.  The outcome
+    for this rare degraded cycle is the pre-existing retain-the-code
+    behaviour, so nothing is made worse; an operator who wants the code
+    changed can call ``rental_control.force_reissue``.
     """
     if not getattr(allocator, "_registry_lost", False):
         return
@@ -154,9 +165,10 @@ def _defer_rotation_during_recovery(
         if not reservation.code_rotation_pending:
             continue
         reservation.code_rotation_pending = False
-        _LOGGER.info(
-            "Deferring date-shift code rotation for entry %s identity %s "
-            "until the shared code registry has recovered",
+        _LOGGER.warning(
+            "Keeping the existing door code for entry %s identity %s despite "
+            "a booking date change because the shared code registry is "
+            "recovering; use rental_control.force_reissue to change it",
             entry_id,
             reservation.identity_key,
         )
