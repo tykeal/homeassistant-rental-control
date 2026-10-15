@@ -265,6 +265,7 @@ class CoordinatorRefreshMixin:
                 operation_results = await event_overrides.async_apply_plan(
                     self, plan, res_by_key
                 )
+            self._apply_observed_code_results(plan, res_by_key, operation_results)
             self._sync_slot_store_from_plan(plan, res_by_key, operation_results)
 
             self._latest_plan = plan

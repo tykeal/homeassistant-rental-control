@@ -9,6 +9,7 @@ from datetime import datetime
 from datetime import timezone
 
 from custom_components.rental_control.coordinator import RentalControlCoordinator
+from custom_components.rental_control.helpers import OperationResult
 from custom_components.rental_control.reconciliation import DesiredPlan
 from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
@@ -145,3 +146,54 @@ def test_lockless_entry_publishes_allocated_code_immediately() -> None:
     coordinator = _coordinator(reservation, event_overrides=None)
 
     assert coordinator.get_slot_code("identity-1") == "1357"
+
+
+def _apply_results(
+    coordinator: RentalControlCoordinator,
+    reservation: Reservation,
+    results: list[OperationResult],
+) -> None:
+    """Replay physical operation results through the coordinator helper."""
+    assert coordinator._latest_plan is not None
+    coordinator._apply_observed_code_results(
+        coordinator._latest_plan,
+        {reservation.identity_key: reservation},
+        results,
+    )
+
+
+def test_confirmed_replacement_publishes_new_code() -> None:
+    """A confirmed date-shift replacement publishes the new PIN at once."""
+    reservation = _reservation("identity-1", "2430")
+    coordinator = _coordinator(reservation)
+    _record_observed(coordinator, reservation, code="2530")
+    assert coordinator.get_slot_code("identity-1") == "2530"
+
+    _apply_results(
+        coordinator,
+        reservation,
+        [
+            OperationResult(kind="clear", slot=10, confirmed=True),
+            OperationResult(kind="set", slot=10, confirmed=True),
+        ],
+    )
+
+    assert coordinator.get_slot_code("identity-1") == "2430"
+
+
+def test_unconfirmed_replacement_keeps_observed_code() -> None:
+    """An unconfirmed write must not publish a code that may not exist."""
+    reservation = _reservation("identity-1", "2430")
+    coordinator = _coordinator(reservation)
+    _record_observed(coordinator, reservation, code="2530")
+
+    _apply_results(
+        coordinator,
+        reservation,
+        [
+            OperationResult(kind="clear", slot=10, confirmed=True),
+            OperationResult(kind="set", slot=10, unconfirmed=True),
+        ],
+    )
+
+    assert coordinator.get_slot_code("identity-1") is None

@@ -47,6 +47,7 @@ from .coordinator_helpers.models import (
     _format_display_slot_name as _format_display_slot_name,  # noqa: F401
 )
 from .coordinator_helpers.models import normalize_event_override_update
+from .helpers import OperationResult
 from .reconciliation import DesiredPlan as _DesiredPlan
 from .reconciliation import ManagedSlot as _ManagedSlot
 from .reconciliation import Reservation as _Reservation
@@ -240,6 +241,39 @@ class RentalControlCoordinator(
                 slot_number,
                 observed.actual_code,
             )
+
+    def _apply_observed_code_results(
+        self,
+        plan: _DesiredPlan,
+        res_by_key: dict[str, _Reservation],
+        operation_results: list[OperationResult],
+    ) -> None:
+        """Refresh sensor-facing codes from confirmed physical writes.
+
+        ``_record_observed_slot_codes`` snapshots the lock as it looked
+        before the plan ran, so a confirmed replacement would otherwise
+        leave sensors publishing a PIN that has just been cleared.  Only
+        confirmed operations are trusted: an unconfirmed or failed write
+        leaves the cached observation alone so the next refresh can
+        re-read the lock.
+        """
+        by_slot: dict[int, list[OperationResult]] = {}
+        for result in operation_results:
+            by_slot.setdefault(result.slot, []).append(result)
+        for identity_key, slot_number in plan.selected.items():
+            reservation = res_by_key.get(identity_key)
+            if reservation is None:
+                continue
+            for result in by_slot.get(slot_number, ()):
+                if not result.confirmed:
+                    continue
+                if result.kind == "clear":
+                    self._observed_slot_codes.pop(identity_key, None)
+                elif result.kind == "set" and reservation.slot_code:
+                    self._observed_slot_codes[identity_key] = (
+                        slot_number,
+                        reservation.slot_code,
+                    )
 
     def get_overflow_reason(self, identity_key: str) -> str | None:
         """Return overflow reason for identity_key in latest plan, or None."""
