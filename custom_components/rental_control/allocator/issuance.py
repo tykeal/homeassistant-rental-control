@@ -236,20 +236,27 @@ def _track_pending_adoption_slots(
         tracked.pop(entry_id, None)
 
 
+def claimed_slots(
+    allocator: DoorCodeAllocator, entry_id: str, lockname: str
+) -> frozenset[int]:
+    """Return slots on one lock claimed by one entry's registry owners."""
+    return frozenset(
+        owner.slot
+        for record in allocator._registry.records.values()
+        for owner in record.owners
+        if owner.entry_id == entry_id
+        and owner.lockname == lockname
+        and owner.slot is not None
+    )
+
+
 def unaccounted_slots(
     allocator: DoorCodeAllocator, observation: CycleObservation
 ) -> frozenset[int]:
     """Return unreadable slots not claimed by this entry's registry owners."""
     if observation.lockname is None:
         return frozenset()
-    claimed = {
-        owner.slot
-        for record in allocator._registry.records.values()
-        for owner in record.owners
-        if owner.entry_id == observation.entry_id
-        and owner.lockname == observation.lockname
-        and owner.slot is not None
-    }
+    claimed = claimed_slots(allocator, observation.entry_id, observation.lockname)
     return frozenset(observation.unreadable_slots - claimed)
 
 
