@@ -24,6 +24,7 @@ import pytest
 
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AdoptionRequest
+from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.codegen import generate_slot_code
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import reissue
@@ -305,3 +306,89 @@ def _slot(
         actual_end=end,
         persisted_identity_key=identity,
     )
+
+
+async def test_missing_registry_defers_rotation_until_recovery() -> None:
+    """A lost registry keeps the observed PIN owned instead of rotating it.
+
+    Rotation deliberately yields to recovery: the observed code is
+    re-adopted so the physically programmed PIN cannot be handed to
+    another booking, and the cycle is able to complete registry
+    recovery instead of fail-closing a previously published booking.
+    The pre-existing code is retained for that degraded cycle.
+    """
+    old_identity = make_reservation_fingerprint(
+        _ENTRY, "Target Guest", _OLD_START, _OLD_END
+    )
+    allocator = _allocator()
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+
+    managed_slots = [
+        _slot(1, _OLD_CODE, "RC Target Guest", _OLD_START, _OLD_END, old_identity),
+    ]
+    reservations = build_reservations(
+        [_event("Target Guest", _NEW_START, _NEW_END)],
+        managed_slots,
+        _ctx(True),
+    )
+    target = reservations[0]
+    target.fingerprint_history.add(old_identity)
+    target.published_once = True
+
+    with patch.object(code_allocation, "get_allocator", return_value=allocator):
+        await code_allocation.async_resolve_codes(
+            reissue.CodeResolutionRequest(
+                hass=cast(Any, SimpleNamespace()),
+                entry_id=_ENTRY,
+                lockname=_LOCK,
+                code_length=_CODE_LENGTH,
+                managed_slots=managed_slots,
+                reservations=reservations,
+            )
+        )
+
+    # The still-programmed PIN is reconstructed as an owned allocation, so a
+    # second, unpublished booking cannot be handed the same code.
+    intruder = await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-b",
+            identity_key="identity-b",
+            preferred_code=_OLD_CODE,
+            code_length=_CODE_LENGTH,
+            lockname="back_door",
+            slot=1,
+        )
+    )
+
+    assert target.code_rotation_pending is False
+    assert target.slot_code == _OLD_CODE
+    assert target.code_source == "adopted"
+    assert intruder.code is not None
+    assert intruder.code != _OLD_CODE
+    assert allocator._registry_lost is False
+
+    # Recovery completed in the same cycle because the reconstructed adoption
+    # satisfied the issuance gate, so no further refresh is fail-closed.
+    followup = build_reservations(
+        [_event("Target Guest", _NEW_START, _NEW_END)],
+        managed_slots,
+        _ctx(True),
+    )
+    followup[0].fingerprint_history.add(old_identity)
+    followup[0].published_once = True
+
+    with patch.object(code_allocation, "get_allocator", return_value=allocator):
+        await code_allocation.async_resolve_codes(
+            reissue.CodeResolutionRequest(
+                hass=cast(Any, SimpleNamespace()),
+                entry_id=_ENTRY,
+                lockname=_LOCK,
+                code_length=_CODE_LENGTH,
+                managed_slots=managed_slots,
+                reservations=followup,
+            )
+        )
+
+    assert followup[0].slot_code == _OLD_CODE
+    assert allocator._registry_lost is False

@@ -68,6 +68,7 @@ async def async_resolve_codes(
             reservation.slot_code = None
             reservation.code_source = "unallocated"
         return CodeResolutionResult(observation, (), consumed_target_keys)
+    _defer_rotation_during_recovery(allocator, entry_id, reservations)
     adoptions = build_adoption_requests(
         entry_id,
         lockname,
@@ -131,6 +132,34 @@ async def async_resolve_codes(
     return CodeResolutionResult(
         observation, getattr(result, "reissues", ()), consumed_target_keys
     )
+
+
+def _defer_rotation_during_recovery(
+    allocator: object,
+    entry_id: str,
+    reservations: list[Reservation],
+) -> None:
+    """Keep date-shift rotation off a lost or recovering registry.
+
+    Skipping adoption also stops the observed code from being rebuilt as
+    an owned allocation.  While the registry is lost that reconstruction
+    is the only record of the physically programmed code, so rotating
+    now could hand the still-programmed code to another reservation and
+    would leave this cycle unable to complete recovery.  Rotation is
+    deferred until a healthy cycle instead.
+    """
+    if not getattr(allocator, "_registry_lost", False):
+        return
+    for reservation in reservations:
+        if not reservation.code_rotation_pending:
+            continue
+        reservation.code_rotation_pending = False
+        _LOGGER.info(
+            "Deferring date-shift code rotation for entry %s identity %s "
+            "until the shared code registry has recovered",
+            entry_id,
+            reservation.identity_key,
+        )
 
 
 def _apply_adoption_results(
