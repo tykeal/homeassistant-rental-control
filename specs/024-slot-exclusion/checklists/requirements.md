@@ -79,6 +79,29 @@ SPDX-License-Identifier: Apache-2.0
   intended behaviour because the loss direction is the safe one.
 - 35 functional requirements, following the predecessors' discipline of keeping
   each requirement independently testable.
+- Three findings from the first Copilot review were folded in rather than
+  argued away, all three verified against `cb4544c`:
+  - Filtering the shared observation for every reader would have changed
+    code-release evidence. `_owner_may_be_programmed`
+    (`allocator/allocator.py` lines 370-394) treats a covered slot with
+    neither an observed code nor unreadability as unprogrammed, and orphan
+    cleanup feeds it observations from the same builder
+    (`allocator/services.py` lines 98-113). Because FR-010's claim-check is
+    scoped to the addressed entry, an exclusion could otherwise have caused a
+    removed entry's code to be released without proof of absence. FR-016 now
+    requires gate-only filtering and FR-018 forbids releasing on the strength
+    of an exclusion; SC-014 and a new edge case cover it.
+  - `_adoption_complete` also requires readable coded slots to be accounted
+    for (`coordinator_helpers/code_allocation.py` lines 197-205), so excluding
+    every unreadable slot is not by itself sufficient. FR-015 is qualified
+    accordingly, with SC-015 and an edge case.
+  - The affected entry does not itself surface `adoption_pending`: when
+    adoption is incomplete it submits no allocation requests at all
+    (`coordinator_helpers/code_allocation.py` lines 86-95), so only the healthy
+    entries reach that refusal. User Story 2 and the Problem Statement now
+    distinguish the two outcomes, and the independent test uses reservations
+    without existing allocations so that existing-code reuse cannot mask the
+    gate.
 - This stage delivers the specification only. Per the established pattern in
   `specs/022-shared-code-allocator` and `specs/023-force-reissue`, `plan.md`,
   `research.md`, `data-model.md`, `quickstart.md`, and `tasks.md` are produced

@@ -63,6 +63,10 @@ non-empty, `allocate_request` refuses **every** entry's allocation at
 
 The consequence is that one dead slot at one property stops codes at an
 unrelated property, on a different lock, belonging to a different config entry.
+The affected entry itself does not surface that refusal, because an entry whose
+adoption has not completed submits no allocation requests at all
+(`coordinator_helpers/code_allocation.py`, lines 86-95); it simply issues
+nothing. The visible `adoption_pending` refusals land on the healthy entries.
 Because adoption runs on every start, the regime-2 freeze re-establishes itself
 on every Home Assistant restart for as long as the slot stays dead.
 
@@ -96,10 +100,13 @@ writes to it and never offers it as a free slot for a new reservation:
 The entry-wide and system-wide freezes are therefore **purely allocator-gate
 artefacts**, not a planner limitation. The planner's behaviour toward the dead
 slot is already exactly what is wanted. Only the allocator's view needs to
-change, and the integration has a single chokepoint for that view:
+change, and the integration has a single chokepoint for producing that view:
 `build_cycle_observation` (`coordinator_helpers/code_allocation.py`, lines
 208-227) is the one place `unreadable_slots` is computed, and
-`_adoption_complete` is the one place it gates adoption.
+`_adoption_complete` is the one place it gates adoption. The observation has
+other readers, notably the code-release evidence path, so the filtering must be
+applied at the gate rather than baked into the observation for everyone; that
+distinction is required by FR-016.
 
 `reissue_preview.preview_request_and_result`
 (`allocator/reissue_preview.py`, lines 90-117) routes through the same
@@ -171,23 +178,30 @@ written to.
 An operator runs three properties as three config entries on three separate
 locks. One slot at property A becomes permanently unreadable. After the next
 Home Assistant restart, properties B and C — which are entirely healthy — also
-stop issuing codes, reporting `adoption_pending`. The operator excludes the
-dead slot at property A. Property A's adoption then completes, the shared
-`_pending_adoption` set empties, and B and C resume issuing immediately.
+stop issuing codes for new reservations, reporting `adoption_pending`. Property
+A issues nothing at all, because an entry whose adoption has not completed
+submits no allocation requests in the first place and so never reaches that
+refusal. The operator excludes the dead slot at property A. Property A's
+adoption then completes, the shared `_pending_adoption` set empties, and B and
+C resume issuing immediately.
 
 **Why this priority**: This is the more damaging regime and the one most likely
 to be misdiagnosed, because the symptom appears at a property that has nothing
 wrong with it.
 
 **Independent Test**: Load three entries, make one slot on entry A UNKNOWN,
-restart, confirm all three entries refuse with `adoption_pending`, exclude the
-one slot on A, and confirm all three resume.
+restart, and give each entry a new reservation that has no existing registry
+allocation — so that existing-code reuse cannot mask the gate. Confirm B and C
+are refused with `adoption_pending` and that A requests nothing, exclude the
+one slot on A, and confirm all three then issue.
 
 **Acceptance Scenarios**:
 
 1. **Given** three loaded entries of which one has an UNKNOWN managed slot,
-   **When** adoption runs at startup, **Then** all three entries refuse
-   allocation with `adoption_pending`.
+   **When** adoption runs at startup and each entry has a new reservation with
+   no existing allocation, **Then** the two healthy entries are refused with
+   `adoption_pending` and the affected entry submits no allocation request at
+   all. No entry issues a code.
 2. **Given** that state, **When** the operator excludes the offending slot on
    its own entry, **Then** that entry's adoption completes, the shared pending
    set empties, and all three entries issue codes on the next cycle.
@@ -278,6 +292,17 @@ set false, and confirm the slot returns to the gate immediately.
 
 ### Edge Cases
 
+- **An orphaned registry owner holds the excluded slot.** A code owned by an
+  entry that has since been removed may still be recorded against the excluded
+  slot. The claim-check in FR-010 is scoped to the addressed entry and cannot
+  see such an owner, so exclusion must never be read as evidence that the slot
+  is unprogrammed. Orphan cleanup continues to see the slot as unreadable and
+  continues to decline to release that code without proof of absence (FR-016,
+  FR-018).
+- **An excluded dead slot coexists with an unaccounted readable slot.**
+  Adoption stays pending and the system stays frozen. Exclusion removes only
+  the unreadability condition; the requirement that readable coded slots be
+  accounted for is untouched, and the operator must resolve that separately.
 - **The slot is readable.** The control refuses. A readable slot can never
   cause either freeze, so there is no legitimate reason to exclude one, and
   refusing is the structural guard that prevents a live guest's slot from being
@@ -367,24 +392,40 @@ set false, and confirm the slot returns to the gate immediately.
 
 #### Effect on the allocator gate
 
-- **FR-014**: An excluded slot MUST NOT appear in the entry's unreadable-slot
-  observation. It therefore MUST NOT contribute to `unaccounted_slots` and MUST
-  NOT by itself hold `issuance_allowed` false.
-- **FR-015**: An excluded slot MUST NOT prevent the entry's adoption from
-  completing. An entry whose only unreadable slots are excluded MUST be
-  discarded from the shared pending-adoption set, so that unrelated entries
-  resume issuing.
-- **FR-016**: Exclusion MUST change only what the allocator observes. It MUST
-  NOT alter the gate's logic, MUST NOT relax its fail-closed default for any
-  non-excluded slot, and MUST NOT scope the shared pending-adoption set per
-  entry. The shared code space remains system-wide.
+- **FR-014**: For the purpose of the issuance gate, an excluded slot MUST NOT
+  count as an unreadable slot. It therefore MUST NOT contribute to
+  `unaccounted_slots` and MUST NOT by itself hold `issuance_allowed` false.
+- **FR-015**: An excluded slot MUST NOT, by virtue of being unreadable, prevent
+  the entry's adoption from completing. Exclusion MUST NOT relax any other
+  adoption condition: an entry that still has a readable coded slot not
+  accounted for by an adoption request MUST remain pending regardless of how
+  many slots are excluded. Recovery of unrelated entries follows only once the
+  shared pending-adoption set is empty, which requires every pending entry to
+  complete adoption on its own terms.
+- **FR-016**: Exclusion MUST be scoped to the allocator's issuance gate — the
+  unaccounted-slot computation and the unreadability condition of adoption
+  completion — and MUST NOT reach any other consumer of the cycle observation.
+  In particular, the raw unreadable-slot evidence MUST remain intact for the
+  code-release and still-programmed checks in
+  `DoorCodeAllocator._owner_may_be_programmed` (`allocator/allocator.py`, lines
+  370-394) and for the orphan cleanup that feeds it observations
+  (`allocator/services.py`, lines 98-113). Exclusion MUST NOT alter the gate's
+  logic, MUST NOT relax its fail-closed default for any non-excluded slot, and
+  MUST NOT scope the shared pending-adoption set per entry. The shared code
+  space remains system-wide.
 - **FR-017**: An excluded slot MUST remain unwritable. Reconciliation MUST
   continue to treat it as blocked, MUST NOT clear it, and MUST NOT offer it as
   a free slot for any reservation. Exclusion removes a slot from the gate's
   accounting; it does not return it to the usable pool.
 - **FR-018**: An excluded slot MUST NOT contribute any observed code to the
-  cycle. Exclusion is an admission that the slot's contents are unknown, not a
-  claim that it is empty.
+  cycle, and MUST NOT thereby be treated as proven empty. Exclusion is an
+  admission that the slot's contents are unknown, not a claim that it is empty.
+  No code may be released on the strength of an exclusion: a registry owner
+  whose slot is excluded MUST NOT be judged unprogrammed, and MUST NOT have its
+  code returned to the pool, because the exclusion is exactly the statement
+  that the slot could not be read. This holds for owners belonging to any
+  config entry, including owners orphaned by a removed entry, which the
+  claim-check in FR-010 does not and cannot cover.
 - **FR-019**: The same observation-level effect MUST apply to the re-issue
   preview path, so that `force_reissue` is unblocked by an exclusion on exactly
   the same terms as ordinary issuance.
@@ -619,6 +660,13 @@ NOT be buried in a log line the operator will never read.
   after the single exclusion call.
 - **SC-013**: Operators need to supply zero new configuration values and
   perform zero Keymaster operations to use the remedy.
+- **SC-014**: Zero codes are released from the registry on the strength of an
+  exclusion. An orphaned owner recorded against an excluded slot is released in
+  zero cases, including when the exclusion was set by a different config entry.
+- **SC-015**: An entry with an excluded dead slot and one unaccounted readable
+  coded slot remains pending adoption in one hundred percent of cases, and
+  unrelated entries remain blocked until that entry completes adoption on its
+  own terms.
 
 ## Alternatives Considered and Rejected
 
@@ -668,8 +716,12 @@ NOT be buried in a log line the operator will never read.
   free, so this feature does not need to change planning behaviour at all.
 - `build_cycle_observation` is the sole producer of the allocator's unreadable
   slot set for an entry, and `_adoption_complete` is the sole consumer that
-  gates adoption on it. Applying exclusions at those two points is therefore
-  sufficient to cover every gated path, including re-issue preview.
+  gates adoption on it. Those two points therefore cover every gated path,
+  including re-issue preview. They are not, however, the only consumers of the
+  observation: `_owner_may_be_programmed` and the orphan cleanup that supplies
+  it observations read the same unreadable-slot set as release evidence, which
+  is why FR-016 requires the filtering to be gate-only rather than applied to
+  the observation for all readers.
 - `SlotStatus.UNKNOWN` is a faithful signal of "this slot's state could not be
   read", so refusing to exclude anything else is a sound guard.
 - The shared allocator, the persisted registry, and the system-wide uniqueness
