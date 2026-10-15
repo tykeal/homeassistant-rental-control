@@ -83,11 +83,11 @@ listing order:
 **Purpose**: Establish the behaviour oracle and confirm the live signatures
 this feature modifies still look the way the design documents claim.
 
-- [ ] T001 Run and record the pre-change baseline with
+- [X] T001 Run and record the pre-change baseline with
       `uv run pytest tests/ -q -p no:randomly` and
       `uv run ruff check custom_components/ tests/`
       ([quickstart.md](quickstart.md) "Validation gate")
-- [ ] T002 Re-read and record the live signatures this feature changes, per
+- [X] T002 Re-read and record the live signatures this feature changes, per
       [quickstart.md](quickstart.md) "Before you start": `unaccounted_slots`,
       `resolve_cycle`, `allocate_request`, `_track_pending_adoption_slots` in
       `custom_components/rental_control/allocator/issuance.py`;
@@ -132,11 +132,11 @@ The tolerance tests ship with the parser because FR-032 and SC-010 are the
 parser's entire contract: an untested parser that raises on a malformed value
 turns a cosmetic data problem into a failed entry setup.
 
-- [ ] T003 Add `CONF_EXCLUDED_SLOTS = "excluded_slots"` to
+- [X] T003 Add `CONF_EXCLUDED_SLOTS = "excluded_slots"` to
       `custom_components/rental_control/const.py` in alphabetical position with
       the other `CONF_` names
       ([data-model.md](data-model.md) "Changed entities")
-- [ ] T004 Create `custom_components/rental_control/allocator/exclusions.py`
+- [X] T004 Create `custom_components/rental_control/allocator/exclusions.py`
       with the **total** `parse_excluded_slots(raw) -> dict[int, str | None]`
       and `serialize_excluded_slots(exclusions) -> list[dict[str, Any]]`,
       emitting slots in ascending order so an unchanged set serialises
@@ -145,14 +145,14 @@ turns a cosmetic data problem into a failed entry setup.
       values, and must keep a member with a non-string `reason` as
       `reason=None` ([data-model.md](data-model.md) "Parsing rules") — FR-006,
       FR-032
-- [ ] T005 Add `refusal_for_exclusion(slot, *, start_slot, max_events,
+- [X] T005 Add `refusal_for_exclusion(slot, *, start_slot, max_events,
       unreadable_slots, managed_slots, claimed_slots) -> str | None` to
       `custom_components/rental_control/allocator/exclusions.py`, returning
       `slot_out_of_range`, then `slot_readable`, then `slot_claimed` in that
       order, and importing nothing from Home Assistant
       ([contracts/set-slot-exclusion-service.md](contracts/set-slot-exclusion-service.md)
       "Validation order") — FR-009, FR-010, FR-011
-- [ ] T006 Create `tests/unit/test_slot_exclusions.py` covering the parser's
+- [X] T006 Create `tests/unit/test_slot_exclusions.py` covering the parser's
       tolerance table (absent key, `None`, `""`, a string, a mapping, a list of
       integers, malformed members, duplicate slots), round-trip stability of
       `serialize_excluded_slots`, and each of the three refusal guards
@@ -169,14 +169,14 @@ three guards are provable without Home Assistant. Nothing consumes them yet.
 claim check, as a pure refactor with no behaviour change, before either depends
 on it.
 
-- [ ] T007 Extract the claim-set computation at
+- [X] T007 Extract the claim-set computation at
       `custom_components/rental_control/allocator/issuance.py:245-252` into a
       module-level `claimed_slots(allocator, entry_id, lockname) ->
       frozenset[int]` and call it from `unaccounted_slots`, changing no
       behaviour
       ([contracts/set-slot-exclusion-service.md](contracts/set-slot-exclusion-service.md)
       "`issuance.claimed_slots`")
-- [ ] T008 Create `tests/unit/test_exclusion_gate.py` with the pre-change
+- [X] T008 Create `tests/unit/test_exclusion_gate.py` with the pre-change
       oracle: `unaccounted_slots` returns exactly today's results for a claimed
       slot, an unclaimed unreadable slot, a lockless observation, and an
       observation with no unreadable slots — asserting T007 changed nothing
@@ -205,12 +205,12 @@ would make this commit import a module that does not yet exist. Only the
 loader moves — persistence and re-validation stay together in group C, where
 they must be.
 
-- [ ] T009 [US1] Add `excluded_slots: frozenset[int] = frozenset()` to
+- [X] T009 [US1] Add `excluded_slots: frozenset[int] = frozenset()` to
       `CycleRequest` in
       `custom_components/rental_control/allocator/models.py:193-203`, after
       `forced_reissues`, leaving `CycleObservation` **unchanged**
       ([data-model.md](data-model.md) "Changed entities")
-- [ ] T010 [US1] Gate member 1 — add keyword-only
+- [X] T010 [US1] Gate member 1 — add keyword-only
       `excluded: frozenset[int] = frozenset()` to `unaccounted_slots` in
       `custom_components/rental_control/allocator/issuance.py:239-253`,
       returning `observation.unreadable_slots - claimed - excluded`; pass
@@ -219,13 +219,13 @@ they must be.
       request.excluded_slots` to `_track_pending_adoption_slots` at lines
       226-237 so an excluded slot is no longer reported as blocking adoption —
       FR-014
-- [ ] T011 [US2] Gate member 2 — add keyword-only
+- [X] T011 [US2] Gate member 2 — add keyword-only
       `excluded: frozenset[int] = frozenset()` to `_adoption_complete` in
       `custom_components/rental_control/coordinator_helpers/code_allocation.py:241-259`
       and change **only** the branch at lines 249-250 to
       `if observation.unreadable_slots - excluded:`, leaving
       `readable_coded_slots <= adopted_slots` exactly as it is — FR-015
-- [ ] T012 Create
+- [X] T012 Create
       `custom_components/rental_control/coordinator_helpers/slot_exclusions.py`
       with **only** the read-only `load(hass, entry_id) -> dict[int, str |
       None]`, reading `CONF_EXCLUDED_SLOTS` from the entry's `data` through
@@ -235,7 +235,7 @@ they must be.
       it; deferring it to Phase 5 would leave group B importing a module that
       has not landed. Extend `tests/unit/test_slot_exclusions.py` with its
       missing-entry, absent-key, and malformed-value cases — FR-031, SC-010
-- [ ] T013 Gate member 3 — in
+- [X] T013 Gate member 3 — in
       `custom_components/rental_control/allocator/reissue_preview.py:111-115`
       narrow the raw rejection to `observation.unreadable_slots - excluded`,
       pass `excluded=` to `issuance.unaccounted_slots` at line 113, **and**
@@ -248,18 +248,18 @@ they must be.
       `frozenset(...)` before use — `load` returns a mapping and the gates
       subtract from a `frozenset[int]` —
       FR-016, FR-019
-- [ ] T014 [US1] Add `excluded_slots: frozenset[int] = frozenset()` to
+- [X] T014 [US1] Add `excluded_slots: frozenset[int] = frozenset()` to
       `CodeResolutionRequest` in
       `custom_components/rental_control/coordinator_helpers/reissue.py:81-91`
       and thread it to `CycleRequest` in `async_resolve_codes`, leaving
       `coerce_code_resolution_request`'s legacy-call rejection unchanged
-- [ ] T015 [US2] Extend `tests/unit/test_exclusion_gate.py`: each of the three
+- [X] T015 [US2] Extend `tests/unit/test_exclusion_gate.py`: each of the three
       gate members with an empty excluded set behaves identically to the T008
       oracle (SC-006); with a non-empty set only the excluded slot's
       contribution disappears; and an entry with one excluded dead slot **and**
       one unaccounted readable coded slot stays pending adoption while
       unrelated entries stay blocked — FR-015, SC-006, SC-015
-- [ ] T016 Create `tests/unit/test_exclusion_release_evidence.py`, the
+- [X] T016 Create `tests/unit/test_exclusion_release_evidence.py`, the
       mandatory regression: with an excluded unreadable slot and a registry
       owner recorded against it, `_release_guard_reason` still returns
       `code_still_programmed`; the same with the owner **orphaned** (its
@@ -287,7 +287,7 @@ in the tree, not even for one commit. Reading a stored set carries no such
 hazard, which is why T012's loader could land earlier without weakening this
 group.
 
-- [ ] T017 [US3] Extend
+- [X] T017 [US3] Extend
       `custom_components/rental_control/coordinator_helpers/slot_exclusions.py`,
       whose read-only `load` landed in T012, with the **pure**
       `revalidate(exclusions, observation) -> (kept, cleared)` dropping any
@@ -299,7 +299,7 @@ group.
       value is unchanged
       ([contracts/set-slot-exclusion-service.md](contracts/set-slot-exclusion-service.md)
       "`slot_exclusions`") — FR-020, FR-021, FR-023, FR-029, FR-031
-- [ ] T018 [US3] In `async_resolve_codes`
+- [X] T018 [US3] In `async_resolve_codes`
       (`custom_components/rental_control/coordinator_helpers/code_allocation.py:46-146`),
       immediately after `build_cycle_observation` at line 68, load and
       `revalidate` against that same observation object; persist when anything
@@ -310,13 +310,13 @@ group.
       what every gate parameter takes, and handing a mapping to
       `observation.unreadable_slots - excluded` raises `TypeError` even when
       it is empty — FR-022, FR-024, FR-027
-- [ ] T019 Pass the **gated** set `sorted(observation.unreadable_slots -
+- [X] T019 Pass the **gated** set `sorted(observation.unreadable_slots -
       excluded)` to `report_unreadable_slots` at
       `custom_components/rental_control/coordinator_helpers/code_allocation.py:120-122`,
       so the "issuance is withheld" notification from `6a6602b` names only
       slots that are actually withholding issuance and dismisses itself when
       the last non-excluded unreadable slot is excluded or recovers
-- [ ] T020 [US3] Extend `tests/unit/test_slot_exclusions.py`: auto-clear within
+- [X] T020 [US3] Extend `tests/unit/test_slot_exclusions.py`: auto-clear within
       one cycle when the slot becomes readable (SC-003); drop when the managed
       range narrows (FR-023); `persist_excluded_slots` writes nothing when the
       set is unchanged; an entry whose persisted set references slots that no
@@ -324,7 +324,7 @@ group.
       regression — persisting while `config_entry.options` is empty invokes
       `update_listener` (`__init__.py:256-281`) and returns without rebuilding
       the entry
-- [ ] T021 [P] Create `tests/unit/test_exclusion_preview.py` asserting the
+- [X] T021 [P] Create `tests/unit/test_exclusion_preview.py` asserting the
       re-issue preview path applies the excluded set to both gate checks but
       performs zero re-validation, zero persistence, and zero notification
       calls — FR-007, FR-019, SC-007
@@ -340,12 +340,12 @@ to create one exists yet.
 **Purpose**: Give the operator the one deliberate, single-slot, un-overridable
 control that creates and clears an exclusion.
 
-- [ ] T022 Rename `_entry_from_sensor_state`
+- [X] T022 Rename `_entry_from_sensor_state`
       (`custom_components/rental_control/coordinator_helpers/reissue_targets.py:127-144`)
       to a public `entry_id_for_entity_attributes` and export it, updating its
       existing caller, with no behaviour change — so the captive-portal
       sensor-attribute contract has exactly one reader
-- [ ] T023 [US1] Create
+- [X] T023 [US1] Create
       `custom_components/rental_control/coordinator_helpers/exclusion_targets.py`
       with `ExclusionTarget(entry_id, lockname, slot, coordinator)` and a
       resolver emitting `ambiguous_target`, `missing_target`,
@@ -361,7 +361,7 @@ control that creates and clears an exclusion.
       `resolve_slot_target` itself, which refuses with `slot_not_managed`
       before `slot_out_of_range` can be emitted and cannot express FR-012
       ([plan.md](plan.md) "Target resolution") — FR-002, FR-003, FR-012
-- [ ] T024 [US1] Create
+- [X] T024 [US1] Create
       `custom_components/rental_control/allocator/exclusion_service.py` with
       `SERVICE_SET_SLOT_EXCLUSION`, the `ExclusionRequest` value object, and
       `SET_SLOT_EXCLUSION_SCHEMA` — `slot` **required**, `excluded` defaulting
@@ -369,7 +369,7 @@ control that creates and clears an exclusion.
       **no `force` key**
       ([contracts/set-slot-exclusion-service.md](contracts/set-slot-exclusion-service.md)
       "Service declaration") — FR-001, FR-002, FR-004, FR-005, FR-006, FR-009
-- [ ] T025 [US1] [US5] Implement the handler in the same module: resolve the
+- [X] T025 [US1] [US5] Implement the handler in the same module: resolve the
       target, evaluate `refusal_for_exclusion` using the coordinator's
       `start_slot`/`max_events`, a freshly built observation, and
       `issuance.claimed_slots` — **skipping all three guards when `excluded` is
@@ -384,18 +384,18 @@ control that creates and clears an exclusion.
       handler, so implementing the branch later would ship a callable service
       where `dry_run: true` persists an exclusion and reopens issuance —
       FR-007, FR-008, FR-012, FR-013, FR-027
-- [ ] T026 Register the service from `register_allocator_services`
+- [X] T026 Register the service from `register_allocator_services`
       (`custom_components/rental_control/allocator/services.py:39-57`), beside
       `register_force_reissue_service` at line 42, with
       `SupportsResponse.OPTIONAL` and a `has_service` guard
-- [ ] T027 [P] Declare `set_slot_exclusion` and its six fields in
+- [X] T027 [P] Declare `set_slot_exclusion` and its six fields in
       `custom_components/rental_control/services.yaml`,
       `custom_components/rental_control/strings.json`,
       `custom_components/rental_control/translations/en.json`, and
       `custom_components/rental_control/translations/fr.json`, with the service
       description stating the FR-030 residual risk and that an options-flow
       save drops exclusions — FR-030, FR-035
-- [ ] T028 [P] [US1] Create `tests/unit/test_exclusion_targets.py` covering
+- [X] T028 [P] [US1] Create `tests/unit/test_exclusion_targets.py` covering
       entity targeting, lock targeting, both supplied, neither supplied, an
       unknown lock, and a lock served by two entries with **disjoint** ranges
       (1-5 and 6-10): slot 7 resolves to the second entry rather than refusing
@@ -403,7 +403,7 @@ control that creates and clears an exclusion.
       `ambiguous_lock`, and clearing a slot that has left every managed range
       resolves through the entry whose persisted set holds it —
       FR-002, FR-003, FR-012
-- [ ] T029 [US1] [US5] Create `tests/unit/test_exclusion_service.py` covering
+- [X] T029 [US1] [US5] Create `tests/unit/test_exclusion_service.py` covering
       each of `slot_readable`, `slot_claimed`, and `slot_out_of_range` refused
       with nothing persisted; an assertion that the schema has no `"force"` key
       and accepts only a scalar `slot`; clearing succeeding for a readable,
@@ -424,7 +424,7 @@ in #802 is remedied end to end for an operator with a frozen property.
 **Purpose**: Make a standing accepted risk impossible to forget, and make a
 support request answerable without further questions.
 
-- [ ] T030 [US4] Add `report_excluded_slots` and `dismiss_excluded_slots` to
+- [X] T030 [US4] Add `report_excluded_slots` and `dismiss_excluded_slots` to
       `custom_components/rental_control/coordinator_helpers/slot_exclusions.py`
       with a per-entry notification id `f"{DOMAIN}_excluded_slots_{entry_id}"`,
       following the reconcile-and-dismiss shape of `report_unreadable_slots`
@@ -432,25 +432,25 @@ support request answerable without further questions.
       entry, the lock, the excluded slots with their recorded reasons, and
       states the FR-030 residual risk that the slot may still hold a code the
       integration cannot see — FR-025, FR-030
-- [ ] T031 [US4] Call `report_excluded_slots` from `async_resolve_codes` on
+- [X] T031 [US4] Call `report_excluded_slots` from `async_resolve_codes` on
       every cycle with the post-re-validation set, so the notification is
       reconciled every cycle and dismissed when the set becomes empty —
       FR-025, SC-008
-- [ ] T032 [US4] Dismiss the exclusion notification in
+- [X] T032 [US4] Dismiss the exclusion notification in
       `custom_components/rental_control/__init__.py` beside the existing
       `dismiss_unreadable_slots` calls at lines 203 and 214, covering both
       unload and permanent removal
-- [ ] T033 [P] [US4] Add an `excluded_slots` key to `allocator_diagnostics`
+- [X] T033 [P] [US4] Add an `excluded_slots` key to `allocator_diagnostics`
       (`custom_components/rental_control/allocator/diagnostics.py:18-58`)
       mapping `entry_id` to its sorted slots and reasons, derived by walking
       `async_entries(DOMAIN)` through `parse_excluded_slots` and omitting
       entries with an empty set — FR-026
-- [ ] T034 [P] [US4] Create `tests/integration/test_exclusion_notifications.py`
+- [X] T034 [P] [US4] Create `tests/integration/test_exclusion_notifications.py`
       asserting exactly one standing notification per entry with a non-empty
       set and zero otherwise at the end of every cycle; that the unreadable-slot
       notification names only non-excluded slots; and that both are dismissed on
       unload and on removal — SC-008
-- [ ] T035 [P] Create `tests/unit/test_exclusion_no_codes.py` asserting no door
+- [X] T035 [P] Create `tests/unit/test_exclusion_no_codes.py` asserting no door
       code appears in the service response, the notification message, the
       diagnostics payload, or any captured log record attributable to this
       feature — FR-028, SC-009
@@ -465,11 +465,11 @@ and invisible the moment it clears.
 **Purpose**: Prove the spec's measurable outcomes as behaviour, not as unit
 assertions about parts.
 
-- [ ] T036 Add the shared integration fixtures: one entry with one permanently
+- [X] T036 Add the shared integration fixtures: one entry with one permanently
       `UNKNOWN` managed slot, and a three-entry fixture on three locks where
       each entry has a new reservation holding **no** existing registry
       allocation, so that existing-code reuse cannot mask the gate
-- [ ] T037 [P] [US1] [US3] Create `tests/integration/test_exclusion_recovery.py`
+- [X] T037 [P] [US1] [US3] Create `tests/integration/test_exclusion_recovery.py`
       driving the whole SC-012 arc with no intervention after the single
       service call: freeze observed with `unaccounted_slots`; exclude; next
       cycle issues to every remaining reservation while the excluded slot is
@@ -477,17 +477,17 @@ assertions about parts.
       readable; next cycle clears the exclusion from the entry's stored data
       and dismisses the notification; slot becomes unreadable again and the
       entry freezes fail-closed afresh — SC-001, SC-003, SC-004, SC-012
-- [ ] T038 [P] [US2] Create `tests/integration/test_exclusion_multi_entry.py`:
+- [X] T038 [P] [US2] Create `tests/integration/test_exclusion_multi_entry.py`:
       three loaded entries, one with an `UNKNOWN` managed slot; after a
       restart, the two healthy entries are refused with `adoption_pending` and
       the affected entry submits no allocation request at all; one exclusion on
       the affected entry; all three then issue; and a further restart requires
       no additional operator action — SC-002
-- [ ] T039 [P] Create `tests/integration/test_exclusion_force_reissue.py`:
+- [X] T039 [P] Create `tests/integration/test_exclusion_force_reissue.py`:
       `force_reissue` succeeds on a non-excluded slot of an entry whose only
       unreadable slot is excluded, failing if gate member 3 was missed —
       FR-019, SC-011
-- [ ] T040 [P] Create `tests/integration/test_exclusion_edge_cases.py`:
+- [X] T040 [P] Create `tests/integration/test_exclusion_edge_cases.py`:
       excluding every managed slot satisfies the gate but reports ordinary
       exhaustion rather than silent success; two entries managing overlapping
       slot numbers on one parent lock do not share an exclusion; an
@@ -504,11 +504,11 @@ asserting test.
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T041 Document the service in `README.md` beside the existing
+- [X] T041 Document the service in `README.md` beside the existing
       `rental_control.force_reissue` section at line 180, stating the three
       guards, the absence of any override, the auto-clear, the residual risk,
       and that an options-flow save drops exclusions
-- [ ] T042 Final gate: `uv run pre-commit run --all-files`,
+- [X] T042 Final gate: `uv run pre-commit run --all-files`,
       `uv run pytest tests/ -q -p no:randomly`, and
       `uv run ruff check custom_components/ tests/`; confirm the 95% coverage
       floor; confirm every new file carries its SPDX header pair; and confirm
