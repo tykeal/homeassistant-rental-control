@@ -89,6 +89,7 @@ class CodeResolutionRequest:
     reservations: list[Reservation]
     suppression: ReissueSuppression = ReissueSuppression()
     forced_reissues: tuple[ForcedReissueDirective, ...] = ()
+    excluded_slots: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)

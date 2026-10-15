@@ -14,6 +14,9 @@ from custom_components.rental_control.allocator.models import AllocationOrigin
 from custom_components.rental_control.allocator.models import AllocationOwner
 from custom_components.rental_control.allocator.models import AllocationRecord
 from custom_components.rental_control.allocator.models import CycleObservation
+from custom_components.rental_control.coordinator_helpers import code_allocation
+from custom_components.rental_control.reconciliation import ManagedSlot
+from custom_components.rental_control.reconciliation import SlotStatus
 
 _NOW = "2026-10-15T12:00:00+00:00"
 
@@ -78,6 +81,16 @@ def _observation(
     )
 
 
+def _slot(number: int, code: str) -> ManagedSlot:
+    """Build a readable managed slot holding a code."""
+    return ManagedSlot(
+        slot=number,
+        managed=True,
+        status=SlotStatus.OCCUPIED,
+        actual_code=code,
+    )
+
+
 def test_claimed_slots_returns_this_entry_and_lock_only() -> None:
     """The extracted claim helper scopes by entry id and lock name."""
     allocator = _with_owner(_allocator())
@@ -123,3 +136,65 @@ def test_unaccounted_slots_reports_unclaimed_unreadable_slots() -> None:
     observation = _observation(unreadable=frozenset({2}))
 
     assert issuance.unaccounted_slots(allocator, observation) == frozenset({2})
+
+
+def test_empty_exclusion_matches_the_unexcluded_oracle() -> None:
+    """An empty excluded set leaves gate member one unchanged."""
+    allocator = _with_owner(_allocator())
+    observation = _observation(unreadable=frozenset({1, 2}))
+
+    assert issuance.unaccounted_slots(
+        allocator, observation, excluded=frozenset()
+    ) == issuance.unaccounted_slots(allocator, observation)
+
+
+def test_exclusion_removes_only_that_slot_from_gate_one() -> None:
+    """Only the excluded slot stops withholding issuance."""
+    allocator = _allocator()
+    observation = _observation(unreadable=frozenset({2, 3}))
+
+    assert issuance.unaccounted_slots(
+        allocator, observation, excluded=frozenset({2})
+    ) == frozenset({3})
+
+
+def test_empty_exclusion_leaves_adoption_gate_unchanged() -> None:
+    """Gate member two with an empty set still fails on unreadable slots."""
+    observation = _observation(unreadable=frozenset({2}))
+
+    assert not code_allocation._adoption_complete(
+        observation, [], [], excluded=frozenset()
+    )
+
+
+def test_adoption_gate_passes_once_the_slot_is_excluded() -> None:
+    """Excluding the only unreadable slot lets adoption complete."""
+    observation = _observation(unreadable=frozenset({2}))
+
+    assert code_allocation._adoption_complete(
+        observation, [], [], excluded=frozenset({2})
+    )
+
+
+def test_adoption_gate_still_fails_on_a_second_unreadable_slot() -> None:
+    """One exclusion does not unblock an unrelated unreadable slot."""
+    observation = _observation(unreadable=frozenset({2, 3}))
+
+    assert not code_allocation._adoption_complete(
+        observation, [], [], excluded=frozenset({2})
+    )
+
+
+def test_exclusion_does_not_bypass_unadopted_readable_codes() -> None:
+    """A readable coded slot still holds adoption open past an exclusion."""
+    observation = CycleObservation(
+        entry_id="entry-a",
+        lockname="front",
+        managed_slots=frozenset({1, 2}),
+        observed_codes={"1234": 1},
+        unreadable_slots=frozenset({2}),
+    )
+
+    assert not code_allocation._adoption_complete(
+        observation, [], [_slot(1, "1234")], excluded=frozenset({2})
+    )

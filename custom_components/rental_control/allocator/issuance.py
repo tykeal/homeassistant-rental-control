@@ -154,11 +154,13 @@ async def resolve_cycle(
         for old_key, new_key in request.rekeys:
             allocator._rekey_unlocked(old_key, new_key)
 
-        unaccounted = unaccounted_slots(allocator, request.observation)
+        unaccounted = unaccounted_slots(
+            allocator, request.observation, excluded=request.excluded_slots
+        )
         _track_pending_adoption_slots(
             allocator,
             request.observation.entry_id,
-            request.observation.unreadable_slots,
+            request.observation.unreadable_slots - request.excluded_slots,
         )
         if request.adoption_complete and not unaccounted:
             allocator._pending_adoption.discard(request.observation.entry_id)
@@ -251,13 +253,16 @@ def claimed_slots(
 
 
 def unaccounted_slots(
-    allocator: DoorCodeAllocator, observation: CycleObservation
+    allocator: DoorCodeAllocator,
+    observation: CycleObservation,
+    *,
+    excluded: frozenset[int] = frozenset(),
 ) -> frozenset[int]:
-    """Return unreadable slots not claimed by this entry's registry owners."""
+    """Return unreadable slots not claimed by owners and not excluded."""
     if observation.lockname is None:
         return frozenset()
     claimed = claimed_slots(allocator, observation.entry_id, observation.lockname)
-    return frozenset(observation.unreadable_slots - claimed)
+    return frozenset(observation.unreadable_slots - claimed - excluded)
 
 
 def _release_and_report_holds(

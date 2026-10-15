@@ -86,7 +86,11 @@ async def async_resolve_codes(
         request.suppression,
     )
     adoption_complete = _adoption_complete(
-        observation, adoptions, managed_slots, request.suppression
+        observation,
+        adoptions,
+        managed_slots,
+        request.suppression,
+        excluded=request.excluded_slots,
     )
     allocations = (
         build_allocation_requests(
@@ -107,6 +111,7 @@ async def async_resolve_codes(
             },
             adoption_complete=adoption_complete,
             forced_reissues=request.forced_reissues,
+            excluded_slots=request.excluded_slots,
         )
     )
     _apply_adoption_results(allocator, entry_id, reservations, result)
@@ -243,10 +248,12 @@ def _adoption_complete(
     adoptions: list[AdoptionRequest],
     managed_slots: list[ManagedSlot],
     suppression: ReissueSuppression | None = None,
+    *,
+    excluded: frozenset[int] = frozenset(),
 ) -> bool:
     """Return whether all readable managed codes were accounted for."""
     suppression = suppression or ReissueSuppression()
-    if observation.unreadable_slots:
+    if observation.unreadable_slots - excluded:
         return False
     adopted_slots = {request.slot for request in adoptions}
     readable_coded_slots = {

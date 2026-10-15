@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from custom_components.rental_control.allocator import exclusions
+from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
+from custom_components.rental_control.coordinator_helpers import slot_exclusions
 
 
 @pytest.mark.parametrize(
@@ -141,3 +144,64 @@ def test_guards_import_no_home_assistant() -> None:
 
     source = Path(exclusions.__file__).read_text(encoding="utf-8")
     assert "homeassistant" not in source
+
+
+def _hass(entries: list[Any]) -> Any:
+    """Build a Home Assistant stand-in exposing config entries."""
+    by_id = {entry.entry_id: entry for entry in entries}
+    return SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_get_entry=by_id.get,
+            async_entries=lambda _domain=None: list(entries),
+        )
+    )
+
+
+def _entry(entry_id: str, data: dict[str, Any]) -> Any:
+    """Build a config-entry stand-in with the given data mapping."""
+    return SimpleNamespace(entry_id=entry_id, data=data, options={})
+
+
+def test_load_returns_empty_for_a_missing_entry() -> None:
+    """An unknown entry id yields no exclusions rather than raising."""
+    assert slot_exclusions.load(_hass([]), "entry-a") == {}
+
+
+def test_load_returns_empty_when_the_key_is_absent() -> None:
+    """An entry that never excluded a slot yields an empty mapping."""
+    hass = _hass([_entry("entry-a", {"name": "Entry A"})])
+
+    assert slot_exclusions.load(hass, "entry-a") == {}
+
+
+def test_load_tolerates_a_malformed_stored_value() -> None:
+    """A corrupt persisted value can never stop an entry from setting up."""
+    hass = _hass([_entry("entry-a", {CONF_EXCLUDED_SLOTS: "not-a-list"})])
+
+    assert slot_exclusions.load(hass, "entry-a") == {}
+
+
+def test_load_parses_a_stored_exclusion() -> None:
+    """A well-formed persisted value round-trips into the mapping."""
+    hass = _hass(
+        [
+            _entry(
+                "entry-a",
+                {CONF_EXCLUDED_SLOTS: [{"slot": 5, "reason": "dead relay"}]},
+            )
+        ]
+    )
+
+    assert slot_exclusions.load(hass, "entry-a") == {5: "dead relay"}
+
+
+def test_load_scopes_to_the_requested_entry() -> None:
+    """One entry's exclusions never leak into another entry's gate."""
+    hass = _hass(
+        [
+            _entry("entry-a", {CONF_EXCLUDED_SLOTS: [{"slot": 5}]}),
+            _entry("entry-b", {CONF_EXCLUDED_SLOTS: [{"slot": 9}]}),
+        ]
+    )
+
+    assert slot_exclusions.load(hass, "entry-b") == {9: None}
