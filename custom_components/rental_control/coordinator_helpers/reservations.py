@@ -168,9 +168,11 @@ def _build_one_reservation(
         )
     )
     if matched_physical is not None and matched_physical.actual_code:
-        slot_code, code_source = _resolve_observed_code(
+        slot_code, code_source, rotation_pending = _resolve_observed_code(
             matched_physical, event, uid, ctx, slot_code, code_source
         )
+    else:
+        rotation_pending = False
 
     try:
         res = _Reservation(
@@ -188,6 +190,7 @@ def _build_one_reservation(
             fingerprint_history=set(),
             missing_count=0,
             code_source=code_source,
+            code_rotation_pending=rotation_pending,
         )
     except ValueError:
         _LOGGER.warning(
@@ -226,11 +229,11 @@ def _resolve_observed_code(
     ctx: ReservationBuildContext,
     slot_code: str,
     code_source: str,
-) -> tuple[str, str]:
-    """Return the (code, source) preserving manual observed PINs."""
+) -> tuple[str, str, bool]:
+    """Return the (code, source, rotating) preserving manual observed PINs."""
     observed_code = matched_physical.actual_code
     if observed_code is None:
-        return slot_code, code_source
+        return slot_code, code_source, False
     slot_name = get_slot_name(
         event.summary, event.description or "", ctx.event_prefix or ""
     )
@@ -245,7 +248,7 @@ def _resolve_observed_code(
         else None
     )
     if identity_key in ctx.reissue_suppression.identity_keys:
-        return slot_code, code_source
+        return slot_code, code_source, False
     observed_start = matched_physical.actual_start
     observed_end = matched_physical.actual_end
     if observed_start is not None and ctx.code_buffer_before:
@@ -269,5 +272,5 @@ def _resolve_observed_code(
         or observed_code != old_generated
         or not ctx.should_update_code
     ):
-        return observed_code, "manual_observed"
-    return slot_code, code_source
+        return observed_code, "manual_observed", False
+    return slot_code, code_source, slot_code != observed_code

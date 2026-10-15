@@ -71,6 +71,10 @@ class Reservation:
         overflow_reason: Why the reservation is not assigned, e.g.
             ``"capacity"``, ``"blocked_clear"``, or
             ``"code_unavailable"``.
+        code_rotation_pending: True for this cycle only when a
+            date-based code must rotate because the booking window
+            moved and the physically observed code still matches the
+            code generated from the previously programmed dates.
     """
 
     identity_key: str
@@ -94,6 +98,7 @@ class Reservation:
     overflow_reason: str | None = None
     sensor_lookup_keys: set[str] = field(default_factory=set)
     code_source: str = "generated"
+    code_rotation_pending: bool = False
 
     def __post_init__(self) -> None:
         """Validate Reservation field invariants.

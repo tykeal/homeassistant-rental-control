@@ -1,0 +1,307 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+"""End-to-end coverage for date-shift door-code rotation (issue #801).
+
+A date-based door code must regenerate when a guest moves their booking
+window before check-in.  These tests drive the real pipeline - reservation
+building, allocator cycle resolution, desired planning, and plan
+application - and assert on the code actually commanded to the lock.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from datetime import timedelta
+from types import SimpleNamespace
+from typing import Any
+from typing import cast
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
+from homeassistant.util import dt as dt_util
+import pytest
+
+from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
+from custom_components.rental_control.allocator.models import AdoptionRequest
+from custom_components.rental_control.codegen import generate_slot_code
+from custom_components.rental_control.coordinator_helpers import code_allocation
+from custom_components.rental_control.coordinator_helpers import reissue
+from custom_components.rental_control.coordinator_helpers.models import (
+    ReservationBuildContext,
+)
+from custom_components.rental_control.coordinator_helpers.reservations import (
+    build_reservations,
+)
+from custom_components.rental_control.event_overrides import EventOverrides
+from custom_components.rental_control.helpers import OperationResult
+from custom_components.rental_control.reconciliation import ManagedSlot
+from custom_components.rental_control.reconciliation import SlotStatus
+from custom_components.rental_control.reconciliation import compute_desired_plan
+from custom_components.rental_control.reconciliation import make_reservation_fingerprint
+
+_ENTRY = "entry-a"
+_LOCK = "front_door"
+_CODE_LENGTH = 4
+_OLD_START = datetime(2024, 12, 25, 16, tzinfo=dt_util.UTC)
+_OLD_END = datetime(2024, 12, 30, 11, tzinfo=dt_util.UTC)
+_NEW_START = _OLD_START - timedelta(days=1)
+_NEW_END = _OLD_END
+_PEER_START = datetime(2025, 1, 5, 16, tzinfo=dt_util.UTC)
+_PEER_END = datetime(2025, 1, 9, 11, tzinfo=dt_util.UTC)
+
+_OLD_CODE = generate_slot_code(
+    "date_based", _CODE_LENGTH, _OLD_START, _OLD_END, "", None
+)
+_NEW_CODE = generate_slot_code(
+    "date_based", _CODE_LENGTH, _NEW_START, _NEW_END, "", None
+)
+_PEER_CODE = generate_slot_code(
+    "date_based", _CODE_LENGTH, _PEER_START, _PEER_END, "", None
+)
+_MANUAL_PIN = "8642"
+
+
+@pytest.mark.parametrize(
+    ("should_update_code", "manual_pin", "expected_code", "expect_rotation"),
+    [
+        (True, None, _NEW_CODE, True),
+        (False, None, _OLD_CODE, False),
+        (True, _MANUAL_PIN, _MANUAL_PIN, False),
+        (False, _MANUAL_PIN, _MANUAL_PIN, False),
+    ],
+    ids=["update-generated", "static-generated", "update-manual", "static-manual"],
+)
+async def test_date_shift_rotation_commands_expected_code(
+    should_update_code: bool,
+    manual_pin: str | None,
+    expected_code: str,
+    expect_rotation: bool,
+) -> None:
+    """Only a date-based code with should_update_code rotates on a date shift."""
+    outcome = await _run_cycle(should_update_code, manual_pin)
+
+    assert outcome["target_code"] == expected_code
+    if expect_rotation:
+        assert outcome["set_codes"] == [(1, _NEW_CODE)]
+        assert outcome["update_times"] == []
+        assert outcome["clears"] == [1]
+    else:
+        assert outcome["set_codes"] == []
+        assert outcome["update_times"] == [(1, expected_code)]
+        assert outcome["clears"] == []
+
+
+@pytest.mark.parametrize("should_update_code", [True, False])
+async def test_date_shift_rotation_leaves_peer_untouched(
+    should_update_code: bool,
+) -> None:
+    """An unaffected reservation sees no clear, set, or update in the cycle."""
+    outcome = await _run_cycle(should_update_code, None)
+
+    assert outcome["peer_code"] == _PEER_CODE
+    assert 2 not in outcome["clears"]
+    assert all(slot != 2 for slot, _code in outcome["set_codes"])
+    assert all(slot != 2 for slot, _code in outcome["update_times"])
+
+
+async def _run_cycle(
+    should_update_code: bool, manual_pin: str | None
+) -> dict[str, Any]:
+    """Run one full refresh cycle and capture the commands sent to the lock."""
+    observed_code = manual_pin or _OLD_CODE
+    old_identity = make_reservation_fingerprint(
+        _ENTRY, "Target Guest", _OLD_START, _OLD_END
+    )
+    peer_identity = make_reservation_fingerprint(
+        _ENTRY, "Peer Guest", _PEER_START, _PEER_END
+    )
+    allocator = _allocator()
+    for identity, code, slot in (
+        (old_identity, observed_code, 1),
+        (peer_identity, _PEER_CODE, 2),
+    ):
+        await allocator.async_adopt(
+            AdoptionRequest(
+                entry_id=_ENTRY,
+                identity_key=identity,
+                code=code,
+                code_length=_CODE_LENGTH,
+                lockname=_LOCK,
+                slot=slot,
+            )
+        )
+
+    managed_slots = [
+        _slot(1, observed_code, "RC Target Guest", _OLD_START, _OLD_END, old_identity),
+        _slot(2, _PEER_CODE, "RC Peer Guest", _PEER_START, _PEER_END, peer_identity),
+    ]
+    reservations = build_reservations(
+        [
+            _event("Target Guest", _NEW_START, _NEW_END),
+            _event("Peer Guest", _PEER_START, _PEER_END),
+        ],
+        managed_slots,
+        _ctx(should_update_code),
+    )
+    target = next(item for item in reservations if item.slot_name == "Target Guest")
+    peer = next(item for item in reservations if item.slot_name == "Peer Guest")
+    # The date shift remaps the persisted mapping onto the new fingerprint.
+    target.fingerprint_history.add(old_identity)
+
+    with patch.object(code_allocation, "get_allocator", return_value=allocator):
+        await code_allocation.async_resolve_codes(
+            reissue.CodeResolutionRequest(
+                hass=cast(Any, SimpleNamespace()),
+                entry_id=_ENTRY,
+                lockname=_LOCK,
+                code_length=_CODE_LENGTH,
+                managed_slots=managed_slots,
+                reservations=reservations,
+            )
+        )
+
+    plan = compute_desired_plan(
+        reservations=reservations,
+        managed_slots=managed_slots,
+        max_events=2,
+        plan_id="plan-801",
+        generated_at=_OLD_START,
+        entry_id=_ENTRY,
+        lockname=_LOCK,
+        start_slot=1,
+    )
+    commands = await _apply(plan, reservations, observed_code)
+    commands["target_code"] = target.slot_code
+    commands["peer_code"] = peer.slot_code
+    return commands
+
+
+async def _apply(
+    plan: Any, reservations: list[Any], observed_code: str
+) -> dict[str, Any]:
+    """Apply a plan against mocked Keymaster services and record commands."""
+    overrides = EventOverrides(start_slot=1, max_slots=2)
+    overrides.update(1, observed_code, "RC Target Guest", _OLD_START, _OLD_END)
+    overrides.update(2, _PEER_CODE, "RC Peer Guest", _PEER_START, _PEER_END)
+    physical = {
+        1: ["RC Target Guest", observed_code],
+        2: ["RC Peer Guest", _PEER_CODE],
+    }
+
+    def _state(entity_id: str) -> Any:
+        """Return the fake Keymaster text state for one slot entity."""
+        for slot, (name, code) in physical.items():
+            if entity_id == f"text.{_LOCK}_code_slot_{slot}_name":
+                return SimpleNamespace(state=name)
+            if entity_id == f"text.{_LOCK}_code_slot_{slot}_pin":
+                return SimpleNamespace(state=code)
+        return None
+
+    coordinator = MagicMock()
+    coordinator.lockname = _LOCK
+    coordinator.hass.states.get.side_effect = _state
+
+    async def _clear(_coordinator: Any, slot: int, **_kwargs: Any) -> OperationResult:
+        """Confirm a clear so the replacement set can proceed."""
+        physical[slot] = ["", ""]
+        overrides.update(slot, None, None, None, None)
+        return OperationResult(kind="clear", slot=slot, confirmed=True)
+
+    with (
+        patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            side_effect=_clear,
+        ) as clear_code,
+        patch(
+            "custom_components.rental_control.event_overrides.async_fire_set_code",
+            new_callable=AsyncMock,
+        ) as set_code,
+        patch(
+            "custom_components.rental_control.event_overrides.async_fire_update_times",
+            new_callable=AsyncMock,
+        ) as update_times,
+    ):
+        set_code.side_effect = lambda _c, _e, slot: OperationResult(
+            kind="set", slot=slot, confirmed=True
+        )
+        update_times.side_effect = lambda _c, _e, slot: OperationResult(
+            kind="update_times", slot=slot, confirmed=True
+        )
+        await overrides.async_apply_plan(
+            coordinator,
+            plan,
+            {item.identity_key: item for item in reservations},
+        )
+
+    return {
+        "clears": [call.args[1] for call in clear_code.call_args_list],
+        "set_codes": [_command(call) for call in set_code.call_args_list],
+        "update_times": [_command(call) for call in update_times.call_args_list],
+    }
+
+
+def _command(call: Any) -> tuple[int, str]:
+    """Return the (slot, code) actually commanded to the lock."""
+    return call.args[2], call.args[1].extra_state_attributes["slot_code"]
+
+
+def _allocator() -> DoorCodeAllocator:
+    """Build an allocator with persistence disabled."""
+    allocator = DoorCodeAllocator(
+        cast(
+            Any,
+            SimpleNamespace(
+                data={},
+                config=SimpleNamespace(config_dir="."),
+                config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
+            ),
+        )
+    )
+    allocator._store = cast(Any, SimpleNamespace(async_save=lambda _registry: None))
+    return allocator
+
+
+def _ctx(should_update_code: bool) -> ReservationBuildContext:
+    """Build a reservation context for the date-based generator."""
+    return ReservationBuildContext(
+        entry_id=_ENTRY,
+        timezone=dt_util.UTC,
+        event_prefix="RC",
+        trim_names=False,
+        max_name_length=20,
+        code_buffer_before=0,
+        code_buffer_after=0,
+        should_update_code=should_update_code,
+        code_generator="date_based",
+        code_length=_CODE_LENGTH,
+        active_windows_for_name=lambda _name: set(),
+        reissue_suppression=reissue.ReissueSuppression(),
+    )
+
+
+def _event(name: str, start: datetime, end: datetime) -> Any:
+    """Build a calendar-like event."""
+    return SimpleNamespace(summary=name, description="", start=start, end=end, uid=None)
+
+
+def _slot(
+    number: int,
+    code: str,
+    name: str,
+    start: datetime,
+    end: datetime,
+    identity: str,
+) -> ManagedSlot:
+    """Build one occupied managed slot."""
+    return ManagedSlot(
+        slot=number,
+        managed=True,
+        status=SlotStatus.OCCUPIED,
+        actual_name=name,
+        actual_code=code,
+        actual_code_present=True,
+        actual_start=start,
+        actual_end=end,
+        persisted_identity_key=identity,
+    )

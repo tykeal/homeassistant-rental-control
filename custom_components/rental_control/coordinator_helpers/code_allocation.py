@@ -243,6 +243,15 @@ def build_adoption_requests(
         ):
             requests.suppressed_slots.add(slot.slot)
             continue
+        if reservation.code_rotation_pending:
+            _LOGGER.info(
+                "Skipping adoption for %s in slot %d because its date-based "
+                "code must rotate for the updated booking window",
+                reservation.identity_key,
+                slot.slot,
+            )
+            requests.suppressed_slots.add(slot.slot)
+            continue
         if not slot.actual_code.isdecimal() or len(slot.actual_code) != code_length:
             _LOGGER.warning(
                 "Skipping adoption for %s in slot %d because the observed code "
@@ -304,6 +313,8 @@ def build_rekey_requests(reservations: list[Reservation]) -> list[tuple[str, str
     requests: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for reservation in sorted(reservations, key=lambda item: item.identity_key):
+        if reservation.code_rotation_pending:
+            continue
         for historical_key in sorted(reservation.fingerprint_history):
             item = (historical_key, reservation.identity_key)
             if historical_key != reservation.identity_key and item not in seen:
