@@ -29,6 +29,7 @@ from .models import ObservedSlotQuery
 from .reissue import CodeResolutionRequest
 from .reissue import CodeResolutionResult
 from .reissue import ReissueSuppression
+from .rotation_guard import RotationGuardTarget
 from .rotation_guard import require_owned_code_for_rotation
 from .slot_matching import find_observed_slot
 
@@ -70,7 +71,9 @@ async def async_resolve_codes(
             reservation.code_source = "unallocated"
         return CodeResolutionResult(observation, (), consumed_target_keys)
     require_owned_code_for_rotation(
-        allocator, entry_id, managed_slots, reservations, _matched_code_slot
+        RotationGuardTarget(allocator, entry_id, lockname, managed_slots),
+        reservations,
+        _matched_code_slot,
     )
     adoptions = build_adoption_requests(
         entry_id,

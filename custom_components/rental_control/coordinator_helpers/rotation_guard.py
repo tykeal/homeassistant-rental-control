@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING
+from typing import Any
 
 if TYPE_CHECKING:
     from ..reconciliation import ManagedSlot
@@ -19,23 +21,38 @@ _SlotMatcher = Callable[
 ]
 
 
+@dataclass
+class RotationGuardTarget:
+    """The allocator and lock the rotation gate is being applied to."""
+
+    allocator: object
+    entry_id: str
+    lockname: str | None
+    managed_slots: list[ManagedSlot]
+
+
 def require_owned_code_for_rotation(
-    allocator: object,
-    entry_id: str,
-    managed_slots: list[ManagedSlot],
+    target: RotationGuardTarget,
     reservations: list[Reservation],
     match_slot: _SlotMatcher,
 ) -> None:
-    """Give up rotation unless the registry already owns the observed code.
+    """Give up rotation unless this very slot already owns the code.
 
     Skipping adoption also stops the observed code from being rebuilt as
     an owned allocation.  That is safe only when the registry already
-    owns it: the release guard then retains it while it stays
-    physically programmed, so it cannot be issued to another booking
-    before the replacement write is confirmed.  An unowned code - a
-    lost or still-recovering registry, or a slot this allocator has
-    never seen - has no such protection, so rotation gives way to
-    adoption and the existing code is retained.
+    records an owner for this entry, lock and slot: the release guard
+    then retains the code while it stays physically programmed here, so
+    it cannot be issued to another booking before the replacement write
+    is confirmed.
+
+    Ownership held by some *other* entry, lock or slot is not enough.
+    The same PIN can legitimately be programmed on two locks, and
+    ``_release_guard_reason`` only inspects the lock recorded on the
+    owner it is releasing.  Were the other owner swept away, the PIN
+    would become issuable while still programmed on this slot.  Any
+    code without a matching local owner - including a lost or
+    still-recovering registry - therefore gives way to adoption and the
+    existing code is retained.
 
     The rotation is given up rather than retried, because adoption
     binds the observed code to the shifted identity and the same cycle
@@ -49,31 +66,40 @@ def require_owned_code_for_rotation(
     """
     if not any(reservation.code_rotation_pending for reservation in reservations):
         return
-    owned = _owned_registry_codes(allocator)
+    records = _registry_records(target.allocator)
     consumed: set[int] = set()
     for reservation in reservations:
-        slot = match_slot(reservation, managed_slots, consumed)
+        slot = match_slot(reservation, target.managed_slots, consumed)
         if not reservation.code_rotation_pending:
             continue
-        if slot is not None and slot.actual_code in owned:
+        if slot is not None and _owned_by_slot(records, target, slot):
             continue
         reservation.code_rotation_pending = False
         _LOGGER.warning(
             "Keeping the existing door code for entry %s identity %s despite "
             "a booking date change because the shared code registry does not "
-            "own the programmed code; use rental_control.force_reissue to "
-            "change it",
-            entry_id,
+            "own the programmed code on this lock slot; use "
+            "rental_control.force_reissue to change it",
+            target.entry_id,
             reservation.identity_key,
         )
 
 
-def _owned_registry_codes(allocator: object) -> frozenset[str]:
-    """Return codes the shared registry currently owns for some identity."""
+def _registry_records(allocator: object) -> dict[str, Any]:
+    """Return the shared registry records keyed by code."""
     registry = getattr(allocator, "_registry", None)
     records = getattr(registry, "records", None)
-    if not isinstance(records, dict):
-        return frozenset()
-    return frozenset(
-        code for code, record in records.items() if getattr(record, "owners", None)
+    return records if isinstance(records, dict) else {}
+
+
+def _owned_by_slot(
+    records: dict[str, Any], target: RotationGuardTarget, slot: ManagedSlot
+) -> bool:
+    """Return whether the registry owns this code for this entry/lock/slot."""
+    record = records.get(slot.actual_code) if slot.actual_code else None
+    return any(
+        owner.entry_id == target.entry_id
+        and owner.lockname == target.lockname
+        and owner.slot == slot.slot
+        for owner in getattr(record, "owners", None) or ()
     )

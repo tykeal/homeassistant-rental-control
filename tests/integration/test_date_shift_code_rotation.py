@@ -564,3 +564,78 @@ async def test_started_stay_keeps_code_and_updates_dates_only() -> None:
     assert result["set_codes"] == []
     assert result["clears"] == []
     assert result["update_times"] == [(1, _OLD_CODE)]
+
+
+async def test_shared_pin_on_other_lock_does_not_permit_rotation() -> None:
+    """Ownership on another lock must not unlock rotation for this slot.
+
+    The same PIN may legitimately be programmed on two locks.  Only the
+    owner being released is checked for retention, so if entry B skipped
+    adoption on the strength of entry A's owner, a failed replacement on
+    B followed by A releasing its booking would leave the PIN issuable
+    while still programmed on B.
+    """
+    allocator = _allocator()
+    # Entry A owns the shared PIN on its own lock and slot.
+    await allocator.async_adopt(
+        AdoptionRequest(
+            entry_id="entry-other",
+            identity_key="identity-other",
+            code=_OLD_CODE,
+            code_length=_CODE_LENGTH,
+            lockname="lock_a",
+            slot=5,
+        )
+    )
+
+    # Entry B has the same PIN on its own lock and a shifted booking.
+    old_identity = make_reservation_fingerprint(
+        _ENTRY, "Target Guest", _OLD_START, _OLD_END
+    )
+    managed_slots = [
+        _slot(1, _OLD_CODE, "RC Target Guest", _OLD_START, _OLD_END, old_identity)
+    ]
+    reservations = build_reservations(
+        [_event("Target Guest", _NEW_START, _NEW_END)], managed_slots, _ctx(True)
+    )
+    reservations[0].fingerprint_history.add(old_identity)
+    assert reservations[0].code_rotation_pending is True
+
+    with (
+        patch.object(code_allocation, "get_allocator", return_value=allocator),
+        patch.object(code_allocation, "async_create"),
+        patch(
+            "custom_components.rental_control.allocator.allocator.async_create",
+            create=True,
+        ),
+    ):
+        await code_allocation.async_resolve_codes(
+            reissue.CodeResolutionRequest(
+                hass=cast(Any, SimpleNamespace()),
+                entry_id=_ENTRY,
+                lockname=_LOCK,
+                code_length=_CODE_LENGTH,
+                managed_slots=managed_slots,
+                reservations=reservations,
+            )
+        )
+
+    assert reservations[0].code_rotation_pending is False
+    assert reservations[0].slot_code == _OLD_CODE
+
+    # Entry A's booking goes away; its owner is the only one the sweep sees.
+    allocator._registry.release("identity-other")
+
+    # Because entry B adopted instead of rotating, the PIN is still owned.
+    intruder = await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-c",
+            identity_key="identity-c",
+            preferred_code=_OLD_CODE,
+            code_length=_CODE_LENGTH,
+            lockname="lock_c",
+            slot=9,
+        )
+    )
+    assert intruder.code is not None
+    assert intruder.code != _OLD_CODE
