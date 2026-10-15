@@ -662,6 +662,63 @@ async def test_checkin_missing_active_does_not_protect_future_same_name(
     assert reservations[1].slot_code == "1111"
 
 
+@pytest.mark.parametrize("manual_pin", [True, False], ids=["manual", "generated"])
+async def test_checkin_protection_labels_code_provenance(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, manual_pin: bool
+) -> None:
+    """A synthesized checked-in stay records accurate code provenance.
+
+    The retained physical PIN is only ``manual_observed`` when it differs
+    from the code the configured generator produces for the stay window.
+    """
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    active_start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    active_end = active_start + timedelta(days=7)
+    generated = coordinator._generate_slot_code(active_start, active_end, None, None)
+    observed_code = "8642" if manual_pin else generated
+    assert not manual_pin or observed_code != generated
+    hass.data[DOMAIN] = {
+        coordinator._entry_id: {
+            CHECKIN_SENSOR: MagicMock(
+                state=CHECKIN_STATE_CHECKED_IN,
+                extra_state_attributes={
+                    "guest_name": "Bob",
+                    "start": active_start,
+                    "end": active_end,
+                    "summary": "Bob",
+                },
+            )
+        }
+    }
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Bob",
+            actual_code=observed_code,
+            actual_code_present=True,
+            actual_start=None,
+            actual_end=None,
+        )
+    ]
+    reservations: list[Any] = []
+
+    coordinator._apply_checkin_protection(reservations, observed_slots)
+
+    assert len(reservations) == 1
+    protected = reservations[0]
+    assert protected.protected_active
+    assert protected.slot_code == observed_code
+    expected = "manual_observed" if manual_pin else "generated"
+    assert protected.code_provenance == expected
+    assert protected.code_source == expected
+
+
 async def test_build_reservations_does_not_copy_active_pin_to_future_same_name(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:

@@ -78,9 +78,10 @@ class Reservation:
             ``"collision_resolved"``, or ``"unallocated"``).
         code_provenance: Where the code came from before allocation:
             ``"generated"`` when the configured generator produces it,
-            or ``"manual_observed"`` when the observed PIN does not
-            match the generator output. The allocator never overwrites
-            this, so it survives into diagnostics.
+            ``"manual_observed"`` when the observed PIN does not match
+            the generator output, or ``"unknown"`` for a reconstructed
+            ghost whose origin cannot be determined. The allocator never
+            overwrites this, so it survives into diagnostics.
         code_rotation_pending: True for this cycle only when a
             date-based code must rotate because the booking window
             moved and the physically observed code still matches the

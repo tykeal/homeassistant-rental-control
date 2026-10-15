@@ -218,3 +218,32 @@ def test_hydration_resets_missing_count_on_reappearance() -> None:
         for action in plan.actions
         if action.kind is ActionKind.CLEAR and action.slot == 10
     ]
+
+
+def test_ghost_reservation_code_provenance_is_unknown() -> None:
+    """A reconstructed ghost does not claim its code was generated.
+
+    Ghosts carry no code, so a later allocator adoption of whatever PIN is
+    still physically programmed must not be reported as generated.
+    """
+    persisted: dict[str, dict[str, object]] = {
+        "ghost-key": {
+            "status": SLOT_STATUS_OCCUPIED,
+            "missing_count": 0,
+            "identity": {"slot_name": "Alice", "summary": "Alice"},
+            "last_observed_actual": {
+                "name_state": "RC Alice",
+                "start_state": "2026-08-15T16:00:00+00:00",
+                "end_state": "2026-08-22T11:00:00+00:00",
+            },
+        }
+    }
+
+    result = reservations.build_ghost_reservations(
+        set(), persisted, "RC ", None, _ctx()
+    )
+
+    assert len(result.reservations) == 1
+    ghost = result.reservations[0]
+    assert ghost.slot_code is None
+    assert ghost.code_provenance == "unknown"

@@ -93,6 +93,7 @@ def test_checkin_protection_suppresses_observed_code() -> None:
         (_START, _END),
         ("identity-a", "9999", False),
         "RC Target Guest",
+        "manual_observed",
     )
     suppressed = build_protected_reservation(
         snapshot,
@@ -101,14 +102,17 @@ def test_checkin_protection_suppresses_observed_code() -> None:
         (_START, _END),
         ("identity-a", "1234", True),
         "RC Target Guest",
+        "generated",
     )
 
     assert retained is not None
     assert retained.slot_code == "9999"
     assert retained.code_source == "manual_observed"
+    assert retained.code_provenance == "manual_observed"
     assert suppressed is not None
     assert suppressed.slot_code == "1234"
     assert suppressed.code_source == "generated"
+    assert suppressed.code_provenance == "generated"
 
 
 def test_adoption_requests_skip_only_suppressed_target() -> None:
