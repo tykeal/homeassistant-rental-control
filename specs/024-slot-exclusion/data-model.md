@@ -263,7 +263,7 @@ Applied in this order; the first match refuses and nothing is written
 | Order | Rule | Refusal reason | Applies when clearing? |
 |-------|------|----------------|------------------------|
 | 1 | Exactly one of `entity_id` / `lockname` | `ambiguous_target` / `missing_target` | yes |
-| 2 | Target resolves to one loaded entry | `unknown_lock`, `ambiguous_lock`, `unknown_entity` | yes |
+| 2 | Target resolves to one loaded entry; the lock path narrows by slot, then by stored exclusion when clearing | `unknown_lock`, `ambiguous_lock`, `unknown_entity` | yes |
 | 3 | `start_slot <= slot < start_slot + max_events` | `slot_out_of_range` | **no** (FR-012) |
 | 4 | Slot is in the current observation's `unreadable_slots` | `slot_readable` | **no** (FR-012) |
 | 5 | Slot not in `claimed_slots(allocator, entry_id, lockname)` | `slot_claimed` | **no** (FR-012) |
@@ -281,11 +281,15 @@ setting and clearing.
 ConfigEntry.data[CONF_EXCLUDED_SLOTS]
         │ parse_excluded_slots
         ▼
-ExcludedSlotSet ──revalidate(observation)──► (kept, cleared)
+ExcludedSlotSet ──revalidate(observation)──► (kept, cleared)   [mappings]
         │                                        │
         │                                        ├─► persist (only if changed)
         │                                        ├─► log INFO per cleared slot
         │                                        └─► notification reconcile
+        │
+        │ frozenset(kept) — the gate takes slots, never reasons
+        ▼
+  excluded: frozenset[int]
         │
         ├─► CodeResolutionRequest.excluded_slots ─► CycleRequest.excluded_slots
         │              │                                      │

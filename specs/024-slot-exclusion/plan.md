@@ -355,6 +355,28 @@ both features call it. Copying the sensor-attribute contract into a second
 module is rejected: the captive-portal contract over `slot_name`, `start`, and
 `end` must have exactly one reader.
 
+The lock path is **slot-aware**, as `resolve_slot_target` already is
+(`reissue_targets.py:75-95`). Several entries may manage disjoint slot ranges
+on one shared parent lock, which the Edge Cases and T040 both require to work,
+so a lock serving more than one entry is not by itself ambiguous. Resolution
+picks the candidate set in this order:
+
+1. loaded entries whose `coordinator.lockname` equals `lockname` — none means
+   `unknown_lock`;
+2. of those, the entries whose managed range contains `slot`;
+3. **only when clearing**, if step 2 is empty, the entries whose persisted
+   exclusion set contains `slot`. This is the FR-012 case where the managed
+   range moved out from under a standing exclusion: the stored key, not a
+   guess, says which entry owns it.
+
+Exactly one candidate resolves. More than one is `ambiguous_lock` — two
+entries genuinely claiming one slot number on one lock is a misconfiguration
+the service must not silently pick a side in. Zero candidates refuses with
+`slot_out_of_range` when setting; when clearing, zero candidates with exactly
+one entry on the lock resolves to that entry and completes as a no-op
+(`changed: false`), and with more than one entry refuses `ambiguous_lock`.
+Clearing therefore never has to guess, and never has to be told a range.
+
 Validation order, which is also the order refusal reasons are emitted:
 
 1. `ambiguous_target` — both `entity_id` and `lockname` supplied (FR-003);
@@ -452,10 +474,20 @@ immediately after `build_cycle_observation` at line 68:
 
 ```python
     observation = build_cycle_observation(entry_id, lockname, managed_slots)
-    excluded, cleared = slot_exclusions.revalidate(
+    kept, cleared = slot_exclusions.revalidate(
         slot_exclusions.load(hass, entry_id), observation
     )
+    excluded = frozenset(kept)
 ```
+
+Note the two types. `load` and `revalidate` deal in
+`dict[int, str | None]`, because persistence, the FR-006 reason, and the
+notification text all need the reason. Every gate parameter and both dataclass
+fields are `frozenset[int]`, because the gate only ever subtracts. The mapping
+is converted **once**, here, with `frozenset(kept)`; passing the mapping
+straight into a gate that evaluates `observation.unreadable_slots - excluded`
+raises `TypeError` even when it is empty. The preview converts the same way:
+`frozenset(slot_exclusions.load(hass, entry_id))`.
 
 `revalidate` drops an exclusion when either:
 
@@ -481,7 +513,7 @@ auto-clear moments later.
 ### 6. Threading the set to the gate
 
 ```text
-slot_exclusions.load/revalidate
+slot_exclusions.load → revalidate → excluded = frozenset(kept)
         │
         ├─► _adoption_complete(observation, adoptions, managed_slots,
         │                      suppression, excluded=excluded)        [G2]
@@ -497,7 +529,7 @@ slot_exclusions.load/revalidate
 and, independently, for the preview:
 
 ```text
-slot_exclusions.load
+excluded = frozenset(slot_exclusions.load(hass, entry_id))
         └─► reissue_preview.preview_request_and_result
                  ├─► if observation.unreadable_slots - excluded:  [G3]
                  ├─► issuance.unaccounted_slots(…, excluded=…)    [G1]

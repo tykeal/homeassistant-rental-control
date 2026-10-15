@@ -118,17 +118,26 @@ and it must not exist before the machinery that honours and retires one.
    Scope section.
 7. **Reusing `resolve_slot_target`.** It refuses with `slot_not_managed` before
    you can emit `slot_out_of_range`, resolves an identity an exclusion has no
-   use for, and cannot express FR-012's "no guards when clearing".
-8. **Leaving the `6a6602b` notification on the raw set.** It says issuance is
+   use for, and cannot express FR-012's "no guards when clearing". Do copy its
+   **slot-aware** lock narrowing (`reissue_targets.py:75-95`): resolving by
+   lock alone refuses `ambiguous_lock` for disjoint ranges on one shared parent
+   lock, which is a supported deployment.
+8. **Handing a mapping to a gate.** `load` and `revalidate` deal in
+   `dict[int, str | None]` because the reason is needed for persistence and
+   the notification. Every gate parameter and both dataclass fields are
+   `frozenset[int]`. Convert once, with `frozenset(kept)`;
+   `observation.unreadable_slots - some_dict` raises `TypeError` even when the
+   dict is empty.
+9. **Leaving the `6a6602b` notification on the raw set.** It says issuance is
    withheld. For an excluded slot that is false, and the operator ends up with
    two standing notifications contradicting each other about one slot.
-9. **Caching the excluded set on the coordinator.** FR-024 requires the gate's
-   set and the re-validated set to come from one observation in one place. A
-   cached copy is a divergence waiting to happen.
-10. **Re-validating or persisting in the dry-run or preview path.** Dry run
+10. **Caching the excluded set on the coordinator.** FR-024 requires the
+    gate's set and the re-validated set to come from one observation in one
+    place. A cached copy is a divergence waiting to happen.
+11. **Re-validating or persisting in the dry-run or preview path.** Dry run
     must be inert (FR-007, SC-007). The ordinary cycle auto-clears moments
     later anyway.
-11. **Touching `reconciliation/`.** Nothing there changes. `_classify_slot`
+12. **Touching `reconciliation/`.** Nothing there changes. `_classify_slot`
     (`reconciliation/desired.py:258-259`) already blocks an `UNKNOWN` slot,
     which is FR-017 and SC-004 for free — and only while exclusion stays out of
     the planner's view.

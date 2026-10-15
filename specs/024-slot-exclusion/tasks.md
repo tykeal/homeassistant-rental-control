@@ -244,7 +244,9 @@ they must be.
       on its empty default still returns `adoption_pending` for an excluded
       slot after both narrowed checks pass, which fails FR-019 exactly as a
       missed gate member does. The set is loaded through T012's `load`,
-      read-only, with no re-validation and no persistence —
+      read-only, with no re-validation and no persistence, and converted with
+      `frozenset(...)` before use — `load` returns a mapping and the gates
+      subtract from a `frozenset[int]` —
       FR-016, FR-019
 - [ ] T014 [US1] Add `excluded_slots: frozenset[int] = frozenset()` to
       `CodeResolutionRequest` in
@@ -302,8 +304,12 @@ group.
       immediately after `build_cycle_observation` at line 68, load and
       `revalidate` against that same observation object; persist when anything
       cleared; log one INFO line per cleared slot naming entry, lock, slot and
-      cause; and pass the kept set to `_adoption_complete` and into
-      `CodeResolutionRequest.excluded_slots` — FR-022, FR-024, FR-027
+      cause; and pass `frozenset(kept)` to `_adoption_complete` and into
+      `CodeResolutionRequest.excluded_slots`. The mapping is kept for
+      persistence, the FR-006 reason, and the notification; the `frozenset` is
+      what every gate parameter takes, and handing a mapping to
+      `observation.unreadable_slots - excluded` raises `TypeError` even when
+      it is empty — FR-022, FR-024, FR-027
 - [ ] T019 Pass the **gated** set `sorted(observation.unreadable_slots -
       excluded)` to `report_unreadable_slots` at
       `custom_components/rental_control/coordinator_helpers/code_allocation.py:120-122`,
@@ -343,11 +349,18 @@ control that creates and clears an exclusion.
       `custom_components/rental_control/coordinator_helpers/exclusion_targets.py`
       with `ExclusionTarget(entry_id, lockname, slot, coordinator)` and a
       resolver emitting `ambiguous_target`, `missing_target`,
-      `unknown_entity`, `unknown_lock`, and `ambiguous_lock`, reusing
-      `entry_id_for_entity_attributes` for the entity path and **not** reusing
-      `resolve_slot_target`, which refuses with `slot_not_managed` before
-      `slot_out_of_range` can be emitted and cannot express FR-012
-      ([plan.md](plan.md) "Target resolution") — FR-002, FR-003
+      `unknown_entity`, `unknown_lock`, and `ambiguous_lock`. The lock path is
+      **slot-aware**, as `resolve_slot_target` is at
+      `custom_components/rental_control/coordinator_helpers/reissue_targets.py:75-95`:
+      narrow the lock's loaded entries by managed range before declaring
+      ambiguity, so disjoint ranges on one shared parent lock resolve; when
+      **clearing** and no range matches, narrow instead by which entry's
+      persisted exclusion set holds the slot, and fall back to the lock's sole
+      entry as a no-op rather than guessing. Reuse
+      `entry_id_for_entity_attributes` for the entity path and do **not** reuse
+      `resolve_slot_target` itself, which refuses with `slot_not_managed`
+      before `slot_out_of_range` can be emitted and cannot express FR-012
+      ([plan.md](plan.md) "Target resolution") — FR-002, FR-003, FR-012
 - [ ] T024 [US1] Create
       `custom_components/rental_control/allocator/exclusion_service.py` with
       `SERVICE_SET_SLOT_EXCLUSION`, the `ExclusionRequest` value object, and
@@ -384,7 +397,12 @@ control that creates and clears an exclusion.
       save drops exclusions — FR-030, FR-035
 - [ ] T028 [P] [US1] Create `tests/unit/test_exclusion_targets.py` covering
       entity targeting, lock targeting, both supplied, neither supplied, an
-      unknown lock, and a lock served by two entries — FR-002, FR-003
+      unknown lock, and a lock served by two entries with **disjoint** ranges
+      (1-5 and 6-10): slot 7 resolves to the second entry rather than refusing
+      `ambiguous_lock`, slot 7 with two entries genuinely claiming it refuses
+      `ambiguous_lock`, and clearing a slot that has left every managed range
+      resolves through the entry whose persisted set holds it —
+      FR-002, FR-003, FR-012
 - [ ] T029 [US1] [US5] Create `tests/unit/test_exclusion_service.py` covering
       each of `slot_readable`, `slot_claimed`, and `slot_out_of_range` refused
       with nothing persisted; an assertion that the schema has no `"force"` key

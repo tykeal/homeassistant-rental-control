@@ -106,7 +106,7 @@ behaviour changes (FR-013).
 | 1 | Not both `entity_id` and `lockname` | `ambiguous_target` | no |
 | 2 | At least one of them | `missing_target` | no |
 | 3 | Entity resolves to one loaded entry | `unknown_entity` | no |
-| 3 | Lock resolves to exactly one loaded entry | `unknown_lock` / `ambiguous_lock` | no |
+| 3 | Lock resolves to exactly one loaded entry, **slot-aware** | `unknown_lock` / `ambiguous_lock` | no |
 | 4 | `start_slot <= slot < start_slot + max_events` | `slot_out_of_range` | **yes** (FR-012) |
 | 5 | Slot is in the live observation's `unreadable_slots` | `slot_readable` | **yes** (FR-012) |
 | 6 | Slot is not claimed by this entry's registry owners | `slot_claimed` | **yes** (FR-012) |
@@ -117,6 +117,23 @@ meaningful observed status.
 
 Checks 1-3 are structural and apply to both directions: a clear call must still
 address exactly one resolvable entry.
+
+Check 3's lock path narrows by **slot**, not by lock alone, exactly as
+`reissue_targets.resolve_slot_target` does (`reissue_targets.py:75-95`).
+Entries managing disjoint ranges — 1-5 and 6-10 — on one shared parent lock
+are a supported deployment, so slot 7 resolves to the second entry rather than
+refusing `ambiguous_lock`. Candidates are selected as:
+
+1. loaded entries on that `lockname`; none is `unknown_lock`;
+2. of those, entries whose managed range contains `slot`;
+3. when **clearing** only, if step 2 is empty, entries whose persisted
+   exclusion set contains `slot` — the stored key identifies the owner of an
+   exclusion whose managed range has since moved, so clearing never guesses.
+
+More than one candidate is `ambiguous_lock`. Zero candidates refuses
+`slot_out_of_range` when setting; when clearing, zero candidates resolves to
+the lock's single entry and completes as a no-op (`changed: false`), or
+refuses `ambiguous_lock` if the lock serves more than one.
 
 ## 3. Response
 
@@ -264,7 +281,14 @@ def report_excluded_slots(
 def dismiss_excluded_slots(hass: Any, entry_id: str) -> None: ...
 ```
 
-`revalidate` is pure and returns `(kept, cleared)`.
+`revalidate` is pure and returns `(kept, cleared)`, both mappings.
+**The mappings never reach a gate.** `load` and `revalidate` keep the reason
+because persistence, FR-006, and the notification text need it; every gate
+parameter and both dataclass fields are `frozenset[int]`, since the gate only
+subtracts. Callers convert once — `frozenset(kept)` on the cycle path and
+`frozenset(load(hass, entry_id))` on the preview path. Passing a mapping into
+`observation.unreadable_slots - excluded` raises `TypeError` even when it is
+empty.
 `persist_excluded_slots` returns whether it wrote, and is a no-op when the
 serialised value is unchanged. `report_excluded_slots` reconciles and dismisses
 in the manner of `report_unreadable_slots`
