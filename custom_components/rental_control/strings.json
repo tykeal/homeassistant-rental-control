@@ -183,6 +183,36 @@
           "description": "Preview the code that would be issued without changing locks, sensors, or the shared registry."
         }
       }
+    },
+    "set_slot_exclusion": {
+      "name": "Set slot exclusion",
+      "description": "Exclude one permanently unreadable managed lock slot from the door code issuance gate, or restore it. An excluded slot is still reconciled and still counts as evidence that a code may be programmed, so a code the integration cannot see may remain on the lock; verify the slot physically before excluding it. The exclusion clears itself as soon as the slot becomes readable again or leaves the managed range, and saving the entry's options discards it.",
+      "fields": {
+        "entity_id": {
+          "name": "Entity",
+          "description": "Single Rental Control reservation sensor identifying the entry."
+        },
+        "lockname": {
+          "name": "Lock name",
+          "description": "Managed lock name for direct slot targeting."
+        },
+        "slot": {
+          "name": "Slot",
+          "description": "Managed slot number to exclude or restore."
+        },
+        "excluded": {
+          "name": "Excluded",
+          "description": "Exclude the slot when true, or restore it to the gate when false."
+        },
+        "reason": {
+          "name": "Reason",
+          "description": "Operator note recorded with the exclusion, shown in the notification."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "Report the result without changing the entry, notifications, or issuance."
+        }
+      }
     }
   }
 }

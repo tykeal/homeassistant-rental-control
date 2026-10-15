@@ -19,6 +19,7 @@ import voluptuous as vol
 from ..const import COORDINATOR
 from ..const import DOMAIN
 from ..const import NAME
+from . import exclusion_service
 from . import reissue as allocator_reissue
 from . import reissue_service
 from .models import CycleObservation
@@ -41,6 +42,7 @@ def register_allocator_services(hass: HomeAssistant) -> None:
     if not hasattr(hass, "services"):
         return
     reissue_service.register_force_reissue_service(hass)
+    exclusion_service.register_set_slot_exclusion_service(hass)
     if hass.services.has_service(DOMAIN, SERVICE_CLEAR_ORPHANED_CODES):
         return
     hass.services.async_register(

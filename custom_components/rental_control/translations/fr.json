@@ -177,6 +177,36 @@
           "description": "Prévisualiser le code qui serait émis sans modifier les verrous, capteurs ou registre partagé."
         }
       }
+    },
+    "set_slot_exclusion": {
+      "name": "Définir l'exclusion de créneau",
+      "description": "Exclure un créneau de verrou géré définitivement illisible de la barrière d'émission des codes, ou le rétablir. Un créneau exclu reste réconcilié et compte toujours comme preuve qu'un code peut y être programmé ; un code invisible pour l'intégration peut donc rester sur le verrou. Vérifiez physiquement le créneau avant de l'exclure. L'exclusion disparaît dès que le créneau redevient lisible ou quitte la plage gérée, et l'enregistrement des options de l'entrée la supprime.",
+      "fields": {
+        "entity_id": {
+          "name": "Entité",
+          "description": "Capteur de réservation Rental Control identifiant l'entrée."
+        },
+        "lockname": {
+          "name": "Nom du verrou",
+          "description": "Nom du verrou géré pour un ciblage direct par créneau."
+        },
+        "slot": {
+          "name": "Créneau",
+          "description": "Numéro de créneau géré à exclure ou à rétablir."
+        },
+        "excluded": {
+          "name": "Exclu",
+          "description": "Exclure le créneau si vrai, ou le rétablir dans la barrière si faux."
+        },
+        "reason": {
+          "name": "Motif",
+          "description": "Note d'exploitation enregistrée avec l'exclusion et affichée dans la notification."
+        },
+        "dry_run": {
+          "name": "Simulation",
+          "description": "Signaler le résultat sans modifier l'entrée, les notifications ou l'émission."
+        }
+      }
     }
   }
 }
