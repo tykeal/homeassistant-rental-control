@@ -47,6 +47,7 @@ from .coordinator_helpers.models import (
     _format_display_slot_name as _format_display_slot_name,  # noqa: F401
 )
 from .coordinator_helpers.models import normalize_event_override_update
+from .helpers import OperationResult
 from .reconciliation import DesiredPlan as _DesiredPlan
 from .reconciliation import ManagedSlot as _ManagedSlot
 from .reconciliation import Reservation as _Reservation
@@ -240,6 +241,62 @@ class RentalControlCoordinator(
                 slot_number,
                 observed.actual_code,
             )
+
+    def _apply_observed_code_results(
+        self,
+        plan: _DesiredPlan,
+        res_by_key: dict[str, _Reservation],
+        operation_results: list[OperationResult],
+    ) -> None:
+        """Refresh sensor-facing codes from confirmed physical writes.
+
+        ``_record_observed_slot_codes`` snapshots the lock as it looked
+        before the plan ran, so a confirmed replacement would otherwise
+        leave sensors publishing a PIN that has just been cleared.  Only
+        confirmed operations are trusted: an unconfirmed or failed write
+        leaves the cached observation alone so the next refresh can
+        re-read the lock.
+        """
+        by_slot: dict[int, list[OperationResult]] = {}
+        for result in operation_results:
+            by_slot.setdefault(result.slot, []).append(result)
+        for identity_key, slot_number in plan.selected.items():
+            reservation = res_by_key.get(identity_key)
+            if reservation is None:
+                continue
+            for result in by_slot.get(slot_number, ()):
+                if not result.confirmed:
+                    continue
+                if result.kind == "clear":
+                    self._observed_slot_codes.pop(identity_key, None)
+                elif result.kind == "set":
+                    self._cache_confirmed_set(
+                        identity_key, slot_number, reservation.slot_code
+                    )
+
+    def _cache_confirmed_set(
+        self, identity_key: str, slot_number: int, slot_code: str | None
+    ) -> None:
+        """Cache a written code only once the lock reports that PIN.
+
+        Set confirmation only verifies the slot name, so the requested
+        PIN is not evidence that it reached the lock.  Publishing an
+        unverified code would let guest-message automations advertise a
+        PIN that is absent, different, or unavailable, so the cached
+        observation is dropped instead and the next refresh re-reads
+        the lock.
+        """
+        if not slot_code or self._observed_pin(slot_number) != slot_code:
+            self._observed_slot_codes.pop(identity_key, None)
+            return
+        self._observed_slot_codes[identity_key] = (slot_number, slot_code)
+
+    def _observed_pin(self, slot_number: int) -> str | None:
+        """Return the PIN the lock currently reports for a slot."""
+        state = self.hass.states.get(
+            f"text.{self.lockname}_code_slot_{slot_number}_pin"
+        )
+        return state.state if state is not None else None
 
     def get_overflow_reason(self, identity_key: str) -> str | None:
         """Return overflow reason for identity_key in latest plan, or None."""

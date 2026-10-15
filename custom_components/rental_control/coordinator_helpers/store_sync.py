@@ -278,6 +278,24 @@ def build_save_payload(
     }
 
 
+def _unreplaced_clear_slots(operation_results: list[OperationResult]) -> set[int]:
+    """Return slots whose confirmed clear was not followed by a set.
+
+    A replacement reports its intermediate confirmed clear so sensors
+    stop publishing the removed code, but the slot is not actually
+    empty once the replacement set is confirmed.  Treating it as
+    cleared would drop the newly programmed reservation's persisted
+    mapping, losing its aliases and fingerprint history.
+    """
+    cleared: set[int] = set()
+    for result in operation_results:
+        if result.kind == "clear" and result.confirmed:
+            cleared.add(result.slot)
+        elif result.kind == "set" and result.confirmed:
+            cleared.discard(result.slot)
+    return cleared
+
+
 def build_store_sync_plan(
     plan: DesiredPlan,
     res_by_key: dict[str, Reservation],
@@ -301,11 +319,7 @@ def build_store_sync_plan(
     """
     now_str = meta[4]
     mappings: dict[str, Any] = current_store.get("mappings", {})
-    confirmed_clear_slots = {
-        result.slot
-        for result in operation_results
-        if result.kind == "clear" and result.confirmed
-    }
+    confirmed_clear_slots = _unreplaced_clear_slots(operation_results)
     failed_set_slots = {
         result.slot
         for result in operation_results

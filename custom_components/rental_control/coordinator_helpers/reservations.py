@@ -13,6 +13,8 @@ import logging
 from typing import TYPE_CHECKING
 from typing import Any
 
+from homeassistant.util import dt
+
 from ..reconciliation import Reservation as _Reservation
 from ..reconciliation import extract_booking_aliases
 from ..reconciliation import make_reservation_fingerprint
@@ -168,9 +170,23 @@ def _build_one_reservation(
         )
     )
     if matched_physical is not None and matched_physical.actual_code:
-        slot_code, code_source = _resolve_observed_code(
-            matched_physical, event, uid, ctx, slot_code, code_source
+        slot_code, code_source, rotation_pending = _resolve_observed_code(
+            _ObservedCodeQuery(
+                matched_physical=matched_physical,
+                event=event,
+                uid=uid,
+                ctx=ctx,
+                generated=(slot_code, code_source),
+                buffered_start=buffered_start,
+            )
         )
+    else:
+        rotation_pending = False
+    rotation_origin = (
+        (matched_physical.slot, matched_physical.actual_code)
+        if rotation_pending and matched_physical and matched_physical.actual_code
+        else None
+    )
 
     try:
         res = _Reservation(
@@ -188,6 +204,8 @@ def _build_one_reservation(
             fingerprint_history=set(),
             missing_count=0,
             code_source=code_source,
+            code_rotation_pending=rotation_pending,
+            code_rotation_origin=rotation_origin,
         )
     except ValueError:
         _LOGGER.warning(
@@ -219,18 +237,28 @@ def _blocks_unknown_date(
     return bool(active_windows and (buffered_start, buffered_end) not in active_windows)
 
 
-def _resolve_observed_code(
-    matched_physical: ManagedSlot,
-    event: Any,
-    uid: str | None,
-    ctx: ReservationBuildContext,
-    slot_code: str,
-    code_source: str,
-) -> tuple[str, str]:
-    """Return the (code, source) preserving manual observed PINs."""
+@dataclass
+class _ObservedCodeQuery:
+    """Inputs needed to reconcile a generated code with the observed PIN."""
+
+    matched_physical: ManagedSlot
+    event: Any
+    uid: str | None
+    ctx: ReservationBuildContext
+    generated: tuple[str, str]
+    buffered_start: datetime
+
+
+def _resolve_observed_code(query: _ObservedCodeQuery) -> tuple[str, str, bool]:
+    """Return the (code, source, rotating) preserving manual observed PINs."""
+    matched_physical = query.matched_physical
+    event = query.event
+    uid = query.uid
+    ctx = query.ctx
+    slot_code, code_source = query.generated
     observed_code = matched_physical.actual_code
     if observed_code is None:
-        return slot_code, code_source
+        return slot_code, code_source, False
     slot_name = get_slot_name(
         event.summary, event.description or "", ctx.event_prefix or ""
     )
@@ -245,7 +273,7 @@ def _resolve_observed_code(
         else None
     )
     if identity_key in ctx.reissue_suppression.identity_keys:
-        return slot_code, code_source
+        return slot_code, code_source, False
     observed_start = matched_physical.actual_start
     observed_end = matched_physical.actual_end
     if observed_start is not None and ctx.code_buffer_before:
@@ -269,5 +297,23 @@ def _resolve_observed_code(
         or observed_code != old_generated
         or not ctx.should_update_code
     ):
-        return observed_code, "manual_observed"
-    return slot_code, code_source
+        return observed_code, "manual_observed", False
+    if not _rotation_window_open(matched_physical.actual_start, query.buffered_start):
+        return observed_code, "manual_observed", False
+    return slot_code, code_source, slot_code != observed_code
+
+
+def _rotation_window_open(
+    programmed_start: datetime | None, buffered_start: datetime
+) -> bool:
+    """Return whether a date shift may still rotate the generated code.
+
+    ``should_update_code`` only promises to follow date changes on future
+    events.  Once either the programmed window or the requested window has
+    opened the guest may already be relying on the issued PIN, so the code
+    is retained and only the stay dates are pushed to the lock.
+    """
+    now = dt.now()
+    if buffered_start <= now:
+        return False
+    return programmed_start is not None and programmed_start > now

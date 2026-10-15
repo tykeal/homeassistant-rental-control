@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from datetime import timezone
+from types import SimpleNamespace
 
 from custom_components.rental_control.coordinator import RentalControlCoordinator
+from custom_components.rental_control.helpers import OperationResult
 from custom_components.rental_control.reconciliation import DesiredPlan
 from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
@@ -145,3 +147,89 @@ def test_lockless_entry_publishes_allocated_code_immediately() -> None:
     coordinator = _coordinator(reservation, event_overrides=None)
 
     assert coordinator.get_slot_code("identity-1") == "1357"
+
+
+def _with_lock_pin(coordinator: RentalControlCoordinator, pin: str | None) -> None:
+    """Attach a fake Keymaster PIN entity state to the coordinator."""
+    coordinator.lockname = "front_door"
+    state = None if pin is None else SimpleNamespace(state=pin)
+    coordinator.hass = SimpleNamespace(
+        states=SimpleNamespace(get=lambda _entity_id: state)
+    )
+
+
+def _apply_results(
+    coordinator: RentalControlCoordinator,
+    reservation: Reservation,
+    results: list[OperationResult],
+) -> None:
+    """Replay physical operation results through the coordinator helper."""
+    assert coordinator._latest_plan is not None
+    coordinator._apply_observed_code_results(
+        coordinator._latest_plan,
+        {reservation.identity_key: reservation},
+        results,
+    )
+
+
+def test_confirmed_replacement_publishes_new_code() -> None:
+    """A confirmed date-shift replacement publishes the new PIN at once."""
+    reservation = _reservation("identity-1", "2430")
+    coordinator = _coordinator(reservation)
+    _with_lock_pin(coordinator, "2430")
+    _record_observed(coordinator, reservation, code="2530")
+    assert coordinator.get_slot_code("identity-1") == "2530"
+
+    _apply_results(
+        coordinator,
+        reservation,
+        [
+            OperationResult(kind="clear", slot=10, confirmed=True),
+            OperationResult(kind="set", slot=10, confirmed=True),
+        ],
+    )
+
+    assert coordinator.get_slot_code("identity-1") == "2430"
+
+
+def test_unconfirmed_replacement_keeps_observed_code() -> None:
+    """An unconfirmed write must not publish a code that may not exist."""
+    reservation = _reservation("identity-1", "2430")
+    coordinator = _coordinator(reservation)
+    _with_lock_pin(coordinator, "2430")
+    _record_observed(coordinator, reservation, code="2530")
+
+    _apply_results(
+        coordinator,
+        reservation,
+        [
+            OperationResult(kind="clear", slot=10, confirmed=True),
+            OperationResult(kind="set", slot=10, unconfirmed=True),
+        ],
+    )
+
+    assert coordinator.get_slot_code("identity-1") is None
+
+
+def test_confirmed_set_without_matching_pin_publishes_nothing() -> None:
+    """A confirmed set whose PIN entity disagrees publishes no code.
+
+    Set confirmation only verifies the slot name, so the requested PIN
+    is not evidence that it reached the lock.
+    """
+    for lock_pin in (None, "", "9999"):
+        reservation = _reservation("identity-1", "2430")
+        coordinator = _coordinator(reservation)
+        _with_lock_pin(coordinator, lock_pin)
+        _record_observed(coordinator, reservation, code="2530")
+
+        _apply_results(
+            coordinator,
+            reservation,
+            [
+                OperationResult(kind="clear", slot=10, confirmed=True),
+                OperationResult(kind="set", slot=10, confirmed=True),
+            ],
+        )
+
+        assert coordinator.get_slot_code("identity-1") is None

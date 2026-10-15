@@ -29,6 +29,8 @@ from .models import ObservedSlotQuery
 from .reissue import CodeResolutionRequest
 from .reissue import CodeResolutionResult
 from .reissue import ReissueSuppression
+from .rotation_guard import RotationGuardTarget
+from .rotation_guard import require_owned_code_for_rotation
 from .slot_matching import find_observed_slot
 
 if TYPE_CHECKING:
@@ -68,6 +70,11 @@ async def async_resolve_codes(
             reservation.slot_code = None
             reservation.code_source = "unallocated"
         return CodeResolutionResult(observation, (), consumed_target_keys)
+    require_owned_code_for_rotation(
+        RotationGuardTarget(allocator, entry_id, lockname, managed_slots),
+        reservations,
+        _matched_code_slot,
+    )
     adoptions = build_adoption_requests(
         entry_id,
         lockname,
@@ -243,6 +250,15 @@ def build_adoption_requests(
         ):
             requests.suppressed_slots.add(slot.slot)
             continue
+        if reservation.code_rotation_pending:
+            _LOGGER.info(
+                "Skipping adoption for %s in slot %d because its date-based "
+                "code must rotate for the updated booking window",
+                reservation.identity_key,
+                slot.slot,
+            )
+            requests.suppressed_slots.add(slot.slot)
+            continue
         if not slot.actual_code.isdecimal() or len(slot.actual_code) != code_length:
             _LOGGER.warning(
                 "Skipping adoption for %s in slot %d because the observed code "
@@ -304,6 +320,8 @@ def build_rekey_requests(reservations: list[Reservation]) -> list[tuple[str, str
     requests: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for reservation in sorted(reservations, key=lambda item: item.identity_key):
+        if reservation.code_rotation_pending:
+            continue
         for historical_key in sorted(reservation.fingerprint_history):
             item = (historical_key, reservation.identity_key)
             if historical_key != reservation.identity_key and item not in seen:

@@ -78,7 +78,11 @@ async def async_apply_plan(self, coordinator: Any, plan, res_by_key):
             elif decision["operation"] == "overwrite":
                 results.append(
                     await self._apply_overwrite_manual_change(
-                        coordinator, action.slot, decision["reservation"], action
+                        coordinator,
+                        action.slot,
+                        decision["reservation"],
+                        action,
+                        collector=results,
                     )
                 )
     finally:
@@ -208,9 +212,14 @@ async def _apply_update_times(self, coordinator: Any, slot: int, res):
 
 
 async def _apply_overwrite_manual_change(
-    self, coordinator: Any, slot: int, res, action
+    self, coordinator: Any, slot: int, res, action, collector=None
 ):
-    """Apply an OVERWRITE_MANUAL_CHANGE or UPDATE_IN_PLACE action."""
+    """Apply an OVERWRITE_MANUAL_CHANGE or UPDATE_IN_PLACE action.
+
+    ``collector`` receives the intermediate confirmed clear so callers
+    replaying the cycle see that the old code left the slot even when
+    the replacement set is not confirmed.
+    """
     actual = self._actual_state_cache.get(slot) or {}
     self._logger.warning(
         "Manual/external drift detected on managed slot %d (reservation %s, desired name %r): changed fields=%s, observed name=%r, observed classification=%s, observed has_code=%s; restoring desired state.",
@@ -231,6 +240,8 @@ async def _apply_overwrite_manual_change(
             slot,
         )
         return clear_result
+    if collector is not None:
+        collector.append(clear_result)
     return await self._apply_set(
         coordinator,
         slot,

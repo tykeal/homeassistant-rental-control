@@ -33,9 +33,27 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from types import SimpleNamespace
 
+from freezegun import freeze_time
 import pytest
 
+from custom_components.rental_control.codegen import generate_slot_code
+from custom_components.rental_control.coordinator_helpers.code_allocation import (
+    build_adoption_requests,
+)
+from custom_components.rental_control.coordinator_helpers.code_allocation import (
+    build_rekey_requests,
+)
+from custom_components.rental_control.coordinator_helpers.models import (
+    ReservationBuildContext,
+)
+from custom_components.rental_control.coordinator_helpers.reissue import (
+    ReissueSuppression,
+)
+from custom_components.rental_control.coordinator_helpers.reservations import (
+    build_reservations,
+)
 from custom_components.rental_control.reconciliation import FINGERPRINT_VERSION
 from custom_components.rental_control.reconciliation import ActionKind
 from custom_components.rental_control.reconciliation import DesiredPlan
@@ -1211,10 +1229,13 @@ class TestReservation:
             assert r.missing_count == count
 
     def test_slot_code_excluded_from_repr(self) -> None:
-        """slot_code does not appear in Reservation repr output."""
+        """No programmed PIN appears in Reservation repr output."""
         r = _make_reservation()
+        r.code_rotation_pending = True
+        r.code_rotation_origin = (3, "8642")
         r_repr = repr(r)
         assert "1234" not in r_repr
+        assert "8642" not in r_repr
 
     def test_slot_code_can_be_unavailable(self) -> None:
         """slot_code accepts None when no safe code is available."""
@@ -2265,54 +2286,79 @@ class TestUidMatchDateShift:
         assert result.matched_identity_key == old_fp
         assert result.date_shifted is True
 
-    def test_date_shifted_flag_signals_code_update_need(self) -> None:
-        """date_shifted=True in result tells coordinator to consider code update.
+    @pytest.mark.parametrize("should_update_code", [True, False])
+    @freeze_time("2026-07-01 12:00:00+00:00")
+    def test_date_shift_rotation_follows_should_update_code(
+        self, should_update_code: bool
+    ) -> None:
+        """A date shift regenerates the code only when should_update_code is set.
 
-        When should_update_code=True (date-based code), the coordinator
-        regenerates the code when date_shifted=True.  When
-        should_update_code=False (static code), only the dates are updated.
-        This test verifies that the rematch result exposes date_shifted
-        so the coordinator can apply its should_update_code policy.
+        Exercises the real reservation builder and the allocator request
+        builders rather than restating the rematch flag.  With
+        ``should_update_code=True`` a date-based code whose physical value
+        still matches the previously programmed window must rotate, which
+        means neither adoption nor a historical rekey may preserve the old
+        code.  With ``should_update_code=False`` the old code is retained.
         """
         entry_id = "entry-001"
         name = "Bob Guest"
-        uid = "uid-xyz"
+        old_start, old_end = _dt(2026, 8, 1), _dt(2026, 8, 7)
+        new_start, new_end = _dt(2026, 8, 2), _dt(2026, 8, 8)
+        old_code = generate_slot_code("date_based", 4, old_start, old_end, "", None)
+        new_code = generate_slot_code("date_based", 4, new_start, new_end, "", None)
+        assert old_code != new_code
 
-        old_fp = make_reservation_fingerprint(
-            entry_id, name, _dt(2026, 8, 1), _dt(2026, 8, 7)
+        old_fp = make_reservation_fingerprint(entry_id, name, old_start, old_end)
+        new_fp = make_reservation_fingerprint(entry_id, name, new_start, new_end)
+        slot = ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name=f"RC {name}",
+            actual_code=old_code,
+            actual_code_present=True,
+            actual_start=old_start,
+            actual_end=old_end,
+            persisted_identity_key=old_fp,
         )
-        new_fp = make_reservation_fingerprint(
-            entry_id, name, _dt(2026, 8, 2), _dt(2026, 8, 8)
+        event = SimpleNamespace(
+            summary=name, description="", start=new_start, end=new_end, uid=None
         )
-        assert old_fp != new_fp
 
-        persisted_mappings = {old_fp: self._make_persisted_with_uid(old_fp, name, uid)}
-
-        reservation = Reservation(
-            identity_key=new_fp,
-            start=_dt(2026, 8, 2),
-            end=_dt(2026, 8, 8),
-            buffered_start=_dt(2026, 8, 2),
-            buffered_end=_dt(2026, 8, 8),
-            summary=name,
-            slot_name=name,
-            display_slot_name=f"RC {name}",
-            slot_code="9999",
+        reservations = build_reservations(
+            [event],
+            [slot],
+            ReservationBuildContext(
+                entry_id=entry_id,
+                timezone=timezone.utc,
+                event_prefix="RC",
+                trim_names=False,
+                max_name_length=20,
+                code_buffer_before=0,
+                code_buffer_after=0,
+                should_update_code=should_update_code,
+                code_generator="date_based",
+                code_length=4,
+                active_windows_for_name=lambda _name: set(),
+                reissue_suppression=ReissueSuppression(),
+            ),
         )
-        reservation.uid_aliases.add(uid)
+        reservation = reservations[0]
+        reservation.fingerprint_history.add(old_fp)
+        adoptions = build_adoption_requests(entry_id, "front", 4, [slot], reservations)
+        rekeys = build_rekey_requests(reservations)
 
-        result = find_reservation_rematch(reservation, persisted_mappings)
-
-        # date_shifted=True allows coordinator to decide code-update strategy
-        assert result.date_shifted is True
-
-        # Simulate coordinator decision logic:
-        # should_update_code=True → regenerate code (date-based)
-        # should_update_code=False → keep code, update times only
-        should_update_code_true = True
-        should_update_code_false = False
-        assert result.date_shifted and should_update_code_true  # would regenerate
-        assert result.date_shifted and not should_update_code_false  # update times only
+        assert reservation.identity_key == new_fp
+        if should_update_code:
+            assert reservation.slot_code == new_code
+            assert reservation.code_rotation_pending is True
+            assert adoptions == []
+            assert rekeys == []
+        else:
+            assert reservation.slot_code == old_code
+            assert reservation.code_rotation_pending is False
+            assert [request.code for request in adoptions] == [old_code]
+            assert rekeys == [(old_fp, new_fp)]
 
     def test_uid_alias_match_requires_name_match(self) -> None:
         """Rule 2 does not fire if the name does not match despite UID overlap."""
