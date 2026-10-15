@@ -27,6 +27,7 @@ from custom_components.rental_control.allocator.allocator import DoorCodeAllocat
 from custom_components.rental_control.allocator.models import AdoptionRequest
 from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.codegen import generate_slot_code
+from custom_components.rental_control.coordinator import RentalControlCoordinator
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import reissue
 from custom_components.rental_control.coordinator_helpers.models import (
@@ -121,6 +122,7 @@ async def _run_cycle(
     manual_pin: str | None,
     new_start: datetime = _NEW_START,
     new_end: datetime = _NEW_END,
+    confirm_set: bool = True,
 ) -> dict[str, Any]:
     """Run one full refresh cycle and capture the commands sent to the lock."""
     observed_code = manual_pin or _OLD_CODE
@@ -185,7 +187,7 @@ async def _run_cycle(
         lockname=_LOCK,
         start_slot=1,
     )
-    commands = await _apply(plan, reservations, observed_code)
+    commands = await _apply(plan, reservations, observed_code, confirm_set)
     commands["target"] = target
     commands["target_code"] = target.slot_code
     commands["peer_code"] = peer.slot_code
@@ -193,7 +195,7 @@ async def _run_cycle(
 
 
 async def _apply(
-    plan: Any, reservations: list[Any], observed_code: str
+    plan: Any, reservations: list[Any], observed_code: str, confirm_set: bool = True
 ) -> dict[str, Any]:
     """Apply a plan against mocked Keymaster services and record commands."""
     overrides = EventOverrides(start_slot=1, max_slots=2)
@@ -238,18 +240,22 @@ async def _apply(
         ) as update_times,
     ):
         set_code.side_effect = lambda _c, _e, slot: OperationResult(
-            kind="set", slot=slot, confirmed=True
+            kind="set",
+            slot=slot,
+            confirmed=confirm_set,
+            unconfirmed=not confirm_set,
         )
         update_times.side_effect = lambda _c, _e, slot: OperationResult(
             kind="update_times", slot=slot, confirmed=True
         )
-        await overrides.async_apply_plan(
+        operation_results = await overrides.async_apply_plan(
             coordinator,
             plan,
             {item.identity_key: item for item in reservations},
         )
 
     return {
+        "operation_results": operation_results,
         "clears": [call.args[1] for call in clear_code.call_args_list],
         "set_codes": [_command(call) for call in set_code.call_args_list],
         "update_times": [_command(call) for call in update_times.call_args_list],
@@ -639,3 +645,34 @@ async def test_shared_pin_on_other_lock_does_not_permit_rotation() -> None:
     )
     assert intruder.code is not None
     assert intruder.code != _OLD_CODE
+
+
+async def test_unconfirmed_replacement_hides_cleared_code() -> None:
+    """A cleared PIN is never published when its replacement is unconfirmed.
+
+    Drives the real overwrite path so the confirmed clear and the
+    unconfirmed set come from production code rather than hand-built
+    operation results.
+    """
+    result = await _run_cycle(
+        should_update_code=True, manual_pin=None, confirm_set=False
+    )
+    kinds = [
+        (item.kind, item.confirmed) for item in result["operation_results"] if item
+    ]
+    assert ("clear", True) in kinds
+
+    reservation = result["target"]
+    coordinator = cast(Any, object.__new__(RentalControlCoordinator))
+    coordinator.event_overrides = object()
+    coordinator._latest_res_by_key = {reservation.identity_key: reservation}
+    coordinator._observed_slot_codes = {reservation.identity_key: (1, _OLD_CODE)}
+    coordinator._latest_plan = SimpleNamespace(selected={reservation.identity_key: 1})
+
+    coordinator._apply_observed_code_results(
+        coordinator._latest_plan,
+        coordinator._latest_res_by_key,
+        result["operation_results"],
+    )
+
+    assert coordinator.get_slot_code(reservation.identity_key) is None

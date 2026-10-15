@@ -5385,8 +5385,12 @@ class TestManualDriftLogging:
             )
 
         assert mock_set.called
-        assert len(results) == 1
-        assert results[0].confirmed is True
+        # The intermediate confirmed clear is reported alongside the set so
+        # callers replaying the cycle see that the old code left the slot.
+        assert [(item.kind, item.confirmed) for item in results] == [
+            ("clear", True),
+            ("set", True),
+        ]
 
     async def test_snapshot_includes_manual_drift_slot(self) -> None:
         """update_diagnostics_snapshot captures OVERWRITE_MANUAL_CHANGE slots."""
