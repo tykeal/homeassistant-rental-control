@@ -68,12 +68,8 @@ async def async_resolve_codes(
         for directive in request.forced_reissues
     )
     observation = build_cycle_observation(entry_id, lockname, managed_slots)
-    request = replace(
-        request,
-        excluded_slots=frozenset(
-            _revalidated_exclusions(hass, entry_id, lockname, observation)
-        ),
-    )
+    exclusions = _revalidated_exclusions(hass, entry_id, lockname, observation)
+    request = replace(request, excluded_slots=frozenset(exclusions))
     allocator = get_allocator(hass)
     if allocator is None:
         for reservation in reservations:
@@ -172,6 +168,7 @@ def _revalidated_exclusions(
     if not stored:
         return {}
     kept, cleared = slot_exclusions.revalidate(stored, observation)
+    slot_exclusions.report_excluded_slots(hass, entry_id, lockname, kept)
     for slot, reason in sorted(cleared.items()):
         _LOGGER.info(
             "Cleared the slot exclusion for entry %s slot %s on lock %s "

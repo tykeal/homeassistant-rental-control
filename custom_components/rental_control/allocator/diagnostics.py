@@ -7,9 +7,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing import Any
 
+from ..const import CONF_EXCLUDED_SLOTS
 from ..const import COORDINATOR
 from ..const import DOMAIN
 from . import reissue
+from .exclusions import parse_excluded_slots
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
@@ -53,10 +55,30 @@ def allocator_diagnostics(allocator: DoorCodeAllocator) -> dict[str, Any]:
             for record in allocator._registry.records.values()
         ],
         "pending_adoption": sorted(allocator._pending_adoption),
+        "excluded_slots": _excluded_slots(allocator),
         "gate_deadline": allocator._gate_deadline,
         "registry_lost": allocator._registry_lost,
         "registry_missing": allocator._registry_missing,
     }
+
+
+def _excluded_slots(allocator: DoorCodeAllocator) -> dict[str, list[dict[str, Any]]]:
+    """Return each entry's standing slot exclusions, omitting empty sets."""
+    found: dict[str, list[dict[str, Any]]] = {}
+    config_entries = getattr(allocator.hass, "config_entries", None)
+    lookup = getattr(config_entries, "async_entries", None)
+    if lookup is None:
+        return found
+    for entry in lookup(DOMAIN):
+        exclusions = parse_excluded_slots(
+            dict(getattr(entry, "data", None) or {}).get(CONF_EXCLUDED_SLOTS)
+        )
+        if exclusions:
+            found[entry.entry_id] = [
+                {"slot": slot, "reason": exclusions[slot]}
+                for slot in sorted(exclusions)
+            ]
+    return found
 
 
 def _owner_diagnostics(owner: Any) -> dict[str, Any]:
