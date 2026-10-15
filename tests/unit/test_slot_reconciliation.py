@@ -1229,10 +1229,13 @@ class TestReservation:
             assert r.missing_count == count
 
     def test_slot_code_excluded_from_repr(self) -> None:
-        """slot_code does not appear in Reservation repr output."""
+        """No programmed PIN appears in Reservation repr output."""
         r = _make_reservation()
+        r.code_rotation_pending = True
+        r.code_rotation_origin = (3, "8642")
         r_repr = repr(r)
         assert "1234" not in r_repr
+        assert "8642" not in r_repr
 
     def test_slot_code_can_be_unavailable(self) -> None:
         """slot_code accepts None when no safe code is available."""

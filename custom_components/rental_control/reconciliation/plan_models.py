@@ -102,7 +102,7 @@ class Reservation:
     sensor_lookup_keys: set[str] = field(default_factory=set)
     code_source: str = "generated"
     code_rotation_pending: bool = False
-    code_rotation_origin: tuple[int, str] | None = None
+    code_rotation_origin: tuple[int, str] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Validate Reservation field invariants.
