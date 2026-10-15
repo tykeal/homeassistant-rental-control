@@ -110,9 +110,11 @@ distinction is required by FR-016.
 
 `reissue_preview.preview_request_and_result`
 (`allocator/reissue_preview.py`, lines 90-117) routes through the same
-observation builder and tests the same two conditions, so the `force_reissue`
-service from feature 023 is unblocked by the same change with no additional
-work.
+observation builder, so `force_reissue` from feature 023 is unblocked by the
+same exclusion. It is not unblocked for free, however: before consulting the
+shared helpers it independently rejects any non-empty raw unreadable set at
+lines 111-112, so that third check has to be made exclusion-aware as well.
+FR-016 and FR-019 require it.
 
 ## Context
 
@@ -402,9 +404,12 @@ set false, and confirm the slot returns to the gate immediately.
   many slots are excluded. Recovery of unrelated entries follows only once the
   shared pending-adoption set is empty, which requires every pending entry to
   complete adoption on its own terms.
-- **FR-016**: Exclusion MUST be scoped to the allocator's issuance gate — the
-  unaccounted-slot computation and the unreadability condition of adoption
-  completion — and MUST NOT reach any other consumer of the cycle observation.
+- **FR-016**: Exclusion MUST be scoped to the allocator's issuance gate. That
+  scope comprises the unaccounted-slot computation, the unreadability condition
+  of adoption completion, and the re-issue preview's own independent rejection
+  of any non-empty unreadable set (`allocator/reissue_preview.py`, lines
+  111-112), which is a third gate check and not a consumer of the other two.
+  Exclusion MUST NOT reach any other consumer of the cycle observation.
   In particular, the raw unreadable-slot evidence MUST remain intact for the
   code-release and still-programmed checks in
   `DoorCodeAllocator._owner_may_be_programmed` (`allocator/allocator.py`, lines
@@ -426,9 +431,11 @@ set false, and confirm the slot returns to the gate immediately.
   that the slot could not be read. This holds for owners belonging to any
   config entry, including owners orphaned by a removed entry, which the
   claim-check in FR-010 does not and cannot cover.
-- **FR-019**: The same observation-level effect MUST apply to the re-issue
-  preview path, so that `force_reissue` is unblocked by an exclusion on exactly
-  the same terms as ordinary issuance.
+- **FR-019**: The re-issue preview path MUST apply exclusions on exactly the
+  same terms as ordinary issuance, so that `force_reissue` is unblocked by an
+  exclusion. This requires treating the preview's own unreadable-set rejection
+  as part of the gate scope under FR-016; reusing the shared helpers alone does
+  not satisfy this requirement.
 
 #### Re-validation and auto-clear
 
@@ -715,13 +722,14 @@ NOT be buried in a log line the operator will never read.
   sufficient: an UNKNOWN slot is already blocked and already never offered as
   free, so this feature does not need to change planning behaviour at all.
 - `build_cycle_observation` is the sole producer of the allocator's unreadable
-  slot set for an entry, and `_adoption_complete` is the sole consumer that
-  gates adoption on it. Those two points therefore cover every gated path,
-  including re-issue preview. They are not, however, the only consumers of the
-  observation: `_owner_may_be_programmed` and the orphan cleanup that supplies
-  it observations read the same unreadable-slot set as release evidence, which
-  is why FR-016 requires the filtering to be gate-only rather than applied to
-  the observation for all readers.
+  slot set for an entry. `_adoption_complete` and the re-issue preview's own
+  unreadable-set rejection are the gating consumers of it, alongside
+  `unaccounted_slots`. Those three checks are the whole gate scope. The
+  observation has other readers that are not part of the gate: notably
+  `_owner_may_be_programmed` and the orphan cleanup that supplies it
+  observations read the same unreadable-slot set as release evidence, which is
+  why FR-016 requires the filtering to be gate-only rather than applied to the
+  observation for all readers.
 - `SlotStatus.UNKNOWN` is a faithful signal of "this slot's state could not be
   read", so refusing to exclude anything else is a sound guard.
 - The shared allocator, the persisted registry, and the system-wide uniqueness
@@ -766,8 +774,10 @@ NOT be buried in a log line the operator will never read.
 - **Follows the service precedent of feature 023** (#735): dual entity-or-lock
   targeting, dry-run plus optional service response, registration from
   `register_allocator_services`, and a single-target-only discipline.
-- **Unblocks `force_reissue` for free**, because the re-issue preview path
-  consumes the same cycle observation and tests the same two gate conditions.
+- **Unblocks `force_reissue`**, because the re-issue preview path consumes the
+  same cycle observation. Its own independent unreadable-set rejection is
+  included in the gate scope so that the unblocking is complete rather than
+  partial.
 - **Honours #607's stateless redesign** and the `0622057` revert by keeping the
   only new persisted state non-authoritative, re-validated every cycle, and
   self-clearing.

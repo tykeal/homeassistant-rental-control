@@ -102,6 +102,15 @@ SPDX-License-Identifier: Apache-2.0
     distinguish the two outcomes, and the independent test uses reservations
     without existing allocations so that existing-code reuse cannot mask the
     gate.
+- A fourth finding from the second review was likewise verified and folded in:
+  `preview_request_and_result` independently rejects any non-empty raw
+  unreadable set (`allocator/reissue_preview.py` lines 111-112) before it
+  consults the two shared helpers. Gate-only filtering of the shared helpers
+  would therefore have left `force_reissue` blocked, contradicting FR-019 and
+  SC-011. The preview's own check is now named as a third member of the gate
+  scope in FR-016, FR-019 states that reusing the shared helpers alone is
+  insufficient, and the "for free" claims in the Problem Statement and
+  Relationship sections were corrected.
 - This stage delivers the specification only. Per the established pattern in
   `specs/022-shared-code-allocator` and `specs/023-force-reissue`, `plan.md`,
   `research.md`, `data-model.md`, `quickstart.md`, and `tasks.md` are produced
