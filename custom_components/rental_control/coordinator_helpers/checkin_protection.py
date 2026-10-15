@@ -53,6 +53,7 @@ def build_protected_reservation(
     window: tuple[datetime, datetime],
     identity: tuple[str, str] | tuple[str, str, bool],
     display_slot_name: str,
+    code_provenance: str = "generated",
 ) -> Reservation | None:
     """Synthesize a protected active reservation, or None when unsafe.
 
@@ -64,6 +65,9 @@ def build_protected_reservation(
         identity: ``(identity_key, slot_code)`` for the synthesized stay,
             optionally followed by whether observed-code retention is suppressed.
         display_slot_name: Display name for the synthesized reservation.
+        code_provenance: ``"generated"`` or ``"manual_observed"`` for the
+            code in *identity*, decided by the caller which owns the
+            generator configuration.
 
     Returns:
         The synthesized :class:`Reservation`, or ``None`` when no safe
@@ -86,7 +90,6 @@ def build_protected_reservation(
         return None
     identity_key = identity[0]
     slot_code = identity[1]
-    suppress_observed = len(identity) > 2 and identity[2]
     protected = Reservation(
         identity_key=identity_key,
         start=snapshot.start,
@@ -98,11 +101,8 @@ def build_protected_reservation(
         display_slot_name=display_slot_name,
         slot_code=slot_code,
         protected_active=True,
-        code_source=(
-            "manual_observed"
-            if matched_physical.actual_code is not None and not suppress_observed
-            else "generated"
-        ),
+        code_source=code_provenance,
+        code_provenance=code_provenance,
     )
     protected.sensor_lookup_keys.add(identity_key)
     return protected

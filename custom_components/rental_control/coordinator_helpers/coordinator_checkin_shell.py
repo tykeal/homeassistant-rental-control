@@ -161,6 +161,9 @@ class CoordinatorCheckinMixin:
             and not suppress_observed
             else generated_code
         )
+        code_provenance = (
+            "generated" if slot_code == generated_code else "manual_observed"
+        )
         return checkin_protection.build_protected_reservation(
             snapshot,
             matched_physical,
@@ -168,6 +171,7 @@ class CoordinatorCheckinMixin:
             (buffered_start, buffered_end),
             (identity_key, slot_code, suppress_observed),
             display_slot_name,
+            code_provenance,
         )
 
     @staticmethod

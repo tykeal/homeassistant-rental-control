@@ -104,6 +104,75 @@ async def test_date_shift_rotation_commands_expected_code(
         assert outcome["clears"] == []
 
 
+@pytest.mark.parametrize(
+    ("should_update_code", "observed_code", "expected_source"),
+    [
+        (True, _OLD_CODE, "generated"),
+        (False, _OLD_CODE, "generated"),
+        (True, _MANUAL_PIN, "manual_observed"),
+        (False, _MANUAL_PIN, "manual_observed"),
+    ],
+    ids=["update-generated", "static-generated", "update-manual", "static-manual"],
+)
+def test_build_reservations_labels_code_source(
+    should_update_code: bool,
+    observed_code: str,
+    expected_source: str,
+) -> None:
+    """A retained generated code stays labelled ``generated`` (issue #803).
+
+    ``code_source`` is a diagnostics label, so a code the generator would
+    itself produce for the programmed window must not be reported as a
+    manual PIN merely because rotation is disabled.
+    """
+    old_identity = make_reservation_fingerprint(
+        _ENTRY, "Target Guest", _OLD_START, _OLD_END
+    )
+    managed_slots = [
+        _slot(1, observed_code, "RC Target Guest", _OLD_START, _OLD_END, old_identity)
+    ]
+
+    reservations = build_reservations(
+        [_event("Target Guest", _NEW_START, _NEW_END)],
+        managed_slots,
+        _ctx(should_update_code),
+    )
+
+    assert reservations[0].code_source == expected_source
+    assert reservations[0].code_provenance == expected_source
+
+
+@pytest.mark.parametrize(
+    ("observed_code", "expected_provenance"),
+    [(_OLD_CODE, "generated"), (_MANUAL_PIN, "manual_observed")],
+    ids=["generated", "manual"],
+)
+async def test_diagnostics_keep_code_provenance_through_allocation(
+    observed_code: str,
+    expected_provenance: str,
+) -> None:
+    """Provenance survives the allocator write-back into diagnostics.
+
+    ``code_source`` is overwritten with the allocation lifecycle result,
+    so the generated/manual distinction is carried by
+    ``code_provenance`` and must still be present once the full
+    build -> allocate -> plan pipeline has run (issue #803).
+    """
+    manual_pin = None if observed_code == _OLD_CODE else observed_code
+    outcome = await _run_cycle(False, manual_pin)
+
+    target = outcome["target"]
+    diagnostics = outcome["plan"].diagnostics
+    diag = diagnostics["reservations"][target.identity_key]
+
+    assert diag["code_provenance"] == expected_provenance
+    assert diag["code_source"] == target.code_source
+    assert diag["code_source"] != expected_provenance
+    assert "slot_code" not in diag
+    assert target.slot_code is not None
+    assert target.slot_code not in diag.values()
+
+
 @pytest.mark.parametrize("should_update_code", [True, False])
 async def test_date_shift_rotation_leaves_peer_untouched(
     should_update_code: bool,
@@ -188,6 +257,7 @@ async def _run_cycle(
         start_slot=1,
     )
     commands = await _apply(plan, reservations, observed_code, confirm_set)
+    commands["plan"] = plan
     commands["target"] = target
     commands["target_code"] = target.slot_code
     commands["peer_code"] = peer.slot_code

@@ -79,6 +79,8 @@ def _reservation_diagnostics(
             "booking_aliases": sorted(res.booking_aliases),
             "slot_name": res.slot_name,
             "summary": res.summary,
+            "code_source": res.code_source,
+            "code_provenance": res.code_provenance,
             "eligible": res.eligible,
             "protected_active": res.protected_active,
             "checked_out": res.checked_out,

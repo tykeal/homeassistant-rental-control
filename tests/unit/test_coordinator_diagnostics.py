@@ -33,3 +33,10 @@ def test_build_reconciliation_diagnostics_includes_overrides() -> None:
     )
     assert "slot_code" not in result["event_overrides"]
     assert result["event_overrides"]["count"] == 2
+
+
+def test_scrub_codes_keeps_code_source_label() -> None:
+    """The code_source label survives scrubbing while the code does not."""
+    payload = {"reservations": {"r-1": {"slot_code": "1234", "code_source": "adopted"}}}
+    scrubbed = diagnostics.scrub_codes(payload)
+    assert scrubbed["reservations"]["r-1"] == {"code_source": "adopted"}
