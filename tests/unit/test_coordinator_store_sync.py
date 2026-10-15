@@ -10,7 +10,9 @@ from datetime import timezone
 from custom_components.rental_control.const import STORE_SCHEMA_VERSION
 from custom_components.rental_control.coordinator_helpers import store_sync
 from custom_components.rental_control.coordinator_helpers.models import StoreSyncPlan
+from custom_components.rental_control.helpers import OperationResult
 from custom_components.rental_control.reconciliation import DesiredPlan
+from custom_components.rental_control.reconciliation import Reservation
 
 
 def test_empty_slot_cache_shape() -> None:
@@ -134,3 +136,67 @@ def test_loaded_store_save_round_trip_preserves_blocked_slots() -> None:
     )
 
     assert payload["blocked_slots"] == {"slot-2": {"reason": "maintenance"}}
+
+
+def _replacement_plan(
+    results: list[OperationResult],
+) -> StoreSyncPlan:
+    """Build a sync plan for one selected slot with the given results."""
+    start = datetime(2026, 9, 17, 16, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 20, 11, tzinfo=timezone.utc)
+    plan = DesiredPlan(plan_id="p1", generated_at=start)
+    plan.selected["identity-new"] = 3
+    reservation = Reservation(
+        identity_key="identity-new",
+        start=start,
+        end=end,
+        buffered_start=start,
+        buffered_end=end,
+        summary="Reserved - Jane Doe",
+        slot_name="Jane Doe",
+        display_slot_name="RC Jane Doe",
+        slot_code="2430",
+    )
+    return store_sync.build_store_sync_plan(
+        plan,
+        {"identity-new": reservation},
+        results,
+        {},
+        {"mappings": {"identity-old": {"slot": 3}}},
+        ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00"),
+    )
+
+
+def test_confirmed_replacement_keeps_new_mapping() -> None:
+    """A clear followed by a confirmed set saves the replacement mapping."""
+    result = _replacement_plan(
+        [
+            OperationResult(kind="clear", slot=3, confirmed=True),
+            OperationResult(kind="set", slot=3, confirmed=True),
+        ]
+    )
+
+    assert "identity-new" in result.upsert_mappings
+    assert result.upsert_mappings["identity-new"]["slot"] == 3
+    assert result.remove_identity_keys == ["identity-old"]
+
+
+def test_unconfirmed_replacement_drops_old_mapping() -> None:
+    """A clear whose replacement is unconfirmed still empties the slot."""
+    result = _replacement_plan(
+        [
+            OperationResult(kind="clear", slot=3, confirmed=True),
+            OperationResult(kind="set", slot=3, unconfirmed=True),
+        ]
+    )
+
+    assert result.upsert_mappings == {}
+    assert result.remove_identity_keys == ["identity-old"]
+
+
+def test_terminal_clear_drops_mapping() -> None:
+    """A clear with no replacement set removes the slot's mapping."""
+    result = _replacement_plan([OperationResult(kind="clear", slot=3, confirmed=True)])
+
+    assert result.upsert_mappings == {}
+    assert result.remove_identity_keys == ["identity-old"]
