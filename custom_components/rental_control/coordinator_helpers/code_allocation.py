@@ -225,7 +225,8 @@ def report_unreadable_slots(
         "help, because the slots stay in the managed range and report as "
         "unknown. If the slots are gone for good, reconfigure this entry's "
         "start slot or event count so that the managed range no longer "
-        "covers them."
+        "covers them, or call the rental_control.set_slot_exclusion action "
+        "to exclude each dead slot from the issuance gate."
     )
     async_create(
         hass,
