@@ -250,7 +250,16 @@ class _ObservedCodeQuery:
 
 
 def _resolve_observed_code(query: _ObservedCodeQuery) -> tuple[str, str, bool]:
-    """Return the (code, source, rotating) preserving manual observed PINs."""
+    """Return the (code, source, rotating) preserving manual observed PINs.
+
+    The returned source is a diagnostics label only; it never changes
+    which code is issued. ``manual_observed`` means the observed PIN does
+    not match what the configured generator produces for the programmed
+    window. That is the best signal available, but it cannot distinguish
+    a human-entered PIN from a code produced by a previous generator
+    configuration, so a generator change relabels pre-existing generated
+    codes as ``manual_observed`` (see issue #736).
+    """
     matched_physical = query.matched_physical
     event = query.event
     uid = query.uid
@@ -292,14 +301,14 @@ def _resolve_observed_code(query: _ObservedCodeQuery) -> tuple[str, str, bool]:
         if observed_start is not None and observed_end is not None
         else None
     )
-    if (
-        old_generated is None
-        or observed_code != old_generated
-        or not ctx.should_update_code
+    if old_generated is None or observed_code != old_generated:
+        return observed_code, "manual_observed", False
+    # The observed PIN is exactly what the generator produces for the
+    # programmed window, so it is a generated code even when it is retained.
+    if not ctx.should_update_code or not _rotation_window_open(
+        matched_physical.actual_start, query.buffered_start
     ):
-        return observed_code, "manual_observed", False
-    if not _rotation_window_open(matched_physical.actual_start, query.buffered_start):
-        return observed_code, "manual_observed", False
+        return observed_code, "generated", False
     return slot_code, code_source, slot_code != observed_code
 
 

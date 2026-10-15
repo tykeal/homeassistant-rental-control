@@ -104,6 +104,43 @@ async def test_date_shift_rotation_commands_expected_code(
         assert outcome["clears"] == []
 
 
+@pytest.mark.parametrize(
+    ("should_update_code", "observed_code", "expected_source"),
+    [
+        (True, _OLD_CODE, "generated"),
+        (False, _OLD_CODE, "generated"),
+        (True, _MANUAL_PIN, "manual_observed"),
+        (False, _MANUAL_PIN, "manual_observed"),
+    ],
+    ids=["update-generated", "static-generated", "update-manual", "static-manual"],
+)
+def test_build_reservations_labels_code_source(
+    should_update_code: bool,
+    observed_code: str,
+    expected_source: str,
+) -> None:
+    """A retained generated code stays labelled ``generated`` (issue #803).
+
+    ``code_source`` is a diagnostics label, so a code the generator would
+    itself produce for the programmed window must not be reported as a
+    manual PIN merely because rotation is disabled.
+    """
+    old_identity = make_reservation_fingerprint(
+        _ENTRY, "Target Guest", _OLD_START, _OLD_END
+    )
+    managed_slots = [
+        _slot(1, observed_code, "RC Target Guest", _OLD_START, _OLD_END, old_identity)
+    ]
+
+    reservations = build_reservations(
+        [_event("Target Guest", _NEW_START, _NEW_END)],
+        managed_slots,
+        _ctx(should_update_code),
+    )
+
+    assert reservations[0].code_source == expected_source
+
+
 @pytest.mark.parametrize("should_update_code", [True, False])
 async def test_date_shift_rotation_leaves_peer_untouched(
     should_update_code: bool,
