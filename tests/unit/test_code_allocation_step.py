@@ -22,6 +22,7 @@ from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import CycleRequest
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator_helpers import code_allocation
+from custom_components.rental_control.coordinator_helpers import slot_exclusions
 from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
     CoordinatorRefreshMixin,
 )
@@ -117,6 +118,15 @@ class _LocklessCoordinator(CoordinatorRefreshMixin):
     ) -> None:
         """Record the eligible reservations synced by lockless allocation."""
         self.synced = res_by_key
+
+
+@pytest.fixture(autouse=True)
+def _inert_exclusion_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the exclusion notice out of this module's notification counts."""
+    monkeypatch.setattr(slot_exclusions, "async_create", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        slot_exclusions, "async_dismiss", lambda *_args, **_kwargs: None
+    )
 
 
 def _reservation(identity_key: str, code: str = "9999") -> Reservation:

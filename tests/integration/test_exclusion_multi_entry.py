@@ -73,15 +73,22 @@ async def test_one_exclusion_releases_every_entry(
 async def test_exclusion_survives_a_further_restart(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A restart needs no second operator action to stay unfrozen."""
+    """A restart needs no second operator action to stay unfrozen.
+
+    The adoption sweep that follows a restart still has to complete, which
+    it does without the operator touching the exclusion again.
+    """
     world = three_entry_world(monkeypatch)
     world.exclude("entry-a", DEAD_SLOT, "relay failed")
     await _run_all(world, {k: reservation(f"pre-{k}") for k in world.specs})
 
     world.restart()
+    assert world.allocator._pending_adoption == set(world.specs)
+
+    await _run_all(world, {k: reservation(f"sweep-{k}") for k in world.specs})
+    assert world.allocator._pending_adoption == set()
 
     guests = {entry_id: reservation(f"post-{entry_id}") for entry_id in world.specs}
     await _run_all(world, guests)
 
-    assert world.allocator._pending_adoption == set()
     assert all(guest.slot_code is not None for guest in guests.values())

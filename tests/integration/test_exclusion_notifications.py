@@ -173,3 +173,24 @@ def test_dismissal_is_inert_without_an_event_bus() -> None:
     slot_exclusions.report_excluded_slots(
         SimpleNamespace(), "entry-a", "front", {1: None}
     )
+
+
+async def test_withdrawing_the_last_exclusion_dismisses_the_notice(
+    notifications: dict[str, str],
+) -> None:
+    """Clearing the last exclusion by hand clears its notification too."""
+    hass = _hass([{"slot": _DEAD_SLOT, "reason": "dead relay"}])
+
+    await _cycle(hass, _slots())
+    assert set(notifications) == {
+        slot_exclusions.excluded_slots_notification_id("entry-a")
+    }
+
+    entry = hass.config_entries.async_get_entry("entry-a")
+    entry.data = {}
+
+    await _cycle(hass, _slots())
+
+    assert set(notifications) == {
+        code_allocation.unreadable_slots_notification_id("entry-a")
+    }

@@ -128,8 +128,19 @@ class World:
         self._update_entry(entry, data=options, options={})
 
     def restart(self) -> None:
-        """Drop the in-memory adoption gate state the way a restart does."""
-        self.allocator._pending_adoption.clear()
+        """Rebuild the allocator the way a Home Assistant restart does.
+
+        The registry survives because it is persisted, but the adoption gate
+        is re-seeded from the configured entries, so every lock-backed entry
+        is pending again until it completes a clean cycle.
+        """
+        registry = self.allocator._registry
+        self.allocator = DoorCodeAllocator(self.hass)
+        self.allocator._registry = registry
+        self.allocator._store = cast(
+            Any, SimpleNamespace(async_save=lambda _registry: None)
+        )
+        self.hass.data[DOMAIN][ALLOCATOR] = self.allocator
 
     async def cycle(
         self,

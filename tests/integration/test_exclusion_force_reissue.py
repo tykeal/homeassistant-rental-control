@@ -48,11 +48,11 @@ def _coordinator(world: World) -> Any:
     return _Coordinator()
 
 
-def _target(slot: int) -> reissue.ReissueTarget:
-    """Build a slot-scoped forced re-issue target."""
+def _target(slot: int, identity_key: str | None = None) -> reissue.ReissueTarget:
+    """Build a forced re-issue target for one slot or reservation."""
     return reissue.ReissueTarget(
         entry_id="entry-a",
-        identity_key=None,
+        identity_key=identity_key,
         lockname="front",
         slot=slot,
         target_key=f"front:{slot}",
@@ -98,21 +98,27 @@ async def test_force_reissue_succeeds_on_a_non_excluded_slot(
     world: World,
 ) -> None:
     """Excluding the dead slot restores forced re-issue on the live slot."""
-    await world.cycle("entry-a", [free_slot(10)], [reservation("identity-live")])
+    await world.cycle(
+        "entry-a", [free_slot(10)], [reservation("identity-live", _LIVE_CODE)]
+    )
     world.exclude("entry-a", DEAD_SLOT, "relay failed")
 
     _, preview = await reissue_preview.preview_request_and_result(
-        world.allocator, _coordinator(world), _target(10)
+        world.allocator, _coordinator(world), _target(10, "identity-live")
     )
 
-    assert preview.reason not in {"unaccounted_slots", "adoption_pending"}
+    assert preview.reason is None
+    assert preview.replacement_code is not None
+    assert preview.replacement_code != _LIVE_CODE
 
 
 async def test_force_reissue_still_refuses_the_excluded_slot_itself(
     world: World,
 ) -> None:
     """An excluded slot holds no allocation, so there is nothing to re-issue."""
-    await world.cycle("entry-a", [free_slot(10)], [reservation("identity-live")])
+    await world.cycle(
+        "entry-a", [free_slot(10)], [reservation("identity-live", _LIVE_CODE)]
+    )
     world.exclude("entry-a", DEAD_SLOT, "relay failed")
 
     _, preview = await reissue_preview.preview_request_and_result(
