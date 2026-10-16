@@ -19,6 +19,7 @@ import secrets
 from typing import Any
 
 from homeassistant.components.persistent_notification import async_create
+from homeassistant.components.persistent_notification import async_dismiss
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.storage import Store
@@ -84,7 +85,7 @@ class RegistryStore:
         except Exception as err:
             raise ConfigEntryNotReady("Unable to load shared code registry") from err
         if payload is None:
-            self._warn_empty("code registry store is absent")
+            self._note_absent("code registry store is absent")
             return RegistryLoadResult(
                 self._empty_registry(),
                 registry_lost=True,
@@ -93,8 +94,9 @@ class RegistryStore:
         try:
             registry = self._registry_from_payload(payload)
         except ValueError as err:
-            self._warn_empty(f"invalid code registry payload: {err}")
+            self._warn_corrupt(f"invalid code registry payload: {err}")
             return RegistryLoadResult(self._empty_registry(), registry_lost=True)
+        self._dismiss_warning()
         return RegistryLoadResult(registry, registry_lost=False)
 
     def async_save(self, registry: AllocationRegistry) -> None:
@@ -106,15 +108,32 @@ class RegistryStore:
         """Return an empty registry with a fresh diagnostic salt."""
         return AllocationRegistry(code_ref_salt=secrets.token_hex(8))
 
-    def _warn_empty(self, message: str) -> None:
-        """Log and notify that the registry could not be used."""
+    def _note_absent(self, message: str) -> None:
+        """Log that no registry exists yet, the expected first-run state."""
+        _LOGGER.info(
+            "Starting with an empty code registry: %s; this is expected on a "
+            "first run or first upgrade and existing door codes are adopted "
+            "from the locks",
+            message,
+        )
+        self._dismiss_warning()
+
+    def _warn_corrupt(self, message: str) -> None:
+        """Log and notify that a stored registry could not be read."""
         _LOGGER.warning("Starting with an empty code registry: %s", message)
         async_create(
             self._hass,
-            f"Starting with an empty shared code registry: {message}",
+            "The stored shared code registry could not be read and has been "
+            "reset. Existing door codes will be re-adopted from the locks; "
+            "please check your locks for unexpected code changes. "
+            f"Details: {message}",
             title=f"{NAME} code registry warning",
             notification_id=_NOTIFICATION_ID,
         )
+
+    def _dismiss_warning(self) -> None:
+        """Clear any stale code registry warning notification."""
+        async_dismiss(self._hass, _NOTIFICATION_ID)
 
     def _registry_from_payload(self, payload: Any) -> AllocationRegistry:
         """Convert a storage payload into a validated allocation registry."""

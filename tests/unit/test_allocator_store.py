@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from dataclasses import field
+import logging
 from types import SimpleNamespace
 from typing import Any
 
@@ -51,20 +54,33 @@ class FakeStore:
         self.delayed_delay = delay
 
 
+@dataclass
+class NotificationCalls:
+    """Captured persistent notification activity."""
+
+    created: list[str] = field(default_factory=list)
+    dismissed: list[str] = field(default_factory=list)
+
+
 @pytest.fixture(autouse=True)
-def patch_store(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def patch_store(monkeypatch: pytest.MonkeyPatch) -> NotificationCalls:
     """Patch Home Assistant storage and notifications."""
-    notifications: list[str] = []
+    calls = NotificationCalls()
     monkeypatch.setattr(store_module, "Store", FakeStore)
     monkeypatch.setattr(
         store_module,
         "async_create",
-        lambda _hass, message, **_kwargs: notifications.append(message),
+        lambda _hass, message, **_kwargs: calls.created.append(message),
+    )
+    monkeypatch.setattr(
+        store_module,
+        "async_dismiss",
+        lambda _hass, notification_id: calls.dismissed.append(notification_id),
     )
     FakeStore.payload = None
     FakeStore.load_error = None
     FakeStore.last_instance = None
-    return notifications
+    return calls
 
 
 def _registry() -> AllocationRegistry:
@@ -131,12 +147,13 @@ def test_serialized_code_fields_do_not_store_plaintext() -> None:
 )
 async def test_missing_and_corrupt_payloads_yield_empty_registry(
     caplog: pytest.LogCaptureFixture,
-    patch_store: list[str],
+    patch_store: NotificationCalls,
     payload: dict[str, Any] | None,
     message: str,
     registry_missing: bool,
 ) -> None:
     """Missing and corrupt payloads fail closed to an empty registry."""
+    caplog.set_level(logging.INFO)
     FakeStore.payload = payload
     wrapper = RegistryStore(SimpleNamespace())
 
@@ -145,8 +162,64 @@ async def test_missing_and_corrupt_payloads_yield_empty_registry(
     assert result.registry.records == {}
     assert result.registry_lost is True
     assert result.registry_missing is registry_missing
-    assert patch_store
     assert message in caplog.text
+    if registry_missing:
+        assert patch_store.created == []
+        assert store_module._NOTIFICATION_ID in patch_store.dismissed
+    else:
+        assert len(patch_store.created) == 1
+        assert message in patch_store.created[0]
+        assert patch_store.dismissed == []
+
+
+async def test_absent_store_logs_without_warning(
+    caplog: pytest.LogCaptureFixture,
+    patch_store: NotificationCalls,
+) -> None:
+    """An absent registry store logs at info level and never warns."""
+    caplog.set_level(logging.INFO)
+    FakeStore.payload = None
+    wrapper = RegistryStore(SimpleNamespace())
+
+    await wrapper.async_load()
+
+    levels = {
+        record.levelno
+        for record in caplog.records
+        if record.name == store_module._LOGGER.name
+    }
+    assert levels == {logging.INFO}
+    assert patch_store.created == []
+
+
+async def test_corrupt_payload_notification_states_consequence(
+    patch_store: NotificationCalls,
+) -> None:
+    """The corrupt payload notification explains impact and next steps."""
+    FakeStore.payload = {"schema_version": 99, "records": []}
+    wrapper = RegistryStore(SimpleNamespace())
+
+    await wrapper.async_load()
+
+    assert len(patch_store.created) == 1
+    message = patch_store.created[0]
+    assert "could not be read" in message
+    assert "re-adopted from the locks" in message
+    assert "schema_version" in message
+
+
+async def test_successful_load_dismisses_stale_notification(
+    patch_store: NotificationCalls,
+) -> None:
+    """A valid payload clears any stale code registry notification."""
+    wrapper = RegistryStore(SimpleNamespace())
+    FakeStore.payload = wrapper._payload_from_registry(_registry())
+
+    result = await wrapper.async_load()
+
+    assert result.registry_lost is False
+    assert patch_store.created == []
+    assert patch_store.dismissed == [store_module._NOTIFICATION_ID]
 
 
 async def test_duplicate_decoded_codes_are_rejected() -> None:
