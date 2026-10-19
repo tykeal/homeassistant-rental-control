@@ -20,6 +20,10 @@ ci:
     - ruff-format
     - interrogate
     - mypy
+  # Dependabot owns hook rev updates (weekly, grouped, signed commits).
+  # Quarterly is the slowest schedule pre-commit.ci allows, minimising
+  # duplicate autoupdate pull requests competing for the same rev values.
+  autoupdate_schedule: quarterly
 
 
 repos:
