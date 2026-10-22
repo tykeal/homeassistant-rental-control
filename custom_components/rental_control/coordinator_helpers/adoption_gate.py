@@ -94,9 +94,9 @@ def report(
         if _reported.pop(entry_id, None) is not None:
             _LOGGER.info(
                 "Rental Control entry %s accounted for every managed slot on "
-                "lock %s, so its adoption gate reopened. Issuance resumes "
-                "once every entry's gate is open, because all entries share "
-                "one door code space",
+                "lock %s, so its adoption gate reopened. Door code issuance "
+                "resumes on the next refresh, unless another entry is still "
+                "waiting for its first adoption cycle",
                 entry_id,
                 lockname or "unknown lock",
             )

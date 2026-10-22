@@ -241,9 +241,10 @@ Whenever the integration withholds issuance, it logs a single warning naming
 the config entry, the lock, every slot holding the gate shut, and the reason for
 each slot — `unreadable` or `holds a code that matches no current reservation`.
 The warning repeats only when the set of blocking slots changes, and an
-informational line records the moment that entry's gate reopens. Issuance
-resumes once every entry's gate is open, because all entries share one door
-code space.
+informational line records the moment that entry's gate reopens. Issuance then
+resumes on the next refresh, unless another entry has yet to finish its first
+adoption cycle; until every entry has adopted once, no entry issues codes,
+because all entries share one door code space.
 
 An unmatched code usually belongs to a booking that has gone away, and clears
 itself once Keymaster finishes clearing the slot. If it persists, clear that
