@@ -181,3 +181,21 @@ def test_forget_entry_drops_the_throttle_state(
     adoption_gate.report("entry-a", "front", status)
 
     assert caplog.text.count(_WITHHOLDING) == 2
+
+
+async def test_missing_allocator_logs_an_error(
+    monkeypatch: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A missing allocator is a catastrophic failure, not a silent one."""
+    caplog.set_level(logging.ERROR)
+    monkeypatch.setattr(code_allocation, "get_allocator", lambda _hass: None)
+    reservation = _reservation(code="1111")
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(), "entry-a", "front", 4, [], [reservation]
+    )
+
+    assert "shared door code allocator is not available" in caplog.text
+    assert reservation.slot_code is None
+    assert reservation.code_source == "unallocated"

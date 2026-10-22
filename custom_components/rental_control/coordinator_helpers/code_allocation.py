@@ -74,6 +74,13 @@ async def async_resolve_codes(
     request = replace(request, excluded_slots=frozenset(exclusions))
     allocator = get_allocator(hass)
     if allocator is None:
+        _LOGGER.error(
+            "Rental Control entry %s cannot issue door codes because the "
+            "shared door code allocator is not available. No door codes will "
+            "be created or updated for any entry until Home Assistant is "
+            "restarted; please report this with the preceding log lines",
+            entry_id,
+        )
         for reservation in reservations:
             reservation.slot_code = None
             reservation.code_source = "unallocated"
