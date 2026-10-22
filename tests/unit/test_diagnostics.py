@@ -16,8 +16,10 @@ from freezegun import freeze_time
 from homeassistant.components.diagnostics.const import REDACTED
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.json import ExtendedJSONEncoder
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.rental_control import diagnostics as diagnostics_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.candidates import candidate_codes
 from custom_components.rental_control.allocator.models import AllocationRequest
@@ -43,6 +45,19 @@ FEED_URL = "https://calendar.example.com/private-token-abc123/ical"
 BOOKING_REF = "HMABCDE123"
 EVENT_UID = "uid-seed-for-static-random-987654"
 FAILURE_TEXT = f"set_pin failed for {GUEST_NAME} with pin {SECRET_CODE}"
+
+
+#: Tokens the fixed test salt produces for the fixture identities.  Real
+#: downloads use a random salt, so a token could otherwise happen to
+#: contain a literal this module asserts the absence of.
+TOKEN_A = "identity-8d1859d7dc64"
+TOKEN_B = "identity-34d1fbc93946"
+
+
+@pytest.fixture(autouse=True)
+def fixed_masker_salt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the diagnostics masker salt so tokens are deterministic."""
+    monkeypatch.setattr(diagnostics_module.secrets, "token_hex", lambda _size: "0" * 32)
 
 
 def _entry(hass: HomeAssistant) -> MockConfigEntry:
@@ -199,6 +214,7 @@ async def test_diagnostics_report_allocator_and_slot_state(
 
     assert result["allocator"]["record_count"] == 1
     token = result["reservations"][0]["identity_key"]
+    assert token == TOKEN_A
     assert result["reconciliation"]["selected"] == {token: 10}
     assert result["config"]["code_length"] == 6
     assert result["config"]["start_slot"] == 10
@@ -305,8 +321,7 @@ async def test_identity_keys_become_opaque_tokens(hass: HomeAssistant) -> None:
     result = await async_get_config_entry_diagnostics(hass, entry)
 
     token = result["reservations"][0]["identity_key"]
-    assert token.startswith("identity-")
-    assert "identity-a" != token
+    assert token == TOKEN_A
     assert result["slots"][0]["desired_identity_key"] == token
     assert result["slots"][0]["persisted_identity_key"] == token
     assert result["allocator"]["records"][0]["owners"][0]["identity_key"] == token
@@ -353,6 +368,7 @@ async def test_collision_resolved_code_seed_is_not_exported(
     serialized = json.dumps(result, cls=ExtendedJSONEncoder)
 
     assert "identity-b" not in serialized
+    assert TOKEN_B in serialized
     assert collision_code not in serialized
     assert len(result["allocator"]["records"]) == 2
 
