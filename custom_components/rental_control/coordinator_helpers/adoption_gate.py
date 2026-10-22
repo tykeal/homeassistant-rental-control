@@ -93,8 +93,10 @@ def report(
     if status.complete:
         if _reported.pop(entry_id, None) is not None:
             _LOGGER.info(
-                "Rental Control entry %s resumed door code issuance on lock "
-                "%s because every managed slot is accounted for again",
+                "Rental Control entry %s accounted for every managed slot on "
+                "lock %s, so its adoption gate reopened. Issuance resumes "
+                "once every entry's gate is open, because all entries share "
+                "one door code space",
                 entry_id,
                 lockname or "unknown lock",
             )

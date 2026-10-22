@@ -148,18 +148,18 @@ async def test_repeated_cycles_warn_once_per_condition(
     assert caplog.text.count(_WITHHOLDING) == 2
 
 
-async def test_recovered_gate_reports_resumed_issuance(
+async def test_recovered_gate_reports_a_reopened_gate(
     monkeypatch: Any,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Clearing the condition is logged, and re-warns if it returns."""
+    """Reopening the entry's own gate is logged, and re-warns if it shuts."""
     caplog.set_level(logging.INFO)
     await _resolve(monkeypatch, [_coded_slot(7, "2222")], [])
 
     reservation = _reservation(code="1111")
     await _resolve(monkeypatch, [_coded_slot(1, "2222")], [reservation])
 
-    assert "resumed door code issuance" in caplog.text
+    assert "its adoption gate reopened" in caplog.text
 
     caplog.clear()
     await _resolve(monkeypatch, [_coded_slot(7, "2222")], [])
