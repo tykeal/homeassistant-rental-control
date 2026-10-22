@@ -27,6 +27,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.rental_control.const import CONF_CLEANING_WINDOW
 from custom_components.rental_control.const import DEFAULT_CLEANING_WINDOW
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.coordinator_helpers import adoption_gate
 
 from tests.fixtures import calendar_data
 
@@ -138,6 +139,14 @@ def pytest_collection_modifyitems(
             item.add_marker(pytest.mark.unit)
         elif parts and parts[0] == "integration":
             item.add_marker(pytest.mark.integration)
+
+
+@pytest.fixture(autouse=True)
+def _reset_adoption_gate_reporting():
+    """Clear the adoption gate's cross-cycle log throttle between tests."""
+    adoption_gate.reset_reporting()
+    yield
+    adoption_gate.reset_reporting()
 
 
 @pytest.fixture(autouse=True)

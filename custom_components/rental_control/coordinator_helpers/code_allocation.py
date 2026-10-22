@@ -26,6 +26,7 @@ from ..const import NAME
 from ..reconciliation import SlotStatus
 from ..reconciliation import compute_desired_plan
 from ..reconciliation.desired import select_eligible_reservations
+from . import adoption_gate
 from . import reissue
 from . import slot_exclusions
 from .models import ObservedSlotQuery
@@ -90,13 +91,15 @@ async def async_resolve_codes(
         reservations,
         request.suppression,
     )
-    adoption_complete = _adoption_complete(
+    gate_status = adoption_gate.evaluate(
         observation,
         adoptions,
         managed_slots,
         request.suppression,
         excluded=request.excluded_slots,
     )
+    adoption_gate.report(entry_id, lockname, gate_status)
+    adoption_complete = gate_status.complete
     allocations = (
         build_allocation_requests(
             entry_id, lockname, code_length, managed_slots, reservations
@@ -289,18 +292,13 @@ def _adoption_complete(
     excluded: frozenset[int] = frozenset(),
 ) -> bool:
     """Return whether all readable managed codes were accounted for."""
-    suppression = suppression or ReissueSuppression()
-    if observation.unreadable_slots - excluded:
-        return False
-    adopted_slots = {request.slot for request in adoptions}
-    readable_coded_slots = {
-        slot.slot
-        for slot in managed_slots
-        if slot.managed and slot.status is not SlotStatus.UNKNOWN and slot.actual_code
-    }
-    readable_coded_slots -= suppression.slots
-    readable_coded_slots -= getattr(adoptions, "suppressed_slots", set())
-    return readable_coded_slots <= adopted_slots
+    return adoption_gate.evaluate(
+        observation,
+        adoptions,
+        managed_slots,
+        suppression,
+        excluded=excluded,
+    ).complete
 
 
 def build_cycle_observation(
