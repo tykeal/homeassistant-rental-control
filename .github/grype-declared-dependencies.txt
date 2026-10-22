@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2021 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Packages this project declares, one name per line, consumed by
+# lfreleng-actions/grype-scan-action as `declared-dependencies`.
+#
+# Why this file exists at all: the action would rather read the
+# dependency graph out of our CycloneDX SBOM, but cyclonedx-py runs
+# in environment mode here and so emits no `metadata.component`
+# root. The action refuses an unrooted graph, and an unusable source
+# leaves every finding classified as declared — which gates on
+# exactly the inherited packages we cannot fix. This list is the
+# documented fallback.
+#
+# The list MUST be complete with respect to pyproject.toml: anything
+# missing from it is classified as inherited and is therefore gated
+# more leniently. Add an entry here whenever a dependency is added to
+# pyproject.toml, in the same spelling the SBOM uses for it.
+#
+# Names, not purls, deliberately. A purl carries the resolved version,
+# so a purl entry would stop matching the moment the version moved
+# and would silently downgrade the package to inherited.
+
+# The integration itself, as it appears in the SBOM.
+homeassistant-rental-control
+
+# [project] dependencies — shipped to users.
+icalendar
+x-wr-timezone
+
+# [project.optional-dependencies] dev / test and [dependency-groups]
+# dev. Not shipped, but we do choose these versions, so a finding in
+# one of them is ours to act on.
+aioresponses
+homeassistant
+pytest-homeassistant-custom-component
+pytest-timeout
+
+# [build-system] requires.
+hatch-vcs
+hatchling

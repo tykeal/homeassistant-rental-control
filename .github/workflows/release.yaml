@@ -249,12 +249,16 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      # Read maintainer-approved bypass issues.
+      issues: read
     steps:
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
         with:
           egress-policy: 'audit'
 
+      # Supplies .github/grype-declared-dependencies.txt, which the
+      # scan classifies its findings against.
       # yamllint disable-line rule:line-length
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -264,128 +268,42 @@ jobs:
         with:
           name: sbom-files
 
-      - name: "Install Grype"
-        id: grype
-        # yamllint disable-line rule:line-length
-        uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
-        with:
-          cache-db: "true"
-
       - name: "Grype audit SBOM"
         id: grype-audit
-        env:
-          GRYPE_CMD: "${{ steps.grype.outputs.cmd }}"
-          NO_BLOCK_AUDIT_FAIL: >-
-            ${{ vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
-        run: |
-            # Run grype once, emitting all three output formats
-            # Render the human-readable table in this step's log
-            set +e
-            "${GRYPE_CMD}" \
-              -o "sarif=grype-results.sarif" \
-              -o "json=grype-results.json" \
-              -o "table=grype-results.txt" \
-              --fail-on medium \
-              -c .grype.yaml \
-              "sbom:sbom-cyclonedx.json"
-            grype_exit=$?
-            set -e
-
-            echo "--- Grype scan results ---"
-            if [ -f grype-results.txt ]; then
-              cat grype-results.txt
-            else
-              echo "No table output produced"
-            fi
-
-            if [ "${grype_exit}" = "0" ]; then
-              echo "No vulnerabilities at or above 'medium'"
-              exit 0
-            fi
-            if [ "${grype_exit}" != "2" ]; then
-              echo "::error::Grype exited with code ${grype_exit}"
-              exit "${grype_exit}"
-            fi
-
-            if [ "${NO_BLOCK_AUDIT_FAIL}" = "true" ]; then
-              echo "::warning::Grype found vulnerabilities at or" \
-                "above the 'medium' threshold, but" \
-                "NO_BLOCK_AUDIT_FAIL is set so the job will not" \
-                "fail."
-              exit 0
-            fi
-            echo "::error::Grype found vulnerabilities at or above" \
-              "the 'medium' severity threshold. See the table" \
-              "above for the offending packages and CVEs."
-            exit 1
-
-      - name: "Upload Grype scan results"
         # yamllint disable-line rule:line-length
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        if: always()
+        uses: lfreleng-actions/grype-scan-action@7b6b12b60de8ff051f2f8021439c1ef0b82b98c1  # v0.4.0
         with:
-          name: grype-scan-results
-          path: |
-            grype-results.sarif
-            grype-results.json
-            grype-results.txt
+          sbom: 'sbom-cyclonedx.json'
+          fail-on: 'medium'
+          # Our own dependencies gate at 'medium' exactly as before.
+          # Packages we merely inherit - almost all of them, since
+          # Home Assistant pins its requirements exactly and we cannot
+          # bump them from here - are reported as warnings instead.
+          # 'none' is deliberate rather than a default taken on trust.
+          # 'critical' was tried first, on the theory that a
+          # catastrophic advisory is worth stopping a build for, and
+          # it immediately gated on five criticals in Home Assistant's
+          # pinned pillow and uv. Every one had an upstream fix we
+          # cannot reach, so the gate would have been exactly the
+          # unactionable red check this change exists to remove. The
+          # findings still appear in the summary and the SARIF report.
+          dependency-policy: 'declared'
+          transitive-fail-on: 'none'
+          # The SBOM cannot answer the declared-vs-inherited question:
+          # cyclonedx-py scans the environment rather than the project
+          # and so emits no 'metadata.component' root, and the action
+          # refuses an unrooted graph. An unusable source would leave
+          # every finding classified as declared, which gates. Supply
+          # the answer directly instead.
+          declared-source: 'file'
+          # yamllint disable-line rule:line-length
+          declared-dependencies: '.github/grype-declared-dependencies.txt'
+          cache-db: 'true'
+          artifact-name: 'grype-scan-results'
           retention-days: 90
-          if-no-files-found: warn
-
-      - name: "Grype summary"
-        if: always()
-        run: |
-            # Render a Markdown table of output in step summary.
-            {
-              echo "## Grype Vulnerability Scan"
-              echo ""
-              if [ ! -f grype-results.json ]; then
-                echo "No scan results available"
-                exit 0
-              fi
-              match_count=$(jq '.matches | length' grype-results.json)
-              if [ "${match_count}" = "0" ]; then
-                echo "No vulnerabilities found at or above the" \
-                  "configured severity threshold."
-                exit 0
-              fi
-              echo "Found ${match_count} matching Grype record(s)."
-              echo ""
-              echo "| Package | Installed | Fixed In | Type |" \
-                "Vulnerability | Severity | EPSS | Risk |"
-              echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
-              jq -r '
-                def esc: tostring | gsub("\\|"; "\\|");
-                def round2: (. * 100 | round) / 100;
-                def epss_pct:
-                  ( .vulnerability.epss // [] ) as $e
-                  | if ($e | length) == 0 then "-"
-                    else ( $e[0].epss // 0 ) as $p
-                      | if $p == 0 then "0%"
-                        elif ($p * 100) < 0.01 then "<0.01%"
-                        else ( ($p * 100) | round2 | tostring
-                               + "%" ) end
-                    end;
-                def risk_fmt:
-                  .vulnerability.risk
-                  | if . == null then "-"
-                    elif type == "number" then
-                      (round2 | tostring)
-                    else (. | tostring) end;
-                .matches[] |
-                [ (.artifact.name // "-" | esc),
-                  (.artifact.version // "-" | esc),
-                  ( ( .vulnerability.fix.versions // [] )
-                    | if length == 0 then "-"
-                      else join(", ") end | esc ),
-                  (.artifact.type // "-" | esc),
-                  (.vulnerability.id // "-" | esc),
-                  (.vulnerability.severity // "-" | esc),
-                  epss_pct,
-                  risk_fmt
-                ] | "| " + join(" | ") + " |"
-              ' grype-results.json
-            } >> "$GITHUB_STEP_SUMMARY"
+          summary-title: 'Grype Vulnerability Scan'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          permit-fail: ${{ vars.NO_BLOCK_AUDIT_FAIL == 'true' }}
 
   build-zip:
     name: 'Build Integration ZIP'
