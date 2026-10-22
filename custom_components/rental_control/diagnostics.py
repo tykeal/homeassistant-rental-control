@@ -11,16 +11,17 @@ report without a round trip.
 
 Door codes are secrets and never appear in the payload.  Only the presence
 and the length of a code are reported.  Anything a code can be rebuilt
-from is withheld as well: absolute reservation dates (the ``date_based``
-generator inputs) are reduced to durations, and reservation identity keys
-(the ``static_random`` and collision-resolution seeds) are replaced with
-per-download opaque tokens that preserve joins inside one file.
+from is withheld as well: reservation dates and window durations (the
+``date_based`` generator inputs) and reservation identity keys (the
+``static_random`` and collision-resolution seeds).  Identities become
+per-download opaque tokens, so every join inside one file still works.
 
 Guest-identifying text (calendar summaries, slot names, Keymaster slot
-name states, booking references and calendar UIDs), free-form operation
-error messages that can echo a submitted PIN back from a failed service
-call, and the calendar URL are redacted because Home Assistant diagnostics
-are routinely pasted into public issue trackers.
+name states, booking references, calendar UIDs and free-form slot
+exclusion notes), operation error messages that can echo a submitted PIN
+back from a failed service call, and the calendar URL are redacted because
+Home Assistant diagnostics are routinely pasted into public issue
+trackers.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from datetime import datetime
 import hashlib
 import secrets
 from typing import Any
+from typing import cast
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
@@ -87,6 +89,7 @@ TO_REDACT: frozenset[str] = frozenset(
         "name_state",
         "pin",
         "preferred_code",
+        "reason",
         "slot_code",
         "slot_name",
         "start",
@@ -126,7 +129,8 @@ async def async_get_config_entry_diagnostics(
         },
         "config": _config_diagnostics(entry, coordinator),
         "excluded_slots": [
-            {"slot": slot, "reason": exclusions[slot]} for slot in sorted(exclusions)
+            {"slot": slot, "reason_present": exclusions[slot] is not None}
+            for slot in sorted(exclusions)
         ],
         "allocator": allocator.diagnostics if allocator is not None else None,
         "reconciliation": (
@@ -263,6 +267,7 @@ def _slot_diagnostics(
     if not callable(observe):
         return None
     desired, persisted, retries = _slot_context(coordinator)
+    windows = _reservation_windows(coordinator)
     rows: list[dict[str, Any]] = []
     for slot in observe():
         code = getattr(slot, "actual_code", None)
@@ -280,8 +285,9 @@ def _slot_diagnostics(
                 "date_range_enabled": slot.date_range_enabled,
                 "actual_window_set": slot.actual_start is not None
                 and slot.actual_end is not None,
-                "actual_window_hours": _window_hours(
-                    slot.actual_start, slot.actual_end
+                "actual_window_matches_desired": _windows_match(
+                    (slot.actual_start, slot.actual_end),
+                    windows.get(desired.get(slot.slot, "")),
                 ),
                 "desired_identity_key": desired.get(
                     slot.slot, slot.desired_identity_key
@@ -348,11 +354,10 @@ def _reservation_diagnostics(coordinator: Any | None) -> list[dict[str, Any]] | 
                 "identity_key": identity_key,
                 "slot_name_length": len(res.slot_name or ""),
                 "display_slot_name_length": len(res.display_slot_name or ""),
-                "window_hours": _window_hours(res.start, res.end),
-                "buffered_window_hours": _window_hours(
-                    res.buffered_start, res.buffered_end
-                ),
-                "window_state": _window_state(res.buffered_start, res.buffered_end),
+                "window_set": isinstance(res.start, datetime)
+                and isinstance(res.end, datetime),
+                "buffer_applied": (res.buffered_start, res.buffered_end)
+                != (res.start, res.end),
                 "code_issued": code is not None,
                 "code_length": len(code) if code else 0,
                 "code_source": res.code_source,
@@ -371,29 +376,36 @@ def _reservation_diagnostics(coordinator: Any | None) -> list[dict[str, Any]] | 
     return rows
 
 
-def _window_hours(start: datetime | None, end: datetime | None) -> float | None:
-    """Return the length of a window in hours, or ``None``.
+def _reservation_windows(
+    coordinator: Any,
+) -> dict[str, tuple[datetime | None, datetime | None]]:
+    """Return each reservation's buffered window, for internal comparison."""
+    reservations = getattr(coordinator, "_latest_res_by_key", None)
+    if not isinstance(reservations, dict):
+        return {}
+    return {
+        identity_key: (res.buffered_start, res.buffered_end)
+        for identity_key, res in reservations.items()
+    }
 
-    Absolute reservation dates are never exported.
-    ``codegen.generate_date_based_code`` derives the whole code from the
-    start date, the end date and the code length, so publishing the dates
-    beside the code length would publish the code.  A duration carries the
-    triage signal without the generator inputs.
+
+def _windows_match(
+    observed: tuple[datetime | None, datetime | None],
+    desired: tuple[datetime | None, datetime | None] | None,
+) -> bool | None:
+    """Return whether an observed slot window equals the desired window.
+
+    Neither window is exported.  ``codegen.generate_date_based_code``
+    derives the whole code from the start date, the end date and the code
+    length, and even a duration leaks those dates once joined with the
+    exported check-in and check-out times and an active stay.  Comparing
+    the windows here keeps the triage signal — "the lock is programmed for
+    the wrong dates" — without exporting any timing material.
     """
-    if not isinstance(start, datetime) or not isinstance(end, datetime):
+    if desired is None:
         return None
-    return round((end - start).total_seconds() / 3600, 2)
-
-
-def _window_state(start: datetime | None, end: datetime | None) -> str | None:
-    """Return whether a window is in the past, active, or in the future."""
-    if not isinstance(start, datetime) or not isinstance(end, datetime):
+    if not all(isinstance(value, datetime) for value in (*observed, *desired)):
         return None
-    now = dt_util.utcnow()
-    if start.tzinfo is None or end.tzinfo is None:
-        now = now.replace(tzinfo=None)
-    if now < start:
-        return "future"
-    if now > end:
-        return "past"
-    return "active"
+    return tuple(
+        dt_util.as_utc(cast("datetime", value)) for value in observed
+    ) == tuple(dt_util.as_utc(cast("datetime", value)) for value in desired)

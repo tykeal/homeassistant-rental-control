@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from datetime import timedelta
 from datetime import timezone as dt_timezone
 import json
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
 
+from freezegun import freeze_time
 from homeassistant.components.diagnostics.const import REDACTED
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.json import ExtendedJSONEncoder
@@ -203,7 +205,7 @@ async def test_diagnostics_report_allocator_and_slot_state(
     assert result["config"]["max_events"] == 3
     assert result["config"]["code_generation"] == "date_based"
     assert result["config"]["lockname"] == "front_door"
-    assert result["excluded_slots"] == [{"slot": 11, "reason": "maintenance"}]
+    assert result["excluded_slots"] == [{"slot": 11, "reason_present": True}]
 
     slots = {row["slot"]: row for row in result["slots"]}
     assert slots[10]["status"] == "occupied"
@@ -228,13 +230,12 @@ async def test_diagnostics_report_allocator_and_slot_state(
     assert reservation["code_length"] == len(SECRET_CODE)
     assert reservation["code_source"] == "allocated"
     assert reservation["desired_slot"] == 10
-    assert reservation["window_hours"] == 91.0
-    assert reservation["buffered_window_hours"] == 91.0
-    assert reservation["window_state"] in {"past", "active", "future"}
+    assert reservation["window_set"] is True
+    assert reservation["buffer_applied"] is False
     assert "start" not in reservation
     assert "end" not in reservation
     assert slots[10]["actual_window_set"] is True
-    assert slots[10]["actual_window_hours"] == 91.0
+    assert slots[10]["actual_window_matches_desired"] is True
 
 
 async def test_diagnostics_never_leak_codes_or_guest_names(
@@ -354,3 +355,104 @@ async def test_collision_resolved_code_seed_is_not_exported(
     assert "identity-b" not in serialized
     assert collision_code not in serialized
     assert len(result["allocator"]["records"]) == 2
+
+
+async def test_exclusion_notes_are_redacted(hass: HomeAssistant) -> None:
+    """A free-form exclusion note never reaches the payload."""
+    note = f"Held for {GUEST_NAME}; temporary PIN {SECRET_CODE}"
+    entry = _entry(hass)
+    hass.config_entries.async_update_entry(
+        entry,
+        data={**entry.data, "excluded_slots": [{"slot": 11, "reason": note}]},
+    )
+    _install_coordinator(hass, entry)
+    await _allocator(hass)
+
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    serialized = json.dumps(result, cls=ExtendedJSONEncoder)
+
+    assert note not in serialized
+    assert GUEST_NAME not in serialized
+    assert SECRET_CODE not in serialized
+    assert result["excluded_slots"] == [{"slot": 11, "reason_present": True}]
+    nested = result["allocator"]["excluded_slots"][entry.entry_id]
+    assert nested == [{"slot": 11, "reason": REDACTED}]
+
+
+def _one_night_coordinator(
+    hass: HomeAssistant, entry: MockConfigEntry, start: datetime
+) -> None:
+    """Install a coordinator for a single active one-night stay."""
+    end = start + timedelta(hours=19)
+    reservation = Reservation(
+        identity_key="identity-a",
+        start=start,
+        end=end,
+        buffered_start=start,
+        buffered_end=end,
+        summary=GUEST_NAME,
+        slot_name=GUEST_NAME,
+        display_slot_name=f"RC {GUEST_NAME}",
+        slot_code=generate_date_based_code(4, start, end),
+        desired_slot=10,
+        protected_active=True,
+        code_source="allocated",
+    )
+    slot = classify_slot(
+        KeymasterSlotSnapshot(
+            slot=10,
+            name_state=f"RC {GUEST_NAME}",
+            pin_state=reservation.slot_code,
+            use_date_range_state="on",
+            enabled_state="on",
+            start_state=start.isoformat(),
+            end_state=end.isoformat(),
+        ),
+        None,
+    )[0]
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        COORDINATOR: SimpleNamespace(
+            lockname="front_door",
+            timezone="UTC",
+            latest_reconciliation_diagnostics={"selected": {"identity-a": 10}},
+            latest_plan=SimpleNamespace(selected={"identity-a": 10}),
+            event_overrides=SimpleNamespace(
+                persisted_mappings={"identity-a": {"slot": 10}},
+                _retry_counts={},
+            ),
+            _observe_managed_slots=lambda: [slot],
+            _latest_res_by_key={"identity-a": reservation},
+        )
+    }
+
+
+@freeze_time("2026-10-22T20:00:00+00:00")
+async def test_active_one_night_stay_is_not_reconstructable(
+    hass: HomeAssistant,
+) -> None:
+    """Two different active one-night stays produce the same timings."""
+    october = datetime(2026, 10, 22, 16, 0, tzinfo=dt_timezone.utc)
+    entry = _entry(hass)
+    _one_night_coordinator(hass, entry, october)
+    october_result = await async_get_config_entry_diagnostics(hass, entry)
+    october_dump = json.dumps(october_result, cls=ExtendedJSONEncoder)
+
+    _one_night_coordinator(
+        hass, entry, datetime(2026, 11, 5, 16, 0, tzinfo=dt_timezone.utc)
+    )
+    november_result = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert generate_date_based_code(4, october, october + timedelta(hours=19)) == "2223"
+    assert "2223" not in october_dump
+    assert _without_identity(october_result["slots"][0]) == _without_identity(
+        november_result["slots"][0]
+    )
+    assert _without_identity(october_result["reservations"][0]) == _without_identity(
+        november_result["reservations"][0]
+    )
+
+
+def _without_identity(row: dict[str, Any]) -> dict[str, Any]:
+    """Return a row stripped of its per-download identity tokens."""
+    tokens = {"identity_key", "desired_identity_key", "persisted_identity_key"}
+    return {key: value for key, value in row.items() if key not in tokens}
