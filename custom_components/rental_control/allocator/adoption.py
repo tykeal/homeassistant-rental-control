@@ -211,17 +211,24 @@ def _release_observed_alias(
     allocator: DoorCodeAllocator,
     request: AdoptionRequest,
 ) -> None:
-    """Remove this slot's observed alias before the identity takes the code.
+    """Remove this slot's observed aliases before the identity takes the code.
 
-    The alias is a placeholder for a code this identity holds physically
+    An alias is a placeholder for a code this identity holds physically
     but does not own. Adoption records that ownership properly, so the
     placeholder must give way even when it names the same code: leaving
     both on one record would read as an adoption conflict and block the
     release of the code for good.
+
+    Earlier fingerprints of the same booking leave placeholders too, and
+    ``_coalesce_fingerprint_owner`` only clears them when the historical
+    identity also held a real allocation. Sweep the whole history here so
+    a suppressed slot that changes fingerprint before adoption resumes
+    cannot leave a stale placeholder behind.
     """
-    alias_key = issuance.observed_alias_key(request)
-    if allocator._registry.code_for_identity(alias_key) is not None:
-        allocator._registry.release(alias_key)
+    for identity_key in (request.identity_key, *request.fingerprint_history):
+        alias_key = issuance.observed_alias_key(request, identity_key=identity_key)
+        if allocator._registry.code_for_identity(alias_key) is not None:
+            allocator._registry.release(alias_key)
 
 
 def _coalesce_fingerprint_owner(
