@@ -11,9 +11,11 @@ report without a round trip.
 
 Door codes are secrets and never appear in the payload.  Only the presence
 and the length of a code are reported.  Guest-identifying text (calendar
-summaries, slot names, Keymaster slot name states) and the calendar URL are
-redacted because Home Assistant diagnostics are routinely pasted into public
-issue trackers.
+summaries, slot names, Keymaster slot name states, booking references and
+calendar UIDs), free-form operation error messages that can echo a
+submitted PIN back from a failed service call, and the calendar URL are
+redacted because Home Assistant diagnostics are routinely pasted into
+public issue trackers.
 """
 
 from __future__ import annotations
@@ -52,21 +54,28 @@ from .const import COORDINATOR
 from .const import DOMAIN
 from .const import VERSION
 
-#: Keys whose values are either secret (door codes) or personally
-#: identifying (guest names).  Applied to the whole payload as defence in
-#: depth, on top of each projection only emitting safe fields.
+#: Keys whose values are secret (door codes), free-form text that can echo
+#: a submitted PIN or guest name back from a failed service call, or
+#: personally identifying (guest names, booking references, calendar UIDs
+#: that double as the ``static_random`` code seed).  Applied to the whole
+#: payload as defence in depth, on top of each projection only emitting
+#: safe fields.
 TO_REDACT: frozenset[str] = frozenset(
     {
         "actual_code",
         "actual_name",
+        "booking_aliases",
         "code",
         "display_slot_name",
+        "last_error",
+        "last_slot_errors",
         "name_state",
         "pin",
         "preferred_code",
         "slot_code",
         "slot_name",
         "summary",
+        "uid_aliases",
         "url",
     }
 )
@@ -157,12 +166,20 @@ def _config_diagnostics(entry: ConfigEntry, coordinator: Any | None) -> dict[str
 def _slot_diagnostics(
     coordinator: Any | None, excluded: set[int]
 ) -> list[dict[str, Any]] | None:
-    """Return per-slot Keymaster observations without any door code."""
+    """Return per-slot Keymaster observations without any door code.
+
+    ``_observe_managed_slots`` classifies fresh physical state only, so the
+    identity and retry fields it leaves at their defaults are filled in
+    from the latest plan, the persisted Store mappings and the
+    :class:`EventOverrides` retry counters instead of reporting ``None``
+    and ``0`` as if they were observed facts.
+    """
     if coordinator is None:
         return None
     observe = getattr(coordinator, "_observe_managed_slots", None)
     if not callable(observe):
         return None
+    desired, persisted, retries = _slot_context(coordinator)
     rows: list[dict[str, Any]] = []
     for slot in observe():
         code = getattr(slot, "actual_code", None)
@@ -180,14 +197,54 @@ def _slot_diagnostics(
                 "date_range_enabled": slot.date_range_enabled,
                 "actual_start": _isoformat(slot.actual_start),
                 "actual_end": _isoformat(slot.actual_end),
-                "desired_identity_key": slot.desired_identity_key,
-                "persisted_identity_key": slot.persisted_identity_key,
+                "desired_identity_key": desired.get(
+                    slot.slot, slot.desired_identity_key
+                ),
+                "persisted_identity_key": persisted.get(
+                    slot.slot, slot.persisted_identity_key
+                ),
                 "blocked_reason": slot.blocked_reason,
-                "retry_count": slot.retry_count,
-                "last_error": slot.last_error,
+                "retry_count": retries.get(slot.slot, slot.retry_count),
+                "last_error_present": bool(slot.last_error),
             }
         )
     return rows
+
+
+def _slot_context(
+    coordinator: Any,
+) -> tuple[dict[int, str], dict[int, str], dict[int, int]]:
+    """Return per-slot desired, persisted and retry state by slot number."""
+    desired: dict[int, str] = {}
+    plan = getattr(coordinator, "latest_plan", None)
+    selected = getattr(plan, "selected", None)
+    if isinstance(selected, dict):
+        desired = {
+            slot: identity_key
+            for identity_key, slot in selected.items()
+            if isinstance(slot, int)
+        }
+
+    persisted: dict[int, str] = {}
+    retries: dict[int, int] = {}
+    overrides = getattr(coordinator, "event_overrides", None)
+    if overrides is not None:
+        mappings = getattr(overrides, "persisted_mappings", None)
+        if isinstance(mappings, dict):
+            for identity_key, mapping in mappings.items():
+                if not isinstance(mapping, dict):
+                    continue
+                slot = mapping.get("slot")
+                if isinstance(slot, int):
+                    persisted[slot] = identity_key
+        counts = getattr(overrides, "_retry_counts", None)
+        if isinstance(counts, dict):
+            retries = {
+                slot: count
+                for slot, count in counts.items()
+                if isinstance(slot, int) and isinstance(count, int)
+            }
+    return desired, persisted, retries
 
 
 def _reservation_diagnostics(coordinator: Any | None) -> list[dict[str, Any]] | None:

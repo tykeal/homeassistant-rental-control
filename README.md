@@ -524,8 +524,9 @@ allocator state, the latest reconciliation plan, the observed state of
 every managed Keymaster slot, and the current reservations. You can
 safely attach the file to a public issue. Diagnostics never include a
 door code — only whether a slot holds a code, plus its digit count —
-and the integration redacts the calendar URL, guest names and calendar
-summaries.
+and the integration redacts the calendar URL, guest names, calendar
+summaries, booking references and the free-form text of lock command
+failures.
 
 ## Known issues
 
