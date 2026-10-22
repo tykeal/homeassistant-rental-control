@@ -28,6 +28,7 @@ and sensors for managing rental properties.
     - [INSTALLATION VIA Home Assistant Community Store (HACS)](#installation-via-home-assistant-community-store-hacs)
 - [Setup](#setup)
 - [Reconfiguration](#reconfiguration)
+- [Downloading Diagnostics](#downloading-diagnostics)
 - [Known issues](#known-issues)
 - [Frequently Asked Questions](#frequently-asked-questions)
     - [Why does my calendar events say `Reserved` instead of the guest's name?](#why-does-my-calendar-events-say-reserved-instead-of-the-guests-name)
@@ -510,6 +511,24 @@ integration.](https://my.home-assistant.io/badges/integration.svg)](https://my.h
 for updates every 2 minutes and events refresh around every 30 seconds. To
 force a full update right away, select the `...` menu next to `Configure` and
 select `Reload`
+
+## Downloading Diagnostics
+
+When reporting a problem — especially "the door code was never
+created" — attach a diagnostics download. Open **Settings** >
+**Devices & Services** > **Rental Control**, select the `...` menu next
+to the affected entry and choose **Download diagnostics**.
+
+The file reports the entry configuration, the shared door-code
+allocator state, the latest reconciliation plan, the observed state of
+every managed Keymaster slot, and the current reservations. You can
+safely attach the file to a public issue. Diagnostics never include a
+door code — only whether a slot holds a code, plus its digit count —
+and the integration redacts the calendar URL, guest names, calendar
+summaries, booking references and the free-form text of lock command
+failures and slot exclusion notes. Reservation dates and durations drop
+out entirely and reservation identities become per-download tokens,
+because a code generator can rebuild a code from either one.
 
 ## Known issues
 
