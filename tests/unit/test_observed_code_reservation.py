@@ -13,6 +13,7 @@ from typing import cast
 from homeassistant.util import dt as dt_util
 import pytest
 
+from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import slot_exclusions
@@ -37,6 +38,7 @@ def _inert_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(slot_exclusions, "async_dismiss", lambda *_a, **_k: None)
     monkeypatch.setattr(code_allocation, "async_create", lambda *_a, **_k: None)
     monkeypatch.setattr(code_allocation, "async_dismiss", lambda *_a, **_k: None)
+    monkeypatch.setattr(allocator_module, "async_create", lambda *_a, **_k: None)
 
 
 def _hass() -> Any:
@@ -272,3 +274,46 @@ async def test_observed_reservation_spans_entries_sharing_a_lock(
 
     assert peer.slot_code is not None
     assert peer.slot_code != "123456"
+
+
+async def test_adoption_supersedes_this_slot_s_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adopting the reserved code replaces its placeholder, not joins it.
+
+    When the gate withholds the replacement allocation, the suppressed
+    identity owns nothing but its observed code is reserved. Once the
+    suppression and the gate clear, the unchanged code is adopted by that
+    same identity and slot, and the adoption must take the placeholder
+    over: two owners on one record would make every later sweep report an
+    adoption conflict and never release the code.
+    """
+    allocator = _allocator()
+    target = _reservation("identity-a", "Target Guest", "3333")
+    target_slot = _coded_slot(1, "1111", "Target Guest")
+    target_slot.persisted_identity_key = "identity-a"
+    unreadable = ManagedSlot(slot=2, managed=True, status=SlotStatus.UNKNOWN)
+
+    await _resolve(
+        allocator,
+        monkeypatch,
+        [target_slot, unreadable],
+        [target],
+        suppression=ReissueSuppression(frozenset({"identity-a"}), frozenset()),
+    )
+
+    assert _owner_keys(allocator, "1111") == {"identity-a:observed:entry-a:front:1"}
+    assert target.slot_code is None
+
+    adopting = _reservation("identity-a", "Target Guest", "3333")
+    adopted_slot = _coded_slot(1, "1111", "Target Guest")
+    adopted_slot.persisted_identity_key = "identity-a"
+    await _resolve(allocator, monkeypatch, [adopted_slot], [adopting])
+
+    assert _owner_keys(allocator, "1111") == {"identity-a"}
+    assert allocator._registry.conflicts() == []
+
+    cleared_slot = ManagedSlot(slot=1, managed=True, status=SlotStatus.FREE)
+    await _resolve(allocator, monkeypatch, [cleared_slot], [])
+
+    assert allocator._registry.records.get("1111") is None

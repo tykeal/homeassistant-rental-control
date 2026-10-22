@@ -76,7 +76,7 @@ def adopt_unlocked(
             reason="identity_code_mismatch",
         )
 
-    _release_moved_observed_alias(allocator, request)
+    _release_observed_alias(allocator, request)
     owner = AllocationOwner(
         entry_id=request.entry_id,
         identity_key=request.identity_key,
@@ -204,6 +204,23 @@ def _release_moved_observed_alias(
     alias_key = issuance.observed_alias_key(request)
     owned_code = allocator._registry.code_for_identity(alias_key)
     if owned_code is not None and owned_code != request.code:
+        allocator._registry.release(alias_key)
+
+
+def _release_observed_alias(
+    allocator: DoorCodeAllocator,
+    request: AdoptionRequest,
+) -> None:
+    """Remove this slot's observed alias before the identity takes the code.
+
+    The alias is a placeholder for a code this identity holds physically
+    but does not own. Adoption records that ownership properly, so the
+    placeholder must give way even when it names the same code: leaving
+    both on one record would read as an adoption conflict and block the
+    release of the code for good.
+    """
+    alias_key = issuance.observed_alias_key(request)
+    if allocator._registry.code_for_identity(alias_key) is not None:
         allocator._registry.release(alias_key)
 
 
