@@ -360,3 +360,98 @@ async def test_adoption_after_a_fingerprint_change_clears_aliases(
     await _resolve(allocator, monkeypatch, [cleared_slot], [])
 
     assert allocator._registry.records.get("1111") is None
+
+
+async def test_mismatched_adoption_clears_the_earlier_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A re-fingerprinted booking replaces its own stale placeholder.
+
+    A gated suppressed cycle leaves only the first fingerprint's
+    placeholder. A later cycle re-fingerprints the booking and issues it
+    a replacement while the lock still shows the old code, so adoption
+    takes the mismatch path and records the new fingerprint's
+    placeholder. The stale one must go, or both sit on one record and
+    every later sweep reports an adoption conflict.
+    """
+    allocator = _allocator()
+    target = _reservation("identity-a", "Target Guest", "3333")
+    target_slot = _coded_slot(1, "1111", "Target Guest")
+    target_slot.persisted_identity_key = "identity-a"
+    unreadable = ManagedSlot(slot=2, managed=True, status=SlotStatus.UNKNOWN)
+    suppressed = ReissueSuppression(frozenset({"identity-a"}), frozenset())
+
+    await _resolve(
+        allocator,
+        monkeypatch,
+        [target_slot, unreadable],
+        [target],
+        suppression=suppressed,
+    )
+
+    assert _owner_keys(allocator, "1111") == {"identity-a:observed:entry-a:front:1"}
+
+    renamed = _reservation("identity-b", "Target Guest", "3333")
+    renamed.fingerprint_history = {"identity-a"}
+    renamed_slot = _coded_slot(1, "1111", "Target Guest")
+    renamed_slot.persisted_identity_key = "identity-b"
+    await _resolve(
+        allocator,
+        monkeypatch,
+        [renamed_slot],
+        [renamed],
+        suppression=ReissueSuppression(frozenset({"identity-b"}), frozenset()),
+    )
+
+    replacement = renamed.slot_code
+    assert replacement is not None and replacement != "1111"
+
+    stale = _reservation("identity-b", "Target Guest", replacement)
+    stale.fingerprint_history = {"identity-a"}
+    stale_slot = _coded_slot(1, "1111", "Target Guest")
+    stale_slot.persisted_identity_key = "identity-b"
+    await _resolve(allocator, monkeypatch, [stale_slot], [stale])
+
+    assert _owner_keys(allocator, "1111") == {"identity-b:observed:entry-a:front:1"}
+    assert allocator._registry.conflicts() == []
+
+
+async def test_adoption_clears_the_alias_of_a_vacated_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adopting a reserved code drops the alias of the slot it left.
+
+    A reservation can be moved to another slot between cycles. Adoption
+    records the booking as the owner of the code at its new slot, so the
+    placeholder naming that same code at the old slot is redundant and
+    must go rather than linger as a second owner.
+    """
+    allocator = _allocator()
+    target = _reservation("identity-a", "Target Guest", "3333")
+    target_slot = _coded_slot(1, "1111", "Target Guest")
+    target_slot.persisted_identity_key = "identity-a"
+    unreadable = ManagedSlot(slot=2, managed=True, status=SlotStatus.UNKNOWN)
+
+    await _resolve(
+        allocator,
+        monkeypatch,
+        [target_slot, unreadable],
+        [target],
+        suppression=ReissueSuppression(frozenset({"identity-a"}), frozenset()),
+    )
+
+    assert _owner_keys(allocator, "1111") == {"identity-a:observed:entry-a:front:1"}
+
+    moved = _reservation("identity-a", "Target Guest", "3333")
+    moved_slot = _coded_slot(2, "1111", "Target Guest")
+    moved_slot.persisted_identity_key = "identity-a"
+    vacated = ManagedSlot(slot=1, managed=True, status=SlotStatus.FREE)
+    await _resolve(allocator, monkeypatch, [vacated, moved_slot], [moved])
+
+    assert _owner_keys(allocator, "1111") == {"identity-a"}
+    assert allocator._registry.conflicts() == []
+
+    cleared = ManagedSlot(slot=2, managed=True, status=SlotStatus.FREE)
+    await _resolve(allocator, monkeypatch, [vacated, cleared], [])
+
+    assert allocator._registry.records.get("1111") is None
