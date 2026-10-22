@@ -17,7 +17,9 @@ from homeassistant.helpers.json import ExtendedJSONEncoder
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
+from custom_components.rental_control.allocator.candidates import candidate_codes
 from custom_components.rental_control.allocator.models import AllocationRequest
+from custom_components.rental_control.codegen import generate_date_based_code
 from custom_components.rental_control.const import ALLOCATOR
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
@@ -194,7 +196,8 @@ async def test_diagnostics_report_allocator_and_slot_state(
     result = await async_get_config_entry_diagnostics(hass, entry)
 
     assert result["allocator"]["record_count"] == 1
-    assert result["reconciliation"]["selected"] == {"identity-a": 10}
+    token = result["reservations"][0]["identity_key"]
+    assert result["reconciliation"]["selected"] == {token: 10}
     assert result["config"]["code_length"] == 6
     assert result["config"]["start_slot"] == 10
     assert result["config"]["max_events"] == 3
@@ -213,20 +216,25 @@ async def test_diagnostics_report_allocator_and_slot_state(
     assert slots[12]["blocked_reason"] == "unreadable"
     assert slots[10]["last_error_present"] is True
     assert slots[11]["last_error_present"] is False
-    assert slots[10]["desired_identity_key"] == "identity-a"
-    assert slots[10]["persisted_identity_key"] == "identity-a"
+    assert slots[10]["desired_identity_key"] == token
+    assert slots[10]["persisted_identity_key"] == token
     assert slots[10]["retry_count"] == 2
     assert slots[11]["desired_identity_key"] is None
     assert slots[11]["retry_count"] == 0
 
     reservation = result["reservations"][0]
-    assert reservation["identity_key"] == "identity-a"
+    assert reservation["identity_key"] == token
     assert reservation["code_issued"] is True
     assert reservation["code_length"] == len(SECRET_CODE)
     assert reservation["code_source"] == "allocated"
     assert reservation["desired_slot"] == 10
-    assert reservation["start"] == "2026-05-01T16:00:00+00:00"
-    assert reservation["end"] == "2026-05-05T11:00:00+00:00"
+    assert reservation["window_hours"] == 91.0
+    assert reservation["buffered_window_hours"] == 91.0
+    assert reservation["window_state"] in {"past", "active", "future"}
+    assert "start" not in reservation
+    assert "end" not in reservation
+    assert slots[10]["actual_window_set"] is True
+    assert slots[10]["actual_window_hours"] == 91.0
 
 
 async def test_diagnostics_never_leak_codes_or_guest_names(
@@ -253,6 +261,8 @@ async def test_diagnostics_never_leak_codes_or_guest_names(
     assert result["reconciliation"]["reservations"][0]["booking_aliases"] == REDACTED
     assert "actual_code" not in serialized
     assert "slot_code" not in serialized
+    assert "2026-05-01" not in serialized
+    assert "identity-a" not in serialized
 
 
 async def test_diagnostics_handle_missing_coordinator(hass: HomeAssistant) -> None:
@@ -283,3 +293,64 @@ async def test_slot_rows_do_not_invent_identity_state(hass: HomeAssistant) -> No
     assert slots[10]["persisted_identity_key"] is None
     assert slots[10]["retry_count"] == 0
     assert slots[10]["code_present"] is True
+
+
+async def test_identity_keys_become_opaque_tokens(hass: HomeAssistant) -> None:
+    """Identity keys are tokenized consistently so joins still work."""
+    entry = _entry(hass)
+    _install_coordinator(hass, entry)
+    await _allocator(hass)
+
+    result = await async_get_config_entry_diagnostics(hass, entry)
+
+    token = result["reservations"][0]["identity_key"]
+    assert token.startswith("identity-")
+    assert "identity-a" != token
+    assert result["slots"][0]["desired_identity_key"] == token
+    assert result["slots"][0]["persisted_identity_key"] == token
+    assert result["allocator"]["records"][0]["owners"][0]["identity_key"] == token
+    assert list(result["reconciliation"]["selected"]) == [token]
+
+
+async def test_date_based_code_cannot_be_reconstructed(hass: HomeAssistant) -> None:
+    """A genuinely date-generated code is not recoverable from the payload."""
+    entry = _entry(hass)
+    coordinator = _install_coordinator(hass, entry)
+    reservation = coordinator._latest_res_by_key["identity-a"]
+    generated = generate_date_based_code(6, reservation.start, reservation.end)
+    reservation.slot_code = generated
+
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    serialized = json.dumps(result, cls=ExtendedJSONEncoder)
+
+    assert generated not in serialized
+    assert reservation.start.strftime("%Y") not in serialized
+    assert reservation.start.isoformat() not in serialized
+    assert reservation.buffered_end.isoformat() not in serialized
+
+
+async def test_collision_resolved_code_seed_is_not_exported(
+    hass: HomeAssistant,
+) -> None:
+    """The collision-resolution seed never leaves with the payload."""
+    entry = _entry(hass)
+    _install_coordinator(hass, entry)
+    allocator = await _allocator(hass)
+    await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-diag",
+            identity_key="identity-b",
+            preferred_code=SECRET_CODE,
+            code_length=len(SECRET_CODE),
+            lockname="front_door",
+            slot=11,
+        )
+    )
+    collision_code = next(candidate_codes("identity-b", len(SECRET_CODE)))
+
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    serialized = json.dumps(result, cls=ExtendedJSONEncoder)
+
+    assert "identity-b" not in serialized
+    assert collision_code not in serialized
+    assert len(result["allocator"]["records"]) == 2

@@ -526,7 +526,9 @@ safely attach the file to a public issue. Diagnostics never include a
 door code — only whether a slot holds a code, plus its digit count —
 and the integration redacts the calendar URL, guest names, calendar
 summaries, booking references and the free-form text of lock command
-failures.
+failures. Reservation dates become durations and reservation identities
+become per-download tokens, because a code generator can rebuild a code
+from either one.
 
 ## Known issues
 

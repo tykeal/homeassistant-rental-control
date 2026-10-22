@@ -10,17 +10,25 @@ current reservation set so that a maintainer can triage a withheld-issuance
 report without a round trip.
 
 Door codes are secrets and never appear in the payload.  Only the presence
-and the length of a code are reported.  Guest-identifying text (calendar
-summaries, slot names, Keymaster slot name states, booking references and
-calendar UIDs), free-form operation error messages that can echo a
-submitted PIN back from a failed service call, and the calendar URL are
-redacted because Home Assistant diagnostics are routinely pasted into
-public issue trackers.
+and the length of a code are reported.  Anything a code can be rebuilt
+from is withheld as well: absolute reservation dates (the ``date_based``
+generator inputs) are reduced to durations, and reservation identity keys
+(the ``static_random`` and collision-resolution seeds) are replaced with
+per-download opaque tokens that preserve joins inside one file.
+
+Guest-identifying text (calendar summaries, slot names, Keymaster slot
+name states, booking references and calendar UIDs), free-form operation
+error messages that can echo a submitted PIN back from a failed service
+call, and the calendar URL are redacted because Home Assistant diagnostics
+are routinely pasted into public issue trackers.
 """
 
 from __future__ import annotations
 
+from collections.abc import KeysView
 from datetime import datetime
+import hashlib
+import secrets
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -29,6 +37,7 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .allocator.exclusions import parse_excluded_slots
 from .allocator.singleton import get_allocator
@@ -63,10 +72,16 @@ from .const import VERSION
 TO_REDACT: frozenset[str] = frozenset(
     {
         "actual_code",
+        "actual_end",
         "actual_name",
+        "actual_start",
         "booking_aliases",
+        "buffered_end",
+        "buffered_start",
         "code",
         "display_slot_name",
+        "end",
+        "end_state",
         "last_error",
         "last_slot_errors",
         "name_state",
@@ -74,6 +89,8 @@ TO_REDACT: frozenset[str] = frozenset(
         "preferred_code",
         "slot_code",
         "slot_name",
+        "start",
+        "start_state",
         "summary",
         "uid_aliases",
         "url",
@@ -120,8 +137,74 @@ async def async_get_config_entry_diagnostics(
         "slots": _slot_diagnostics(coordinator, set(exclusions)),
         "reservations": _reservation_diagnostics(coordinator),
     }
-    redacted: dict[str, Any] = async_redact_data(payload, TO_REDACT)
+    masker = _IdentityMasker()
+    masker.collect(coordinator, allocator)
+    redacted: dict[str, Any] = async_redact_data(masker.scrub(payload), TO_REDACT)
     return redacted
+
+
+class _IdentityMasker:
+    """Replace reservation identity keys with per-download opaque tokens.
+
+    ``allocator/candidates.py::candidate_codes`` derives its deterministic
+    collision-resolution walk from the identity key and the code length
+    alone, so publishing an identity key next to a code length would let a
+    reader reproduce the sequence that issued the code.  Tokens are salted
+    per download, which keeps every join inside one diagnostics file intact
+    while exporting nothing a code can be rebuilt from.
+    """
+
+    def __init__(self) -> None:
+        """Create a masker with a fresh per-download salt."""
+        self._salt = secrets.token_hex(16)
+        self._tokens: dict[str, str] = {}
+
+    def collect(self, coordinator: Any | None, allocator: Any | None) -> None:
+        """Record every identity key reachable from this download."""
+        if coordinator is not None:
+            self._add_all(getattr(coordinator, "_latest_res_by_key", None))
+            plan = getattr(coordinator, "latest_plan", None)
+            self._add_all(getattr(plan, "selected", None))
+            overrides = getattr(coordinator, "event_overrides", None)
+            self._add_all(getattr(overrides, "persisted_mappings", None))
+        registry = getattr(allocator, "_registry", None)
+        for record in getattr(registry, "records", {}).values():
+            for owner in getattr(record, "owners", ()):
+                self._add(getattr(owner, "identity_key", None))
+
+    def scrub(self, value: Any) -> Any:
+        """Return *value* with every known identity key tokenized."""
+        if isinstance(value, dict):
+            return {self.scrub(key): self.scrub(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self.scrub(item) for item in value]
+        if isinstance(value, str):
+            return self._mask_text(value)
+        return value
+
+    def _add_all(self, identities: Any) -> None:
+        """Record identity keys from a mapping or iterable of keys."""
+        if isinstance(identities, dict):
+            identities = identities.keys()
+        if not isinstance(identities, (list, set, frozenset, tuple, KeysView)):
+            return
+        for identity in identities:
+            self._add(identity)
+
+    def _add(self, identity: Any) -> None:
+        """Record one identity key and mint its token."""
+        if not isinstance(identity, str) or not identity:
+            return
+        if identity not in self._tokens:
+            digest = hashlib.sha256(f"{self._salt}{identity}".encode()).hexdigest()
+            self._tokens[identity] = f"identity-{digest[:12]}"
+
+    def _mask_text(self, text: str) -> str:
+        """Replace any embedded identity key inside *text* with its token."""
+        for identity in sorted(self._tokens, key=len, reverse=True):
+            if identity in text:
+                text = text.replace(identity, self._tokens[identity])
+        return text
 
 
 def _coordinator_for(hass: HomeAssistant, entry: ConfigEntry) -> Any | None:
@@ -195,8 +278,11 @@ def _slot_diagnostics(
                 "name_present": bool(slot.actual_name),
                 "enabled": slot.enabled,
                 "date_range_enabled": slot.date_range_enabled,
-                "actual_start": _isoformat(slot.actual_start),
-                "actual_end": _isoformat(slot.actual_end),
+                "actual_window_set": slot.actual_start is not None
+                and slot.actual_end is not None,
+                "actual_window_hours": _window_hours(
+                    slot.actual_start, slot.actual_end
+                ),
                 "desired_identity_key": desired.get(
                     slot.slot, slot.desired_identity_key
                 ),
@@ -262,10 +348,11 @@ def _reservation_diagnostics(coordinator: Any | None) -> list[dict[str, Any]] | 
                 "identity_key": identity_key,
                 "slot_name_length": len(res.slot_name or ""),
                 "display_slot_name_length": len(res.display_slot_name or ""),
-                "start": _isoformat(res.start),
-                "end": _isoformat(res.end),
-                "buffered_start": _isoformat(res.buffered_start),
-                "buffered_end": _isoformat(res.buffered_end),
+                "window_hours": _window_hours(res.start, res.end),
+                "buffered_window_hours": _window_hours(
+                    res.buffered_start, res.buffered_end
+                ),
+                "window_state": _window_state(res.buffered_start, res.buffered_end),
                 "code_issued": code is not None,
                 "code_length": len(code) if code else 0,
                 "code_source": res.code_source,
@@ -284,6 +371,29 @@ def _reservation_diagnostics(coordinator: Any | None) -> list[dict[str, Any]] | 
     return rows
 
 
-def _isoformat(value: datetime | None) -> str | None:
-    """Return an ISO-8601 string for *value*, or ``None``."""
-    return value.isoformat() if isinstance(value, datetime) else None
+def _window_hours(start: datetime | None, end: datetime | None) -> float | None:
+    """Return the length of a window in hours, or ``None``.
+
+    Absolute reservation dates are never exported.
+    ``codegen.generate_date_based_code`` derives the whole code from the
+    start date, the end date and the code length, so publishing the dates
+    beside the code length would publish the code.  A duration carries the
+    triage signal without the generator inputs.
+    """
+    if not isinstance(start, datetime) or not isinstance(end, datetime):
+        return None
+    return round((end - start).total_seconds() / 3600, 2)
+
+
+def _window_state(start: datetime | None, end: datetime | None) -> str | None:
+    """Return whether a window is in the past, active, or in the future."""
+    if not isinstance(start, datetime) or not isinstance(end, datetime):
+        return None
+    now = dt_util.utcnow()
+    if start.tzinfo is None or end.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    if now < start:
+        return "future"
+    if now > end:
+        return "past"
+    return "active"
