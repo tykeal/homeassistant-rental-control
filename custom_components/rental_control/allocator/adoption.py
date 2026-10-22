@@ -115,6 +115,56 @@ def adopt_unlocked(
     return AllocationResult(code=request.code, origin=AllocationOrigin.ADOPTED)
 
 
+def reserve_observed_code(
+    allocator: DoorCodeAllocator,
+    request: AdoptionRequest,
+) -> None:
+    """Reserve a suppressed slot's observed code under an alias identity.
+
+    The code is recorded at its own length so that it is unavailable to
+    every entry sharing the lock, without assigning it to any
+    reservation. A code that already has a registry record is left alone,
+    because an existing record already keeps it out of issuance and
+    adding an owner would create a spurious adoption conflict.
+    """
+    if not request.code.isdecimal():
+        return
+    alias_key = issuance.observed_alias_key(request)
+    _release_moved_observed_alias(allocator, request)
+    record = allocator._registry.records.get(request.code)
+    if record is not None and not any(
+        owner.identity_key == alias_key for owner in record.owners
+    ):
+        return
+    now = datetime.now(UTC).isoformat()
+    owner = AllocationOwner(
+        entry_id=request.entry_id,
+        identity_key=alias_key,
+        origin=AllocationOrigin.ADOPTED,
+        lockname=request.lockname,
+        slot=request.slot,
+        lock_observed=True,
+        first_seen=now,
+        last_seen=now,
+    )
+    reserved = allocator._registry.add_owner(
+        request.code,
+        request.code_length,
+        owner,
+        allocator.code_ref(request.code),
+        now,
+    )
+    if record is None:
+        _LOGGER.info(
+            "Reserved observed code_ref %s for %s at %s:%s because its "
+            "slot is exempt from adoption this cycle",
+            reserved.code_ref,
+            request.entry_id,
+            request.lockname,
+            request.slot,
+        )
+
+
 def _record_mismatched_observed_owner(
     allocator: DoorCodeAllocator,
     request: AdoptionRequest,

@@ -202,6 +202,7 @@ class CycleRequest:
     adoption_complete: bool = True
     forced_reissues: tuple[ForcedReissueDirective, ...] = ()
     excluded_slots: frozenset[int] = frozenset()
+    observed_reservations: tuple[AdoptionRequest, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

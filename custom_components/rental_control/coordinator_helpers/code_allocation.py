@@ -127,6 +127,9 @@ async def async_resolve_codes(
             adoption_complete=adoption_complete,
             forced_reissues=request.forced_reissues,
             excluded_slots=request.excluded_slots,
+            observed_reservations=tuple(
+                getattr(adoptions, "observed_reservations", ())
+            ),
         )
     )
     _apply_adoption_results(allocator, entry_id, reservations, result)
@@ -352,6 +355,7 @@ def build_adoption_requests(
             slot.slot in suppression.slots and reservation.protected_active
         ):
             requests.suppressed_slots.add(slot.slot)
+            _reserve_observed_code(requests, entry_id, lockname, reservation, slot)
             continue
         if reservation.code_rotation_pending:
             _LOGGER.info(
@@ -361,6 +365,7 @@ def build_adoption_requests(
                 slot.slot,
             )
             requests.suppressed_slots.add(slot.slot)
+            _reserve_observed_code(requests, entry_id, lockname, reservation, slot)
             continue
         if not slot.actual_code.isdecimal() or len(slot.actual_code) != code_length:
             _LOGGER.warning(
@@ -383,6 +388,36 @@ def build_adoption_requests(
             )
         )
     return requests
+
+
+def _reserve_observed_code(
+    requests: reissue.AdoptionRequests,
+    entry_id: str,
+    lockname: str,
+    reservation: Reservation,
+    slot: ManagedSlot,
+) -> None:
+    """Hold a suppressed slot's observed code against re-issue elsewhere.
+
+    A suppressed slot is exempt from adoption, so nothing records the code
+    it still holds. Without a reservation the allocator is free to hand
+    that same code to another booking, which would program a duplicate
+    code onto the lock. Non-decimal codes are skipped because the
+    allocator can never produce one, so they cannot collide.
+    """
+    code = slot.actual_code
+    if not code or not code.isdecimal():
+        return
+    requests.observed_reservations.append(
+        AdoptionRequest(
+            entry_id=entry_id,
+            identity_key=reservation.identity_key,
+            code=code,
+            code_length=len(code),
+            lockname=lockname,
+            slot=slot.slot,
+        )
+    )
 
 
 def build_allocation_requests(
