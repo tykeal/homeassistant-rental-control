@@ -364,6 +364,7 @@ def build_adoption_requests(
                 reservation.identity_key,
                 slot.slot,
             )
+            requests.suppressed_slots.add(slot.slot)
             continue
         requests.append(
             AdoptionRequest(

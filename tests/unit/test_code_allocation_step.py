@@ -27,6 +27,9 @@ from custom_components.rental_control.coordinator_helpers.coordinator_refresh_sh
     CoordinatorRefreshMixin,
 )
 from custom_components.rental_control.coordinator_helpers.reissue import (
+    AdoptionRequests,
+)
+from custom_components.rental_control.coordinator_helpers.reissue import (
     ReissueSuppression,
 )
 from custom_components.rental_control.reconciliation import ManagedSlot
@@ -484,10 +487,10 @@ async def test_unreadable_slots_keep_adoption_gate_pending(
     assert reservation.code_source == "unallocated"
 
 
-async def test_invalid_code_length_keeps_adoption_gate_pending(
+async def test_invalid_code_length_does_not_block_the_gate(
     monkeypatch: Any,
 ) -> None:
-    """Skipped readable codes leave adoption pending for a later cycle."""
+    """A wrong-length observed code is skipped without wedging the entry."""
     allocator = FakeAllocator()
     monkeypatch.setattr(
         code_allocation,
@@ -505,9 +508,87 @@ async def test_invalid_code_length_keeps_adoption_gate_pending(
         [reservation],
     )
 
-    assert allocator.calls == []
-    assert reservation.slot_code is None
-    assert reservation.code_source == "unallocated"
+    assert allocator.requests[0].adoption_complete is True
+    assert allocator.requests[0].adoptions == []
+    assert reservation.slot_code == "1111"
+    assert reservation.code_source == "allocated"
+
+
+async def test_non_decimal_code_does_not_block_the_gate(
+    monkeypatch: Any,
+) -> None:
+    """A non-decimal observed code of the right length also stays accounted."""
+    allocator = FakeAllocator()
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: allocator,
+    )
+    reservation = _reservation("identity-a", code="1111")
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        "front",
+        4,
+        [_slot(1, "12AB")],
+        [reservation],
+    )
+
+    assert allocator.requests[0].adoption_complete is True
+    assert allocator.requests[0].adoptions == []
+    assert reservation.slot_code == "1111"
+    assert reservation.code_source == "allocated"
+
+
+def test_invalid_code_slots_are_recorded_as_suppressed() -> None:
+    """Both halves of the invalid-code branch account the skipped slot."""
+    for observed in ("22222", "12AB"):
+        requests = cast(
+            AdoptionRequests,
+            code_allocation.build_adoption_requests(
+                "entry-a",
+                "front",
+                4,
+                [_slot(1, observed)],
+                [_reservation("identity-a", code="1111")],
+            ),
+        )
+
+        assert list(requests) == []
+        assert requests.suppressed_slots == {1}
+
+
+async def test_invalid_code_slot_does_not_starve_peers(
+    monkeypatch: Any,
+) -> None:
+    """One unreadable-length slot must not stop issuance for the entry."""
+    allocator = FakeAllocator()
+    monkeypatch.setattr(
+        code_allocation,
+        "get_allocator",
+        lambda _hass: allocator,
+    )
+    target = _reservation("identity-a", code="1111")
+    target.slot_name = "Target Guest"
+    target.display_slot_name = "RC Target Guest"
+    peer = _reservation("identity-b", code="4444")
+    peer.slot_name = "Other Guest"
+    peer.display_slot_name = "RC Other Guest"
+    peer_slot = ManagedSlot(slot=2, managed=True, status=SlotStatus.FREE)
+
+    await code_allocation.async_resolve_codes(
+        SimpleNamespace(),
+        "entry-a",
+        "front",
+        4,
+        [_slot(1, "22222", "RC Target Guest"), peer_slot],
+        [target, peer],
+    )
+
+    assert allocator.requests[0].adoption_complete is True
+    assert peer.slot_code == "4444"
+    assert peer.code_source == "allocated"
 
 
 async def test_unknown_slot_with_stale_code_is_not_adopted(
