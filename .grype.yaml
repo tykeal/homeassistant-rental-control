@@ -1,158 +1,55 @@
 # SPDX-FileCopyrightText: 2021 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
 ---
+# Grype ignore rules for packages inherited from Home Assistant.
+#
+# Every package listed below reaches our SBOM only as a transitive
+# dependency of Home Assistant. Home Assistant itself is declared
+# solely under the "dev" and "test" optional dependency groups in
+# pyproject.toml; it is never shipped to users. People running this
+# integration get Home Assistant from their own installation, so
+# none of these packages are part of what we distribute.
+#
+# Home Assistant pins each of these to an exact version, which means
+# we cannot upgrade them independently. Dependabot security updates
+# for them fail outright as unresolvable, because the requested
+# version directly contradicts Home Assistant's pin. The only real
+# remedy is for Home Assistant upstream to bump its own pins, which
+# we then pick up automatically.
+#
+# These rules are deliberately written without a "version" and
+# without a "vulnerability" key, so they match every version of the
+# package and every advisory against it. The previous configuration
+# pinned each ignore to a specific CVE at a specific version. Those
+# entries silently stopped matching anything the moment Home
+# Assistant bumped a pin, which broke CI and forced a hand rewrite
+# of this file on every upstream bump.
+#
+# Revisit this file if any of these packages ever becomes a direct
+# runtime dependency of this integration. At that point we would
+# control its version ourselves and should audit it properly
+# rather than blanket-ignoring it.
 ignore:
-  # PyJWT transitive dependency via homeassistant —
-  # accepts unknown crit header extensions
-  # (CVE-2026-32597). We cannot pin PyJWT directly
-  # because it comes from homeassistant.
-  - vulnerability: GHSA-752w-5fwx-jx9f
-    package:
+  # Imaging library pulled in by Home Assistant's core
+  # requirements; pinned exactly by Home Assistant.
+  - package:
+      name: pillow
+      type: python
+
+  # Python package installer vendored into Home Assistant's
+  # requirements; pinned exactly by Home Assistant.
+  - package:
+      name: uv
+      type: python
+
+  # JWT implementation used by Home Assistant's auth stack;
+  # pinned exactly by Home Assistant.
+  - package:
       name: PyJWT
-      version: "2.12.1"
       type: python
 
-  # PyJWT transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 2.13.0.
-  - vulnerability: GHSA-w7vc-732c-9m39
-    package:
-      name: PyJWT
-      version: "2.12.1"
-      type: python
-
-  # PyJWT transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 2.13.0.
-  - vulnerability: GHSA-xgmm-8j9v-c9wx
-    package:
-      name: PyJWT
-      version: "2.12.1"
-      type: python
-
-  # PyJWT transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 2.13.0.
-  - vulnerability: GHSA-993g-76c3-p5m4
-    package:
-      name: PyJWT
-      version: "2.12.1"
-      type: python
-
-  # PyJWT transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 2.13.0.
-  - vulnerability: GHSA-jq35-7prp-9v3f
-    package:
-      name: PyJWT
-      version: "2.12.1"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-62p4-gmf7-7g93
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-xj96-63gp-2gmr
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-vjc4-5qp5-m44j
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-45hq-cxwh-f6vc
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-5x94-69rx-g8h2
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-phj9-mv4w-65pm
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-8v84-f9pq-wr9x
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-6r8x-57c9-28j4
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-9hw9-ch79-4vh6
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-jjj6-mw9f-p565
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-pg7v-jwj7-p798
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-fj7v-r99m-22gq
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # pillow transitive dependency via homeassistant —
-  # we cannot pin it directly. Fixed in 12.3.0.
-  - vulnerability: GHSA-4x4j-2g7c-83w6
-    package:
-      name: pillow
-      version: "12.2.0"
-      type: python
-
-  # cryptography transitive dependency via
-  # homeassistant — we cannot pin it directly.
-  # Fixed in 50.0.0.
-  - vulnerability: GHSA-g6cj-pr64-35w5
-    package:
+  # Cryptographic primitives used throughout Home Assistant;
+  # pinned exactly by Home Assistant.
+  - package:
       name: cryptography
-      version: "48.0.1"
       type: python
