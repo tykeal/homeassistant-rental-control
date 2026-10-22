@@ -41,6 +41,7 @@ from .const import NAME
 from .const import PLATFORMS
 from .const import UNSUB_LISTENERS
 from .coordinator import RentalControlCoordinator
+from .coordinator_helpers.adoption_gate import forget_entry as forget_gate_report
 from .coordinator_helpers.code_allocation import dismiss_unreadable_slots
 from .coordinator_helpers.slot_exclusions import dismiss_excluded_slots
 from .listeners import (
@@ -203,6 +204,7 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
         dismiss_unreadable_slots(hass, config_entry.entry_id)
         dismiss_excluded_slots(hass, config_entry.entry_id)
+        forget_gate_report(config_entry.entry_id)
 
         hass.data[DOMAIN].pop(config_entry.entry_id)
 
@@ -215,6 +217,7 @@ async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
     """Handle permanent removal of a Rental Control entry."""
     dismiss_unreadable_slots(hass, config_entry.entry_id)
     dismiss_excluded_slots(hass, config_entry.entry_id)
+    forget_gate_report(config_entry.entry_id)
     allocator = get_allocator(hass)
     if allocator is None:
         return

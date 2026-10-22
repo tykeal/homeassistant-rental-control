@@ -231,6 +231,26 @@ managed range, the next refresh resumes issuance and clears the notification.
 When the slot is permanently dead and you cannot reshape the managed range,
 exclude it with the slot exclusion action described below.
 
+### When the Integration Withholds Issuance
+
+An unreadable slot is not the only thing that can stop issuance. A readable
+managed slot holding a code that matches no current reservation also fails the
+gate closed, because the integration will not issue codes while it cannot
+account for a code already on the lock.
+
+Whenever the integration withholds issuance, it logs a single warning naming
+the config entry, the lock, every slot holding the gate shut, and the reason for
+each slot — `unreadable` or `holds a code that matches no current reservation`.
+The warning repeats only when the set of blocking slots changes, and an
+informational line records the moment that entry's gate reopens. Issuance then
+resumes on the next refresh, unless another entry has yet to finish its first
+adoption cycle; until every entry has adopted once, no entry issues codes,
+because all entries share one door code space.
+
+An unmatched code usually belongs to a booking that has gone away, and clears
+itself once Keymaster finishes clearing the slot. If it persists, clear that
+code at the lock.
+
 ### Slot Exclusion Action
 
 The `rental_control.set_slot_exclusion` service action tells one entry to stop
