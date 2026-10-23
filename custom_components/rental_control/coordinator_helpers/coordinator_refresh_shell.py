@@ -28,6 +28,7 @@ from ..const import REQUEST_TIMEOUT
 from ..reconciliation import Reservation as _Reservation
 from ..reconciliation.desired import select_eligible_reservations
 from ..util import OperationResult
+from . import allocation_failure
 from . import calendar_parsing
 from . import code_allocation
 from . import lockless_store
@@ -287,7 +288,14 @@ class CoordinatorRefreshMixin:
             )
 
     async def _run_lockless_allocation(self, new_calendar: list[CalendarEvent]) -> None:
-        """Allocate codes for entries that do not manage Keymaster slots."""
+        """Allocate codes for entries that do not manage Keymaster slots.
+
+        A failed cycle deliberately leaves ``_latest_res_by_key`` alone,
+        so the entry keeps publishing the last codes it successfully
+        issued rather than blanking every guest's code over a failure
+        that may be transient. The failure is made visible through
+        ``allocation_failure`` instead of through missing codes.
+        """
         try:
             reservations = self._prepare_reservations_for_adoption(new_calendar, [])
             self._apply_checkin_protection(reservations)
@@ -315,10 +323,13 @@ class CoordinatorRefreshMixin:
             self._latest_plan = None
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as err:
             _LOGGER.exception(
                 "Lockless allocation failed for %s; skipping cycle", self._name
             )
+            allocation_failure.report(self.hass, self._entry_id, self._name, err)
+        else:
+            allocation_failure.resolve(self.hass, self._entry_id, self._name)
 
     def _sync_lockless_slot_store(self, res_by_key: dict[str, _Reservation]) -> None:
         """Persist lockless reservation metadata and published-code state."""
