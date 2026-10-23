@@ -115,10 +115,12 @@ CONF_CODE_BUFFER_AFTER = "code_buffer_after"
 DEFAULT_CODE_BUFFER_BEFORE = 0
 DEFAULT_CODE_BUFFER_AFTER = 0
 
+CODE_GENERATOR_LAST_FOUR = "last_four"
+
 CODE_GENERATORS = [
     {"type": "date_based", "description": "Start/End Date"},
     {"type": "static_random", "description": "Static Random"},
-    {"type": "last_four", "description": "Last 4 Phone Digits"},
+    {"type": CODE_GENERATOR_LAST_FOUR, "description": "Last 4 Phone Digits"},
 ]
 
 STARTUP_MESSAGE = f"""

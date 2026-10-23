@@ -14,6 +14,7 @@ from homeassistant.components.persistent_notification import async_create
 
 from ..const import DOMAIN
 from ..const import NAME
+from . import entry_info
 from . import issuance
 from . import reissue
 from .models import AdoptionRequest
@@ -323,6 +324,35 @@ def _release_historical_observed_alias(
         allocator._registry.release(alias_key)
 
 
+def _conflict_is_expected(
+    allocator: DoorCodeAllocator,
+    record: AllocationRecord,
+) -> bool:
+    """Return whether every owner of a shared code generates last_four.
+
+    Under the ``last_four`` generator the code *is* the guest's last
+    four phone digits, so two owners holding one code means one phone
+    number, which in practice means one guest moving between units at
+    the same property. That is the generator working as specified, and
+    the report says "no code was rotated" because there is nothing to
+    act on, so it is suppressed to an INFO log line.
+
+    Suppression requires *every* owner's entry to use ``last_four``.
+    A record shared between a ``last_four`` entry and a ``date_based``
+    one is not explained by the generator: the date_based entry picked
+    that code from the shared code space, which is the allocator
+    problem the notification exists to surface, so the mixed case still
+    notifies. An entry whose generator cannot be determined at all -
+    deleted, unloaded or carrying no configuration - counts as "not
+    known to be last_four", so an undeterminable owner also notifies.
+    Silence is only ever chosen on positive evidence.
+    """
+    return bool(record.owners) and all(
+        entry_info.uses_last_four(allocator.hass, owner.entry_id)
+        for owner in record.owners
+    )
+
+
 def _report_adoption_conflict(
     allocator: DoorCodeAllocator,
     record: AllocationRecord,
@@ -336,6 +366,16 @@ def _report_adoption_conflict(
         f"Shared code registry adoption conflict for code_ref "
         f"{record.code_ref}: {owners}. No code was rotated."
     )
+    if _conflict_is_expected(allocator, record):
+        _LOGGER.info(
+            "Shared code_ref %s has multiple owners (%s), which is expected "
+            "under the last_four generator because the code is the guest's "
+            "phone digits. No code was rotated and no notification was "
+            "raised.",
+            record.code_ref,
+            owners,
+        )
+        return
     _LOGGER.warning(message)
     _notify(
         allocator,
