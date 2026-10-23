@@ -402,3 +402,28 @@ async def test_a_published_ghost_is_withheld_after_flags_clear() -> None:
     returned = _reservation("identity-ghost", code=_CODE)
     await _cycle(allocator, [returned], entry_id="entry-a")
     assert returned.slot_code == _CODE
+
+
+async def test_an_empty_cycle_cannot_clear_flags_for_an_unobserved_lock() -> None:
+    """An empty cycle declines nothing, so it must not clear the flags.
+
+    A missing registry previously cleared the flags on any sound cycle,
+    which an empty lockless cycle trivially is. That returned the
+    allocator to normal issuance while an unobserved lock still held
+    codes, letting a later published reservation be handed one of them.
+    """
+    allocator = _allocator(broken_lock=True)
+    await allocator.async_unregister_entry("entry-broken")
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+
+    await _cycle(allocator, [], entry_id="entry-free")
+
+    assert allocator._registry_lost is True
+    assert allocator._registry_missing is True
+
+    reservations = [_reservation()]
+    await _cycle(allocator, reservations, entry_id="entry-free")
+
+    assert reservations[0].slot_code is None
+    assert reservations[0].code_source == "unallocated"
