@@ -92,13 +92,15 @@ class _LocklessCoordinator(CoordinatorRefreshMixin):
 
 @pytest.fixture(autouse=True)
 def _notifications(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Notifications]:
-    """Capture notifications and reset the module's reporting state."""
-    allocation_failure.reset_reporting()
+    """Capture notifications raised while a test runs.
+
+    Resetting the module's reporting state is handled globally by the
+    autouse fixture in ``tests/conftest.py``.
+    """
     recorder = _Notifications()
     monkeypatch.setattr(allocation_failure, "async_create", recorder.create)
     monkeypatch.setattr(allocation_failure, "async_dismiss", recorder.dismiss)
     yield recorder
-    allocation_failure.reset_reporting()
 
 
 def _failing(message: str = "boom") -> Any:

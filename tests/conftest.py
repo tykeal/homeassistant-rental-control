@@ -28,6 +28,7 @@ from custom_components.rental_control.const import CONF_CLEANING_WINDOW
 from custom_components.rental_control.const import DEFAULT_CLEANING_WINDOW
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator_helpers import adoption_gate
+from custom_components.rental_control.coordinator_helpers import allocation_failure
 
 from tests.fixtures import calendar_data
 
@@ -142,11 +143,18 @@ def pytest_collection_modifyitems(
 
 
 @pytest.fixture(autouse=True)
-def _reset_adoption_gate_reporting():
-    """Clear the adoption gate's cross-cycle log throttle between tests."""
+def _reset_module_level_reporting():
+    """Clear cross-cycle reporting throttles held in module globals.
+
+    Both the adoption gate and the allocation failure reporter keep
+    their throttle state in module-level dicts, so a test that leaves
+    an entry recorded changes what a later test observes.
+    """
     adoption_gate.reset_reporting()
+    allocation_failure.reset_reporting()
     yield
     adoption_gate.reset_reporting()
+    allocation_failure.reset_reporting()
 
 
 @pytest.fixture(autouse=True)
