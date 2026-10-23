@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _CONFLICT_NOTIFICATION_ID = f"{DOMAIN}_code_registry_conflict"
+_LAST_FOUR_CODE_LENGTH = 4
 
 
 def conflict_notification_id(code_ref: str) -> str:
@@ -63,10 +64,18 @@ def _conflict_is_expected(
     deleted, unloaded or carrying no configuration - counts as "not
     known to be last_four", so an undeterminable owner also notifies.
     Silence is only ever chosen on positive evidence.
+
+    The shared code itself must also be four digits long. A phone
+    derived code never is anything else, so a longer shared code was
+    produced some other way and is not explained by the generator.
     """
-    return bool(record.owners) and all(
-        entry_info.uses_last_four(allocator.hass, owner.entry_id)
-        for owner in record.owners
+    return (
+        bool(record.owners)
+        and record.code_length == _LAST_FOUR_CODE_LENGTH
+        and all(
+            entry_info.uses_last_four(allocator.hass, owner.entry_id)
+            for owner in record.owners
+        )
     )
 
 

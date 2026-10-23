@@ -239,9 +239,9 @@ def report_forced_hold_deferrals(
     async_create(
         hass,
         (
-            "Rental Control cannot yet replace door codes you asked it to "
-            f"re-issue: {held}. The existing codes stay in place until it "
-            "can."
+            "Rental Control is still holding door codes it replaced on a "
+            f"forced re-issue out of use: {held}. They stay reserved so no "
+            "other booking is given them, until they can safely be released."
         ),
         title=f"{NAME} forced re-issue holds",
         notification_id=_FORCED_HOLD_NOTIFICATION_ID,

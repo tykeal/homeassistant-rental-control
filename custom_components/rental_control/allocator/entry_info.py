@@ -23,10 +23,15 @@ from typing import Any
 
 from ..const import CODE_GENERATOR_LAST_FOUR
 from ..const import CONF_CODE_GENERATION
+from ..const import CONF_CODE_LENGTH
+from ..const import DEFAULT_CODE_LENGTH
+
+_LAST_FOUR_CODE_LENGTH = 4
 
 __all__ = [
     "CODE_GENERATOR_LAST_FOUR",
     "code_generator",
+    "configured_code_length",
     "describe_owner",
     "describe_slot",
     "entry_config",
@@ -100,8 +105,33 @@ def code_generator(hass: Any, entry_id: str) -> str | None:
 
 
 def uses_last_four(hass: Any, entry_id: str) -> bool:
-    """Return whether an entry derives codes from guest phone digits."""
-    return code_generator(hass, entry_id) == CODE_GENERATOR_LAST_FOUR
+    """Return whether an entry derives codes from guest phone digits.
+
+    The generator setting alone is not enough. ``generate_slot_code``
+    uses the phone digits only when the configured code length is four,
+    and silently falls back to date-based codes otherwise, so an entry
+    set to ``last_four`` with a six digit code is a date-based entry in
+    everything but name. Mirror that condition here, or a genuine
+    date-based collision between two such entries would be silenced.
+    """
+    if code_generator(hass, entry_id) != CODE_GENERATOR_LAST_FOUR:
+        return False
+    return configured_code_length(hass, entry_id) == _LAST_FOUR_CODE_LENGTH
+
+
+def configured_code_length(hass: Any, entry_id: str) -> int | None:
+    """Return an entry's configured code length, or None if unknown."""
+    config = entry_config(hass, entry_id)
+    if config is None:
+        return None
+    length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
+    if isinstance(length, bool):
+        return None
+    if isinstance(length, int):
+        return length
+    if isinstance(length, str) and length.strip().isdecimal():
+        return int(length.strip())
+    return None
 
 
 def describe_slot(

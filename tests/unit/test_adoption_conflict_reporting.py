@@ -39,7 +39,7 @@ class _Notifications:
         self.calls.append({"message": message, **kwargs})
 
 
-def _hass(**generators: str | None) -> Any:
+def _hass(code_length: int = 4, **generators: str | None) -> Any:
     """Build a hass whose entries use the named code generators.
 
     ``None`` registers no entry at all, which models an entry that has
@@ -53,7 +53,11 @@ def _hass(**generators: str | None) -> Any:
             title=f"Unit {entry_id[-1].upper()}",
             disabled_by=None,
             data=MappingProxyType(
-                {"keymaster_entry_id": "front", "code_generation": generator}
+                {
+                    "keymaster_entry_id": "front",
+                    "code_generation": generator,
+                    "code_length": code_length,
+                }
             ),
             options=MappingProxyType({}),
         )
@@ -97,7 +101,7 @@ def _adopt(
             entry_id=entry_id,
             identity_key=f"{entry_id}-guest-{slot}",
             code=code,
-            code_length=4,
+            code_length=len(code),
             lockname=lockname,
             slot=slot,
         ),
@@ -200,3 +204,22 @@ def test_conflict_notification_names_lock_and_slot(
     assert "entry_a-guest-3" not in message
     assert "entry_a:" not in message
     assert "entry_a-guest-3" in caplog.text
+
+
+def test_long_last_four_sharing_still_notifies(
+    notifications: _Notifications,
+) -> None:
+    """A six digit entry is date based however its generator is set.
+
+    ``generate_slot_code`` uses the guest's phone digits only when the
+    configured code length is four and silently falls back to date
+    based codes otherwise, so a shared code between two six digit
+    entries is a genuine collision and must still be reported.
+    """
+    allocator = _allocator(
+        _hass(code_length=6, entry_a="last_four", entry_b="last_four")
+    )
+    _adopt(allocator, "entry_a", 3, code="432100")
+    _adopt(allocator, "entry_b", 5, code="432100")
+
+    assert len(notifications.calls) == 1
