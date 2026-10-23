@@ -22,6 +22,7 @@ from typing import cast
 from homeassistant.util import dt as dt_util
 import pytest
 
+from custom_components.rental_control.allocator.allocator import DOMAIN
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.coordinator_helpers import code_allocation
@@ -453,7 +454,7 @@ async def test_a_reloaded_lock_entry_must_adopt_again() -> None:
         lockname="front",
         managed_slots=[_slot(1, "1234")],
     )
-    assert "entry-lock" in allocator._adopted_entries
+    assert allocator._adopted_locks["entry-lock"] == "front"
 
     await allocator.async_register_entry("entry-lock")
     allocator._registry_lost = True
@@ -465,6 +466,78 @@ async def test_a_reloaded_lock_entry_must_adopt_again() -> None:
     assert allocator._registry_missing is True
 
     await allocator.async_unregister_entry("entry-lock")
+    reservations = [_reservation()]
+    await _cycle(allocator, reservations, entry_id="entry-free")
+
+    assert reservations[0].slot_code is None
+    assert reservations[0].code_source == "unallocated"
+    assert allocator._registry_lost is True
+
+
+async def test_an_incomplete_cycle_withdraws_adopted_standing() -> None:
+    """A lock-backed entry stops counting as observed once a cycle fails.
+
+    Adoption proves the registry has seen what the lock holds, and that
+    proof lapses the moment a later cycle finds a code it cannot
+    account for. Leaving the entry marked as observed would let a
+    lockless cycle issue that very code and clear the recovery flags.
+    """
+    allocator = _allocator("entry-lock")
+    await _cycle(
+        allocator,
+        [_reservation("identity-lock", code="1234")],
+        entry_id="entry-lock",
+        lockname="front",
+        managed_slots=[_slot(1, "1234")],
+    )
+    assert allocator._adopted_locks["entry-lock"] == "front"
+
+    allocator._registry_lost = True
+    allocator._registry_missing = False
+    await _cycle(
+        allocator,
+        [],
+        entry_id="entry-lock",
+        lockname="front",
+        managed_slots=[_slot(2, "8888")],
+    )
+
+    assert "entry-lock" not in allocator._adopted_locks
+
+    reservations = [_reservation()]
+    await _cycle(allocator, reservations, entry_id="entry-free")
+
+    assert reservations[0].slot_code is None
+    assert reservations[0].code_source == "unallocated"
+    assert allocator._registry_lost is True
+
+
+async def test_switching_locks_withdraws_adopted_standing() -> None:
+    """Adoption is bound to the lock it read, not merely to the entry.
+
+    Options updates change an entry's lock in place without
+    re-registering it, so an entry that adopted its old lock would
+    otherwise keep vouching for a lock nothing has ever observed.
+    """
+    allocator = _allocator("entry-lock")
+    await _cycle(
+        allocator,
+        [_reservation("identity-lock", code="1234")],
+        entry_id="entry-lock",
+        lockname="front",
+        managed_slots=[_slot(1, "1234")],
+    )
+    assert allocator._adopted_locks["entry-lock"] == "front"
+
+    entry = next(
+        entry
+        for entry in allocator.hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id == "entry-lock"
+    )
+    entry.data = MappingProxyType({"keymaster_entry_id": "Back Door"})
+    allocator._registry_lost = True
+    allocator._registry_missing = False
+
     reservations = [_reservation()]
     await _cycle(allocator, reservations, entry_id="entry-free")
 

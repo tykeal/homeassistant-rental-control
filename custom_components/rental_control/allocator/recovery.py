@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
 from collections.abc import Mapping
 import logging
 from typing import TYPE_CHECKING
+from typing import Any
+from typing import cast
+
+from homeassistant.util import slugify
 
 from ..const import CONF_LOCK_ENTRY
 from ..const import DOMAIN
@@ -37,6 +40,14 @@ def entry_has_lock(data: object) -> bool:
     )
 
 
+def configured_lockname(data: object) -> str | None:
+    """Return the slugified lock an entry is currently configured for."""
+    if not entry_has_lock(data):
+        return None
+    lock_entry = cast(Mapping[str, Any], data)[CONF_LOCK_ENTRY]
+    return str(slugify(str(lock_entry).strip()))
+
+
 def unobserved_lock_entries(allocator: DoorCodeAllocator) -> frozenset[str]:
     """Return configured lock-backed entries that have not adopted.
 
@@ -44,19 +55,21 @@ def unobserved_lock_entries(allocator: DoorCodeAllocator) -> frozenset[str]:
     read. ``_seed_pending_adoption`` never enrolls a disabled entry, and
     ``async_setup_entry`` unregisters an entry whose setup fails, so
     both leave the gate empty while their codes stay programmed in a
-    lock. Membership of ``_adopted_entries`` is therefore tracked
-    positively, from cycles that actually completed adoption, and every
-    configured lock-backed entry missing from it is treated as holding
-    codes the registry cannot see.
+    lock. Adoption is therefore tracked positively in
+    ``_adopted_locks``, from cycles that actually completed, and against
+    the lock that was read: an entry whose options later point at a
+    different lock has not observed that one, and an entry whose latest
+    cycle was incomplete has stopped observing its own.
     """
     entries = getattr(allocator.hass, "config_entries", None)
     if entries is None:
         return frozenset()
-    adopted: Collection[str] = getattr(allocator, "_adopted_entries", frozenset())
+    adopted: Mapping[str, str] = getattr(allocator, "_adopted_locks", {})
     return frozenset(
         entry.entry_id
         for entry in entries.async_entries(DOMAIN)
-        if entry_has_lock(getattr(entry, "data", {})) and entry.entry_id not in adopted
+        if (lockname := configured_lockname(getattr(entry, "data", {}))) is not None
+        and adopted.get(entry.entry_id) != lockname
     )
 
 
@@ -143,6 +156,7 @@ def issuance_block(
 
 
 __all__ = [
+    "configured_lockname",
     "entry_has_lock",
     "issuance_block",
     "lockless_recovery_allowed",

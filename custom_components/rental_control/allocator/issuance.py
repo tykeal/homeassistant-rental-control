@@ -181,13 +181,7 @@ async def resolve_cycle(
             request.observation.entry_id,
             request.observation.unreadable_slots - request.excluded_slots,
         )
-        if request.adoption_complete and not unaccounted:
-            if request.observation.lockname is not None:
-                allocator._adopted_entries.add(request.observation.entry_id)
-            allocator._pending_adoption.discard(request.observation.entry_id)
-            if not allocator._pending_adoption:
-                allocator._gate_deadline = 0.0
-                allocator._gate_warning_sent = False
+        _record_adoption(allocator, request, unaccounted=unaccounted)
 
         allocator._warn_if_gate_expired()
         issuance_allowed = not unaccounted
@@ -280,6 +274,35 @@ def _persist_registry(
         allocator._store.async_save(allocator._registry)
         allocator._registry_lost = False
         allocator._registry_missing = False
+
+
+def _record_adoption(
+    allocator: DoorCodeAllocator,
+    request: CycleRequest,
+    *,
+    unaccounted: frozenset[int],
+) -> None:
+    """Update what the allocator has observed of an entry's lock.
+
+    A complete cycle with nothing unaccounted records the lock it read,
+    which is what the recovery safeguards check against the lock the
+    entry is currently configured for. An incomplete cycle withdraws
+    that record instead: it leaves a code in the lock that the registry
+    never saw, so the entry no longer vouches for it.
+    """
+    entry_id = request.observation.entry_id
+    lockname = request.observation.lockname
+    sound = request.adoption_complete and not unaccounted
+    if lockname is not None and not sound:
+        allocator._adopted_locks.pop(entry_id, None)
+    if not sound:
+        return
+    if lockname is not None:
+        allocator._adopted_locks[entry_id] = lockname
+    allocator._pending_adoption.discard(entry_id)
+    if not allocator._pending_adoption:
+        allocator._gate_deadline = 0.0
+        allocator._gate_warning_sent = False
 
 
 def _track_pending_adoption_slots(

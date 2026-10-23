@@ -54,7 +54,7 @@ class DoorCodeAllocator:
         self._store = RegistryStore(hass)
         self._lock = asyncio.Lock()
         self._pending_adoption = self._seed_pending_adoption()
-        self._adopted_entries: set[str] = set()
+        self._adopted_locks: dict[str, str] = {}
         self._pending_adoption_slots: dict[str, frozenset[int]] = {}
         self._gate_deadline = (
             monotonic() + _ADOPTION_GATE_WARNING_SECONDS
@@ -90,7 +90,7 @@ class DoorCodeAllocator:
         """
         async with self._lock:
             self._pending_adoption.add(entry_id)
-            self._adopted_entries.discard(entry_id)
+            self._adopted_locks.pop(entry_id, None)
             if self._gate_deadline == 0.0:
                 self._gate_deadline = monotonic() + _ADOPTION_GATE_WARNING_SECONDS
                 self._gate_warning_sent = False
@@ -100,7 +100,7 @@ class DoorCodeAllocator:
         async with self._lock:
             self._pending_adoption.discard(entry_id)
             self._pending_adoption_slots.pop(entry_id, None)
-            self._adopted_entries.discard(entry_id)
+            self._adopted_locks.pop(entry_id, None)
             if not self._pending_adoption:
                 self._gate_deadline = 0.0
                 self._gate_warning_sent = False
@@ -293,7 +293,7 @@ class DoorCodeAllocator:
         async with self._lock:
             self._pending_adoption.discard(entry_id)
             self._pending_adoption_slots.pop(entry_id, None)
-            self._adopted_entries.discard(entry_id)
+            self._adopted_locks.pop(entry_id, None)
             if not self._pending_adoption:
                 self._gate_deadline = 0.0
                 self._gate_warning_sent = False

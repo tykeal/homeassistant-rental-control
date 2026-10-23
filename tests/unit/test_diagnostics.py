@@ -193,7 +193,7 @@ async def _allocator(
     # The entry is lock-backed, so the adoption gate holds it until a cycle
     # has observed the lock; stand in for that cycle to reach allocation.
     allocator._pending_adoption.discard(entry_id)
-    allocator._adopted_entries.add(entry_id)
+    allocator._adopted_locks[entry_id] = "front_door"
     await allocator.async_allocate(
         AllocationRequest(
             entry_id="entry-diag",
