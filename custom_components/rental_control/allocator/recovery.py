@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection
+from collections.abc import Mapping
 import logging
 from typing import TYPE_CHECKING
 
@@ -20,8 +21,13 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def entry_has_lock(data: object) -> bool:
-    """Return whether config entry data references a Keymaster lock."""
-    if not isinstance(data, dict):
+    """Return whether config entry data references a Keymaster lock.
+
+    Home Assistant exposes ``ConfigEntry.data`` as a read-only
+    ``MappingProxyType`` rather than a ``dict``, so this accepts any
+    mapping.  Testing for ``dict`` made every real entry look lockless.
+    """
+    if not isinstance(data, Mapping):
         return False
     lock_entry = data.get(CONF_LOCK_ENTRY)
     return (

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from datetime import timedelta
+from types import MappingProxyType
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
@@ -39,7 +40,12 @@ def _fake_hass(
     disabled_lock: bool = False,
     broken_lock: bool = False,
 ) -> Any:
-    """Build a minimal hass object seeded with lock-backed entries."""
+    """Build a minimal hass object seeded with lock-backed entries.
+
+    Entry data is a read-only ``MappingProxyType`` exactly as Home
+    Assistant exposes it, so the lock detection used by the recovery
+    gates is exercised against the real type.
+    """
     hass = SimpleNamespace()
     hass.data = {}
     hass.config = SimpleNamespace(config_dir=".")
@@ -47,7 +53,7 @@ def _fake_hass(
         SimpleNamespace(
             entry_id=entry_id,
             disabled_by=None,
-            data={"keymaster_entry_id": "front"},
+            data=MappingProxyType({"keymaster_entry_id": "front"}),
         )
         for entry_id in lock_entry_ids
     ]
@@ -56,7 +62,7 @@ def _fake_hass(
             SimpleNamespace(
                 entry_id="entry-disabled",
                 disabled_by="user",
-                data={"keymaster_entry_id": "back"},
+                data=MappingProxyType({"keymaster_entry_id": "back"}),
             )
         )
     if broken_lock:
@@ -64,7 +70,7 @@ def _fake_hass(
             SimpleNamespace(
                 entry_id="entry-broken",
                 disabled_by=None,
-                data={"keymaster_entry_id": "side"},
+                data=MappingProxyType({"keymaster_entry_id": "side"}),
             )
         )
     hass.config_entries = SimpleNamespace(async_entries=lambda _domain=None: entries)
