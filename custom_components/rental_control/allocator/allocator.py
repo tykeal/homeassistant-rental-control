@@ -14,7 +14,6 @@ from typing import Any
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.core import HomeAssistant
 
-from ..const import CONF_LOCK_ENTRY
 from ..const import DOMAIN
 from ..const import NAME
 from . import adoption
@@ -35,6 +34,7 @@ from .models import OrphanCleanupReport
 from .models import ReissuePreview
 from .models import ReissuePreviewRequest
 from .models import ReleaseReport
+from .recovery import entry_has_lock as _entry_has_lock
 from .registry import AllocationRegistry
 from .store import RegistryStore
 from .store import code_ref_for
@@ -42,18 +42,6 @@ from .store import code_ref_for
 _LOGGER = logging.getLogger(__name__)
 _ADOPTION_GATE_WARNING_SECONDS = 300.0
 _GATE_NOTIFICATION_ID = f"{DOMAIN}_code_registry_adoption_pending"
-
-
-def _entry_has_lock(data: object) -> bool:
-    """Return whether config entry data references a Keymaster lock."""
-    if not isinstance(data, dict):
-        return False
-    lock_entry = data.get(CONF_LOCK_ENTRY)
-    return (
-        isinstance(lock_entry, str)
-        and bool(lock_entry.strip())
-        and lock_entry.strip() != "(none)"
-    )
 
 
 class DoorCodeAllocator:
@@ -66,6 +54,7 @@ class DoorCodeAllocator:
         self._store = RegistryStore(hass)
         self._lock = asyncio.Lock()
         self._pending_adoption = self._seed_pending_adoption()
+        self._adopted_locks: dict[str, str] = {}
         self._pending_adoption_slots: dict[str, frozenset[int]] = {}
         self._gate_deadline = (
             monotonic() + _ADOPTION_GATE_WARNING_SECONDS
@@ -94,9 +83,14 @@ class DoorCodeAllocator:
         }
 
     async def async_register_entry(self, entry_id: str) -> None:
-        """Mark an entry as awaiting its first allocator cycle."""
+        """Mark an entry as awaiting its first allocator cycle.
+
+        A reloaded entry must adopt again before its lock counts as
+        observed, so any earlier adoption is forgotten here.
+        """
         async with self._lock:
             self._pending_adoption.add(entry_id)
+            self._adopted_locks.pop(entry_id, None)
             if self._gate_deadline == 0.0:
                 self._gate_deadline = monotonic() + _ADOPTION_GATE_WARNING_SECONDS
                 self._gate_warning_sent = False
@@ -106,6 +100,7 @@ class DoorCodeAllocator:
         async with self._lock:
             self._pending_adoption.discard(entry_id)
             self._pending_adoption_slots.pop(entry_id, None)
+            self._adopted_locks.pop(entry_id, None)
             if not self._pending_adoption:
                 self._gate_deadline = 0.0
                 self._gate_warning_sent = False
@@ -298,6 +293,7 @@ class DoorCodeAllocator:
         async with self._lock:
             self._pending_adoption.discard(entry_id)
             self._pending_adoption_slots.pop(entry_id, None)
+            self._adopted_locks.pop(entry_id, None)
             if not self._pending_adoption:
                 self._gate_deadline = 0.0
                 self._gate_warning_sent = False

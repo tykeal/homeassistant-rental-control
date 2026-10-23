@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from . import adoption
+from . import recovery
 from . import reissue
 from . import services
 from .candidates import candidate_codes
@@ -63,7 +64,10 @@ def select_code(
 
 
 def allocate_request(
-    allocator: DoorCodeAllocator, request: AllocationRequest
+    allocator: DoorCodeAllocator,
+    request: AllocationRequest,
+    *,
+    lockless_cycle: bool = False,
 ) -> AllocationResult:
     """Allocate a code while the allocator lock is already held."""
     existing = allocator._registry.record_for_identity(request.identity_key)
@@ -74,19 +78,11 @@ def allocate_request(
             if owner.identity_key == request.identity_key
         )
         return AllocationResult(code=existing.code, origin=owner.origin)
-    if not request.issuance_allowed:
-        return AllocationResult(code=None, reason="unaccounted_slots")
-    if allocator._pending_adoption:
-        return AllocationResult(code=None, reason="adoption_pending")
-    if allocator._registry_lost and (
-        request.previously_published or not allocator._registry_missing
-    ):
-        _LOGGER.warning(
-            "Declined allocation for %s:%s after registry loss",
-            request.entry_id,
-            request.identity_key,
-        )
-        return AllocationResult(code=None, reason="recovery_fail_closed")
+    declined, recovering = recovery.issuance_block(
+        allocator, request, lockless_cycle=lockless_cycle
+    )
+    if declined is not None:
+        return declined
     code, origin = select_code(
         allocator._registry,
         request.preferred_code,
@@ -94,6 +90,15 @@ def allocate_request(
         request.identity_key,
         exclude=frozenset(),
     )
+    if recovering and origin is not AllocationOrigin.PREFERRED:
+        _LOGGER.warning(
+            "Declined recovery for generator-only entry %s:%s: its preferred "
+            "code is already taken, so re-issuing would hand the guest a "
+            "code they have never been given",
+            request.entry_id,
+            request.identity_key,
+        )
+        return AllocationResult(code=None, reason="recovery_fail_closed")
     if code is None or origin is None:
         preferred_ref = allocator.code_ref(request.preferred_code)
         _LOGGER.warning(
@@ -176,14 +181,11 @@ async def resolve_cycle(
             request.observation.entry_id,
             request.observation.unreadable_slots - request.excluded_slots,
         )
-        if request.adoption_complete and not unaccounted:
-            allocator._pending_adoption.discard(request.observation.entry_id)
-            if not allocator._pending_adoption:
-                allocator._gate_deadline = 0.0
-                allocator._gate_warning_sent = False
+        _record_adoption(allocator, request, unaccounted=unaccounted)
 
         allocator._warn_if_gate_expired()
         issuance_allowed = not unaccounted
+        lockless_cycle = request.observation.lockname is None
         allocated: dict[str, AllocationResult] = {}
         for allocation in request.allocations:
             if allocation.identity_key in adopted:
@@ -192,7 +194,9 @@ async def resolve_cycle(
                 allocation,
                 issuance_allowed=allocation.issuance_allowed and issuance_allowed,
             )
-            allocated[allocation.identity_key] = allocate_request(allocator, allocation)
+            allocated[allocation.identity_key] = allocate_request(
+                allocator, allocation, lockless_cycle=lockless_cycle
+            )
         rollbacks = reissue.rollback_blocked_reissues(
             allocator, request, staged_reissues, allocated
         )
@@ -217,19 +221,16 @@ async def resolve_cycle(
             allocator, request, reissue_outcomes
         )
         recovery_declined = any(
-            result.reason == "recovery_fail_closed" for result in allocated.values()
+            result.reason in ("recovery_fail_closed", "published_code_unknown")
+            for result in allocated.values()
         )
-        if not allocator._registry_lost:
-            allocator._store.async_save(allocator._registry)
-        elif (
-            allocator._registry_missing
-            and request.adoption_complete
-            and not unaccounted
-            and not recovery_declined
-        ):
-            allocator._store.async_save(allocator._registry)
-            allocator._registry_lost = False
-            allocator._registry_missing = False
+        _persist_registry(
+            allocator,
+            request,
+            unaccounted=unaccounted,
+            recovery_declined=recovery_declined,
+            lockless_cycle=lockless_cycle,
+        )
         return CycleResult(
             adopted=adopted,
             allocated=allocated,
@@ -237,6 +238,71 @@ async def resolve_cycle(
             unaccounted_slots=unaccounted,
             reissues=tuple(reissue_outcomes),
         )
+
+
+def _persist_registry(
+    allocator: DoorCodeAllocator,
+    request: CycleRequest,
+    *,
+    unaccounted: frozenset[int],
+    recovery_declined: bool,
+    lockless_cycle: bool,
+) -> None:
+    """Save the registry and clear recovery flags once the cycle is sound.
+
+    A lockless cycle may complete recovery even when the stored registry
+    was corrupt rather than absent. Either way the flags may only clear
+    once no entry is still awaiting its first cycle and every configured
+    lock-backed entry has actually adopted, since clearing them returns
+    the allocator to normal issuance, where a code still programmed in
+    an unobserved lock would look free.
+    """
+    if not allocator._registry_lost:
+        allocator._store.async_save(allocator._registry)
+        return
+    recoverable = (
+        (allocator._registry_missing or lockless_cycle)
+        and not allocator._pending_adoption
+        and not recovery.unobserved_lock_entries(allocator)
+    )
+    if (
+        recoverable
+        and request.adoption_complete
+        and not unaccounted
+        and not recovery_declined
+    ):
+        allocator._store.async_save(allocator._registry)
+        allocator._registry_lost = False
+        allocator._registry_missing = False
+
+
+def _record_adoption(
+    allocator: DoorCodeAllocator,
+    request: CycleRequest,
+    *,
+    unaccounted: frozenset[int],
+) -> None:
+    """Update what the allocator has observed of an entry's lock.
+
+    A complete cycle with nothing unaccounted records the lock it read,
+    which is what the recovery safeguards check against the lock the
+    entry is currently configured for. An incomplete cycle withdraws
+    that record instead: it leaves a code in the lock that the registry
+    never saw, so the entry no longer vouches for it.
+    """
+    entry_id = request.observation.entry_id
+    lockname = request.observation.lockname
+    sound = request.adoption_complete and not unaccounted
+    if lockname is not None and not sound:
+        allocator._adopted_locks.pop(entry_id, None)
+    if not sound:
+        return
+    if lockname is not None:
+        allocator._adopted_locks[entry_id] = lockname
+    allocator._pending_adoption.discard(entry_id)
+    if not allocator._pending_adoption:
+        allocator._gate_deadline = 0.0
+        allocator._gate_warning_sent = False
 
 
 def _track_pending_adoption_slots(
