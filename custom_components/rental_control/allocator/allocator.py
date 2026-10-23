@@ -18,6 +18,7 @@ from ..const import DOMAIN
 from ..const import NAME
 from . import adoption
 from . import diagnostics
+from . import entry_info
 from . import issuance
 from . import orphans
 from . import reissue
@@ -222,26 +223,41 @@ class DoorCodeAllocator:
             self._describe_pending_entry(entry_id)
             for entry_id in sorted(self._pending_adoption)
         )
-        message = (
+        _LOGGER.warning(
             "Shared code allocator is still waiting for adoption from "
-            f"entries: {pending}. New code issuance remains disabled."
+            "entries: %s. New code issuance remains disabled.",
+            pending,
         )
-        _LOGGER.warning(message)
+        named = ", ".join(
+            self._describe_pending_entry(entry_id, friendly=True)
+            for entry_id in sorted(self._pending_adoption)
+        )
         async_create(
             self.hass,
-            message,
+            (
+                "Rental Control is still waiting to read the door codes "
+                f"already programmed for: {named}. No new door codes are "
+                "issued for any entry until that finishes, because every "
+                "entry shares one door code space."
+            ),
             title=f"{NAME} code adoption pending",
             notification_id=_GATE_NOTIFICATION_ID,
         )
         self._gate_warning_sent = True
 
-    def _describe_pending_entry(self, entry_id: str) -> str:
-        """Return a pending entry label annotated with its blocking slots."""
+    def _describe_pending_entry(self, entry_id: str, *, friendly: bool = False) -> str:
+        """Return a pending entry label annotated with its blocking slots.
+
+        The log is addressed to a maintainer and keeps the entry id; a
+        notification is addressed to the user, who knows the entry by
+        the name they gave it.
+        """
+        label = entry_info.entry_name(self.hass, entry_id) if friendly else entry_id
         slots = sorted(self._pending_adoption_slots.get(entry_id, ()))
         if not slots:
-            return entry_id
-        label = "slots" if len(slots) > 1 else "slot"
-        return f"{entry_id} (unreadable {label} {', '.join(map(str, slots))})"
+            return label
+        noun = "slots" if len(slots) > 1 else "slot"
+        return f"{label} (unreadable {noun} {', '.join(map(str, slots))})"
 
     async def async_sweep(
         self, observation: CycleObservation, active_keys: set[str]

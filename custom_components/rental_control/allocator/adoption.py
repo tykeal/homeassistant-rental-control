@@ -7,13 +7,9 @@ from __future__ import annotations
 from datetime import UTC
 from datetime import datetime
 import logging
-import sys
 from typing import TYPE_CHECKING
 
-from homeassistant.components.persistent_notification import async_create
-
-from ..const import DOMAIN
-from ..const import NAME
+from . import adoption_reports
 from . import issuance
 from . import reissue
 from .models import AdoptionRequest
@@ -26,7 +22,6 @@ if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
 
 _LOGGER = logging.getLogger(__name__)
-_CONFLICT_NOTIFICATION_ID = f"{DOMAIN}_code_registry_conflict"
 
 
 def adopt_unlocked(
@@ -69,7 +64,9 @@ def adopt_unlocked(
             observed_ref,
         )
         _record_mismatched_observed_owner(allocator, request, observed_ref, now)
-        _report_identity_mismatch(allocator, request, existing, observed_ref)
+        adoption_reports.report_identity_mismatch(
+            allocator, request, existing, observed_ref
+        )
         return AllocationResult(
             code=request.code,
             origin=AllocationOrigin.ADOPTED,
@@ -103,7 +100,7 @@ def adopt_unlocked(
         and request.identity_key not in before_identities
         and len(record.owners) > 1
     ):
-        _report_adoption_conflict(allocator, record)
+        adoption_reports.report_adoption_conflict(allocator, record)
     _LOGGER.info(
         "Adopted shared allocation code_ref %s for %s:%s at %s:%s",
         record.code_ref,
@@ -194,7 +191,7 @@ def _record_mismatched_observed_owner(
     )
     if before is not None and alias_key not in before_identities:
         if len(record.owners) > 1:
-            _report_adoption_conflict(allocator, record)
+            adoption_reports.report_adoption_conflict(allocator, record)
 
 
 def _release_moved_observed_alias(
@@ -321,60 +318,3 @@ def _release_historical_observed_alias(
     alias_key = issuance.observed_alias_key(request, identity_key=historical_key)
     if allocator._registry.code_for_identity(alias_key) is not None:
         allocator._registry.release(alias_key)
-
-
-def _report_adoption_conflict(
-    allocator: DoorCodeAllocator,
-    record: AllocationRecord,
-) -> None:
-    """Log and notify that an observed code has multiple owners."""
-    owners = ", ".join(
-        f"{owner.entry_id}:{owner.identity_key}@{owner.lockname}:{owner.slot}"
-        for owner in record.owners
-    )
-    message = (
-        f"Shared code registry adoption conflict for code_ref "
-        f"{record.code_ref}: {owners}. No code was rotated."
-    )
-    _LOGGER.warning(message)
-    _notify(
-        allocator,
-        message,
-        title=f"{NAME} code registry conflict",
-        notification_id=_CONFLICT_NOTIFICATION_ID,
-    )
-
-
-def _report_identity_mismatch(
-    allocator: DoorCodeAllocator,
-    request: AdoptionRequest,
-    existing: AllocationRecord,
-    observed_ref: str,
-) -> None:
-    """Log and notify that one identity has conflicting observed code refs."""
-    mismatch = (request.entry_id, request.identity_key, observed_ref)
-    if mismatch in allocator._reported_identity_mismatches:
-        return
-    allocator._reported_identity_mismatches.add(mismatch)
-    message = (
-        f"Shared code registry identity mismatch for {request.entry_id}:"
-        f"{request.identity_key}: registry code_ref {existing.code_ref}, "
-        f"observed code_ref {observed_ref}. The observed lock code was "
-        "retained and no code was rotated."
-    )
-    _LOGGER.warning(message)
-    _notify(
-        allocator,
-        message,
-        title=f"{NAME} code registry identity mismatch",
-        notification_id=f"{_CONFLICT_NOTIFICATION_ID}_identity",
-    )
-
-
-def _notify(allocator: DoorCodeAllocator, message: str, **kwargs: str) -> None:
-    """Create a notification, honoring tests patched on the allocator module."""
-    allocator_module = sys.modules.get(
-        "custom_components.rental_control.allocator.allocator"
-    )
-    create = getattr(allocator_module, "async_create", async_create)
-    create(allocator.hass, message, **kwargs)
