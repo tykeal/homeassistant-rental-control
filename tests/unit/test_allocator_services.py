@@ -572,8 +572,11 @@ def test_forced_hold_deferral_notification_skips_first_cycle(
     services_module.report_forced_hold_deferrals(allocator, ())
 
     assert len(created) == 1
-    assert "abc12345:unverifiable_lock" in created[0][0][1]
-    assert "adoption_conflict" not in created[0][0][1]
+    message = created[0][0][1]
+    assert "front slot 1" in message
+    assert "its lock could not be read this cycle" in message
+    assert "abc12345" not in message
+    assert "adoption_conflict" not in message
 
 
 def test_forced_hold_report_scopes_current_observation(

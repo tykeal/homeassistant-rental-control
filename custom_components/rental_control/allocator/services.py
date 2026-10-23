@@ -19,6 +19,7 @@ import voluptuous as vol
 from ..const import COORDINATOR
 from ..const import DOMAIN
 from ..const import NAME
+from . import entry_info
 from . import exclusion_service
 from . import reissue as allocator_reissue
 from . import reissue_service
@@ -146,9 +147,18 @@ def report_orphan_cleanup(hass: HomeAssistant, report: OrphanCleanupReport) -> N
     message = "Shared code orphan cleanup retained allocations: " + ", ".join(
         f"{outcome.code_ref}:{outcome.reason}" for outcome in report.retained
     )
+    _LOGGER.warning(message)
+    retained = ", ".join(
+        f"{entry_info.describe_slot(hass, outcome.entry_id, outcome.lockname, outcome.slot)}"
+        f" ({entry_info.retention_phrase(outcome.reason)})"
+        for outcome in report.retained
+    )
     async_create(
         hass,
-        message,
+        (
+            "Rental Control kept door codes that orphan cleanup could not "
+            f"safely clear: {retained}. Nothing was changed on the locks."
+        ),
         title=f"{NAME} code orphan cleanup",
         notification_id=_ORPHAN_NOTIFICATION_ID,
     )
@@ -221,9 +231,18 @@ def report_forced_hold_deferrals(
     _LOGGER.warning(message)
     if not hasattr(hass, "bus"):
         return
+    held = ", ".join(
+        f"{entry_info.describe_slot(hass, outcome.entry_id, outcome.lockname, outcome.slot)}"
+        f" ({entry_info.retention_phrase(outcome.retention_reason)})"
+        for outcome in deferred
+    )
     async_create(
         hass,
-        message,
+        (
+            "Rental Control cannot yet replace door codes you asked it to "
+            f"re-issue: {held}. The existing codes stay in place until it "
+            "can."
+        ),
         title=f"{NAME} forced re-issue holds",
         notification_id=_FORCED_HOLD_NOTIFICATION_ID,
     )

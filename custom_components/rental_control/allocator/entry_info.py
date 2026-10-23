@@ -27,8 +27,11 @@ from ..const import CONF_CODE_GENERATION
 __all__ = [
     "CODE_GENERATOR_LAST_FOUR",
     "code_generator",
+    "describe_owner",
+    "describe_slot",
     "entry_config",
     "entry_name",
+    "retention_phrase",
     "uses_last_four",
 ]
 
@@ -99,3 +102,41 @@ def code_generator(hass: Any, entry_id: str) -> str | None:
 def uses_last_four(hass: Any, entry_id: str) -> bool:
     """Return whether an entry derives codes from guest phone digits."""
     return code_generator(hass, entry_id) == CODE_GENERATOR_LAST_FOUR
+
+
+def describe_slot(
+    hass: Any,
+    entry_id: str,
+    lockname: str | None,
+    slot: int | None,
+) -> str:
+    """Return a user-facing description of one entry's lock slot.
+
+    A user knows their configuration as a named entry, a lock and a
+    slot number, so that is what notifications say. An entry that
+    drives no lock has no slot to name and is described by name alone.
+    """
+    name = entry_name(hass, entry_id)
+    if lockname is None or slot is None:
+        return name
+    return f"{name} on {lockname} slot {slot}"
+
+
+def describe_owner(hass: Any, owner: Any) -> str:
+    """Return a user-facing description of one allocation owner."""
+    return describe_slot(hass, owner.entry_id, owner.lockname, owner.slot)
+
+
+_RETENTION_PHRASES = {
+    "adoption_conflict": "the code is in use by more than one booking",
+    "unverifiable_lock": "its lock could not be read this cycle",
+    "code_still_programmed": "the code is still programmed in the lock",
+    "recovery_fail_closed": "the code registry is still recovering",
+}
+
+
+def retention_phrase(reason: str | None) -> str:
+    """Return a readable explanation of a retention reason code."""
+    if reason is None:
+        return "it could not be released"
+    return _RETENTION_PHRASES.get(reason, reason.replace("_", " "))

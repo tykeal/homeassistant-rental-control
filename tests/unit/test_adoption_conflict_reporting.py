@@ -180,3 +180,23 @@ def test_conflict_notification_id_is_per_code_ref(
     assert all("conflict" in notification_id for notification_id in ids)
     assert len(ids) == 2
     assert len(set(ids)) == 2
+
+
+def test_conflict_notification_names_lock_and_slot(
+    notifications: _Notifications, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The notification carries names; the log keeps the identifiers."""
+    caplog.set_level("INFO")
+    allocator = _allocator(_hass(entry_a="date_based", entry_b="date_based"))
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
+
+    message = notifications.calls[0]["message"]
+    assert "Unit A" in message
+    assert "Unit B" in message
+    assert "front_door" in message
+    assert "slot 3" in message
+    assert "slot 5" in message
+    assert "entry_a-guest-3" not in message
+    assert "entry_a:" not in message
+    assert "entry_a-guest-3" in caplog.text

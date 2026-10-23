@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """User-facing reports for shared door-code adoption problems.
 
-Adoption itself and the way adoption problems are reported change for
-different reasons and are read by different people, so they are kept
-apart. This module owns every notification the adoption path raises,
-along with the rule deciding which shared codes are worth reporting
-at all.
+These reports have two audiences and say different things to each.
+The log is read by a maintainer chasing a bug, so it keeps the entry
+id, the identity key and the code_ref.  The notification is read by
+the person running the property, who knows their configuration as a
+named entry, a lock and a slot number, so it says that instead and
+keeps one masked code_ref as the handle tying it back to the log.
 """
 
 from __future__ import annotations
@@ -93,9 +94,17 @@ def report_adoption_conflict(
         )
         return
     _LOGGER.warning(message)
+    places = ", ".join(
+        entry_info.describe_owner(allocator.hass, owner) for owner in record.owners
+    )
     _notify(
         allocator,
-        message,
+        (
+            f"Rental Control found one door code in use by more than one "
+            f"booking: {places}. The code was left in place and nothing was "
+            f"rotated. Search the Home Assistant log for code_ref "
+            f"{record.code_ref} for the full details."
+        ),
         title=f"{NAME} code registry conflict",
         notification_id=conflict_notification_id(record.code_ref),
     )
@@ -119,9 +128,18 @@ def report_identity_mismatch(
         "retained and no code was rotated."
     )
     _LOGGER.warning(message)
+    where = entry_info.describe_slot(
+        allocator.hass, request.entry_id, request.lockname, request.slot
+    )
     _notify(
         allocator,
-        message,
+        (
+            f"Rental Control found a different door code on the lock than "
+            f"the one it recorded for a booking in {where}. The code on the "
+            f"lock was kept and nothing was rotated. Search the Home "
+            f"Assistant log for code_ref {observed_ref} for the full "
+            "details."
+        ),
         title=f"{NAME} code registry identity mismatch",
         notification_id=f"{_CONFLICT_NOTIFICATION_ID}_identity",
     )

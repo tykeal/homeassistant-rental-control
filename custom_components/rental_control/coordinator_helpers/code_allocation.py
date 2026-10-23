@@ -13,6 +13,7 @@ from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.persistent_notification import async_dismiss
 from homeassistant.util import dt
 
+from ..allocator import entry_info
 from ..allocator import get_allocator
 from ..allocator.models import AdoptionRequest
 from ..allocator.models import AllocationOrigin
@@ -147,14 +148,20 @@ async def async_resolve_codes(
         sorted(observation.unreadable_slots - request.excluded_slots),
     )
     if _apply_allocation_results(allocator, entry_id, reservations, result):
-        message = (
-            f"Shared code allocator exhausted the configured code space for "
-            f"entry {entry_id}. New duplicate codes were not issued."
+        _LOGGER.warning(
+            "Shared code allocator exhausted the configured code space for "
+            "entry %s. New duplicate codes were not issued.",
+            entry_id,
         )
-        _LOGGER.warning(message)
+        name = entry_info.entry_name(hass, entry_id)
         async_create(
             hass,
-            message,
+            (
+                f"Rental Control ran out of unused door codes for {name}, so "
+                "no code was issued for at least one booking. Shorten the "
+                "booking window, reduce the number of tracked events, or use "
+                "a longer code length to free up codes."
+            ),
             title=f"{NAME} code allocation exhausted",
             notification_id=f"{_EXHAUSTED_NOTIFICATION_ID}_{entry_id}",
         )
@@ -226,8 +233,16 @@ def report_unreadable_slots(
     slot_list = ", ".join(str(slot) for slot in slots)
     label = "slots" if len(slots) > 1 else "slot"
     lock_label = lockname or "unknown lock"
+    _LOGGER.warning(
+        "Entry %s cannot read managed %s %s on lock %s; issuance is withheld",
+        entry_id,
+        label,
+        slot_list,
+        lock_label,
+    )
+    name = entry_info.entry_name(hass, entry_id)
     message = (
-        f"Rental Control entry {entry_id} cannot read managed {label} "
+        f"Rental Control entry {name} cannot read managed {label} "
         f"{slot_list} on lock {lock_label}. Door code issuance is withheld "
         "while those slots stay unreadable, because an unreadable slot may "
         "still hold a code the integration cannot see. If this condition is "

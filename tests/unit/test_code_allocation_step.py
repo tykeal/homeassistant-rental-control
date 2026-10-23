@@ -1171,9 +1171,12 @@ async def test_exhaustion_notifies_once_per_cycle(
 
     assert first.slot_code is None
     assert second.slot_code is None
-    assert [message for message in notifications if "exhausted" in message] == [
-        notifications[0]
+    exhaustion = [
+        message
+        for message in notifications
+        if "ran out of unused door codes" in message
     ]
+    assert exhaustion == [notifications[0]]
 
 
 async def test_unaccounted_slots_suppress_issuance() -> None:
@@ -1398,6 +1401,31 @@ async def test_unreadable_slots_raise_notification(
     assert kwargs["notification_id"] == f"{DOMAIN}_unreadable_slots_entry-a"
 
 
+async def test_unreadable_slots_notification_names_the_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The notification names the entry; the log keeps the entry id."""
+    entry_id = "0123456789abcdef0123456789abcdef"
+    created: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        code_allocation,
+        "async_create",
+        lambda _hass, message, **kwargs: created.append((message, kwargs)),
+    )
+    hass = _notifying_hass()
+    entry = SimpleNamespace(entry_id=entry_id, title="Unit A", data={}, options={})
+    hass.config_entries.async_get_entry = lambda requested: (
+        entry if requested == entry_id else None
+    )
+
+    code_allocation.report_unreadable_slots(hass, entry_id, "front", [3])
+
+    assert len(created) == 1
+    message, _kwargs = created[0]
+    assert "Unit A" in message
+    assert entry_id not in message
+
+
 async def test_owned_unreadable_slot_keeps_notification(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1555,10 +1583,9 @@ async def test_adoption_gate_message_names_blocking_slots(
     allocator._gate_warning_sent = False
     allocator._warn_if_gate_expired()
 
-    assert notifications == [
-        "Shared code allocator is still waiting for adoption from entries: "
-        "entry-a (unreadable slots 1, 2). New code issuance remains disabled."
-    ]
+    assert len(notifications) == 1
+    assert "unreadable slots 1, 2" in notifications[0]
+    assert "waiting to read the door codes" in notifications[0]
 
 
 async def test_adopted_entry_clears_blocking_slot_tracking() -> None:
