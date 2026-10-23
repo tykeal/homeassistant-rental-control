@@ -275,7 +275,11 @@ async def test_resolve_cycle_orders_reissue_steps(
         apply,
     )
 
-    def allocate(_allocator: DoorCodeAllocator, request: AllocationRequest) -> object:
+    def allocate(
+        _allocator: DoorCodeAllocator,
+        request: AllocationRequest,
+        **_kwargs: object,
+    ) -> object:
         """Record the allocation step."""
         calls.append("allocate")
         return SimpleNamespace(
