@@ -85,12 +85,17 @@ def _adopt(
     code: str = _CODE,
     lockname: str = "front_door",
 ) -> None:
-    """Adopt one observed code for one entry's slot."""
+    """Adopt one observed code for one entry's slot.
+
+    The identity is derived from the slot so that one entry adopting
+    two codes reads as two bookings rather than as one booking whose
+    code changed, which is a different report entirely.
+    """
     adoption.adopt_unlocked(
         allocator,
         AdoptionRequest(
             entry_id=entry_id,
-            identity_key=f"{entry_id}-guest",
+            identity_key=f"{entry_id}-guest-{slot}",
             code=code,
             code_length=4,
             lockname=lockname,
@@ -118,7 +123,7 @@ def test_last_four_sharing_logs_without_notifying(
 
     assert notifications.calls == []
     assert "expected under the last_four generator" in caplog.text
-    assert "entry_a-guest" in caplog.text
+    assert "entry_a-guest-3" in caplog.text
 
 
 def test_date_based_sharing_still_notifies(notifications: _Notifications) -> None:
@@ -159,3 +164,19 @@ def test_undeterminable_generator_still_notifies(
     _adopt(allocator, "entry_b", 5)
 
     assert len(notifications.calls) == 1
+
+
+def test_conflict_notification_id_is_per_code_ref(
+    notifications: _Notifications,
+) -> None:
+    """Two conflicting codes must not overwrite one another's report."""
+    allocator = _allocator(_hass(entry_a="date_based", entry_b="date_based"))
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
+    _adopt(allocator, "entry_a", 4, code=_OTHER_CODE)
+    _adopt(allocator, "entry_b", 6, code=_OTHER_CODE)
+
+    ids = [call["notification_id"] for call in notifications.calls]
+    assert all("conflict" in notification_id for notification_id in ids)
+    assert len(ids) == 2
+    assert len(set(ids)) == 2

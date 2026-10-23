@@ -30,6 +30,16 @@ _LOGGER = logging.getLogger(__name__)
 _CONFLICT_NOTIFICATION_ID = f"{DOMAIN}_code_registry_conflict"
 
 
+def conflict_notification_id(code_ref: str) -> str:
+    """Return the persistent notification id for one code's conflict.
+
+    Each conflicting code gets its own notification. A single shared id
+    let one code's report overwrite another's, so only the newest was
+    ever visible and dismissing it hid every other open conflict.
+    """
+    return f"{_CONFLICT_NOTIFICATION_ID}_{code_ref}"
+
+
 def adopt_unlocked(
     allocator: DoorCodeAllocator,
     request: AdoptionRequest,
@@ -381,7 +391,7 @@ def _report_adoption_conflict(
         allocator,
         message,
         title=f"{NAME} code registry conflict",
-        notification_id=_CONFLICT_NOTIFICATION_ID,
+        notification_id=conflict_notification_id(record.code_ref),
     )
 
 
