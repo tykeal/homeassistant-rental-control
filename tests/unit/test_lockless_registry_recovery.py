@@ -34,7 +34,11 @@ _END = _START + timedelta(days=3)
 _CODE = "9999"
 
 
-def _fake_hass(*lock_entry_ids: str, disabled_lock: bool = False) -> Any:
+def _fake_hass(
+    *lock_entry_ids: str,
+    disabled_lock: bool = False,
+    broken_lock: bool = False,
+) -> Any:
     """Build a minimal hass object seeded with lock-backed entries."""
     hass = SimpleNamespace()
     hass.data = {}
@@ -55,14 +59,28 @@ def _fake_hass(*lock_entry_ids: str, disabled_lock: bool = False) -> Any:
                 data={"keymaster_entry_id": "back"},
             )
         )
+    if broken_lock:
+        entries.append(
+            SimpleNamespace(
+                entry_id="entry-broken",
+                disabled_by=None,
+                data={"keymaster_entry_id": "side"},
+            )
+        )
     hass.config_entries = SimpleNamespace(async_entries=lambda _domain=None: entries)
     return hass
 
 
-def _allocator(*lock_entry_ids: str, disabled_lock: bool = False) -> DoorCodeAllocator:
+def _allocator(
+    *lock_entry_ids: str,
+    disabled_lock: bool = False,
+    broken_lock: bool = False,
+) -> DoorCodeAllocator:
     """Build an allocator whose persistence is a no-op."""
     allocator = DoorCodeAllocator(
-        _fake_hass(*lock_entry_ids, disabled_lock=disabled_lock)
+        _fake_hass(
+            *lock_entry_ids, disabled_lock=disabled_lock, broken_lock=broken_lock
+        )
     )
     allocator._store = cast(Any, SimpleNamespace(async_save=lambda _registry: None))
     return allocator
@@ -330,3 +348,57 @@ async def test_recovery_waits_for_a_disabled_lock_entry() -> None:
     assert reservations[0].code_source == "unallocated"
     assert allocator._registry_lost is True
     assert allocator._registry_missing is True
+
+
+async def test_recovery_waits_for_a_lock_entry_that_failed_setup() -> None:
+    """An enabled lock entry that never adopted still blocks recovery.
+
+    ``async_setup_entry`` unregisters an entry from the adoption gate
+    when its setup raises, which an initial calendar fetch failure can
+    do before any reconciliation runs. The entry stays enabled, so
+    neither the gate nor a disabled-entry filter catches it, while its
+    codes remain programmed in the lock.
+    """
+    allocator = _allocator(broken_lock=True)
+    await allocator.async_unregister_entry("entry-broken")
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+
+    reservations = [_reservation()]
+    await _cycle(allocator, reservations, entry_id="entry-free")
+
+    assert reservations[0].slot_code is None
+    assert reservations[0].code_source == "unallocated"
+    assert allocator._registry_lost is True
+    assert allocator._registry_missing is True
+
+
+async def test_a_published_ghost_is_withheld_after_flags_clear() -> None:
+    """A lost code is never replaced by a placeholder, flags or not.
+
+    The recovery flags are global while a decline is per entry, so a
+    clean cycle for one entry can clear them while another entry still
+    has a published reservation whose code was lost. Normal issuance
+    must not then accept that reservation's all-zero placeholder.
+    """
+    allocator = _allocator()
+    allocator._registry_lost = True
+    allocator._registry_missing = False
+
+    ghost = _reservation("identity-ghost", code=None)
+    await _cycle(allocator, [ghost], entry_id="entry-a")
+
+    # A clean cycle for an unrelated entry clears the shared flags.
+    await _cycle(allocator, [], entry_id="entry-b")
+    allocator._registry_lost = False
+    allocator._registry_missing = False
+
+    still_ghosted = _reservation("identity-ghost", code=None)
+    await _cycle(allocator, [still_ghosted], entry_id="entry-a")
+
+    assert still_ghosted.slot_code is None
+    assert allocator._registry.code_for_identity("identity-ghost") is None
+
+    returned = _reservation("identity-ghost", code=_CODE)
+    await _cycle(allocator, [returned], entry_id="entry-a")
+    assert returned.slot_code == _CODE

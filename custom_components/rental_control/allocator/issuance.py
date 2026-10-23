@@ -10,9 +10,8 @@ from datetime import datetime
 import logging
 from typing import TYPE_CHECKING
 
-from ..const import CONF_LOCK_ENTRY
-from ..const import DOMAIN
 from . import adoption
+from . import recovery
 from . import reissue
 from . import services
 from .candidates import candidate_codes
@@ -64,75 +63,6 @@ def select_code(
     return None, None
 
 
-def entry_has_lock(data: object) -> bool:
-    """Return whether config entry data references a Keymaster lock."""
-    if not isinstance(data, dict):
-        return False
-    lock_entry = data.get(CONF_LOCK_ENTRY)
-    return (
-        isinstance(lock_entry, str)
-        and bool(lock_entry.strip())
-        and lock_entry.strip() != "(none)"
-    )
-
-
-def unobserved_lock_entries(allocator: DoorCodeAllocator) -> frozenset[str]:
-    """Return configured lock-backed entries that will never adopt.
-
-    ``_seed_pending_adoption`` enrolls only entries that are enabled, so
-    a disabled lock-backed entry is never in ``_pending_adoption`` even
-    though unloading it leaves its codes programmed in the lock. An
-    empty pending set therefore does not by itself prove that every
-    physical code is represented in the registry.
-    """
-    entries = getattr(allocator.hass, "config_entries", None)
-    if entries is None:
-        return frozenset()
-    return frozenset(
-        entry.entry_id
-        for entry in entries.async_entries(DOMAIN)
-        if getattr(entry, "disabled_by", None) is not None
-        and entry_has_lock(getattr(entry, "data", {}))
-    )
-
-
-def lockless_recovery_allowed(
-    allocator: DoorCodeAllocator,
-    request: AllocationRequest,
-    *,
-    lockless_cycle: bool,
-) -> bool:
-    """Return whether a lost registry may still issue for this request.
-
-    Fail-closed exists because a lost registry cannot prove a code is
-    unused, and re-issuing one that is already programmed into a lock
-    would hand two guests the same code. A generator-only entry programs
-    no lock and observes no slots, so it has nothing to adopt and would
-    otherwise wait forever for an adoption that can never happen.
-
-    Recovery is therefore allowed only when every one of these holds:
-
-    * the whole cycle is lockless and the request claims no physical
-      slot, so nothing this entry issues can reach a lock;
-    * no entry is still pending its first adoption, so every enabled
-      lock-backed entry has re-registered the codes its locks hold;
-    * no disabled lock-backed entry is configured, because such an entry
-      never adopts and its programmed codes would stay invisible to
-      ``select_code``;
-    * the request carries a real preferred code rather than a
-      placeholder, so recovery restores a code a guest already has
-      instead of inventing one.
-    """
-    return (
-        lockless_cycle
-        and request.lockname is None
-        and request.slot is None
-        and request.preferred_code_known
-        and not allocator._pending_adoption
-        and not unobserved_lock_entries(allocator)
-    )
-
-
 def allocate_request(
     allocator: DoorCodeAllocator,
     request: AllocationRequest,
@@ -148,32 +78,11 @@ def allocate_request(
             if owner.identity_key == request.identity_key
         )
         return AllocationResult(code=existing.code, origin=owner.origin)
-    if not request.issuance_allowed:
-        return AllocationResult(code=None, reason="unaccounted_slots")
-    if allocator._pending_adoption:
-        return AllocationResult(code=None, reason="adoption_pending")
-    if allocator._registry_lost and (
-        request.previously_published or not allocator._registry_missing
-    ):
-        if not lockless_recovery_allowed(
-            allocator, request, lockless_cycle=lockless_cycle
-        ):
-            _LOGGER.warning(
-                "Declined allocation for %s:%s after registry loss",
-                request.entry_id,
-                request.identity_key,
-            )
-            return AllocationResult(code=None, reason="recovery_fail_closed")
-        _LOGGER.info(
-            "Re-issuing a code for generator-only entry %s:%s after registry "
-            "loss; this entry drives no lock, so there is nothing to adopt "
-            "and no physical slot a re-issued code could collide with",
-            request.entry_id,
-            request.identity_key,
-        )
-        recovering = True
-    else:
-        recovering = False
+    declined, recovering = recovery.issuance_block(
+        allocator, request, lockless_cycle=lockless_cycle
+    )
+    if declined is not None:
+        return declined
     code, origin = select_code(
         allocator._registry,
         request.preferred_code,
@@ -273,6 +182,8 @@ async def resolve_cycle(
             request.observation.unreadable_slots - request.excluded_slots,
         )
         if request.adoption_complete and not unaccounted:
+            if request.observation.lockname is not None:
+                allocator._adopted_entries.add(request.observation.entry_id)
             allocator._pending_adoption.discard(request.observation.entry_id)
             if not allocator._pending_adoption:
                 allocator._gate_deadline = 0.0
@@ -316,7 +227,8 @@ async def resolve_cycle(
             allocator, request, reissue_outcomes
         )
         recovery_declined = any(
-            result.reason == "recovery_fail_closed" for result in allocated.values()
+            result.reason in ("recovery_fail_closed", "published_code_unknown")
+            for result in allocated.values()
         )
         _persist_registry(
             allocator,
@@ -355,7 +267,7 @@ def _persist_registry(
     recoverable = allocator._registry_missing or (
         lockless_cycle
         and not allocator._pending_adoption
-        and not unobserved_lock_entries(allocator)
+        and not recovery.unobserved_lock_entries(allocator)
     )
     if (
         recoverable

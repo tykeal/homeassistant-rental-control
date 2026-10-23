@@ -22,7 +22,6 @@ from . import issuance
 from . import orphans
 from . import reissue
 from . import services
-from .issuance import entry_has_lock as _entry_has_lock
 from .models import AdoptionRequest
 from .models import AllocationOwner
 from .models import AllocationRecord
@@ -35,6 +34,7 @@ from .models import OrphanCleanupReport
 from .models import ReissuePreview
 from .models import ReissuePreviewRequest
 from .models import ReleaseReport
+from .recovery import entry_has_lock as _entry_has_lock
 from .registry import AllocationRegistry
 from .store import RegistryStore
 from .store import code_ref_for
@@ -54,6 +54,7 @@ class DoorCodeAllocator:
         self._store = RegistryStore(hass)
         self._lock = asyncio.Lock()
         self._pending_adoption = self._seed_pending_adoption()
+        self._adopted_entries: set[str] = set()
         self._pending_adoption_slots: dict[str, frozenset[int]] = {}
         self._gate_deadline = (
             monotonic() + _ADOPTION_GATE_WARNING_SECONDS
@@ -94,6 +95,7 @@ class DoorCodeAllocator:
         async with self._lock:
             self._pending_adoption.discard(entry_id)
             self._pending_adoption_slots.pop(entry_id, None)
+            self._adopted_entries.discard(entry_id)
             if not self._pending_adoption:
                 self._gate_deadline = 0.0
                 self._gate_warning_sent = False
@@ -286,6 +288,7 @@ class DoorCodeAllocator:
         async with self._lock:
             self._pending_adoption.discard(entry_id)
             self._pending_adoption_slots.pop(entry_id, None)
+            self._adopted_entries.discard(entry_id)
             if not self._pending_adoption:
                 self._gate_deadline = 0.0
                 self._gate_warning_sent = False
