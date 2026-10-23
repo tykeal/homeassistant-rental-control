@@ -173,22 +173,75 @@ def test_rotation_pending_slot_reserves_its_observed_code() -> None:
     ] == [("1111", 4, 1)]
 
 
-def test_invalid_code_slot_reserves_nothing() -> None:
-    """The invalid-code branch cannot collide, so it reserves nothing."""
-    for observed in ("22222", "12AB"):
-        requests = cast(
-            AdoptionRequests,
-            code_allocation.build_adoption_requests(
-                "entry-a",
-                "front",
-                4,
-                [_coded_slot(1, observed, "Target Guest")],
-                [_reservation("identity-a", "Target Guest", "1111")],
-            ),
-        )
+def test_non_decimal_invalid_code_slot_reserves_nothing() -> None:
+    """A non-decimal observed code cannot collide, so it reserves nothing."""
+    requests = cast(
+        AdoptionRequests,
+        code_allocation.build_adoption_requests(
+            "entry-a",
+            "front",
+            4,
+            [_coded_slot(1, "12AB", "Target Guest")],
+            [_reservation("identity-a", "Target Guest", "1111")],
+        ),
+    )
 
-        assert requests.suppressed_slots == {1}
-        assert requests.observed_reservations == []
+    assert requests.suppressed_slots == {1}
+    assert requests.observed_reservations == []
+
+
+def test_wrong_length_invalid_code_slot_is_reserved() -> None:
+    """A wrong-length decimal observed code is held at its own length.
+
+    The slot is still suppressed so the adoption gate does not deadlock,
+    but the code it physically holds is recorded so that an entry
+    configured for that length cannot be issued the same digits.
+    """
+    requests = cast(
+        AdoptionRequests,
+        code_allocation.build_adoption_requests(
+            "entry-a",
+            "front",
+            4,
+            [_coded_slot(1, "22222", "Target Guest")],
+            [_reservation("identity-a", "Target Guest", "1111")],
+        ),
+    )
+
+    assert list(requests) == []
+    assert requests.suppressed_slots == {1}
+    assert [
+        (item.code, item.code_length, item.slot)
+        for item in requests.observed_reservations
+    ] == [("22222", 5, 1)]
+
+
+async def test_wrong_length_code_is_not_issued_to_a_peer_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 4-digit entry's 5-digit slot code stays off a 5-digit peer's list."""
+    allocator = _allocator()
+    target = _reservation("identity-a", "Target Guest", "3333")
+    target_slot = _coded_slot(1, "22222", "Target Guest")
+    target_slot.persisted_identity_key = "identity-a"
+
+    await _resolve(allocator, monkeypatch, [target_slot], [target])
+
+    assert _owner_keys(allocator, "22222") == {"identity-a:observed:entry-a:front:1"}
+
+    peer = _reservation("identity-b", "Other Guest", "22222")
+    peer_slot = ManagedSlot(slot=5, managed=True, status=SlotStatus.FREE)
+    await _resolve(
+        allocator,
+        monkeypatch,
+        [peer_slot],
+        [peer],
+        entry_id="entry-b",
+        code_length=5,
+    )
+
+    assert peer.slot_code is not None
+    assert peer.slot_code != "22222"
 
 
 async def test_reserved_observed_code_is_released_when_it_disappears(

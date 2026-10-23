@@ -375,6 +375,7 @@ def build_adoption_requests(
                 slot.slot,
             )
             requests.suppressed_slots.add(slot.slot)
+            _reserve_observed_code(requests, entry_id, lockname, reservation, slot)
             continue
         requests.append(
             AdoptionRequest(
