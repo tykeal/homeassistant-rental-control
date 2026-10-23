@@ -35,9 +35,10 @@ class AdoptionRequests(list[AdoptionRequest]):
     """Adoption requests plus skipped slots accounted by suppression."""
 
     def __init__(self) -> None:
-        """Initialize the request list and suppressed slot set."""
+        """Initialize the request list, suppressed slots and reservations."""
         super().__init__()
         self.suppressed_slots: set[int] = set()
+        self.observed_reservations: list[AdoptionRequest] = []
 
 
 class ReissuePhase(StrEnum):

@@ -76,7 +76,7 @@ def adopt_unlocked(
             reason="identity_code_mismatch",
         )
 
-    _release_moved_observed_alias(allocator, request)
+    _release_observed_alias(allocator, request)
     owner = AllocationOwner(
         entry_id=request.entry_id,
         identity_key=request.identity_key,
@@ -115,6 +115,56 @@ def adopt_unlocked(
     return AllocationResult(code=request.code, origin=AllocationOrigin.ADOPTED)
 
 
+def reserve_observed_code(
+    allocator: DoorCodeAllocator,
+    request: AdoptionRequest,
+) -> None:
+    """Reserve a suppressed slot's observed code under an alias identity.
+
+    The code is recorded at its own length so that it is unavailable to
+    every entry sharing the lock, without assigning it to any
+    reservation. A code that already has a registry record is left alone,
+    because an existing record already keeps it out of issuance and
+    adding an owner would create a spurious adoption conflict.
+    """
+    if not request.code.isdecimal():
+        return
+    alias_key = issuance.observed_alias_key(request)
+    _release_moved_observed_alias(allocator, request)
+    record = allocator._registry.records.get(request.code)
+    if record is not None and not any(
+        owner.identity_key == alias_key for owner in record.owners
+    ):
+        return
+    now = datetime.now(UTC).isoformat()
+    owner = AllocationOwner(
+        entry_id=request.entry_id,
+        identity_key=alias_key,
+        origin=AllocationOrigin.ADOPTED,
+        lockname=request.lockname,
+        slot=request.slot,
+        lock_observed=True,
+        first_seen=now,
+        last_seen=now,
+    )
+    reserved = allocator._registry.add_owner(
+        request.code,
+        request.code_length,
+        owner,
+        allocator.code_ref(request.code),
+        now,
+    )
+    if record is None:
+        _LOGGER.info(
+            "Reserved observed code_ref %s for %s at %s:%s because its "
+            "slot is exempt from adoption this cycle",
+            reserved.code_ref,
+            request.entry_id,
+            request.lockname,
+            request.slot,
+        )
+
+
 def _record_mismatched_observed_owner(
     allocator: DoorCodeAllocator,
     request: AdoptionRequest,
@@ -124,6 +174,7 @@ def _record_mismatched_observed_owner(
     """Record observed-code ownership without moving the primary identity."""
     alias_key = issuance.observed_alias_key(request)
     _release_moved_observed_alias(allocator, request)
+    _release_historical_slot_aliases(allocator, request)
     owner = AllocationOwner(
         entry_id=request.entry_id,
         identity_key=alias_key,
@@ -155,6 +206,64 @@ def _release_moved_observed_alias(
     owned_code = allocator._registry.code_for_identity(alias_key)
     if owned_code is not None and owned_code != request.code:
         allocator._registry.release(alias_key)
+
+
+def _release_historical_slot_aliases(
+    allocator: DoorCodeAllocator,
+    request: AdoptionRequest,
+) -> None:
+    """Remove earlier fingerprints' aliases for this physical slot.
+
+    Only one identity can stand for a slot at a time, so an alias left
+    by a prior fingerprint of the same booking is stale. Dropping it
+    keeps the two from landing on one record, which would read as an
+    adoption conflict and block the code from ever being reclaimed.
+    """
+    for historical_key in request.fingerprint_history:
+        alias_key = issuance.observed_alias_key(request, identity_key=historical_key)
+        if allocator._registry.code_for_identity(alias_key) is not None:
+            allocator._registry.release(alias_key)
+
+
+def _observed_alias_keys(
+    allocator: DoorCodeAllocator,
+    request: AdoptionRequest,
+    identity_key: str,
+) -> list[str]:
+    """Return one identity's observed aliases on this entry's lock."""
+    prefix = f"{identity_key}:observed:{request.entry_id}:{request.lockname}:"
+    return [key for key in allocator._registry.by_identity if key.startswith(prefix)]
+
+
+def _release_observed_alias(
+    allocator: DoorCodeAllocator,
+    request: AdoptionRequest,
+) -> None:
+    """Remove the aliases this adoption makes redundant.
+
+    An alias is a placeholder for a code the booking holds physically
+    but does not own. Adoption records that ownership properly, so a
+    placeholder for the same slot must give way even when it names the
+    same code, and so must one that names the adopted code from another
+    slot the code has since moved away from. Leaving either on the
+    record would read as an adoption conflict and block the release of
+    the code for good. Nothing is lost by releasing them, because the
+    new owner is retained for as long as the lock reports its code
+    anywhere in this entry's managed slots.
+
+    Earlier fingerprints of the same booking leave placeholders too, and
+    ``_coalesce_fingerprint_owner`` only clears them when the historical
+    identity also held a real allocation. Sweep the whole history here so
+    a suppressed slot that changes fingerprint before adoption resumes
+    cannot leave a stale placeholder behind.
+    """
+    this_slot_suffix = f":{request.slot}"
+    for identity_key in (request.identity_key, *request.fingerprint_history):
+        for alias_key in _observed_alias_keys(allocator, request, identity_key):
+            if alias_key.endswith(this_slot_suffix) or (
+                allocator._registry.code_for_identity(alias_key) == request.code
+            ):
+                allocator._registry.release(alias_key)
 
 
 def _coalesce_fingerprint_owner(

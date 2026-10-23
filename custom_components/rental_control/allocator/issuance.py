@@ -10,6 +10,7 @@ from datetime import datetime
 import logging
 from typing import TYPE_CHECKING
 
+from . import adoption
 from . import reissue
 from . import services
 from .candidates import candidate_codes
@@ -128,6 +129,22 @@ def allocate_request(
     return AllocationResult(code=record.code, origin=origin)
 
 
+def _apply_adoptions(
+    allocator: DoorCodeAllocator, request: CycleRequest
+) -> dict[str, AllocationResult]:
+    """Adopt this cycle's observed codes that no forced re-issue claims."""
+    adopted: dict[str, AllocationResult] = {}
+    for adoption_request in request.adoptions:
+        if not allocator._registry_lost and reissue.adoption_matches_forced_reissue(
+            adoption_request, request
+        ):
+            continue
+        adopted[adoption_request.identity_key] = allocator._adopt_unlocked(
+            adoption_request
+        )
+    return adopted
+
+
 async def resolve_cycle(
     allocator: DoorCodeAllocator, request: CycleRequest
 ) -> CycleResult:
@@ -143,16 +160,13 @@ async def resolve_cycle(
             applied, staged_reissues = reissue.apply_forced_reissues(allocator, request)
             reissue_outcomes.extend(applied)
 
-        adopted: dict[str, AllocationResult] = {}
-        for adoption in request.adoptions:
-            if not allocator._registry_lost and reissue.adoption_matches_forced_reissue(
-                adoption, request
-            ):
-                continue
-            adopted[adoption.identity_key] = allocator._adopt_unlocked(adoption)
+        adopted = _apply_adoptions(allocator, request)
 
         for old_key, new_key in request.rekeys:
             allocator._rekey_unlocked(old_key, new_key)
+
+        for reservation in request.observed_reservations:
+            adoption.reserve_observed_code(allocator, reservation)
 
         unaccounted = unaccounted_slots(
             allocator, request.observation, excluded=request.excluded_slots
