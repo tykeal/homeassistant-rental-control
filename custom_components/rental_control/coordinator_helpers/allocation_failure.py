@@ -59,16 +59,24 @@ def notification_id(entry_id: str) -> str:
 
 
 def report(hass: Any, entry_id: str, name: str, error: BaseException) -> None:
-    """Record a failed lockless cycle and surface it once per condition."""
+    """Record a failed lockless cycle and surface it once per condition.
+
+    The streak counts refresh cycles that failed, so only a successful
+    cycle may reset it. A different exception part way through an
+    unbroken run is a changed condition, not a fresh run: it re-announces
+    so the operator sees the new error, while the count keeps climbing
+    towards the next escalation.
+    """
     signature = signature_for(error)
     state = _state.get(entry_id)
-    if state is None or state.signature != signature:
+    if state is None:
         state = FailureState(signature)
         _state[entry_id] = state
         announce = True
     else:
         state.count += 1
-        announce = state.count in _ESCALATIONS
+        announce = state.signature != signature or state.count in _ESCALATIONS
+        state.signature = signature
     if not announce:
         return
     _notify(hass, entry_id, name, state)

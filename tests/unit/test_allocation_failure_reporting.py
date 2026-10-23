@@ -232,3 +232,29 @@ async def test_unload_forgets_and_dismisses(_notifications: _Notifications) -> N
 
     assert allocation_failure.diagnostics("entry-a") is None
     assert allocation_failure.notification_id("entry-a") in _notifications.dismissed
+
+
+async def test_a_changed_failure_keeps_the_streak_running(
+    monkeypatch: pytest.MonkeyPatch, _notifications: _Notifications
+) -> None:
+    """Only a successful cycle resets the consecutive-failure count.
+
+    A different exception part way through an unbroken run is a changed
+    condition, not a fresh run. Restarting the count there would hide
+    how long the entry has been failing and would delay every
+    escalation threshold.
+    """
+    coordinator = _LocklessCoordinator()
+    monkeypatch.setattr(code_allocation, "async_resolve_codes", _failing("first"))
+    for _ in range(9):
+        await coordinator._run_lockless_allocation([])
+
+    monkeypatch.setattr(code_allocation, "async_resolve_codes", _failing("second"))
+    await coordinator._run_lockless_allocation([])
+
+    assert allocation_failure.diagnostics("entry-a") == {
+        "consecutive_failures": 10,
+        "last_error": "RuntimeError: second",
+    }
+    assert "on 10 consecutive refresh cycles" in _notifications.created[-1][1]
+    assert "second" in _notifications.created[-1][1]
