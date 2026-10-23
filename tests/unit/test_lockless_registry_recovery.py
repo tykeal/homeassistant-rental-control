@@ -34,7 +34,7 @@ _END = _START + timedelta(days=3)
 _CODE = "9999"
 
 
-def _fake_hass(*lock_entry_ids: str) -> Any:
+def _fake_hass(*lock_entry_ids: str, disabled_lock: bool = False) -> Any:
     """Build a minimal hass object seeded with lock-backed entries."""
     hass = SimpleNamespace()
     hass.data = {}
@@ -47,20 +47,30 @@ def _fake_hass(*lock_entry_ids: str) -> Any:
         )
         for entry_id in lock_entry_ids
     ]
+    if disabled_lock:
+        entries.append(
+            SimpleNamespace(
+                entry_id="entry-disabled",
+                disabled_by="user",
+                data={"keymaster_entry_id": "back"},
+            )
+        )
     hass.config_entries = SimpleNamespace(async_entries=lambda _domain=None: entries)
     return hass
 
 
-def _allocator(*lock_entry_ids: str) -> DoorCodeAllocator:
+def _allocator(*lock_entry_ids: str, disabled_lock: bool = False) -> DoorCodeAllocator:
     """Build an allocator whose persistence is a no-op."""
-    allocator = DoorCodeAllocator(_fake_hass(*lock_entry_ids))
+    allocator = DoorCodeAllocator(
+        _fake_hass(*lock_entry_ids, disabled_lock=disabled_lock)
+    )
     allocator._store = cast(Any, SimpleNamespace(async_save=lambda _registry: None))
     return allocator
 
 
 def _reservation(
     identity_key: str = "identity-a",
-    code: str = _CODE,
+    code: str | None = _CODE,
     *,
     published: bool = True,
 ) -> Reservation:
@@ -184,7 +194,13 @@ async def test_lock_backed_entry_still_fails_closed_after_loss() -> None:
 
 
 async def test_lockless_recovery_avoids_a_programmed_lock_code() -> None:
-    """Recovery never hands out a code another entry has in a lock."""
+    """Recovery never hands out a code another entry has in a lock.
+
+    The lockless entry prefers exactly the code the lock holds, so the
+    only codes recovery could reach it through are collision fallbacks.
+    Those cannot be proven to be the code this guest already has, so
+    recovery declines rather than publish a different one.
+    """
     allocator = _allocator()
     allocator._registry_lost = True
     allocator._registry_missing = False
@@ -203,8 +219,10 @@ async def test_lockless_recovery_avoids_a_programmed_lock_code() -> None:
     lockless = [_reservation("identity-free", code=_CODE)]
     await _cycle(allocator, lockless, entry_id="entry-free")
 
-    assert lockless[0].slot_code is not None
     assert lockless[0].slot_code != _CODE
+    assert lockless[0].slot_code is None
+    assert lockless[0].code_source == "unallocated"
+    assert allocator._registry_lost is True
 
 
 async def test_lockless_recovery_waits_for_pending_adoption() -> None:
@@ -253,3 +271,62 @@ async def test_single_allocation_outside_a_cycle_still_fails_closed() -> None:
 
     assert result.code is None
     assert result.reason == "recovery_fail_closed"
+
+
+async def test_recovery_declines_a_ghost_without_a_real_code() -> None:
+    """A code-less ghost is never recovered onto its placeholder code.
+
+    ``ghost_reservations`` retains a published booking through a feed
+    miss with ``slot_code=None``, and ``build_allocation_requests``
+    substitutes an all-zero placeholder for the missing preference.
+    Allocating that placeholder would publish a fabricated code and the
+    existing-owner shortcut would then keep it when the booking returns.
+    """
+    allocator = _allocator()
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+
+    ghost = _reservation("identity-ghost", code=None)
+    await _cycle(allocator, [ghost], entry_id="entry-free")
+
+    assert ghost.slot_code is None
+    assert ghost.code_source == "unallocated"
+    assert allocator._registry.code_for_identity("identity-ghost") is None
+    assert allocator._registry_lost is True
+
+
+async def test_ghost_recovers_once_its_real_code_returns() -> None:
+    """The booking's return restores the generated code, not a placeholder."""
+    allocator = _allocator()
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+
+    ghost = _reservation("identity-ghost", code=None)
+    await _cycle(allocator, [ghost], entry_id="entry-free")
+    assert ghost.slot_code is None
+
+    live = _reservation("identity-ghost", code=_CODE)
+    await _cycle(allocator, [live], entry_id="entry-free")
+
+    assert live.slot_code == _CODE
+
+
+async def test_recovery_waits_for_a_disabled_lock_entry() -> None:
+    """A disabled lock-backed entry blocks recovery and the flag clear.
+
+    A disabled entry is never enrolled in the adoption gate, yet
+    unloading it leaves its codes programmed in the lock. An empty
+    pending set therefore cannot prove every physical code is in the
+    registry, so recovery must stay shut while one is configured.
+    """
+    allocator = _allocator(disabled_lock=True)
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+
+    reservations = [_reservation()]
+    await _cycle(allocator, reservations, entry_id="entry-free")
+
+    assert reservations[0].slot_code is None
+    assert reservations[0].code_source == "unallocated"
+    assert allocator._registry_lost is True
+    assert allocator._registry_missing is True

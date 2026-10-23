@@ -14,7 +14,6 @@ from typing import Any
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.core import HomeAssistant
 
-from ..const import CONF_LOCK_ENTRY
 from ..const import DOMAIN
 from ..const import NAME
 from . import adoption
@@ -23,6 +22,7 @@ from . import issuance
 from . import orphans
 from . import reissue
 from . import services
+from .issuance import entry_has_lock as _entry_has_lock
 from .models import AdoptionRequest
 from .models import AllocationOwner
 from .models import AllocationRecord
@@ -42,18 +42,6 @@ from .store import code_ref_for
 _LOGGER = logging.getLogger(__name__)
 _ADOPTION_GATE_WARNING_SECONDS = 300.0
 _GATE_NOTIFICATION_ID = f"{DOMAIN}_code_registry_adoption_pending"
-
-
-def _entry_has_lock(data: object) -> bool:
-    """Return whether config entry data references a Keymaster lock."""
-    if not isinstance(data, dict):
-        return False
-    lock_entry = data.get(CONF_LOCK_ENTRY)
-    return (
-        isinstance(lock_entry, str)
-        and bool(lock_entry.strip())
-        and lock_entry.strip() != "(none)"
-    )
 
 
 class DoorCodeAllocator:

@@ -450,6 +450,7 @@ def build_allocation_requests(
                 previously_published=reservation.published_once,
                 lockname=lockname if planned_slot is not None else None,
                 slot=planned_slot,
+                preferred_code_known=preferred is not None,
             )
         )
     return requests

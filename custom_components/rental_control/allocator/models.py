@@ -81,7 +81,14 @@ class AllocationRecord:
 
 @dataclass(frozen=True, slots=True)
 class AllocationRequest:
-    """Request a code for one reservation identity."""
+    """Request a code for one reservation identity.
+
+    ``preferred_code_known`` is False when the caller had no real code to
+    prefer and ``preferred_code`` is only a placeholder, as happens for a
+    ghost reservation retained through a feed miss. Normal issuance
+    ignores the distinction, but recovery after a registry loss must not
+    treat a placeholder as the code a guest already holds.
+    """
 
     entry_id: str
     identity_key: str
@@ -92,6 +99,7 @@ class AllocationRequest:
     lockname: str | None = None
     slot: int | None = None
     issuance_allowed: bool = True
+    preferred_code_known: bool = True
 
 
 @dataclass(frozen=True, slots=True)
