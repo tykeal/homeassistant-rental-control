@@ -50,6 +50,7 @@ class _LocklessCoordinator(CoordinatorRefreshMixin):
     code_length = 4
     _name = "Entry A"
     _latest_plan = None
+    event_overrides: Any = None
 
     def __init__(self) -> None:
         """Initialize a single reservation and empty published state."""
@@ -258,3 +259,25 @@ async def test_a_changed_failure_keeps_the_streak_running(
     }
     assert "on 10 consecutive refresh cycles" in _notifications.created[-1][1]
     assert "second" in _notifications.created[-1][1]
+
+
+async def test_gaining_a_lock_clears_a_lockless_failure(
+    monkeypatch: pytest.MonkeyPatch, _notifications: _Notifications
+) -> None:
+    """Switching an entry to lock-backed mode clears its failure report.
+
+    An options update that adds a lock reconfigures the coordinator in
+    place, so later refreshes run reconciliation and never reach the
+    lockless ``resolve`` call.  Without clearing it here, a stale
+    notification would outlive the condition it describes forever.
+    """
+    coordinator = _LocklessCoordinator()
+    monkeypatch.setattr(code_allocation, "async_resolve_codes", _failing())
+    await coordinator._run_lockless_allocation([])
+    assert allocation_failure.has_report("entry-a") is True
+
+    await coordinator._run_reconciliation([])
+
+    assert allocation_failure.has_report("entry-a") is False
+    assert allocation_failure.diagnostics("entry-a") is None
+    assert allocation_failure.notification_id("entry-a") in _notifications.dismissed

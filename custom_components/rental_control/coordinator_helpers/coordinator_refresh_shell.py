@@ -208,7 +208,14 @@ class CoordinatorRefreshMixin:
             )
 
     async def _run_reconciliation(self, new_calendar: list[CalendarEvent]) -> None:
-        """Build a desired plan from the calendar and apply it to the lock."""
+        """Build a desired plan from the calendar and apply it to the lock.
+
+        An entry whose options gain a lock keeps running in place, so a
+        failure report left by its earlier lockless cycles is cleared
+        here; nothing else would ever clear it.
+        """
+        if allocation_failure.has_report(self._entry_id):
+            allocation_failure.forget_entry(self.hass, self._entry_id)
         event_overrides = self.event_overrides
         if event_overrides is None:
             return

@@ -98,6 +98,11 @@ def resolve(hass: Any, entry_id: str, name: str) -> None:
     dismiss(hass, entry_id)
 
 
+def has_report(entry_id: str) -> bool:
+    """Return whether an entry currently has an open failure report."""
+    return entry_id in _state
+
+
 def forget_entry(hass: Any, entry_id: str) -> None:
     """Drop and dismiss an entry's failure report as it goes away."""
     _state.pop(entry_id, None)
@@ -156,6 +161,7 @@ __all__ = [
     "diagnostics",
     "dismiss",
     "forget_entry",
+    "has_report",
     "notification_id",
     "report",
     "reset_reporting",
