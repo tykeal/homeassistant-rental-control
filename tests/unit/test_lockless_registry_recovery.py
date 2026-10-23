@@ -433,3 +433,41 @@ async def test_an_empty_cycle_cannot_clear_flags_for_an_unobserved_lock() -> Non
 
     assert reservations[0].slot_code is None
     assert reservations[0].code_source == "unallocated"
+
+
+async def test_a_reloaded_lock_entry_must_adopt_again() -> None:
+    """Reloading a lock-backed entry withdraws its adopted standing.
+
+    Unloading an entry clears its pending gate, and reloading it
+    re-registers it. Treating the adoption it completed before the
+    reload as still current would let an empty lockless cycle clear the
+    recovery flags while the reloaded lock is unobserved, and a setup
+    failure then removes the pending gate as well, leaving nothing to
+    hold issuance back.
+    """
+    allocator = _allocator("entry-lock")
+    await _cycle(
+        allocator,
+        [_reservation("identity-lock", code="1234")],
+        entry_id="entry-lock",
+        lockname="front",
+        managed_slots=[_slot(1, "1234")],
+    )
+    assert "entry-lock" in allocator._adopted_entries
+
+    await allocator.async_register_entry("entry-lock")
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+
+    await _cycle(allocator, [], entry_id="entry-free")
+
+    assert allocator._registry_lost is True
+    assert allocator._registry_missing is True
+
+    await allocator.async_unregister_entry("entry-lock")
+    reservations = [_reservation()]
+    await _cycle(allocator, reservations, entry_id="entry-free")
+
+    assert reservations[0].slot_code is None
+    assert reservations[0].code_source == "unallocated"
+    assert allocator._registry_lost is True

@@ -258,15 +258,18 @@ def _persist_registry(
 
     A lockless cycle may complete recovery even when the stored registry
     was corrupt rather than absent. Either way the flags may only clear
-    once every configured lock-backed entry has actually adopted, since
-    clearing them returns the allocator to normal issuance, where a code
-    still programmed in an unobserved lock would look free.
+    once no entry is still awaiting its first cycle and every configured
+    lock-backed entry has actually adopted, since clearing them returns
+    the allocator to normal issuance, where a code still programmed in
+    an unobserved lock would look free.
     """
     if not allocator._registry_lost:
         allocator._store.async_save(allocator._registry)
         return
-    recoverable = (allocator._registry_missing or lockless_cycle) and not (
-        recovery.unobserved_lock_entries(allocator)
+    recoverable = (
+        (allocator._registry_missing or lockless_cycle)
+        and not allocator._pending_adoption
+        and not recovery.unobserved_lock_entries(allocator)
     )
     if (
         recoverable

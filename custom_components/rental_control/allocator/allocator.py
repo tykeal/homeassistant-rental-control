@@ -83,9 +83,14 @@ class DoorCodeAllocator:
         }
 
     async def async_register_entry(self, entry_id: str) -> None:
-        """Mark an entry as awaiting its first allocator cycle."""
+        """Mark an entry as awaiting its first allocator cycle.
+
+        A reloaded entry must adopt again before its lock counts as
+        observed, so any earlier adoption is forgotten here.
+        """
         async with self._lock:
             self._pending_adoption.add(entry_id)
+            self._adopted_entries.discard(entry_id)
             if self._gate_deadline == 0.0:
                 self._gate_deadline = monotonic() + _ADOPTION_GATE_WARNING_SECONDS
                 self._gate_warning_sent = False
