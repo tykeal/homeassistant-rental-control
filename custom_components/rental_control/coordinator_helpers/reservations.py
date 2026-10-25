@@ -82,6 +82,7 @@ def _resolve_slot_name(event: Any, ctx: ReservationBuildContext) -> str | None:
         _coerce_event_datetime(event.start, ctx),
         _coerce_event_datetime(event.end, ctx),
         ctx.bookings_only_feed,
+        getattr(event, "uid", None),
     )
 
 

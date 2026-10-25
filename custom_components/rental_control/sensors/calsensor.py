@@ -222,6 +222,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             bookings_only_feed=bool(
                 getattr(self.coordinator, "bookings_only_feed", False)
             ),
+            uid=getattr(event, "uid", None),
         )
 
     def _build_parsed_attributes(self) -> dict[str, str]:
