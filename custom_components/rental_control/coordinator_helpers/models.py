@@ -84,6 +84,7 @@ class CalendarParseContext:
     honor_event_times: bool
     code_buffer_before: int
     code_buffer_after: int
+    bookings_only_feed: bool = False
     override_lookup: Callable[[str], Mapping[str, Any] | None] | None = None
 
 
@@ -102,6 +103,7 @@ class ReservationBuildContext:
     code_generator: str
     code_length: int
     active_windows_for_name: Callable[[str], set[tuple[datetime, datetime]]]
+    bookings_only_feed: bool = False
     reissue_suppression: ReissueSuppression = field(
         default_factory=lambda: _empty_reissue_suppression()
     )

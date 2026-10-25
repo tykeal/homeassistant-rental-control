@@ -43,6 +43,7 @@ from homeassistant.util import dt as dt_util
 
 from .allocator.exclusions import parse_excluded_slots
 from .allocator.singleton import get_allocator
+from .bookings_only import feed_is_bookings_only
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_BUFFER_AFTER
@@ -241,6 +242,7 @@ def _config_diagnostics(entry: ConfigEntry, coordinator: Any | None) -> dict[str
         "should_update_code": data.get(CONF_SHOULD_UPDATE_CODE),
         "honor_event_times": data.get(CONF_HONOR_EVENT_TIMES),
         "ignore_non_reserved": data.get(CONF_IGNORE_NON_RESERVED),
+        "bookings_only_feed": feed_is_bookings_only(data),
         "trim_names": data.get(CONF_TRIM_NAMES),
         "max_name_length": data.get(CONF_MAX_NAME_LENGTH),
         "verify_ssl": data.get(CONF_VERIFY_SSL),

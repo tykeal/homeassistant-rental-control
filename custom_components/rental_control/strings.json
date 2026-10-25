@@ -18,6 +18,7 @@
     "step": {
       "user": {
         "data": {
+          "bookings_only_feed": "Calendar contains only confirmed bookings (never blocked dates)",
           "checkin": "Default Check-in time",
           "checkout": "Default Check-out time",
           "cleaning_window": "Cleaning Window (hours)",
@@ -43,6 +44,7 @@
           "verify_ssl": "Verify SSL certificates"
         },
         "data_description": {
+          "bookings_only_feed": "Enable only if this calendar never publishes blocked or unavailable dates. Booking.com no longer identifies guests in its feed, so this is required for Booking.com calendars that export booked dates only. Enabling this on a calendar that does publish blocked dates will issue door codes for those blocks.",
           "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)",
           "date_only": "Displays each reservation as a single all-day block. Guest arrival and departure times are hidden from the calendar."
         }
@@ -68,6 +70,7 @@
     "step": {
       "init": {
         "data": {
+          "bookings_only_feed": "Calendar contains only confirmed bookings (never blocked dates)",
           "checkin": "Default Check-in time",
           "checkout": "Default Check-out time",
           "cleaning_window": "Cleaning Window (hours)",
@@ -94,6 +97,7 @@
           "enable_keymaster_event_diagnostics": "Enable keymaster event diagnostics (records last 10 keymaster_lock_state_changed events on the check-in sensor)"
         },
         "data_description": {
+          "bookings_only_feed": "Enable only if this calendar never publishes blocked or unavailable dates. Booking.com no longer identifies guests in its feed, so this is required for Booking.com calendars that export booked dates only. Enabling this on a calendar that does publish blocked dates will issue door codes for those blocks.",
           "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)",
           "code_buffer_before": "Minutes before check-in time to activate the lock code (0 = no buffer)",
           "code_buffer_after": "Minutes after checkout time to deactivate the lock code (0 = no buffer)",

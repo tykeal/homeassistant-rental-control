@@ -18,6 +18,7 @@
     "step": {
       "user": {
         "data": {
+          "bookings_only_feed": "Le calendrier ne contient que des réservations confirmées",
           "checkin": "Heure d'arrivée par défaut",
           "checkout": "Heure de départ par défaut",
           "cleaning_window": "Fenêtre de ménage (heures)",
@@ -40,6 +41,7 @@
           "max_name_length": "Longueur maximale du nom de créneau"
         },
         "data_description": {
+          "bookings_only_feed": "À activer uniquement si ce calendrier ne publie jamais de dates bloquées ou indisponibles. Booking.com n'identifie plus les clients dans son flux, ce qui rend cette option nécessaire pour les calendriers Booking.com n'exportant que les dates réservées. L'activer sur un calendrier publiant des dates bloquées créera des codes de porte pour ces blocages.",
           "cleaning_window": "Heures de maintien du statut de départ avant le retour à aucune réservation (0,5–48)"
         }
       }
@@ -64,6 +66,7 @@
     "step": {
       "init": {
         "data": {
+          "bookings_only_feed": "Le calendrier ne contient que des réservations confirmées",
           "checkin": "Heure d'arrivée par défaut",
           "checkout": "Heure de départ par défaut",
           "cleaning_window": "Fenêtre de ménage (heures)",
@@ -89,6 +92,7 @@
           "code_buffer_after": "Tampon de désactivation du code de verrouillage (minutes après le départ)"
         },
         "data_description": {
+          "bookings_only_feed": "À activer uniquement si ce calendrier ne publie jamais de dates bloquées ou indisponibles. Booking.com n'identifie plus les clients dans son flux, ce qui rend cette option nécessaire pour les calendriers Booking.com n'exportant que les dates réservées. L'activer sur un calendrier publiant des dates bloquées créera des codes de porte pour ces blocages.",
           "cleaning_window": "Heures de maintien du statut de départ avant le retour à aucune réservation (0,5–48)",
           "code_buffer_before": "Minutes avant l'heure d'arrivée pour activer le code de verrouillage (0 = pas de tampon)",
           "code_buffer_after": "Minutes après l'heure de départ pour désactiver le code de verrouillage (0 = pas de tampon)"

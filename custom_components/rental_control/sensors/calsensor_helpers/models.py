@@ -100,6 +100,7 @@ class SlotReadContext:
     end: datetime
     get_slot_name: Callable[[str, Any, str], str | None]
     make_reservation_fingerprint: Callable[[str, str, datetime, datetime], str]
+    bookings_only_feed: bool = False
 
 
 @dataclass(frozen=True, slots=True)

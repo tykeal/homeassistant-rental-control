@@ -99,6 +99,7 @@ class RentalControlCoordinator(
 
     _parent_entry_id: str | None
     _child_locknames: set[str]
+    bookings_only_feed: bool
     code_buffer_after: int
     code_buffer_before: int
     code_generator: str

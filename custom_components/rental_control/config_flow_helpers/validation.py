@@ -16,6 +16,8 @@ import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 
 from ..allocator import get_allocator
+from ..bookings_only import host_defaults_bookings_only
+from ..const import CONF_BOOKINGS_ONLY_FEED
 from ..const import CONF_CHECKIN
 from ..const import CONF_CHECKOUT
 from ..const import CONF_CODE_GENERATION
@@ -195,8 +197,52 @@ def validate_name_trimming(user_input: dict[str, Any], errors: dict[str, str]) -
             errors["base"] = "prefix_too_long_for_trim"
 
 
+def _is_entry_creation(flow: Any) -> bool:
+    """Return whether a flow is creating a brand new config entry.
+
+    The creation handler stamps ``created`` in its constructor and owns
+    no config entry; the options handler is the mirror image. Both
+    signals are required so that a future options flow gaining one of
+    them cannot silently take the creation-only path.
+    """
+    if not hasattr(flow, "created"):
+        return False
+    config_entry = getattr(flow, "config_entry", None)
+    return getattr(config_entry, "entry_id", None) is None
+
+
+def drop_uninformative_bookings_only(flow: Any, user_input: dict[str, Any]) -> None:
+    """Discard a creation-time bookings-only answer that carries no intent.
+
+    Entry creation is a single step, so the form renders before the
+    calendar URL is known and the checkbox is always drawn unticked. An
+    operator has no way to express a deliberate ``False`` for a
+    Booking.com host there: leaving it unticked is indistinguishable
+    from never having considered it, and storing that answer would walk
+    every newly added Booking.com calendar straight back into the silent
+    no-codes failure of issue #830.
+
+    Omitting the key rather than storing either answer leaves
+    ``feed_is_bookings_only`` as the single place that decides, so a new
+    Booking.com entry behaves exactly like one created before the option
+    existed. Ticking the box still records a real ``True``.
+
+    The options flow renders a URL-aware default and is where a
+    deliberate ``False`` is expressed, so it is never touched here.
+    """
+    if not _is_entry_creation(flow):
+        return
+    if user_input.get(CONF_BOOKINGS_ONLY_FEED) is not False:
+        return
+    if not host_defaults_bookings_only(user_input.get(CONF_URL)):
+        return
+    del user_input[CONF_BOOKINGS_ONLY_FEED]
+
+
 def apply_successful_conversions(flow: Any, user_input: dict[str, Any]) -> None:
     """Apply conversions that only occur when validation has no errors."""
+    drop_uninformative_bookings_only(flow, user_input)
+
     if user_input[CONF_LOCK_ENTRY] == "(none)":
         user_input[CONF_LOCK_ENTRY] = None
 

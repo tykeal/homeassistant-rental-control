@@ -33,6 +33,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt
 from homeassistant.util import slugify
 
+from ..bookings_only import feed_is_bookings_only
 from ..const import CONF_CHECKIN
 from ..const import CONF_CHECKOUT
 from ..const import CONF_CODE_BUFFER_AFTER
@@ -140,6 +141,7 @@ class CoordinatorSetupMixin:
         self.num_misses: int = 0
         self.days: int = int(str(config.get(CONF_DAYS)))
         self.ignore_non_reserved: bool = bool(config.get(CONF_IGNORE_NON_RESERVED))
+        self.bookings_only_feed: bool = feed_is_bookings_only(config)
         self.verify_ssl: bool = bool(config.get(CONF_VERIFY_SSL))
         self.event_overrides: EventOverrides | None = (
             EventOverrides(self.start_slot, self.max_events) if self.lockname else None
@@ -285,6 +287,7 @@ class CoordinatorSetupMixin:
             code_generator=self.code_generator,
             code_length=self.code_length,
             active_windows_for_name=self._active_checkin_windows_for_name,
+            bookings_only_feed=self.bookings_only_feed,
             reissue_suppression=reissue.current_suppression(self),
         )
 
@@ -301,6 +304,7 @@ class CoordinatorSetupMixin:
             checkout=self.checkout,
             event_prefix=self.event_prefix,
             ignore_non_reserved=self.ignore_non_reserved,
+            bookings_only_feed=self.bookings_only_feed,
             honor_event_times=self.honor_event_times,
             code_buffer_before=self.code_buffer_before,
             code_buffer_after=self.code_buffer_after,
