@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
+from ..codegen import code_is_phone_derived
 from ..codegen import extract_last_four
 from ..codegen import generate_date_based_code
 from ..codegen import generate_slot_code
 from ..codegen import generate_static_random_code
 
 __all__ = [
+    "code_is_phone_derived",
     "extract_last_four",
     "generate_date_based_code",
     "generate_slot_code",

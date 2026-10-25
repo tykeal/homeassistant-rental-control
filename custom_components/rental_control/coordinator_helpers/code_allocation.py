@@ -13,6 +13,7 @@ from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.persistent_notification import async_dismiss
 from homeassistant.util import dt
 
+from ..allocator import code_origin
 from ..allocator import entry_info
 from ..allocator import get_allocator
 from ..allocator.models import AdoptionRequest
@@ -28,6 +29,7 @@ from ..reconciliation import SlotStatus
 from ..reconciliation import compute_desired_plan
 from ..reconciliation.desired import select_eligible_reservations
 from . import adoption_gate
+from . import generator_divergence
 from . import reissue
 from . import slot_exclusions
 from .models import ObservedSlotQuery
@@ -90,6 +92,10 @@ async def async_resolve_codes(
         RotationGuardTarget(allocator, entry_id, lockname, managed_slots),
         reservations,
         _matched_code_slot,
+    )
+    code_origin.record_cycle_evidence(entry_id, reservations)
+    request = generator_divergence.rotate_stale_codes(
+        request, allocator, _matched_code_slot
     )
     adoptions = build_adoption_requests(
         entry_id,

@@ -31,6 +31,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .allocator import async_get_or_create_allocator
+from .allocator import code_origin
 from .allocator import get_allocator
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_GENERATE
@@ -42,6 +43,7 @@ from .const import PLATFORMS
 from .const import UNSUB_LISTENERS
 from .coordinator import RentalControlCoordinator
 from .coordinator_helpers import allocation_failure
+from .coordinator_helpers import generator_divergence
 from .coordinator_helpers.adoption_gate import forget_entry as forget_gate_report
 from .coordinator_helpers.code_allocation import dismiss_unreadable_slots
 from .coordinator_helpers.slot_exclusions import dismiss_excluded_slots
@@ -207,6 +209,8 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
         dismiss_excluded_slots(hass, config_entry.entry_id)
         forget_gate_report(config_entry.entry_id)
         allocation_failure.forget_entry(hass, config_entry.entry_id)
+        generator_divergence.forget_entry(config_entry.entry_id)
+        code_origin.forget_entry(config_entry.entry_id)
 
         hass.data[DOMAIN].pop(config_entry.entry_id)
 
@@ -221,6 +225,8 @@ async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
     dismiss_excluded_slots(hass, config_entry.entry_id)
     forget_gate_report(config_entry.entry_id)
     allocation_failure.forget_entry(hass, config_entry.entry_id)
+    generator_divergence.forget_entry(config_entry.entry_id)
+    code_origin.forget_entry(config_entry.entry_id)
     allocator = get_allocator(hass)
     if allocator is None:
         return

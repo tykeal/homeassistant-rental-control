@@ -89,6 +89,11 @@ class Reservation:
         code_rotation_origin: The ``(slot, code)`` the rotation signal
             was derived from, so the allocator can confirm it is
             suppressing adoption of that exact physical PIN.
+        phone_last_four: The guest phone digits this cycle's feed text
+            yields for the reservation, or ``None`` when the feed
+            supplies none. It is the only durable evidence of whether a
+            ``last_four`` code was really phone-derived, because
+            generation falls back to date-based codes silently.
     """
 
     identity_key: str
@@ -115,6 +120,7 @@ class Reservation:
     code_provenance: str = "generated"
     code_rotation_pending: bool = False
     code_rotation_origin: tuple[int, str] | None = field(default=None, repr=False)
+    phone_last_four: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Validate Reservation field invariants.

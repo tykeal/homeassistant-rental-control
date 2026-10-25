@@ -105,7 +105,7 @@ def code_generator(hass: Any, entry_id: str) -> str | None:
 
 
 def uses_last_four(hass: Any, entry_id: str) -> bool:
-    """Return whether an entry derives codes from guest phone digits.
+    """Return whether an entry is configured to derive codes from phone digits.
 
     The generator setting alone is not enough. ``generate_slot_code``
     uses the phone digits only when the configured code length is four,
@@ -113,6 +113,16 @@ def uses_last_four(hass: Any, entry_id: str) -> bool:
     set to ``last_four`` with a six digit code is a date-based entry in
     everything but name. Mirror that condition here, or a genuine
     date-based collision between two such entries would be silenced.
+
+    This remains a configuration read, and configuration is only ever
+    half the answer. The same silent fallback happens at the right code
+    length whenever the reservation text carries no phone number, which
+    is now the normal state of every Booking.com backed feed, so an
+    entry can report ``last_four`` here while publishing nothing but
+    date-based codes. A caller deciding whether to stay silent about a
+    code must pair this with
+    :func:`.code_origin.owner_code_is_phone_derived`, which asks what
+    the code actually was rather than what it was meant to be.
     """
     if code_generator(hass, entry_id) != CODE_GENERATOR_LAST_FOUR:
         return False

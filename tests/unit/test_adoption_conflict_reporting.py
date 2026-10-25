@@ -20,8 +20,11 @@ import pytest
 
 from custom_components.rental_control.allocator import adoption
 from custom_components.rental_control.allocator import allocator as allocator_module
+from custom_components.rental_control.allocator import code_origin
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AdoptionRequest
+from custom_components.rental_control.const import COORDINATOR
+from custom_components.rental_control.const import DOMAIN
 
 _CODE = "4321"
 _OTHER_CODE = "8765"
@@ -39,13 +42,25 @@ class _Notifications:
         self.calls.append({"message": message, **kwargs})
 
 
-def _hass(code_length: int = 4, **generators: str | None) -> Any:
+def _hass(
+    code_length: int = 4,
+    phone_last_four: str | None = _CODE,
+    *,
+    with_reservations: bool = True,
+    **generators: str | None,
+) -> Any:
     """Build a hass whose entries use the named code generators.
 
     ``None`` registers no entry at all, which models an entry that has
     been deleted while its codes are still programmed in a lock. Entry
     data is a ``MappingProxyType`` exactly as Home Assistant exposes it,
     so the mapping-aware read is exercised against the real type.
+
+    Each entry also gets a loaded coordinator whose reservations report
+    ``phone_last_four`` for every identity ``_adopt`` can mint, because
+    that is the only evidence a ``last_four`` code really came from a
+    phone number. ``with_reservations=False`` leaves the coordinator
+    out, which models an entry whose codes outlive its loaded state.
     """
     entries = {
         entry_id: SimpleNamespace(
@@ -65,7 +80,23 @@ def _hass(code_length: int = 4, **generators: str | None) -> Any:
         if generator is not None
     }
     hass = SimpleNamespace()
-    hass.data = {}
+    hass.data = {
+        DOMAIN: {
+            entry_id: {
+                COORDINATOR: SimpleNamespace(
+                    _latest_res_by_key={
+                        f"{entry_id}-guest-{slot}": SimpleNamespace(
+                            phone_last_four=phone_last_four
+                        )
+                        for slot in range(1, 11)
+                    }
+                )
+            }
+            for entry_id in generators
+        }
+        if with_reservations
+        else {}
+    }
     hass.config = SimpleNamespace(config_dir=".")
     hass.config_entries = SimpleNamespace(
         async_entries=lambda _domain=None: list(entries.values()),
@@ -108,6 +139,14 @@ def _adopt(
     )
 
 
+@pytest.fixture(autouse=True)
+def _clean_cycle_evidence() -> Any:
+    """Keep one test's in-flight evidence out of the next one."""
+    code_origin.reset_cycle_evidence()
+    yield
+    code_origin.reset_cycle_evidence()
+
+
 @pytest.fixture(name="notifications")
 def _notifications(monkeypatch: pytest.MonkeyPatch) -> _Notifications:
     """Capture allocator notifications instead of raising them."""
@@ -128,6 +167,52 @@ def test_last_four_sharing_logs_without_notifying(
     assert notifications.calls == []
     assert "expected under the last_four generator" in caplog.text
     assert "entry_a-guest-3" in caplog.text
+
+
+def test_phoneless_last_four_sharing_still_notifies(
+    notifications: _Notifications,
+) -> None:
+    """A last_four entry with no phone digits publishes date-based codes.
+
+    Booking.com stopped supplying phone information, so both entries
+    silently fell back to ``generate_date_based_code``. At a code length
+    of four that code is only ``start_day + end_day``, so the collision
+    is real and must be reported rather than explained away by a
+    generator that never ran (issue #861).
+    """
+    allocator = _allocator(
+        _hass(phone_last_four=None, entry_a="last_four", entry_b="last_four")
+    )
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
+
+    assert len(notifications.calls) == 1
+
+
+def test_last_four_sharing_notifies_when_digits_differ(
+    notifications: _Notifications,
+) -> None:
+    """Phone digits that are not the shared code explain nothing."""
+    allocator = _allocator(
+        _hass(phone_last_four="1111", entry_a="last_four", entry_b="last_four")
+    )
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
+
+    assert len(notifications.calls) == 1
+
+
+def test_last_four_sharing_notifies_without_a_reservation(
+    notifications: _Notifications,
+) -> None:
+    """An owner whose reservation cannot be read is undeterminable."""
+    allocator = _allocator(
+        _hass(with_reservations=False, entry_a="last_four", entry_b="last_four")
+    )
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
+
+    assert len(notifications.calls) == 1
 
 
 def test_date_based_sharing_still_notifies(notifications: _Notifications) -> None:
@@ -221,5 +306,78 @@ def test_long_last_four_sharing_still_notifies(
     )
     _adopt(allocator, "entry_a", 3, code="432100")
     _adopt(allocator, "entry_b", 5, code="432100")
+
+    assert len(notifications.calls) == 1
+
+
+def test_in_flight_cycle_evidence_is_enough_to_stay_silent(
+    notifications: _Notifications,
+) -> None:
+    """A booking's first cycle has evidence before the cache catches up.
+
+    The coordinator's reservation cache is only refreshed once a cycle
+    has completed, but conflicts are reported as owners are added, which
+    is during the cycle.  Without reading the cycle in flight a genuinely
+    phone-derived shared code would notify on its first cycle and stay
+    notified, because nothing reports it again.
+    """
+    hass = _hass(with_reservations=False, entry_a="last_four", entry_b="last_four")
+    for entry_id in ("entry_a", "entry_b"):
+        code_origin.record_cycle_evidence(
+            entry_id,
+            [
+                SimpleNamespace(
+                    identity_key=f"{entry_id}-guest-{slot}", phone_last_four=_CODE
+                )
+                for slot in range(1, 11)
+            ],
+        )
+    allocator = _allocator(hass)
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
+
+    assert notifications.calls == []
+
+
+def test_forgetting_an_entry_drops_its_cycle_evidence(
+    notifications: _Notifications,
+) -> None:
+    """An unloaded entry stops vouching for codes it no longer owns."""
+    hass = _hass(with_reservations=False, entry_a="last_four", entry_b="last_four")
+    for entry_id in ("entry_a", "entry_b"):
+        code_origin.record_cycle_evidence(
+            entry_id,
+            [
+                SimpleNamespace(
+                    identity_key=f"{entry_id}-guest-{slot}", phone_last_four=_CODE
+                )
+                for slot in range(1, 11)
+            ],
+        )
+    code_origin.forget_entry("entry_b")
+    allocator = _allocator(hass)
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
+
+    assert len(notifications.calls) == 1
+
+
+def test_repeated_cycles_notify_a_ghost_conflict_once(
+    notifications: _Notifications,
+) -> None:
+    """A persisting conflict is edge-triggered, not re-raised per cycle.
+
+    Issue #861 made a ghost - a reservation whose feed text is gone, so
+    it carries no phone digits - notify rather than stay silent. That
+    must not reopen the conflict spam issue #857 closed, so the same
+    conflict surviving many refresh cycles must still raise exactly one
+    notification. It does, because the report is raised only as an
+    identity joins a code that already had owners, and the registry
+    that records ownership outlives the cycle.
+    """
+    allocator = _allocator(_hass(phone_last_four=None, a="last_four", b="last_four"))
+    for _cycle in range(5):
+        _adopt(allocator, "a", 1)
+        _adopt(allocator, "b", 2)
 
     assert len(notifications.calls) == 1

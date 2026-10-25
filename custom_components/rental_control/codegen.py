@@ -19,6 +19,69 @@ from typing import Final
 from typing import cast
 
 _LAST_FOUR_UNSET: Final[object] = object()
+_LAST_FOUR_GENERATOR: Final[str] = "last_four"
+_LAST_FOUR_CODE_LENGTH: Final[int] = 4
+
+
+def code_is_phone_derived(
+    code: str | None,
+    description: str | None,
+    code_generator: str | None,
+    code_length: int | None,
+    *,
+    last_four: str | None | object = _LAST_FOUR_UNSET,
+) -> bool:
+    """Return whether a code really came from the guest's phone digits.
+
+    Configuration alone cannot answer this. :func:`generate_slot_code`
+    asks for the ``last_four`` generator only when the configured code
+    length is four, and even then ``extract_last_four`` returns ``None``
+    whenever the reservation text carries no usable phone number. In
+    that case generation falls through to
+    :func:`generate_date_based_code` *silently*: the entry keeps
+    reporting ``last_four`` while every code it publishes is date-based.
+    That is not a corner case. Booking.com stopped publishing phone
+    information in late September 2026, for direct connections and for
+    PMS-mediated ones alike, so every Booking.com backed entry
+    configured for ``last_four`` is now in exactly this state.
+
+    Callers therefore use this predicate instead of the configured
+    generator whenever a decision turns on the code's real origin. It
+    answers only on positive evidence - the digits the feed supplies for
+    this reservation are the code - so an unknown description, a missing
+    reservation or an unreadable configuration answers ``False`` and the
+    caller fails toward reporting rather than toward silence.
+
+    Args:
+        code: The code whose origin is in question.
+        description: Reservation text to extract phone digits from.
+            Ignored when *last_four* is supplied.
+        code_generator: The entry's configured generator, or ``None``
+            when it could not be determined.
+        code_length: The entry's configured code length, or ``None``
+            when it could not be determined.
+        last_four: Pre-extracted phone digits for the reservation, which
+            saves re-parsing the description and lets a caller that only
+            retained the digits answer without the text. ``None`` means
+            "the feed supplied no phone digits", which is a definite
+            answer of ``False``.
+
+    Returns:
+        ``True`` only when the configured generator would have used
+        phone digits and those digits are exactly *code*.
+    """
+    if code is None:
+        return False
+    if code_generator != _LAST_FOUR_GENERATOR:
+        return False
+    if code_length != _LAST_FOUR_CODE_LENGTH:
+        return False
+    digits = (
+        extract_last_four(description)
+        if last_four is _LAST_FOUR_UNSET
+        else cast(str | None, last_four)
+    )
+    return digits is not None and digits == code
 
 
 def generate_date_based_code(code_length: int, start: datetime, end: datetime) -> str:
