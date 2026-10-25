@@ -23,6 +23,14 @@ from custom_components.rental_control.coordinator_helpers.models import (
 from custom_components.rental_control.coordinator_helpers.models import (
     ReservationBuildContext,
 )
+from custom_components.rental_control.reconciliation import make_reservation_fingerprint
+from custom_components.rental_control.sensors.calsensor_helpers import slots
+from custom_components.rental_control.sensors.calsensor_helpers.models import (
+    SlotReadContext,
+)
+from custom_components.rental_control.sensors.checkin.event_selection import (
+    extract_slot_name,
+)
 from custom_components.rental_control.util import get_slot_name
 
 BOOKING_URL = "https://ical.booking.com/v1/export?t=abc123"
@@ -215,3 +223,56 @@ def test_host_match_is_not_a_substring_match() -> None:
         is False
     )
     assert feed_is_bookings_only({"url": "https://booking.com.evil.net/x.ics"}) is False
+
+
+def test_calendar_sensor_reads_synthesized_slot() -> None:
+    """The event sensor publishes the code the coordinator programmed."""
+    event = _parse(
+        [_closed_event(date(2026, 10, 23), date(2026, 10, 25))], _parse_ctx()
+    )[0]
+    built = reservations.build_reservations(
+        [event], None, _build_ctx(bookings_only_feed=True)
+    )
+    identity_key = built[0].identity_key
+
+    class _Coordinator:
+        """Minimal coordinator exposing reconciliation lookups."""
+
+        def get_slot_assignment(self, key: str) -> int | None:
+            """Return the slot assigned to an identity key."""
+            return 3 if key == identity_key else None
+
+        def get_slot_code(self, key: str) -> str | None:
+            """Return the code issued for an identity key."""
+            return built[0].slot_code if key == identity_key else None
+
+    context = SlotReadContext(
+        entry_id="entry-1",
+        summary=event.summary,
+        description=event.description,
+        event_prefix="",
+        start=event.start,
+        end=event.end,
+        get_slot_name=get_slot_name,
+        make_reservation_fingerprint=make_reservation_fingerprint,
+        bookings_only_feed=True,
+    )
+
+    result = slots.read_slot(context, _Coordinator())
+
+    assert result.slot_name == built[0].slot_name
+    assert result.slot_number == 3
+    assert result.slot_code == built[0].slot_code
+
+
+def test_checkin_slot_name_matches_the_coordinator() -> None:
+    """Check-in tracking names an anonymous stay like the coordinator."""
+    event = _parse(
+        [_closed_event(date(2026, 10, 23), date(2026, 10, 25))], _parse_ctx()
+    )[0]
+    built = reservations.build_reservations(
+        [event], None, _build_ctx(bookings_only_feed=True)
+    )
+
+    assert extract_slot_name(event, "", True) == built[0].slot_name
+    assert extract_slot_name(event, "", False) is None

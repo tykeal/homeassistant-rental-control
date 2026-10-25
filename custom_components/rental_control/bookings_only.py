@@ -32,16 +32,23 @@ production (issue #850), so every read here accepts any
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
 from homeassistant.const import CONF_URL
 
 from .const import CONF_BOOKINGS_ONLY_FEED
+from .helpers import get_slot_name
 
 # aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
 
-__all__ = ["feed_is_bookings_only", "host_defaults_bookings_only"]
+__all__ = [
+    "feed_is_bookings_only",
+    "host_defaults_bookings_only",
+    "resolve_slot_name",
+    "synthesized_slot_name",
+]
 
 _BOOKINGS_ONLY_DOMAIN = "booking.com"
 
@@ -99,3 +106,36 @@ def feed_is_bookings_only(config: Any) -> bool:
     if stored is not None:
         return stored
     return host_defaults_bookings_only(config.get(CONF_URL))
+
+
+def synthesized_slot_name(start: datetime, end: datetime) -> str:
+    """Return a date-derived slot name for an anonymous reservation.
+
+    A bookings-only feed has nothing to name a reservation after except
+    its stay.  The year is part of the name because it is hashed into
+    the reservation fingerprint: two stays covering the same day and
+    month in different years must not collapse onto one key.
+    """
+    return f"Booking {start:%d %b} - {end:%d %b %Y}"
+
+
+def resolve_slot_name(
+    summary: Any,
+    description: Any,
+    event_prefix: str,
+    start: datetime,
+    end: datetime,
+    bookings_only_feed: bool,
+) -> str | None:
+    """Return an event's slot name, synthesizing one when permitted.
+
+    Every consumer of a slot name must resolve it the same way.  The
+    name is hashed into the reservation fingerprint that the calendar
+    sensors and the check-in sensor look codes up by, so a caller still
+    reading ``get_slot_name`` alone would see ``None`` for an anonymous
+    booking and publish no code for a slot the coordinator did program.
+    """
+    slot_name = get_slot_name(summary, description or "", event_prefix or "")
+    if slot_name or not bookings_only_feed:
+        return slot_name
+    return synthesized_slot_name(start, end)

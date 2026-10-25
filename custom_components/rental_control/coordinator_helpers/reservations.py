@@ -15,12 +15,12 @@ from typing import Any
 
 from homeassistant.util import dt
 
+from ..bookings_only import resolve_slot_name
 from ..reconciliation import Reservation as _Reservation
 from ..reconciliation import extract_booking_aliases
 from ..reconciliation import make_reservation_fingerprint
 from ..reconciliation import normalize_slot_name_for_fingerprint
 from ..util import apply_buffer
-from ..util import get_slot_name
 from ..util import normalize_uid
 from .codegen import generate_slot_code
 from .ghost_reservations import build_ghost_reservations as build_ghost_reservations
@@ -67,18 +67,6 @@ def _buffered_window(
     return buffered_start, buffered_end
 
 
-def _synthesized_slot_name(start: datetime, end: datetime) -> str:
-    """Return a date-derived slot name for an anonymous reservation.
-
-    Booking.com no longer publishes a guest name, so a bookings-only
-    feed has nothing to name a reservation after except its stay.  The
-    year is part of the name because it feeds reservation identity: two
-    stays covering the same day and month in different years must not
-    collapse onto one key.
-    """
-    return f"Booking {start:%d %b} - {end:%d %b %Y}"
-
-
 def _resolve_slot_name(event: Any, ctx: ReservationBuildContext) -> str | None:
     """Return an event's slot name, synthesizing one when permitted.
 
@@ -87,14 +75,13 @@ def _resolve_slot_name(event: Any, ctx: ReservationBuildContext) -> str | None:
     the name-window pass and the reservation build would make identity
     unstable and churn issued codes.
     """
-    slot_name = get_slot_name(
-        event.summary, event.description or "", ctx.event_prefix or ""
-    )
-    if slot_name or not ctx.bookings_only_feed:
-        return slot_name
-    return _synthesized_slot_name(
+    return resolve_slot_name(
+        event.summary,
+        event.description,
+        ctx.event_prefix or "",
         _coerce_event_datetime(event.start, ctx),
         _coerce_event_datetime(event.end, ctx),
+        ctx.bookings_only_feed,
     )
 
 

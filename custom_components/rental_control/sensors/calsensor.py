@@ -219,6 +219,9 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
             end=event.end,
             get_slot_name=get_slot_name,
             make_reservation_fingerprint=make_reservation_fingerprint,
+            bookings_only_feed=bool(
+                getattr(self.coordinator, "bookings_only_feed", False)
+            ),
         )
 
     def _build_parsed_attributes(self) -> dict[str, str]:

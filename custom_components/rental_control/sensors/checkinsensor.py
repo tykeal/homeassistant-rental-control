@@ -235,7 +235,11 @@ class CheckinTrackingSensor(
 
     def _extract_slot_name(self, event: CalendarEvent) -> str | None:
         """Extract guest/slot name from a calendar event."""
-        return extract_slot_name(event, self.coordinator.event_prefix or "")
+        return extract_slot_name(
+            event,
+            self.coordinator.event_prefix or "",
+            bool(getattr(self.coordinator, "bookings_only_feed", False)),
+        )
 
     def _is_keymaster_monitoring_enabled(self) -> bool:
         """Return True when keymaster monitoring is switched on."""

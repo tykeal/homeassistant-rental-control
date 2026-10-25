@@ -10,7 +10,7 @@ from datetime import datetime
 
 from homeassistant.components.calendar import CalendarEvent
 
-from ...util import get_slot_name
+from ...bookings_only import resolve_slot_name
 
 
 def event_key(summary: str, start: datetime) -> str:
@@ -59,6 +59,21 @@ def find_tracked_event(
     return None
 
 
-def extract_slot_name(event: CalendarEvent, event_prefix: str) -> str | None:
-    """Extract the guest/slot name using existing Rental Control parsing."""
-    return get_slot_name(event.summary, event.description or "", event_prefix or "")
+def extract_slot_name(
+    event: CalendarEvent, event_prefix: str, bookings_only_feed: bool = False
+) -> str | None:
+    """Extract the guest/slot name using existing Rental Control parsing.
+
+    A bookings-only feed publishes anonymous reservations, which the
+    coordinator names after their stay. Check-in tracking must use the
+    same name or it would treat a programmed stay as unnamed and skip
+    active-stay protection and early-checkout expiry.
+    """
+    return resolve_slot_name(
+        event.summary,
+        event.description,
+        event_prefix or "",
+        event.start,
+        event.end,
+        bookings_only_feed,
+    )
