@@ -217,7 +217,7 @@ def _parse_vevent(
 
     override = None
     override_name = slot_name
-    if override_name is None and ctx.bookings_only_feed:
+    if not override_name and ctx.bookings_only_feed:
         # A UID-derived name is safe to synthesize here because it
         # depends on neither the dates nor the UTC conversion, so it
         # cannot disagree with the name reservations.py computes.  The

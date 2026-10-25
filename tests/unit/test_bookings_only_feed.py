@@ -612,6 +612,56 @@ def test_named_reservation_is_unaffected_by_uid_naming() -> None:
     assert [res.slot_name for res in built] == ["Smith"]
 
 
+def test_blank_summary_resolves_everywhere_the_same() -> None:
+    """A blank summary names, codes and looks up overrides alike.
+
+    ``get_slot_name`` returns an empty string rather than ``None`` for a
+    summary-less VEVENT, so every site must test the name for falsiness
+    or they would disagree on an anonymous stay's identity.
+    """
+    uid = "7654321@booking.com"
+    expected_name = uid_slot_name(uid)
+    looked_up: list[str] = []
+
+    def _lookup(name: str) -> dict[str, Any] | None:
+        """Record the resolved name and register no override."""
+        looked_up.append(name)
+        return None
+
+    ctx = _parse_ctx(bookings_only_feed=True)
+    ctx.override_lookup = _lookup
+
+    parsed = _parse(
+        [_closed_event(date(2026, 10, 23), date(2026, 10, 25), "", uid=uid)], ctx
+    )
+    built = reservations.build_reservations(
+        parsed, None, _build_ctx(bookings_only_feed=True)
+    )
+
+    assert looked_up == [expected_name]
+    assert [res.slot_name for res in built] == [expected_name]
+
+    result = slots.read_slot(
+        SlotReadContext(
+            entry_id="entry-1",
+            summary=parsed[0].summary,
+            description=parsed[0].description,
+            event_prefix="",
+            start=parsed[0].start,
+            end=parsed[0].end,
+            get_slot_name=get_slot_name,
+            make_reservation_fingerprint=make_reservation_fingerprint,
+            bookings_only_feed=True,
+            uid=parsed[0].uid,
+        ),
+        SimpleNamespace(
+            get_slot_assignment=lambda _key: None, get_slot_code=lambda _key: None
+        ),
+    )
+
+    assert result.slot_name == expected_name
+
+
 class _CreationFlow:
     """Stub of the entry-creation handler, which stamps ``created``."""
 
