@@ -23,6 +23,8 @@ from custom_components.rental_control.coordinator_helpers.models import (
 from custom_components.rental_control.coordinator_helpers.models import (
     ReservationBuildContext,
 )
+from custom_components.rental_control.reconciliation import ManagedSlot
+from custom_components.rental_control.reconciliation import SlotStatus
 from custom_components.rental_control.reconciliation import make_reservation_fingerprint
 from custom_components.rental_control.sensors.calsensor_helpers import slots
 from custom_components.rental_control.sensors.calsensor_helpers.models import (
@@ -276,3 +278,98 @@ def test_checkin_slot_name_matches_the_coordinator() -> None:
 
     assert extract_slot_name(event, "", True) == built[0].slot_name
     assert extract_slot_name(event, "", False) is None
+
+
+def _capture_queries(monkeypatch: Any) -> list[Any]:
+    """Record every observed-slot query the reservation builder makes."""
+    captured: list[Any] = []
+    real = reservations.find_observed_slot
+
+    def _spy(query: Any) -> Any:
+        """Record a query and defer to the real matcher."""
+        captured.append(query)
+        return real(query)
+
+    monkeypatch.setattr(reservations, "find_observed_slot", _spy)
+    return captured
+
+
+def _managed_slot(
+    slot: int, name: str, start: datetime, end: datetime, code: str
+) -> ManagedSlot:
+    """Return an observed, managed Keymaster slot."""
+    return ManagedSlot(
+        slot=slot,
+        managed=True,
+        status=SlotStatus.OCCUPIED,
+        actual_name=name,
+        actual_code=code,
+        actual_code_present=True,
+        actual_start=start,
+        actual_end=end,
+    )
+
+
+def test_anonymous_reservation_carries_its_date_windows(monkeypatch: Any) -> None:
+    """An anonymous stay matches against its own reserved date windows."""
+    event = _parse(
+        [_closed_event(date(2026, 10, 23), date(2026, 10, 25))], _parse_ctx()
+    )[0]
+    name = "Booking 23 Oct - 25 Oct 2026"
+    observed = [_managed_slot(1, name, event.start, event.end, "1111")]
+    captured = _capture_queries(monkeypatch)
+
+    reservations.build_reservations(
+        [event], observed, _build_ctx(bookings_only_feed=True)
+    )
+
+    assert len(captured) == 1
+    assert captured[0].reserved_date_windows == {(event.start, event.end)}
+    assert captured[0].ordered_date_windows == [(event.start, event.end)]
+
+
+def test_duplicate_anonymous_stays_require_a_date_match(monkeypatch: Any) -> None:
+    """Two stays sharing a synthesized name are counted and date-matched."""
+    events = _parse(
+        [
+            _closed_event(date(2026, 10, 23), date(2026, 10, 25)),
+            _closed_event(
+                date(2026, 10, 23), date(2026, 10, 25), "CLOSED - Not available "
+            ),
+        ],
+        _parse_ctx(),
+    )
+    name = "Booking 23 Oct - 25 Oct 2026"
+    observed = [
+        _managed_slot(1, name, events[0].start, events[0].end, "1111"),
+        _managed_slot(2, name, events[0].start, events[0].end, "2222"),
+    ]
+    captured = _capture_queries(monkeypatch)
+
+    reservations.build_reservations(
+        events, observed, _build_ctx(bookings_only_feed=True)
+    )
+
+    assert len(captured) == 2
+    assert all(query.require_date_match for query in captured)
+    assert [query.expected_name_count for query in captured] == [2, 2]
+
+
+def test_anonymous_stay_does_not_adopt_a_reserved_window_pin() -> None:
+    """Known windows fence an anonymous stay off a stale slot's PIN."""
+    event = _parse(
+        [_closed_event(date(2026, 10, 23), date(2026, 10, 25))], _parse_ctx()
+    )[0]
+    name = "Booking 23 Oct - 25 Oct 2026"
+    stale_start = datetime(2026, 10, 1, 16, 0, tzinfo=timezone.utc)
+    stale_end = datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc)
+    observed = [_managed_slot(1, name, stale_start, stale_end, "1111")]
+
+    ctx = _build_ctx(bookings_only_feed=True)
+    ctx.active_windows_for_name = lambda _name: {(stale_start, stale_end)}
+
+    built = reservations.build_reservations([event], observed, ctx)
+
+    assert len(built) == 1
+    assert built[0].slot_code != "1111"
+    assert built[0].code_source == "generated"
