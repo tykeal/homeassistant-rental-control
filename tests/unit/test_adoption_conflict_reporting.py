@@ -20,6 +20,7 @@ import pytest
 
 from custom_components.rental_control.allocator import adoption
 from custom_components.rental_control.allocator import allocator as allocator_module
+from custom_components.rental_control.allocator import code_origin
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AdoptionRequest
 from custom_components.rental_control.const import COORDINATOR
@@ -136,6 +137,14 @@ def _adopt(
             slot=slot,
         ),
     )
+
+
+@pytest.fixture(autouse=True)
+def _clean_cycle_evidence() -> Any:
+    """Keep one test's in-flight evidence out of the next one."""
+    code_origin.reset_cycle_evidence()
+    yield
+    code_origin.reset_cycle_evidence()
 
 
 @pytest.fixture(name="notifications")
@@ -297,5 +306,57 @@ def test_long_last_four_sharing_still_notifies(
     )
     _adopt(allocator, "entry_a", 3, code="432100")
     _adopt(allocator, "entry_b", 5, code="432100")
+
+    assert len(notifications.calls) == 1
+
+
+def test_in_flight_cycle_evidence_is_enough_to_stay_silent(
+    notifications: _Notifications,
+) -> None:
+    """A booking's first cycle has evidence before the cache catches up.
+
+    The coordinator's reservation cache is only refreshed once a cycle
+    has completed, but conflicts are reported as owners are added, which
+    is during the cycle.  Without reading the cycle in flight a genuinely
+    phone-derived shared code would notify on its first cycle and stay
+    notified, because nothing reports it again.
+    """
+    hass = _hass(with_reservations=False, entry_a="last_four", entry_b="last_four")
+    for entry_id in ("entry_a", "entry_b"):
+        code_origin.record_cycle_evidence(
+            entry_id,
+            [
+                SimpleNamespace(
+                    identity_key=f"{entry_id}-guest-{slot}", phone_last_four=_CODE
+                )
+                for slot in range(1, 11)
+            ],
+        )
+    allocator = _allocator(hass)
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
+
+    assert notifications.calls == []
+
+
+def test_forgetting_an_entry_drops_its_cycle_evidence(
+    notifications: _Notifications,
+) -> None:
+    """An unloaded entry stops vouching for codes it no longer owns."""
+    hass = _hass(with_reservations=False, entry_a="last_four", entry_b="last_four")
+    for entry_id in ("entry_a", "entry_b"):
+        code_origin.record_cycle_evidence(
+            entry_id,
+            [
+                SimpleNamespace(
+                    identity_key=f"{entry_id}-guest-{slot}", phone_last_four=_CODE
+                )
+                for slot in range(1, 11)
+            ],
+        )
+    code_origin.forget_entry("entry_b")
+    allocator = _allocator(hass)
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
 
     assert len(notifications.calls) == 1

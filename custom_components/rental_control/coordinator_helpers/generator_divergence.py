@@ -28,6 +28,7 @@ hand-entered PINs replaced should leave ``should_update_code`` off.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 import logging
 from typing import TYPE_CHECKING
 from typing import Any
@@ -38,6 +39,7 @@ from ..codegen import code_is_phone_derived
 from ..codegen import generate_slot_code
 from ..const import CONF_SHOULD_UPDATE_CODE
 from ..reconciliation.desired import select_eligible_reservations
+from .reissue import ReissueSuppression
 from .reservations import rotation_window_open
 
 if TYPE_CHECKING:
@@ -62,6 +64,7 @@ class Divergence:
     effective_generator: str
     reason: str
     rotating: bool
+    rotation_attempted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +82,44 @@ class DivergenceQuery:
 
 
 _state: dict[str, dict[str, Divergence]] = {}
+
+#: Codes a rotation has already been requested away from, per entry and
+#: identity.  A rotation is offered once: the allocator may answer it
+#: with a collision-resolved alternative rather than the exact code
+#: asked for, and re-reading that alternative as a fresh divergence
+#: would ask for a rotation on every refresh forever.
+_attempts: dict[str, dict[str, str]] = {}
+
+
+def rotate_stale_codes(
+    request: CodeResolutionRequest, allocator: Any, match_slot: Any
+) -> CodeResolutionRequest:
+    """Return one cycle's request carrying the rotations it has earned.
+
+    A rotating identity also joins the cycle's retention suppression.
+    Its slot still physically holds the code being replaced, and that
+    code is about to leave the registry with the allocation this cycle
+    releases.  Suppressing retention is what makes the adoption step
+    reserve the observed code under an alias, so the allocator cannot
+    hand the still-programmed code to another booking before the
+    replacement is confirmed.
+    """
+    directives = directives_for(request, allocator, match_slot)
+    identities = {
+        directive.identity_key
+        for directive in directives
+        if directive.identity_key is not None
+    }
+    if not identities:
+        return request
+    return replace(
+        request,
+        forced_reissues=request.forced_reissues + directives,
+        suppression=ReissueSuppression(
+            identity_keys=request.suppression.identity_keys | identities,
+            slots=request.suppression.slots,
+        ),
+    )
 
 
 def directives_for(
@@ -145,6 +186,7 @@ def _scan(
         return {}, []
     found: dict[str, Divergence] = {}
     directives: list[ForcedReissueDirective] = []
+    attempts = _attempts.setdefault(entry_id, {})
     consumed: set[int] = set()
     eligible = {
         reservation.identity_key
@@ -161,21 +203,40 @@ def _scan(
             continue
         if reservation.identity_key in query.already_reissuing:
             continue
+        if reservation.missing_count:
+            # A reservation absent from the feed carries no event text,
+            # so its empty phone evidence says nothing about the feed
+            # having dropped phone numbers.  Retention wins.
+            continue
         held = code_for_identity(reservation.identity_key)
         expected = generate_slot_code(
             generator, code_length, reservation.start, reservation.end, None, None
         )
         if not _diverges(reservation, held, expected, generator, code_length):
             continue
-        rotating = should_update_code and _stay_has_not_started(reservation, slot)
+        attempted = attempts.get(reservation.identity_key)
+        if attempted is not None and held != attempted:
+            # The allocator answered an earlier rotation with a code of
+            # its own choosing, which collision resolution may move away
+            # from ``expected``.  The booking has been re-issued under
+            # the current generator, so it has settled.
+            attempts.pop(reservation.identity_key, None)
+            continue
+        rotating = (
+            should_update_code
+            and attempted is None
+            and _stay_has_not_started(reservation, slot)
+        )
         found[reservation.identity_key] = Divergence(
             identity_key=reservation.identity_key,
             configured_generator=generator,
             effective_generator="date_based",
             reason=PHONE_DIGITS_UNAVAILABLE,
             rotating=rotating,
+            rotation_attempted=attempted is not None,
         )
         if rotating:
+            attempts[reservation.identity_key] = held
             reservation.slot_code = expected
             reservation.code_source = "generated"
             reservation.code_provenance = "generated"
@@ -199,22 +260,19 @@ def _diverges(
 ) -> bool:
     """Return whether a held code is one the generator cannot produce.
 
-    Three things must all be true, and each rules out a case that is not
-    this defect. The held code must not be phone-derived, or it is the
-    generator working. The generator must not be able to produce a
-    phone-derived code for this reservation any more, which is what
-    separates a feed that dropped phone numbers from a merely
-    collision-resolved code. And the held code must differ from what the
-    generator produces now, or there is nothing diverging to report.
+    The one divergence detectable here is a feed that stopped supplying
+    phone numbers, so a reservation that still has phone digits is never
+    divergent: its held code is either those digits or a
+    collision-resolved substitute for them, and neither is this defect.
+    Where there are no digits, generation can only have produced the
+    date-based code, so any other held code is unexplained.
     """
     if held is None:
         return False
     last_four = reservation.phone_last_four
-    if code_is_phone_derived(held, None, generator, code_length, last_four=last_four):
+    if last_four is not None:
         return False
-    if code_is_phone_derived(
-        expected, None, generator, code_length, last_four=last_four
-    ):
+    if code_is_phone_derived(held, None, generator, code_length, last_four=None):
         return False
     return held != expected
 
@@ -275,6 +333,7 @@ def diagnostics(entry_id: str) -> list[dict[str, Any]] | None:
             "effective_generator": divergence.effective_generator,
             "divergence_reason": divergence.reason,
             "rotating": divergence.rotating,
+            "rotation_attempted": divergence.rotation_attempted,
         }
         for divergence in sorted(found.values(), key=lambda item: item.identity_key)
     ]
@@ -283,11 +342,13 @@ def diagnostics(entry_id: str) -> list[dict[str, Any]] | None:
 def forget_entry(entry_id: str) -> None:
     """Drop an entry's divergences as it goes away."""
     _state.pop(entry_id, None)
+    _attempts.pop(entry_id, None)
 
 
 def reset_reporting() -> None:
     """Drop all divergence state, so the next cycle reports again."""
     _state.clear()
+    _attempts.clear()
 
 
 __all__ = [
@@ -296,6 +357,7 @@ __all__ = [
     "Divergence",
     "DivergenceQuery",
     "diagnostics",
+    "rotate_stale_codes",
     "evaluate",
     "forget_entry",
     "reset_reporting",

@@ -30,7 +30,42 @@ from .models import AllocationOwner
 from .models import AllocationRecord
 from .reissue_state import observed_alias_base_identity
 
-__all__ = ["owner_code_is_phone_derived"]
+__all__ = [
+    "forget_entry",
+    "owner_code_is_phone_derived",
+    "record_cycle_evidence",
+    "reset_cycle_evidence",
+]
+
+_UNKNOWN = object()
+
+#: Phone evidence for the cycle currently being resolved, per entry and
+#: identity.  The coordinator's reservation cache is only refreshed once
+#: a cycle has completed, so a booking adopted or allocated for the
+#: first time is not in it yet while its own conflicts are reported.
+#: Reading a cycle that is still in flight is what keeps a genuinely
+#: phone-derived shared code from raising a conflict on its first cycle
+#: and then staying raised, because conflicts are reported only as an
+#: owner is added.
+_cycle_evidence: dict[str, dict[str, str | None]] = {}
+
+
+def record_cycle_evidence(entry_id: str, reservations: list[Any]) -> None:
+    """Publish the reservations the cycle about to run is working from."""
+    _cycle_evidence[entry_id] = {
+        reservation.identity_key: getattr(reservation, "phone_last_four", None)
+        for reservation in reservations
+    }
+
+
+def forget_entry(entry_id: str) -> None:
+    """Drop one entry's in-flight evidence as it goes away."""
+    _cycle_evidence.pop(entry_id, None)
+
+
+def reset_cycle_evidence() -> None:
+    """Drop every entry's in-flight evidence."""
+    _cycle_evidence.clear()
 
 
 def owner_code_is_phone_derived(
@@ -46,16 +81,42 @@ def owner_code_is_phone_derived(
     for this booking, which is the only sound basis for staying silent
     about a shared code.
     """
-    reservation = _reservation_for(hass, owner.entry_id, owner.identity_key)
-    if reservation is None:
+    last_four = _phone_last_four(hass, owner.entry_id, owner.identity_key)
+    if last_four is _UNKNOWN:
         return False
     return code_is_phone_derived(
         record.code,
         None,
         entry_info.code_generator(hass, owner.entry_id),
         entry_info.configured_code_length(hass, owner.entry_id),
-        last_four=getattr(reservation, "phone_last_four", None),
+        last_four=last_four,
     )
+
+
+def _phone_last_four(hass: Any, entry_id: str, identity_key: str) -> Any:
+    """Return an owner's phone digits, or ``_UNKNOWN`` when undeterminable.
+
+    ``None`` and ``_UNKNOWN`` are different answers.  ``None`` means the
+    reservation was read and carried no phone number, which is positive
+    evidence that the code cannot be phone-derived.  ``_UNKNOWN`` means
+    the reservation could not be read at all.
+    """
+    for key in _owner_identities(identity_key):
+        evidence = _cycle_evidence.get(entry_id)
+        if evidence is not None and key in evidence:
+            return evidence[key]
+    reservation = _reservation_for(hass, entry_id, identity_key)
+    if reservation is None:
+        return _UNKNOWN
+    return getattr(reservation, "phone_last_four", None)
+
+
+def _owner_identities(identity_key: str) -> tuple[str, ...]:
+    """Return an owner's identity and the booking identity behind it."""
+    base_identity = observed_alias_base_identity(identity_key)
+    if base_identity is None:
+        return (identity_key,)
+    return (identity_key, base_identity)
 
 
 def _reservation_for(hass: Any, entry_id: str, identity_key: str) -> Any | None:

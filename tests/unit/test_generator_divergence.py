@@ -21,6 +21,9 @@ from custom_components.rental_control.coordinator_helpers import generator_diver
 from custom_components.rental_control.coordinator_helpers.reissue import (
     CodeResolutionRequest,
 )
+from custom_components.rental_control.coordinator_helpers.reissue import (
+    ReissueSuppression,
+)
 from custom_components.rental_control.reconciliation import Reservation
 
 _ENTRY_ID = "entry-divergence"
@@ -58,7 +61,10 @@ def _hass(
 
 
 def _reservation(
-    *, started: bool = False, phone_last_four: str | None = None
+    *,
+    started: bool = False,
+    phone_last_four: str | None = None,
+    missing_count: int = 0,
 ) -> Reservation:
     """Return one reservation whose stay is ahead of or behind now."""
     now = dt_util.now()
@@ -74,6 +80,7 @@ def _reservation(
         slot_name="Guest",
         display_slot_name="Guest",
         slot_code=None,
+        missing_count=missing_count,
         phone_last_four=phone_last_four,
     )
 
@@ -118,6 +125,7 @@ def test_stale_phone_code_rotates_before_the_stay() -> None:
             "effective_generator": "date_based",
             "divergence_reason": generator_divergence.PHONE_DIGITS_UNAVAILABLE,
             "rotating": True,
+            "rotation_attempted": False,
         }
     ]
 
@@ -226,3 +234,102 @@ def test_directives_for_skips_identities_already_reissuing() -> None:
     )
 
     assert [directive.identity_key for directive in directives] == ["identity-1"]
+
+
+def test_missing_feed_event_is_not_read_as_a_lost_phone() -> None:
+    """A reservation absent from the feed carries no evidence either way."""
+    reservation = _reservation(missing_count=1)
+
+    directives = generator_divergence.evaluate(_query(_hass(), [reservation], "9876"))
+
+    assert directives == ()
+    assert generator_divergence.diagnostics(_ENTRY_ID) is None
+
+
+def test_collision_resolved_phone_code_is_not_a_divergence() -> None:
+    """Phone digits present means the held code is a phone-derived one."""
+    reservation = _reservation(phone_last_four="9876")
+
+    directives = generator_divergence.evaluate(_query(_hass(), [reservation], "9875"))
+
+    assert directives == ()
+    assert generator_divergence.diagnostics(_ENTRY_ID) is None
+
+
+def test_rotation_is_requested_only_once_per_identity() -> None:
+    """A collision-resolved replacement is not re-read as a fresh stale code."""
+    first = _reservation()
+    assert generator_divergence.evaluate(_query(_hass(), [first], "9876")) != ()
+
+    # The allocator answered with a code of its own choosing rather than
+    # the one asked for, which is collision resolution, not staleness.
+    second = _reservation()
+    directives = generator_divergence.evaluate(_query(_hass(), [second], "0001"))
+
+    assert directives == ()
+    assert second.slot_code is None
+    assert generator_divergence.diagnostics(_ENTRY_ID) is None
+
+
+def test_failed_rotation_is_reported_without_retrying() -> None:
+    """A rotation that did not take shows as attempted and is not repeated."""
+    first = _reservation()
+    assert generator_divergence.evaluate(_query(_hass(), [first], "9876")) != ()
+
+    second = _reservation()
+    directives = generator_divergence.evaluate(_query(_hass(), [second], "9876"))
+
+    assert directives == ()
+    report = generator_divergence.diagnostics(_ENTRY_ID)
+    assert report is not None
+    assert report[0]["rotating"] is False
+    assert report[0]["rotation_attempted"] is True
+
+
+def test_rotating_identities_join_retention_suppression() -> None:
+    """A rotating identity's programmed PIN is held against re-issue."""
+    reservation = _reservation()
+    request = CodeResolutionRequest(
+        hass=_hass(),
+        entry_id=_ENTRY_ID,
+        lockname="frontdoor",
+        code_length=4,
+        managed_slots=[],
+        reservations=[reservation],
+        suppression=ReissueSuppression(frozenset({"other"}), frozenset({7})),
+    )
+    allocator = SimpleNamespace(
+        _registry=SimpleNamespace(code_for_identity=lambda key: "9876")
+    )
+
+    updated = generator_divergence.rotate_stale_codes(
+        request, allocator, lambda res, slots, consumed: None
+    )
+
+    assert updated.suppression.identity_keys == frozenset({"other", "identity-1"})
+    assert updated.suppression.slots == frozenset({7})
+    assert [directive.identity_key for directive in updated.forced_reissues] == [
+        "identity-1"
+    ]
+
+
+def test_rotate_stale_codes_leaves_a_clean_cycle_alone() -> None:
+    """Nothing diverging means the request is handed back untouched."""
+    reservation = _reservation(phone_last_four="9876")
+    request = CodeResolutionRequest(
+        hass=_hass(),
+        entry_id=_ENTRY_ID,
+        lockname="frontdoor",
+        code_length=4,
+        managed_slots=[],
+        reservations=[reservation],
+    )
+    allocator = SimpleNamespace(
+        _registry=SimpleNamespace(code_for_identity=lambda key: "9876")
+    )
+
+    updated = generator_divergence.rotate_stale_codes(
+        request, allocator, lambda res, slots, consumed: None
+    )
+
+    assert updated is request

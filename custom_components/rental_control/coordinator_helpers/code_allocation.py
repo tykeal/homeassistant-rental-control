@@ -13,6 +13,7 @@ from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.persistent_notification import async_dismiss
 from homeassistant.util import dt
 
+from ..allocator import code_origin
 from ..allocator import entry_info
 from ..allocator import get_allocator
 from ..allocator.models import AdoptionRequest
@@ -92,10 +93,9 @@ async def async_resolve_codes(
         reservations,
         _matched_code_slot,
     )
-    request = replace(
-        request,
-        forced_reissues=request.forced_reissues
-        + generator_divergence.directives_for(request, allocator, _matched_code_slot),
+    code_origin.record_cycle_evidence(entry_id, reservations)
+    request = generator_divergence.rotate_stale_codes(
+        request, allocator, _matched_code_slot
     )
     adoptions = build_adoption_requests(
         entry_id,
