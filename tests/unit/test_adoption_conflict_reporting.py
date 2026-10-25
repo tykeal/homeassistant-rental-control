@@ -360,3 +360,24 @@ def test_forgetting_an_entry_drops_its_cycle_evidence(
     _adopt(allocator, "entry_b", 5)
 
     assert len(notifications.calls) == 1
+
+
+def test_repeated_cycles_notify_a_ghost_conflict_once(
+    notifications: _Notifications,
+) -> None:
+    """A persisting conflict is edge-triggered, not re-raised per cycle.
+
+    Issue #861 made a ghost - a reservation whose feed text is gone, so
+    it carries no phone digits - notify rather than stay silent. That
+    must not reopen the conflict spam issue #857 closed, so the same
+    conflict surviving many refresh cycles must still raise exactly one
+    notification. It does, because the report is raised only as an
+    identity joins a code that already had owners, and the registry
+    that records ownership outlives the cycle.
+    """
+    allocator = _allocator(_hass(phone_last_four=None, a="last_four", b="last_four"))
+    for _cycle in range(5):
+        _adopt(allocator, "a", 1)
+        _adopt(allocator, "b", 2)
+
+    assert len(notifications.calls) == 1
