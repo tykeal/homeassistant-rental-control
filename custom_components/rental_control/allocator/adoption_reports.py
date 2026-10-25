@@ -20,6 +20,7 @@ from homeassistant.components.persistent_notification import async_create
 
 from ..const import DOMAIN
 from ..const import NAME
+from . import code_origin
 from . import entry_info
 from .models import AdoptionRequest
 from .models import AllocationRecord
@@ -46,7 +47,7 @@ def _conflict_is_expected(
     allocator: DoorCodeAllocator,
     record: AllocationRecord,
 ) -> bool:
-    """Return whether every owner of a shared code generates last_four.
+    """Return whether every owner of a shared code is explained by it.
 
     Under the ``last_four`` generator the code *is* the guest's last
     four phone digits, so two owners holding one code means one phone
@@ -65,6 +66,19 @@ def _conflict_is_expected(
     known to be last_four", so an undeterminable owner also notifies.
     Silence is only ever chosen on positive evidence.
 
+    Configuration alone is not that evidence.
+    ``generate_slot_code`` uses the phone digits only when the
+    configured code length is four, and falls back to date-based codes
+    silently both when it is not and when the reservation text carries
+    no phone number at all. Either way the entry still reports
+    ``last_four``. The second case stopped being hypothetical when
+    Booking.com dropped phone information from its feeds, and at a code
+    length of four a date-based code is only ``start_day + end_day``, so
+    two such entries colliding is likely - and is exactly the collision
+    this report exists to raise (issue #861). Each owner must therefore
+    show that its own reservation's phone digits really are the shared
+    code.
+
     The shared code itself must also be four digits long. A phone
     derived code never is anything else, so a longer shared code was
     produced some other way and is not explained by the generator.
@@ -74,6 +88,7 @@ def _conflict_is_expected(
         and record.code_length == _LAST_FOUR_CODE_LENGTH
         and all(
             entry_info.uses_last_four(allocator.hass, owner.entry_id)
+            and code_origin.owner_code_is_phone_derived(allocator.hass, owner, record)
             for owner in record.owners
         )
     )

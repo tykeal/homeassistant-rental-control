@@ -22,6 +22,8 @@ from custom_components.rental_control.allocator import adoption
 from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AdoptionRequest
+from custom_components.rental_control.const import COORDINATOR
+from custom_components.rental_control.const import DOMAIN
 
 _CODE = "4321"
 _OTHER_CODE = "8765"
@@ -39,13 +41,25 @@ class _Notifications:
         self.calls.append({"message": message, **kwargs})
 
 
-def _hass(code_length: int = 4, **generators: str | None) -> Any:
+def _hass(
+    code_length: int = 4,
+    phone_last_four: str | None = _CODE,
+    *,
+    with_reservations: bool = True,
+    **generators: str | None,
+) -> Any:
     """Build a hass whose entries use the named code generators.
 
     ``None`` registers no entry at all, which models an entry that has
     been deleted while its codes are still programmed in a lock. Entry
     data is a ``MappingProxyType`` exactly as Home Assistant exposes it,
     so the mapping-aware read is exercised against the real type.
+
+    Each entry also gets a loaded coordinator whose reservations report
+    ``phone_last_four`` for every identity ``_adopt`` can mint, because
+    that is the only evidence a ``last_four`` code really came from a
+    phone number. ``with_reservations=False`` leaves the coordinator
+    out, which models an entry whose codes outlive its loaded state.
     """
     entries = {
         entry_id: SimpleNamespace(
@@ -65,7 +79,23 @@ def _hass(code_length: int = 4, **generators: str | None) -> Any:
         if generator is not None
     }
     hass = SimpleNamespace()
-    hass.data = {}
+    hass.data = {
+        DOMAIN: {
+            entry_id: {
+                COORDINATOR: SimpleNamespace(
+                    _latest_res_by_key={
+                        f"{entry_id}-guest-{slot}": SimpleNamespace(
+                            phone_last_four=phone_last_four
+                        )
+                        for slot in range(1, 11)
+                    }
+                )
+            }
+            for entry_id in generators
+        }
+        if with_reservations
+        else {}
+    }
     hass.config = SimpleNamespace(config_dir=".")
     hass.config_entries = SimpleNamespace(
         async_entries=lambda _domain=None: list(entries.values()),
@@ -128,6 +158,52 @@ def test_last_four_sharing_logs_without_notifying(
     assert notifications.calls == []
     assert "expected under the last_four generator" in caplog.text
     assert "entry_a-guest-3" in caplog.text
+
+
+def test_phoneless_last_four_sharing_still_notifies(
+    notifications: _Notifications,
+) -> None:
+    """A last_four entry with no phone digits publishes date-based codes.
+
+    Booking.com stopped supplying phone information, so both entries
+    silently fell back to ``generate_date_based_code``. At a code length
+    of four that code is only ``start_day + end_day``, so the collision
+    is real and must be reported rather than explained away by a
+    generator that never ran (issue #861).
+    """
+    allocator = _allocator(
+        _hass(phone_last_four=None, entry_a="last_four", entry_b="last_four")
+    )
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
+
+    assert len(notifications.calls) == 1
+
+
+def test_last_four_sharing_notifies_when_digits_differ(
+    notifications: _Notifications,
+) -> None:
+    """Phone digits that are not the shared code explain nothing."""
+    allocator = _allocator(
+        _hass(phone_last_four="1111", entry_a="last_four", entry_b="last_four")
+    )
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
+
+    assert len(notifications.calls) == 1
+
+
+def test_last_four_sharing_notifies_without_a_reservation(
+    notifications: _Notifications,
+) -> None:
+    """An owner whose reservation cannot be read is undeterminable."""
+    allocator = _allocator(
+        _hass(with_reservations=False, entry_a="last_four", entry_b="last_four")
+    )
+    _adopt(allocator, "entry_a", 3)
+    _adopt(allocator, "entry_b", 5)
+
+    assert len(notifications.calls) == 1
 
 
 def test_date_based_sharing_still_notifies(notifications: _Notifications) -> None:
