@@ -66,6 +66,7 @@ from .const import COORDINATOR
 from .const import DOMAIN
 from .const import VERSION
 from .coordinator_helpers import allocation_failure
+from .coordinator_helpers import generator_divergence
 
 #: Keys whose values are secret (door codes), free-form text that can echo
 #: a submitted PIN or guest name back from a failed service call, or
@@ -143,6 +144,7 @@ async def async_get_config_entry_diagnostics(
         "slots": _slot_diagnostics(coordinator, set(exclusions)),
         "reservations": _reservation_diagnostics(coordinator),
         "allocation_failure": allocation_failure.diagnostics(entry.entry_id),
+        "generator_divergence": generator_divergence.diagnostics(entry.entry_id),
     }
     masker = _IdentityMasker()
     masker.collect(coordinator, allocator)

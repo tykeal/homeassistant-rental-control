@@ -322,22 +322,26 @@ def _resolve_observed_code(query: _ObservedCodeQuery) -> tuple[str, str, bool]:
         return observed_code, "manual_observed", False
     # The observed PIN is exactly what the generator produces for the
     # programmed window, so it is a generated code even when it is retained.
-    if not ctx.should_update_code or not _rotation_window_open(
+    if not ctx.should_update_code or not rotation_window_open(
         matched_physical.actual_start, query.buffered_start
     ):
         return observed_code, "generated", False
     return slot_code, code_source, slot_code != observed_code
 
 
-def _rotation_window_open(
+def rotation_window_open(
     programmed_start: datetime | None, buffered_start: datetime
 ) -> bool:
-    """Return whether a date shift may still rotate the generated code.
+    """Return whether a stay is still early enough to rotate its code.
 
-    ``should_update_code`` only promises to follow date changes on future
+    ``should_update_code`` only promises to follow changes on future
     events.  Once either the programmed window or the requested window has
     opened the guest may already be relying on the issued PIN, so the code
     is retained and only the stay dates are pushed to the lock.
+
+    Both windows are buffered and timezone aware, and ``dt.now()`` is the
+    Home Assistant clock, so every caller deciding whether a stay has
+    started must use this rather than compare datetimes itself.
     """
     now = dt.now()
     if buffered_start <= now:

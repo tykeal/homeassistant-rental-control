@@ -28,6 +28,7 @@ from ..reconciliation import SlotStatus
 from ..reconciliation import compute_desired_plan
 from ..reconciliation.desired import select_eligible_reservations
 from . import adoption_gate
+from . import generator_divergence
 from . import reissue
 from . import slot_exclusions
 from .models import ObservedSlotQuery
@@ -90,6 +91,11 @@ async def async_resolve_codes(
         RotationGuardTarget(allocator, entry_id, lockname, managed_slots),
         reservations,
         _matched_code_slot,
+    )
+    request = replace(
+        request,
+        forced_reissues=request.forced_reissues
+        + generator_divergence.directives_for(request, allocator, _matched_code_slot),
     )
     adoptions = build_adoption_requests(
         entry_id,
