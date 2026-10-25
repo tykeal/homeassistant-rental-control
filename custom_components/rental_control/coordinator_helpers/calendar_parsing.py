@@ -20,6 +20,7 @@ from typing import cast
 
 from homeassistant.components.calendar import CalendarEvent
 
+from ..bookings_only import uid_slot_name
 from ..const import EVENT_AGE_THRESHOLD_DAYS
 from ..description_parser import extract_checkin_time
 from ..description_parser import extract_checkout_time
@@ -215,8 +216,19 @@ def _parse_vevent(
         slot_name = get_slot_name(summary, "", "")
 
     override = None
-    if slot_name and ctx.override_lookup is not None:
-        override = ctx.override_lookup(slot_name)
+    override_name = slot_name
+    if not override_name and ctx.bookings_only_feed:
+        # A UID-derived name is safe to synthesize here because it
+        # depends on neither the dates nor the UTC conversion, so it
+        # cannot disagree with the name reservations.py computes.  The
+        # date-derived fallback is deliberately *not* used: the
+        # override decides the check-in time, which decides the UTC
+        # start, so a date-derived name here could differ from the one
+        # built downstream whenever the conversion shifts the day.
+        raw_uid = event.get("UID")
+        override_name = uid_slot_name(str(raw_uid) if raw_uid is not None else None)
+    if override_name and ctx.override_lookup is not None:
+        override = ctx.override_lookup(override_name)
 
     checkin, checkout = _select_event_times(event, override, ctx)
 

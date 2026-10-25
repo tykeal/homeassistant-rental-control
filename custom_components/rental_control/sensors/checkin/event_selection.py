@@ -65,9 +65,9 @@ def extract_slot_name(
     """Extract the guest/slot name using existing Rental Control parsing.
 
     A bookings-only feed publishes anonymous reservations, which the
-    coordinator names after their stay. Check-in tracking must use the
-    same name or it would treat a programmed stay as unnamed and skip
-    active-stay protection and early-checkout expiry.
+    coordinator names after their ``UID``. Check-in tracking must use
+    the same name or it would treat a programmed stay as unnamed and
+    skip active-stay protection and early-checkout expiry.
     """
     return resolve_slot_name(
         event.summary,
@@ -76,4 +76,5 @@ def extract_slot_name(
         event.start,
         event.end,
         bookings_only_feed,
+        getattr(event, "uid", None),
     )

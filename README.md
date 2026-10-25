@@ -365,8 +365,15 @@ issues guest door codes for those blocks, so only turn it on for a
 calendar that never publishes them.
 
 When the option is on and an event carries no usable name, the
-integration names the slot after the stay, for example
-`Booking 23 Oct - 25 Oct 2026`. The option also takes precedence over
+integration names the slot after a short token derived from the
+event's calendar `UID`, for example `Booking A3F9K2`. The token is a
+stable hash, so the reservation number itself never reaches the lock,
+and the name survives an amendment to the stay: when a booking's dates
+move upstream, the reservation keeps its slot and its door code rather
+than taking a fresh slot and a new code. A feed that publishes no
+usable `UID` falls back to naming the slot after the stay, for example
+`Booking 23 Oct - 25 Oct 2026`; such a name does shift with the dates.
+The option also takes precedence over
 "ignore events that are not standard reservations", which would
 otherwise discard the same events.
 

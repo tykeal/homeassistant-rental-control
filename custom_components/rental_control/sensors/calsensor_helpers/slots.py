@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...bookings_only import synthesized_slot_name
+from ...bookings_only import anonymous_slot_name
 from .models import SlotReadContext
 from .models import SlotReadResult
 
@@ -19,11 +19,11 @@ def read_slot(context: SlotReadContext, coordinator: Any) -> SlotReadResult:
         context.description,
         context.event_prefix,
     )
-    if slot_name is None and context.bookings_only_feed:
+    if not slot_name and context.bookings_only_feed:
         # An anonymous booking is still programmed into a slot, so the
         # sensor must name it exactly as the coordinator did or it would
         # publish no code for a code that is live on the lock.
-        slot_name = synthesized_slot_name(context.start, context.end)
+        slot_name = anonymous_slot_name(context.uid, context.start, context.end)
     slot_number: int | None = None
     slot_code: str | None = None
     if slot_name is not None:
