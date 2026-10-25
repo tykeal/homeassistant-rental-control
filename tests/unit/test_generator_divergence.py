@@ -263,12 +263,15 @@ def test_rotation_is_requested_only_once_per_identity() -> None:
 
     # The allocator answered with a code of its own choosing rather than
     # the one asked for, which is collision resolution, not staleness.
-    second = _reservation()
-    directives = generator_divergence.evaluate(_query(_hass(), [second], "0001"))
+    # The replacement must stay settled on every later refresh too, or
+    # a future guest's PIN moves on alternating refreshes.
+    for _refresh in range(3):
+        settled = _reservation()
+        directives = generator_divergence.evaluate(_query(_hass(), [settled], "0001"))
 
-    assert directives == ()
-    assert second.slot_code is None
-    assert generator_divergence.diagnostics(_ENTRY_ID) is None
+        assert directives == ()
+        assert settled.slot_code is None
+        assert generator_divergence.diagnostics(_ENTRY_ID) is None
 
 
 def test_failed_rotation_is_reported_without_retrying() -> None:

@@ -83,12 +83,28 @@ class DivergenceQuery:
 
 _state: dict[str, dict[str, Divergence]] = {}
 
-#: Codes a rotation has already been requested away from, per entry and
-#: identity.  A rotation is offered once: the allocator may answer it
-#: with a collision-resolved alternative rather than the exact code
-#: asked for, and re-reading that alternative as a fresh divergence
-#: would ask for a rotation on every refresh forever.
-_attempts: dict[str, dict[str, str]] = {}
+
+@dataclass(frozen=True, slots=True)
+class _Attempt:
+    """One rotation this module has already asked an identity to make.
+
+    ``code`` is the code the rotation was requested away from, so a
+    later refresh can tell a replacement that was issued from one that
+    never arrived.  ``settled`` records that the replacement did arrive
+    and that the identity is finished with, which must outlive the
+    replacement itself.
+    """
+
+    code: str
+    settled: bool
+
+
+#: Rotations already asked for, per entry and identity.  A rotation is
+#: offered once: the allocator may answer it with a collision-resolved
+#: alternative rather than the exact code asked for, and re-reading that
+#: alternative as a fresh divergence would ask for a rotation on every
+#: refresh forever.
+_attempts: dict[str, dict[str, _Attempt]] = {}
 
 
 def rotate_stale_codes(
@@ -214,17 +230,21 @@ def _scan(
         )
         if not _diverges(reservation, held, expected, generator, code_length):
             continue
-        attempted = attempts.get(reservation.identity_key)
-        if attempted is not None and held != attempted:
-            # The allocator answered an earlier rotation with a code of
-            # its own choosing, which collision resolution may move away
-            # from ``expected``.  The booking has been re-issued under
-            # the current generator, so it has settled.
-            attempts.pop(reservation.identity_key, None)
+        attempt = attempts.get(reservation.identity_key)
+        if attempt is not None and attempt.settled:
+            continue
+        if attempt is not None and held != attempt.code:
+            # The allocator answered the rotation with a code of its own
+            # choosing, which collision resolution may move away from
+            # ``expected``.  The booking has been re-issued under the
+            # current generator, so it is settled and stays settled: a
+            # dropped marker would read the replacement as stale again
+            # and move a future guest's PIN on alternating refreshes.
+            attempts[reservation.identity_key] = _Attempt(held, settled=True)
             continue
         rotating = (
             should_update_code
-            and attempted is None
+            and attempt is None
             and _stay_has_not_started(reservation, slot)
         )
         found[reservation.identity_key] = Divergence(
@@ -233,10 +253,10 @@ def _scan(
             effective_generator="date_based",
             reason=PHONE_DIGITS_UNAVAILABLE,
             rotating=rotating,
-            rotation_attempted=attempted is not None,
+            rotation_attempted=attempt is not None,
         )
         if rotating:
-            attempts[reservation.identity_key] = held
+            attempts[reservation.identity_key] = _Attempt(held, settled=False)
             reservation.slot_code = expected
             reservation.code_source = "generated"
             reservation.code_provenance = "generated"
