@@ -22,6 +22,7 @@ from ..reconciliation import make_reservation_fingerprint
 from ..reconciliation import normalize_slot_name_for_fingerprint
 from ..util import apply_buffer
 from ..util import normalize_uid
+from .codegen import extract_last_four
 from .codegen import generate_slot_code
 from .ghost_reservations import build_ghost_reservations as build_ghost_reservations
 from .models import ObservedSlotQuery
@@ -160,6 +161,7 @@ def _build_one_reservation(
     booking_aliases = extract_booking_aliases(event.summary, event.description or "")
     display_slot_name = _display_slot_name(slot_name, prefix, ctx)
 
+    phone_last_four = extract_last_four(event.description)
     slot_code = generate_slot_code(
         ctx.code_generator, ctx.code_length, start, end, event.description, uid
     )
@@ -222,6 +224,7 @@ def _build_one_reservation(
             code_provenance=code_source,
             code_rotation_pending=rotation_pending,
             code_rotation_origin=rotation_origin,
+            phone_last_four=phone_last_four,
         )
     except ValueError:
         _LOGGER.warning(
