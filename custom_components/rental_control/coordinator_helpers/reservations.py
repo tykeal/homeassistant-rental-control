@@ -67,15 +67,44 @@ def _buffered_window(
     return buffered_start, buffered_end
 
 
+def _synthesized_slot_name(start: datetime, end: datetime) -> str:
+    """Return a date-derived slot name for an anonymous reservation.
+
+    Booking.com no longer publishes a guest name, so a bookings-only
+    feed has nothing to name a reservation after except its stay.  The
+    year is part of the name because it feeds reservation identity: two
+    stays covering the same day and month in different years must not
+    collapse onto one key.
+    """
+    return f"Booking {start:%d %b} - {end:%d %b %Y}"
+
+
+def _resolve_slot_name(event: Any, ctx: ReservationBuildContext) -> str | None:
+    """Return an event's slot name, synthesizing one when permitted.
+
+    Every call site must resolve the name the same way: the name is
+    hashed into the reservation fingerprint, so a disagreement between
+    the name-window pass and the reservation build would make identity
+    unstable and churn issued codes.
+    """
+    slot_name = get_slot_name(
+        event.summary, event.description or "", ctx.event_prefix or ""
+    )
+    if slot_name or not ctx.bookings_only_feed:
+        return slot_name
+    return _synthesized_slot_name(
+        _coerce_event_datetime(event.start, ctx),
+        _coerce_event_datetime(event.end, ctx),
+    )
+
+
 def _collect_name_windows(
     ordered_calendar: list[Any], ctx: ReservationBuildContext
 ) -> _NameWindows:
     """Return per-name counts and reserved/ordered date windows."""
     windows = _NameWindows()
     for event in ordered_calendar:
-        slot_name = get_slot_name(
-            event.summary, event.description or "", ctx.event_prefix or ""
-        )
+        slot_name = _resolve_slot_name(event, ctx)
         if not slot_name:
             continue
         key = normalize_slot_name_for_fingerprint(slot_name)
@@ -130,9 +159,7 @@ def _build_one_reservation(
     windows: _NameWindows,
 ) -> _Reservation | None:
     """Return one reservation for an event, or None when invalid."""
-    slot_name = get_slot_name(
-        event.summary, event.description or "", ctx.event_prefix or ""
-    )
+    slot_name = _resolve_slot_name(event, ctx)
     if not slot_name:
         return None
 
@@ -269,9 +296,7 @@ def _resolve_observed_code(query: _ObservedCodeQuery) -> tuple[str, str, bool]:
     observed_code = matched_physical.actual_code
     if observed_code is None:
         return slot_code, code_source, False
-    slot_name = get_slot_name(
-        event.summary, event.description or "", ctx.event_prefix or ""
-    )
+    slot_name = _resolve_slot_name(event, ctx)
     identity_key = (
         make_reservation_fingerprint(
             ctx.entry_id,

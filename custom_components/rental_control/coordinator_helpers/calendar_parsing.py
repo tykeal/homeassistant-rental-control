@@ -188,8 +188,14 @@ def _vevent_filtered(
             return True
     except (AttributeError, TypeError):  # fmt: skip
         pass
-    if ctx.ignore_non_reserved and any(
-        x in summary for x in ["Blocked", "Not available"]
+    # A bookings-only feed overrides this filter. The operator has
+    # asserted that the calendar never publishes blocked dates, so
+    # Booking.com's "CLOSED - Not available" title names a real
+    # reservation; dropping it here would silently defeat that choice.
+    if (
+        ctx.ignore_non_reserved
+        and not ctx.bookings_only_feed
+        and any(x in summary for x in ["Blocked", "Not available"])
     ):
         return True
     return False
