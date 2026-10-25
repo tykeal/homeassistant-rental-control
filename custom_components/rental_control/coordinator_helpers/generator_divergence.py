@@ -18,11 +18,14 @@ narrower promise, because changing a code a guest may already hold is
 its own failure, and is offered only when the operator opted into
 rotation with ``should_update_code`` *and* the stay has not started.
 
-What this cannot do is tell a stale generated code from a PIN an
-operator typed into the lock by hand.  Both read as a code the
-generator would not produce now, exactly as ``_resolve_observed_code``
-already notes for issue #736.  An operator who does not want
-hand-entered PINs replaced should leave ``should_update_code`` off.
+A code the generator could not have produced for the window actually
+programmed into the lock is already treated as operator-entered
+elsewhere: ``_resolve_observed_code`` labels it ``manual_observed`` and
+refuses to rotate it.  That judgement is made while the reservations are
+built, which is before this scan runs, so it is honoured here rather
+than re-litigated.  Such a code is still reported, because an operator
+may well want to know their hand-entered PIN no longer matches the
+configured generator, but it is never rotated away.
 """
 
 from __future__ import annotations
@@ -53,6 +56,11 @@ _LOGGER = logging.getLogger(__name__)
 #: Only one cause is detectable today, and naming it keeps the
 #: diagnostics row readable without inviting a guess at any other.
 PHONE_DIGITS_UNAVAILABLE = "phone_digits_unavailable"
+
+#: Provenance label ``_resolve_observed_code`` gives a held code the
+#: configured generator could not have produced for the window that is
+#: actually programmed into the lock.
+_MANUAL_PROVENANCE = "manual_observed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +253,7 @@ def _scan(
         rotating = (
             should_update_code
             and attempt is None
+            and not _is_operator_entered(reservation)
             and _stay_has_not_started(reservation, slot)
         )
         found[reservation.identity_key] = Divergence(
@@ -295,6 +304,22 @@ def _diverges(
     if code_is_phone_derived(held, None, generator, code_length, last_four=None):
         return False
     return held != expected
+
+
+def _is_operator_entered(reservation: Reservation) -> bool:
+    """Return whether a held code reads as a hand-entered PIN.
+
+    ``build_reservations`` runs before this scan and has already
+    compared the observed PIN against what the generator produces for
+    the window programmed into the lock.  When it could not account for
+    the PIN it labelled the provenance ``manual_observed`` and refused
+    rotation, and that refusal is binding: replacing a PIN an operator
+    typed into the lock by hand is a worse failure than leaving a code
+    the configuration no longer explains.  ``code_provenance`` is used
+    rather than ``code_source`` because the allocator never overwrites
+    it.
+    """
+    return reservation.code_provenance == _MANUAL_PROVENANCE
 
 
 def _stay_has_not_started(reservation: Reservation, slot: ManagedSlot | None) -> bool:

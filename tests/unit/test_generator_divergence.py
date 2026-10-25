@@ -18,13 +18,21 @@ from custom_components.rental_control.const import CONF_CODE_GENERATION
 from custom_components.rental_control.const import CONF_CODE_LENGTH
 from custom_components.rental_control.const import CONF_SHOULD_UPDATE_CODE
 from custom_components.rental_control.coordinator_helpers import generator_divergence
+from custom_components.rental_control.coordinator_helpers.models import (
+    ReservationBuildContext,
+)
 from custom_components.rental_control.coordinator_helpers.reissue import (
     CodeResolutionRequest,
 )
 from custom_components.rental_control.coordinator_helpers.reissue import (
     ReissueSuppression,
 )
+from custom_components.rental_control.coordinator_helpers.reservations import (
+    build_reservations,
+)
+from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
+from custom_components.rental_control.reconciliation import SlotStatus
 
 _ENTRY_ID = "entry-divergence"
 
@@ -65,6 +73,7 @@ def _reservation(
     started: bool = False,
     phone_last_four: str | None = None,
     missing_count: int = 0,
+    code_provenance: str = "generated",
 ) -> Reservation:
     """Return one reservation whose stay is ahead of or behind now."""
     now = dt_util.now()
@@ -82,6 +91,8 @@ def _reservation(
         slot_code=None,
         missing_count=missing_count,
         phone_last_four=phone_last_four,
+        code_source=code_provenance,
+        code_provenance=code_provenance,
     )
 
 
@@ -151,6 +162,92 @@ def test_rotation_requires_should_update_code() -> None:
 
     assert directives == ()
     assert reservation.slot_code is None
+    report = generator_divergence.diagnostics(_ENTRY_ID)
+    assert report is not None
+    assert report[0]["rotating"] is False
+
+
+def test_operator_entered_pin_is_reported_but_not_rotated() -> None:
+    """A hand-entered PIN is surfaced but never replaced.
+
+    ``build_reservations`` has already judged this code unexplainable
+    for the programmed window and labelled it ``manual_observed``, which
+    is the established refusal to rotate.  The divergence scan honours
+    that refusal while still reporting the mismatch.
+    """
+    reservation = _reservation(code_provenance="manual_observed")
+
+    directives = generator_divergence.evaluate(_query(_hass(), [reservation], "9876"))
+
+    assert directives == ()
+    assert reservation.slot_code is None
+    assert reservation.code_provenance == "manual_observed"
+    report = generator_divergence.diagnostics(_ENTRY_ID)
+    assert report is not None
+    assert report[0]["identity_key"] == "identity-1"
+    assert report[0]["rotating"] is False
+    assert report[0]["divergence_reason"] == (
+        generator_divergence.PHONE_DIGITS_UNAVAILABLE
+    )
+
+
+def test_built_manual_pin_reaches_the_scan_unrotated() -> None:
+    """The provenance survives from the calendar build into the scan.
+
+    ``rotate_stale_codes`` runs after ``build_reservations`` in
+    ``async_resolve_codes``, so the ``manual_observed`` label a real
+    build produces must still be on the reservation the scan sees.
+    """
+    start = dt_util.now() + timedelta(days=3)
+    end = start + timedelta(days=2)
+    built = build_reservations(
+        [SimpleNamespace(summary="Guest", description="", start=start, end=end)],
+        [
+            ManagedSlot(
+                slot=1,
+                managed=True,
+                status=SlotStatus.OCCUPIED,
+                actual_name="RC Guest",
+                actual_code="9876",
+                actual_start=start,
+                actual_end=end,
+            )
+        ],
+        ReservationBuildContext(
+            entry_id=_ENTRY_ID,
+            timezone=dt_util.DEFAULT_TIME_ZONE,
+            event_prefix="RC",
+            trim_names=False,
+            max_name_length=20,
+            code_buffer_before=0,
+            code_buffer_after=0,
+            should_update_code=True,
+            code_generator=CODE_GENERATOR_LAST_FOUR,
+            code_length=4,
+            active_windows_for_name=lambda _slot_name: set(),
+        ),
+    )
+
+    assert [res.code_provenance for res in built] == ["manual_observed"]
+
+    allocator = SimpleNamespace(
+        _registry=SimpleNamespace(code_for_identity=lambda key: "9876")
+    )
+    updated = generator_divergence.rotate_stale_codes(
+        CodeResolutionRequest(
+            hass=_hass(),
+            entry_id=_ENTRY_ID,
+            lockname="frontdoor",
+            code_length=4,
+            managed_slots=[],
+            reservations=built,
+        ),
+        allocator,
+        lambda res, slots, consumed: None,
+    )
+
+    assert updated.forced_reissues == ()
+    assert built[0].slot_code == "9876"
     report = generator_divergence.diagnostics(_ENTRY_ID)
     assert report is not None
     assert report[0]["rotating"] is False
