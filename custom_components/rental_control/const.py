@@ -60,6 +60,7 @@ ATTR_NAME = "rental_control_name"
 ATTR_SLOT_NAME = "slot_name"
 
 # Config
+CONF_BOOKINGS_ONLY_FEED = "bookings_only_feed"
 CONF_CHECKIN = "checkin"
 CONF_CHECKOUT = "checkout"
 CONF_CLEANING_WINDOW = "cleaning_window"

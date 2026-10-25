@@ -24,6 +24,7 @@ from homeassistant.const import CONF_VERIFY_SSL
 import homeassistant.helpers.config_validation as cv
 from homeassistant.util import slugify
 
+from ..bookings_only import feed_is_bookings_only
 from ..const import CONF_CHECKIN
 from ..const import CONF_CHECKOUT
 from ..const import CONF_CODE_BUFFER_AFTER
@@ -112,6 +113,7 @@ class CoordinatorConfigMixin:
             self.event_overrides.event_prefix = self.event_prefix
         self.code_length = config.get(CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH)
         self.ignore_non_reserved = bool(config.get(CONF_IGNORE_NON_RESERVED))
+        self.bookings_only_feed = feed_is_bookings_only(config)
         self.verify_ssl = bool(config.get(CONF_VERIFY_SSL))
 
         if config_update.buffer_changed(

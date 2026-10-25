@@ -21,7 +21,9 @@ from homeassistant.helpers.selector import SelectSelectorMode
 from homeassistant.util import dt
 import voluptuous as vol
 
+from ..bookings_only import host_defaults_bookings_only
 from ..const import CODE_GENERATORS
+from ..const import CONF_BOOKINGS_ONLY_FEED
 from ..const import CONF_CHECKIN
 from ..const import CONF_CHECKOUT
 from ..const import CONF_CLEANING_WINDOW
@@ -292,6 +294,14 @@ def _behavior_fields(context: SchemaBuildContext) -> dict[Any, Any]:
         vol.Optional(
             CONF_IGNORE_NON_RESERVED,
             default=_get_default(context, CONF_IGNORE_NON_RESERVED, True),
+        ): cv.boolean,
+        vol.Optional(
+            CONF_BOOKINGS_ONLY_FEED,
+            default=_get_default(
+                context,
+                CONF_BOOKINGS_ONLY_FEED,
+                host_defaults_bookings_only(_get_default(context, CONF_URL)),
+            ),
         ): cv.boolean,
         vol.Optional(
             CONF_VERIFY_SSL, default=_get_default(context, CONF_VERIFY_SSL, True)
