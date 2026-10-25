@@ -46,6 +46,8 @@ and sensors for managing rental properties.
   every 2 minutes)
 - Define checkin/checkout times that apply to all-day calendar entries
 - Ability to ignore 'Blocked' and 'Not available' events
+- Ability to treat a calendar as confirmed bookings only, for feeds like
+  Booking.com that no longer name their guests
 - Calendars can have their own timezone definition that is separate from the
   Home Assistant instance itself. This is useful for managing properties that
   are in a different timezone from where Home Assistant is
@@ -336,6 +338,30 @@ Both events include attributes: `summary`, `guest_name`, `entity_id`, `start`,
 - Slot command retry with escalation: if a lock code set/clear command fails
   after 3 attempts the integration creates a persistent notification alerting
   the user to take manual action
+
+#### Bookings-Only Calendars
+
+Booking.com's iCal export no longer identifies guests. Every event
+carries the title `CLOSED - Not available`, whether it covers a real
+reservation or a date the host blocked. The integration normally skips
+events summarised `Blocked` or `Not available`, because Airbnb, Google
+Calendar and PMS feeds use those words for genuine blocks, so such a
+feed produces no door codes at all.
+
+- **`bookings_only_feed`** (boolean, default: on for `booking.com`
+  calendar URLs, off for everything else) — assert that this calendar
+  publishes confirmed bookings and nothing else
+
+Enable the option when the calendar never publishes blocked or
+unavailable dates. In Booking.com's extranet that means exporting
+booked dates only. Enabling it on a calendar that does publish blocked
+dates issues guest door codes for those blocks.
+
+When the option is on and an event carries no usable name, the
+integration names the slot after the stay, for example
+`Booking 23 Oct - 25 Oct 2026`. The option also takes precedence over
+"ignore events that are not standard reservations", which would
+otherwise discard the same events.
 
 #### Slot Name Trimming
 
