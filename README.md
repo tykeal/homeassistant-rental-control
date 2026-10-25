@@ -352,10 +352,17 @@ feed produces no door codes at all.
   calendar URLs, off for everything else) — assert that this calendar
   publishes confirmed bookings and nothing else
 
-Enable the option when the calendar never publishes blocked or
-unavailable dates. In Booking.com's extranet that means exporting
-booked dates only. Enabling it on a calendar that does publish blocked
-dates issues guest door codes for those blocks.
+A Booking.com calendar defaults to bookings-only, whether you added it
+before or after this option existed, so its door codes work without
+any action from you. Turn the option off in the integration's options
+if your feed also exports blocked dates: in Booking.com's extranet
+that is the difference between exporting booked dates only and
+exporting booked plus closed dates. Every other calendar defaults to
+off and keeps the normal `Blocked`/`Not available` filtering.
+
+Leaving the option on for a calendar that does publish blocked dates
+issues guest door codes for those blocks, so only turn it on for a
+calendar that never publishes them.
 
 When the option is on and an event carries no usable name, the
 integration names the slot after the stay, for example

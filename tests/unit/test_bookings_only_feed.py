@@ -9,12 +9,19 @@ from datetime import datetime
 from datetime import time
 from datetime import timezone
 from types import MappingProxyType
+from types import SimpleNamespace
 from typing import Any
 
+from homeassistant.const import CONF_URL
 from icalendar import Calendar
 from icalendar import Event
 
 from custom_components.rental_control.bookings_only import feed_is_bookings_only
+from custom_components.rental_control.config_flow_helpers.validation import (
+    apply_successful_conversions,
+)
+from custom_components.rental_control.const import CONF_BOOKINGS_ONLY_FEED
+from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.coordinator_helpers import calendar_parsing
 from custom_components.rental_control.coordinator_helpers import reservations
 from custom_components.rental_control.coordinator_helpers.models import (
@@ -373,3 +380,70 @@ def test_anonymous_stay_does_not_adopt_a_reserved_window_pin() -> None:
     assert len(built) == 1
     assert built[0].slot_code != "1111"
     assert built[0].code_source == "generated"
+
+
+class _CreationFlow:
+    """Stub of the entry-creation handler, which stamps ``created``."""
+
+    def __init__(self) -> None:
+        """Initialize the creation-flow stub."""
+        self.created = "2026-10-24T00:00:00+00:00"
+
+
+class _OptionsFlow:
+    """Stub of the options handler, which owns a config entry."""
+
+    def __init__(self) -> None:
+        """Initialize the options-flow stub."""
+        self.config_entry = SimpleNamespace(entry_id="entry-1")
+
+
+def _save(flow: Any, url: str, bookings_only: bool) -> dict[str, Any]:
+    """Return the config entry data a flow would store for a submission."""
+    user_input: dict[str, Any] = {
+        CONF_URL: url,
+        CONF_BOOKINGS_ONLY_FEED: bookings_only,
+        CONF_LOCK_ENTRY: "(none)",
+    }
+    apply_successful_conversions(flow, user_input)
+    return user_input
+
+
+def test_new_booking_com_entry_defaults_to_bookings_only() -> None:
+    """A new Booking.com entry is bookings-only without operator action.
+
+    The creation form renders before the URL is known, so an unticked
+    box there expresses nothing and must not pin the entry to False.
+    """
+    stored = _save(_CreationFlow(), BOOKING_URL, False)
+
+    assert CONF_BOOKINGS_ONLY_FEED not in stored
+    assert feed_is_bookings_only(MappingProxyType(stored)) is True
+
+
+def test_new_non_booking_com_entry_stays_off() -> None:
+    """A new entry on any other host keeps its stored False."""
+    stored = _save(_CreationFlow(), AIRBNB_URL, False)
+
+    assert stored[CONF_BOOKINGS_ONLY_FEED] is False
+    assert feed_is_bookings_only(MappingProxyType(stored)) is False
+
+
+def test_options_flow_preserves_an_explicit_booking_com_false() -> None:
+    """An operator exporting closed dates can turn the option off.
+
+    The options form renders a URL-aware default, so a False saved
+    there is a real choice and the creation-time rule must not reach it.
+    """
+    stored = _save(_OptionsFlow(), BOOKING_URL, False)
+
+    assert stored[CONF_BOOKINGS_ONLY_FEED] is False
+    assert feed_is_bookings_only(MappingProxyType(stored)) is False
+
+
+def test_opting_in_on_another_host_is_recorded() -> None:
+    """Ticking the box on a non-Booking.com host stores a real True."""
+    stored = _save(_CreationFlow(), AIRBNB_URL, True)
+
+    assert stored[CONF_BOOKINGS_ONLY_FEED] is True
+    assert feed_is_bookings_only(MappingProxyType(stored)) is True
