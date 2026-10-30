@@ -23,6 +23,7 @@ and sensors for managing rental properties.
         - [Slot Name Trimming](#slot-name-trimming)
         - [Lock Code Buffer Times](#lock-code-buffer-times)
         - [Keymaster Event Diagnostics](#keymaster-event-diagnostics)
+    - [Using Door Codes Without Keymaster](#using-door-codes-without-keymaster)
 - [Installation](#installation)
     - [Keymaster (optional)](#keymaster-optional)
     - [Calendar Triggers in Home Assistant 2026.11](#calendar-triggers-in-home-assistant-202611)
@@ -464,6 +465,122 @@ integration only records events from monitored locks.
         - The integration extracts email addresses from the Description by
           matching against: `Email:\s+(\S+@\S+)`
         - Reservation URLs match against the first URL in the Description
+
+### Using Door Codes Without Keymaster
+
+An entry with no Keymaster lock still generates a door code for every
+reservation and publishes it on the event sensors. Automations can use
+it to drive a lock that Keymaster does not support. Rental Control
+never touches such a lock: adding, changing and removing the code is
+your automation's job, and the sensor attributes below are its only
+input. This section describes what those automations can rely on.
+
+Each event sensor carries these attributes. While the sensor shows
+`No reservation`, every one except `summary` is empty (`None`).
+
+| Attribute | Value |
+| --- | --- |
+| `start` | Timezone-aware datetime when the stay begins, in the calendar's configured timezone. All-day events use the configured check-in time |
+| `end` | Timezone-aware datetime when the stay ends, likewise using the configured checkout time |
+| `slot_name` | The guest's name as the integration derives it from the event; see [Bookings-Only Calendars](#bookings-only-calendars) for anonymous bookings |
+| `slot_code` | The door code, a string of digits of the configured code length. It can start with `0`, so treat it as text |
+| `slot_number` | Always empty on an entry without a lock; do not key anything on it |
+| `uid` | The event's calendar `UID`, when the feed provides one |
+| `summary`, `description`, `location`, `eta_days`, `eta_hours`, `eta_minutes` | Event details and the time until `start` |
+
+The integration guarantees the following:
+
+- **When `slot_code` is present.** From the first refresh after a
+  reservation enters the calendar window until the stay ends, as long
+  as the event yields a `slot_name`. An event that yields no slot name,
+  such as a bare `Reserved` with no reservation code, never gets one.
+- **When `slot_code` is absent.** At checkout the check-in sensor moves
+  to `checked_out` (at the end time, or earlier through the manual
+  checkout action), and from the next refresh the code may be empty
+  while the event is still listed. When the integration declines to
+  issue a code, the field is empty and the log carries a warning or
+  error saying why. A refresh that fails outright keeps publishing the
+  last codes it issued.
+- **An empty `slot_code` is not a removal instruction.** It means the
+  integration has no code to publish. Drive removal from the stay's
+  `end`, or from the lock's own expiry, and cache the code yourself if
+  your lock needs the value to delete it.
+- **Stability.** A stay's code does not change between refreshes while
+  the booking stays the same. A booking whose name, dates or
+  description change can receive a new code, depending on the
+  [code generator](#door-code-generation), so react to changes in
+  `slot_code` rather than reading it once. For anonymous bookings, a
+  `slot_name` derived from the calendar `UID` survives date changes;
+  one derived from the dates does not.
+- **Checkout-day retention.** An event stays in the event sensors and
+  in the calendar's event list (calendar cards, `calendar.get_events`)
+  for the whole local day on which it ends, until local midnight. A
+  noon checkout stays visible for twelve hours after `end`. The
+  calendar entity's own state and current-event attributes move on at
+  `end`, so do not drive removal from them.
+- **A cancelled booking disappears.** Once a reservation leaves the
+  feed, its event leaves the sensors, so delete its code from your
+  lock through your own records.
+
+> **Warning:** an automation that fires a fixed delay after `end` never
+> runs if `end` plus that delay crosses local midnight, because the
+> event has gone by then. A 22:00 checkout leaves only two hours. Keep
+> the delay short enough for your latest checkout, or record `end` when
+> you program the code.
+
+Events sort by start time, so on a turnover day the departing stay
+remains in `event_0` until midnight and the arriving guest appears in
+`event_1`. Watch every event sensor, and make your lock actions
+idempotent per reservation. Key them on `uid` when your feed provides
+one, otherwise on `slot_name` together with `start` and `end`: two
+stays can share a guest name.
+
+A sketch for a lock that accepts time-bounded codes. It reprograms
+the code whenever the code or the stay's dates change. Replace
+`script.lock_add_code` and `script.lock_remove_expired_codes` with the
+actions your lock provides:
+
+```yaml
+- alias: Program guest door code
+  mode: queued
+  triggers:
+    - trigger: state
+      entity_id:
+        - sensor.my_calendar_rental_control_event_0
+        - sensor.my_calendar_rental_control_event_1
+      attribute: slot_code
+    - trigger: state
+      entity_id:
+        - sensor.my_calendar_rental_control_event_0
+        - sensor.my_calendar_rental_control_event_1
+      attribute: start
+    - trigger: state
+      entity_id:
+        - sensor.my_calendar_rental_control_event_0
+        - sensor.my_calendar_rental_control_event_1
+      attribute: end
+  conditions:
+    - condition: template
+      value_template: >
+        {{ trigger.to_state.attributes.slot_code not in [none, ''] }}
+  actions:
+    - action: script.lock_add_code
+      data:
+        name: "{{ trigger.to_state.attributes.slot_name }}"
+        code: "{{ trigger.to_state.attributes.slot_code }}"
+        start: "{{ trigger.to_state.attributes.start }}"
+        end: "{{ trigger.to_state.attributes.end }}"
+
+- alias: Remove expired guest door codes
+  triggers:
+    - trigger: template
+      value_template: >
+        {% set end = state_attr('sensor.my_calendar_rental_control_event_0',
+                                'end') %}
+        {{ end is not none and now() >= end + timedelta(hours=3) }}
+  actions:
+    - action: script.lock_remove_expired_codes
+```
 
 ## Installation
 
