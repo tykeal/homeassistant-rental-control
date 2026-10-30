@@ -65,6 +65,7 @@ from ..const import DOMAIN
 from ..const import LOCK_MANAGER
 from ..const import VERSION
 from ..event_overrides import EventOverrides
+from ..helpers import configured_lock_slug
 from ..reconciliation import DesiredPlan as _DesiredPlan
 from ..reconciliation import Reservation as _Reservation
 from . import keymaster_bootstrap
@@ -133,9 +134,7 @@ class CoordinatorSetupMixin:
         self.checkout: time = cv.time(config.get(CONF_CHECKOUT))
         self.start_slot: int = int(str(config.get(CONF_START_SLOT)))
         lockname_raw = config.get(CONF_LOCK_ENTRY)
-        self.lockname: str | None = (
-            slugify(lockname_raw) if lockname_raw and lockname_raw.strip() else None
-        )
+        self.lockname: str | None = configured_lock_slug(lockname_raw)
         self.max_events: int = int(str(config.get(CONF_MAX_EVENTS)))
         self.max_misses: int = DEFAULT_MAX_MISSES
         self.num_misses: int = 0

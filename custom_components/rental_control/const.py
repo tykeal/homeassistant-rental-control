@@ -9,6 +9,8 @@ DOMAIN = "rental_control"
 DOMAIN_DATA = f"{DOMAIN}_DATA"
 VERSION = "0.0.0"
 LOCK_MANAGER = "keymaster"
+# Lock selector value meaning "no Keymaster lock"
+LOCK_ENTRY_NONE = "(none)"
 
 ISSUE_URL = "https://github.com/tykeal/homeassistant-rental-control/issues"
 

@@ -47,6 +47,7 @@ from .coordinator_helpers import generator_divergence
 from .coordinator_helpers.adoption_gate import forget_entry as forget_gate_report
 from .coordinator_helpers.code_allocation import dismiss_unreadable_slots
 from .coordinator_helpers.slot_exclusions import dismiss_excluded_slots
+from .helpers import configured_lock_entry
 from .listeners import (
     async_register_keymaster_listener as async_register_keymaster_listener,
 )
@@ -346,9 +347,4 @@ async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -
 
 def _entry_has_lock(config_entry: ConfigEntry) -> bool:
     """Return whether a config entry should participate in code adoption."""
-    lock_entry = config_entry.data.get(CONF_LOCK_ENTRY)
-    return (
-        isinstance(lock_entry, str)
-        and bool(lock_entry.strip())
-        and lock_entry.strip() != "(none)"
-    )
+    return configured_lock_entry(config_entry.data.get(CONF_LOCK_ENTRY)) is not None

@@ -22,7 +22,6 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 import homeassistant.helpers.config_validation as cv
-from homeassistant.util import slugify
 
 from ..bookings_only import feed_is_bookings_only
 from ..const import CONF_CHECKIN
@@ -50,6 +49,7 @@ from ..const import DEFAULT_CODE_LENGTH
 from ..const import DEFAULT_MAX_NAME_LENGTH
 from ..const import DEFAULT_TRIM_NAMES
 from ..event_overrides import EventOverrides
+from ..helpers import configured_lock_slug
 from ..util import apply_buffer
 from ..util import check_gather_results
 from . import config_update
@@ -82,9 +82,7 @@ class CoordinatorConfigMixin:
         previous_lockname = self.lockname
         previous_max_events = self.max_events
         previous_start_slot = self.start_slot
-        self.lockname = (
-            slugify(lockname_raw) if lockname_raw and lockname_raw.strip() else None
-        )
+        self.lockname = configured_lock_slug(lockname_raw)
         self.max_events = int(str(config.get(CONF_MAX_EVENTS)))
         self.start_slot = int(str(config.get(CONF_START_SLOT)))
         # Keep event_overrides in sync with config changes
