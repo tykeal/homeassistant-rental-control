@@ -346,9 +346,22 @@ jobs:
           # Strip leading 'v' if present
           VERSION="${TAG#v}"
           echo "Setting const.py VERSION to: $VERSION"
-          # yamllint disable-line rule:line-length
+          COMPONENT="${{ github.workspace }}/custom_components/rental_control"
           sed -i "/^VERSION = /c\\VERSION = \"${VERSION}\"" \
-            "${{ github.workspace }}/custom_components/rental_control/const.py"
+            "${COMPONENT}/const.py"
+          # sed exits 0 when nothing matches, so verify the result
+          if ! grep -qxF "VERSION = \"${VERSION}\"" "${COMPONENT}/const.py"
+          then
+            echo "::error::const.py VERSION substitution failed"
+            exit 1
+          fi
+          MANIFEST_VERSION="$(jq -r '.version' "${COMPONENT}/manifest.json")"
+          if [ "${MANIFEST_VERSION}" != "${VERSION}" ]; then
+            echo "::error::manifest.json version ${MANIFEST_VERSION}" \
+              "does not match ${VERSION}"
+            exit 1
+          fi
+          echo "Verified const.py and manifest.json carry ${VERSION}"
 
       - name: 'Create integration ZIP'
         shell: bash
