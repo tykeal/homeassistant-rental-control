@@ -2,6 +2,10 @@
   "domain": "rental_control",
   "name": "Rental Control",
   "after_dependencies": ["keymaster"],
+  "categories": [
+    "security_safety.locks_access",
+    "productivity_information.calendars_todos"
+  ],
   "codeowners": ["@tykeal"],
   "config_flow": true,
   "dependencies": [],
