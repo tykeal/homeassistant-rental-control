@@ -23,6 +23,8 @@ from custom_components.rental_control.coordinator_helpers.reissue import (
 from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import SlotStatus
 
+from tests.fixtures.fake_hass import fake_config
+
 _DEAD_SLOT = 11
 
 
@@ -63,7 +65,7 @@ def _hass(stored: list[dict[str, Any]] | None) -> Any:
     hass = SimpleNamespace(
         bus=SimpleNamespace(),
         data={DOMAIN: {}},
-        config=SimpleNamespace(config_dir="."),
+        config=fake_config(),
         config_entries=SimpleNamespace(
             async_get_entry=lambda entry_id: entry if entry_id == "entry-a" else None,
             async_entries=lambda _domain=None: [entry],

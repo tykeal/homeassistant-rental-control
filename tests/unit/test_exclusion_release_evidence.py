@@ -24,6 +24,8 @@ from custom_components.rental_control.allocator.models import AllocationOwner
 from custom_components.rental_control.allocator.models import AllocationRecord
 from custom_components.rental_control.allocator.models import CycleObservation
 
+from tests.fixtures.fake_hass import fake_config
+
 _NOW = "2026-10-15T12:00:00+00:00"
 _CODE = "1234"
 _EXCLUDED_SLOT = 3
@@ -40,7 +42,7 @@ def _allocator() -> DoorCodeAllocator:
     """Build an allocator with persistence disabled."""
     hass = SimpleNamespace(
         data={},
-        config=SimpleNamespace(config_dir="."),
+        config=fake_config(),
         config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
     )
     allocator = DoorCodeAllocator(cast(Any, hass))

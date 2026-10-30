@@ -36,6 +36,8 @@ from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
 from custom_components.rental_control.reconciliation import SlotStatus
 
+from tests.fixtures.fake_hass import fake_config
+
 
 class FakeAllocator:
     """Allocator test double that records cycle ordering."""
@@ -1315,7 +1317,7 @@ def _fake_hass(*entry_ids: str) -> Any:
     """Build a minimal hass object for allocator unit tests."""
     hass = SimpleNamespace()
     hass.data = {}
-    hass.config = SimpleNamespace(config_dir=".")
+    hass.config = fake_config()
     entries = [SimpleNamespace(entry_id=entry_id) for entry_id in entry_ids]
     hass.config_entries = SimpleNamespace(async_entries=lambda _domain=None: entries)
     return hass

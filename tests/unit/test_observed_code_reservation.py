@@ -30,6 +30,8 @@ from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
 from custom_components.rental_control.reconciliation import SlotStatus
 
+from tests.fixtures.fake_hass import fake_config
+
 
 @pytest.fixture(autouse=True)
 def _inert_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -45,7 +47,7 @@ def _hass() -> Any:
     """Build a minimal hass object for allocator unit tests."""
     hass = SimpleNamespace()
     hass.data = {}
-    hass.config = SimpleNamespace(config_dir=".")
+    hass.config = fake_config()
     hass.config_entries = SimpleNamespace(async_entries=lambda _domain=None: [])
     return hass
 
