@@ -74,9 +74,10 @@ RECONCILIATION = FailureKind(
     title=f"{NAME} door code reconciliation failed",
     message=(
         "Rental Control could not reconcile door codes for {name} with "
-        "its lock on {count} {cycles}. The lock keeps the codes from the "
-        "last successful cycle, so new, changed or ended bookings are not "
-        "being programmed or cleared until this clears. The failure is: "
+        "its lock on {count} {cycles}. A failed cycle may have updated "
+        "only some slots, so check the codes actually on the lock. New, "
+        "changed or ended bookings may not be programmed or cleared until "
+        "this clears. The failure is: "
         "{signature}. Search the Home Assistant log for "
         '"Reconciliation failed for {name}" for the full traceback, and '
         "please report it with those log lines."
