@@ -38,7 +38,7 @@ jobs:
     # Inputs' job. No ruleset or required status check names either,
     # so nothing gating a merge is affected.
     # yamllint disable-line rule:line-length
-    uses: lfreleng-actions/security-workflows/.github/workflows/codeql.yaml@179b57cc41fbdae90d68237b418539d33e5ba091  # v0.9.4
+    uses: lfreleng-actions/security-workflows/.github/workflows/codeql.yaml@ef6c0d9930feedb274067703b50eeebe5ab859b3  # v0.9.5
     with:
       config_file: .github/codeql/codeql-config.yml
     permissions:
