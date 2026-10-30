@@ -31,6 +31,8 @@ from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
 from custom_components.rental_control.reconciliation import SlotStatus
 
+from tests.fixtures.fake_hass import fake_config
+
 _START = datetime(2026, 9, 17, 16, tzinfo=dt_util.UTC)
 _END = _START + timedelta(days=3)
 _CODE = "9999"
@@ -49,7 +51,7 @@ def _fake_hass(
     """
     hass = SimpleNamespace()
     hass.data = {}
-    hass.config = SimpleNamespace(config_dir=".")
+    hass.config = fake_config()
     entries = [
         SimpleNamespace(
             entry_id=entry_id,

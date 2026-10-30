@@ -32,6 +32,8 @@ from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
 from custom_components.rental_control.reconciliation import SlotStatus
 
+from tests.fixtures.fake_hass import fake_config
+
 DEAD_SLOT = 11
 START = datetime(2026, 9, 17, 16, tzinfo=dt_util.UTC)
 
@@ -72,7 +74,7 @@ class World:
             SimpleNamespace(
                 bus=SimpleNamespace(),
                 data={DOMAIN: {}},
-                config=SimpleNamespace(config_dir="."),
+                config=fake_config(),
                 config_entries=SimpleNamespace(
                     async_get_entry=self._get_entry,
                     async_entries=lambda _domain=None: list(self.entries),

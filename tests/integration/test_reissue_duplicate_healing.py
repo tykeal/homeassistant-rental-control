@@ -25,6 +25,8 @@ from custom_components.rental_control.reconciliation import Reservation
 from custom_components.rental_control.reconciliation import SlotStatus
 from custom_components.rental_control.reconciliation import compute_desired_plan
 
+from tests.fixtures.fake_hass import fake_config
+
 _START = datetime(2026, 9, 17, 16, tzinfo=dt_util.UTC)
 _END = _START + timedelta(days=3)
 _OLD = "1234"
@@ -188,7 +190,7 @@ def _allocator() -> DoorCodeAllocator:
             Any,
             SimpleNamespace(
                 data={},
-                config=SimpleNamespace(config_dir="."),
+                config=fake_config(),
                 config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
             ),
         )

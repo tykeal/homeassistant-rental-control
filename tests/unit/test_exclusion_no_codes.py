@@ -21,6 +21,8 @@ from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import slot_exclusions
 
+from tests.fixtures.fake_hass import fake_config
+
 _CODE = "8642"
 _DEAD_SLOT = 11
 _NOW = "2026-10-15T12:00:00+00:00"
@@ -36,7 +38,7 @@ def _hass() -> Any:
     return SimpleNamespace(
         bus=SimpleNamespace(),
         data={},
-        config=SimpleNamespace(config_dir="."),
+        config=fake_config(),
         config_entries=SimpleNamespace(
             async_get_entry=lambda entry_id: entry if entry_id == "entry-a" else None,
             async_entries=lambda _domain=None: [entry],

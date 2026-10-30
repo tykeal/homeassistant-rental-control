@@ -43,6 +43,8 @@ from custom_components.rental_control.reconciliation import SlotStatus
 from custom_components.rental_control.reconciliation import compute_desired_plan
 from custom_components.rental_control.reconciliation import make_reservation_fingerprint
 
+from tests.fixtures.fake_hass import fake_config
+
 _ENTRY = "entry-a"
 _LOCK = "front_door"
 _CODE_LENGTH = 4
@@ -344,7 +346,7 @@ def _allocator() -> DoorCodeAllocator:
             Any,
             SimpleNamespace(
                 data={},
-                config=SimpleNamespace(config_dir="."),
+                config=fake_config(),
                 config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
             ),
         )

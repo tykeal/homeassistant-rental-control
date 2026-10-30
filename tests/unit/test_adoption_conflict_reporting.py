@@ -26,6 +26,8 @@ from custom_components.rental_control.allocator.models import AdoptionRequest
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 
+from tests.fixtures.fake_hass import fake_config
+
 _CODE = "4321"
 _OTHER_CODE = "8765"
 
@@ -97,7 +99,7 @@ def _hass(
         if with_reservations
         else {}
     }
-    hass.config = SimpleNamespace(config_dir=".")
+    hass.config = fake_config()
     hass.config_entries = SimpleNamespace(
         async_entries=lambda _domain=None: list(entries.values()),
         async_get_entry=entries.get,
