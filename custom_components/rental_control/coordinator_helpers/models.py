@@ -235,17 +235,6 @@ class BootstrapDecision:
 
 
 @dataclass
-class AdoptionMappingDecision:
-    """Cache-only Store adoption decision for a single Keymaster slot."""
-
-    identity_key: str
-    mapping: dict[str, Any]
-    slot: int
-    status: str
-    skip_reason: str | None = None
-
-
-@dataclass
 class CheckinProtectionSnapshot:
     """Pure projection of the check-in tracking sensor state."""
 

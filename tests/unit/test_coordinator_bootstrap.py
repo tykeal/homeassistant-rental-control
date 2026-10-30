@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
-"""Tests for the pure Keymaster bootstrap/adoption coordinator helpers."""
+"""Tests for the pure Keymaster bootstrap coordinator helpers."""
 
 from __future__ import annotations
 
@@ -8,9 +8,6 @@ from datetime import datetime
 from datetime import timezone
 
 from custom_components.rental_control.coordinator_helpers import keymaster_bootstrap
-from custom_components.rental_control.coordinator_helpers.models import (
-    AdoptionMappingDecision,
-)
 from custom_components.rental_control.coordinator_helpers.models import (
     BootstrapDecision,
 )
@@ -47,21 +44,3 @@ def test_plan_bootstrap_slot_builds_override() -> None:
     assert decision.override_update.slot == 10
     assert decision.override_update.slot_code == "1234"
     assert decision.override_update.slot_name == "Guest"
-
-
-def test_plan_adoption_skips_existing_slot() -> None:
-    """A slot already present in the Store is not adopted."""
-    snapshot = KeymasterSlotSnapshot(slot=10, name_state="Guest", pin_state="1234")
-    assert (
-        keymaster_bootstrap.plan_adoption(snapshot, {10}, "entry", "RC ", "now") is None
-    )
-
-
-def test_plan_adoption_builds_mapping() -> None:
-    """A new coded slot yields an adoption mapping decision."""
-    snapshot = KeymasterSlotSnapshot(slot=11, name_state="Guest", pin_state="1234")
-    decision = keymaster_bootstrap.plan_adoption(snapshot, set(), "entry", "", "now")
-    assert isinstance(decision, AdoptionMappingDecision)
-    assert decision.slot == 11
-    assert decision.identity_key == "adopted.entry.slot11"
-    assert isinstance(decision.mapping, dict)
