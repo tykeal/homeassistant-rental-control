@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Operator reporting for lockless allocation failures (issue #848)."""
+"""Operator reporting for refresh-cycle failures (issues #848, #852)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from datetime import datetime
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from homeassistant.util import dt as dt_util
 import pytest
@@ -89,6 +90,41 @@ class _LocklessCoordinator(CoordinatorRefreshMixin):
     ) -> None:
         """Ignore store persistence for these tests."""
         del res_by_key
+
+
+class _LockedCoordinator(_LocklessCoordinator):
+    """Coordinator stand-in whose reconciliation can be made to fail."""
+
+    lockname = "front_door"
+    max_events = 3
+    start_slot = 10
+
+    def __init__(self) -> None:
+        """Attach a lock whose plan application always succeeds."""
+        super().__init__()
+        self.event_overrides = SimpleNamespace(
+            async_apply_plan=AsyncMock(return_value=[])
+        )
+
+    def _observe_managed_slots(self) -> list[ManagedSlot]:
+        """Report no managed slots."""
+        return []
+
+    def _record_observed_slot_codes(self, *_args: Any) -> None:
+        """Ignore observed-code bookkeeping."""
+
+    def _must_defer_for_checkin_restore(self, *_args: Any) -> bool:
+        """Never defer the cycle."""
+        return False
+
+    def _apply_observed_code_results(self, *_args: Any) -> None:
+        """Ignore operation results."""
+
+    def _sync_slot_store_from_plan(self, *_args: Any) -> None:
+        """Ignore store persistence."""
+
+
+_RECONCILIATION = allocation_failure.RECONCILIATION
 
 
 @pytest.fixture(autouse=True)
@@ -281,3 +317,118 @@ async def test_gaining_a_lock_clears_a_lockless_failure(
     assert allocation_failure.has_report("entry-a") is False
     assert allocation_failure.diagnostics("entry-a") is None
     assert allocation_failure.notification_id("entry-a") in _notifications.dismissed
+
+
+async def test_reconciliation_failure_raises_one_notification(
+    monkeypatch: pytest.MonkeyPatch, _notifications: _Notifications
+) -> None:
+    """A repeating reconciliation failure announces once, as its own kind."""
+    coordinator = _LockedCoordinator()
+    monkeypatch.setattr(code_allocation, "async_resolve_codes", _failing())
+
+    for _ in range(5):
+        await coordinator._run_reconciliation([])
+
+    assert len(_notifications.created) == 1
+    notification_id, message = _notifications.created[0]
+    assert notification_id == allocation_failure.notification_id(
+        "entry-a", _RECONCILIATION
+    )
+    assert notification_id != allocation_failure.notification_id("entry-a")
+    assert "could not reconcile door codes for Entry A" in message
+    assert "RuntimeError: boom" in message
+    assert allocation_failure.diagnostics("entry-a", _RECONCILIATION) == {
+        "consecutive_failures": 5,
+        "last_error": "RuntimeError: boom",
+    }
+    assert allocation_failure.diagnostics("entry-a") is None
+
+
+async def test_reconciliation_recovery_dismisses_the_notification(
+    monkeypatch: pytest.MonkeyPatch, _notifications: _Notifications
+) -> None:
+    """A successful reconciliation clears its failure report."""
+    coordinator = _LockedCoordinator()
+    monkeypatch.setattr(code_allocation, "async_resolve_codes", _failing())
+    await coordinator._run_reconciliation([])
+    assert allocation_failure.has_report("entry-a", _RECONCILIATION) is True
+
+    monkeypatch.setattr(code_allocation, "async_resolve_codes", _succeeding)
+    await coordinator._run_reconciliation([])
+
+    assert allocation_failure.has_report("entry-a", _RECONCILIATION) is False
+    assert (
+        allocation_failure.notification_id("entry-a", _RECONCILIATION)
+        in _notifications.dismissed
+    )
+
+
+async def test_a_successful_reconciliation_alone_raises_nothing(
+    monkeypatch: pytest.MonkeyPatch, _notifications: _Notifications
+) -> None:
+    """A healthy lock-backed entry never touches either notification."""
+    coordinator = _LockedCoordinator()
+    monkeypatch.setattr(code_allocation, "async_resolve_codes", _succeeding)
+
+    await coordinator._run_reconciliation([])
+
+    assert _notifications.created == []
+    assert _notifications.dismissed == []
+
+
+async def test_failure_kinds_do_not_overwrite_each_other(
+    _notifications: _Notifications,
+) -> None:
+    """Each kind keeps its own run, and resolving one leaves the other."""
+    hass = SimpleNamespace(bus=SimpleNamespace())
+    allocation_failure.report(hass, "entry-a", "Entry A", RuntimeError("lockless"))
+    allocation_failure.report(
+        hass, "entry-a", "Entry A", RuntimeError("reconcile"), _RECONCILIATION
+    )
+
+    allocation_failure.resolve(hass, "entry-a", "Entry A")
+
+    assert allocation_failure.diagnostics("entry-a") is None
+    assert allocation_failure.diagnostics("entry-a", _RECONCILIATION) == {
+        "consecutive_failures": 1,
+        "last_error": "RuntimeError: reconcile",
+    }
+    assert _notifications.dismissed == [allocation_failure.notification_id("entry-a")]
+
+
+async def test_losing_a_lock_clears_a_reconciliation_failure(
+    monkeypatch: pytest.MonkeyPatch, _notifications: _Notifications
+) -> None:
+    """Switching an entry to lockless mode clears its reconciliation report."""
+    coordinator = _LockedCoordinator()
+    monkeypatch.setattr(code_allocation, "async_resolve_codes", _failing())
+    await coordinator._run_reconciliation([])
+    assert allocation_failure.has_report("entry-a", _RECONCILIATION) is True
+
+    await coordinator._run_lockless_allocation([])
+
+    assert allocation_failure.has_report("entry-a", _RECONCILIATION) is False
+    assert (
+        allocation_failure.notification_id("entry-a", _RECONCILIATION)
+        in _notifications.dismissed
+    )
+
+
+async def test_unload_forgets_every_failure_kind(
+    _notifications: _Notifications,
+) -> None:
+    """Entry teardown drops and dismisses both kinds of report."""
+    hass = SimpleNamespace(bus=SimpleNamespace())
+    allocation_failure.report(hass, "entry-a", "Entry A", RuntimeError("boom"))
+    allocation_failure.report(
+        hass, "entry-a", "Entry A", RuntimeError("boom"), _RECONCILIATION
+    )
+
+    allocation_failure.forget_entry(hass, "entry-a")
+
+    assert allocation_failure.diagnostics("entry-a") is None
+    assert allocation_failure.diagnostics("entry-a", _RECONCILIATION) is None
+    assert set(_notifications.dismissed) == {
+        allocation_failure.notification_id("entry-a"),
+        allocation_failure.notification_id("entry-a", _RECONCILIATION),
+    }

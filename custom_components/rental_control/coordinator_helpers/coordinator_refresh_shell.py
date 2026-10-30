@@ -212,10 +212,12 @@ class CoordinatorRefreshMixin:
 
         An entry whose options gain a lock keeps running in place, so a
         failure report left by its earlier lockless cycles is cleared
-        here; nothing else would ever clear it.
+        here; nothing else would ever clear it. Failures of this cycle
+        are surfaced through ``allocation_failure`` as their own kind.
         """
-        if allocation_failure.has_report(self._entry_id):
-            allocation_failure.forget_entry(self.hass, self._entry_id)
+        allocation_failure.forget(
+            self.hass, self._entry_id, allocation_failure.LOCKLESS
+        )
         event_overrides = self.event_overrides
         if event_overrides is None:
             return
@@ -289,9 +291,20 @@ class CoordinatorRefreshMixin:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as err:
             _LOGGER.exception(
                 "Reconciliation failed for %s; skipping cycle", self._name
+            )
+            allocation_failure.report(
+                self.hass,
+                self._entry_id,
+                self._name,
+                err,
+                allocation_failure.RECONCILIATION,
+            )
+        else:
+            allocation_failure.resolve(
+                self.hass, self._entry_id, self._name, allocation_failure.RECONCILIATION
             )
 
     async def _run_lockless_allocation(self, new_calendar: list[CalendarEvent]) -> None:
@@ -301,8 +314,13 @@ class CoordinatorRefreshMixin:
         so the entry keeps publishing the last codes it successfully
         issued rather than blanking every guest's code over a failure
         that may be transient. The failure is made visible through
-        ``allocation_failure`` instead of through missing codes.
+        ``allocation_failure`` instead of through missing codes. A
+        reconciliation report left from when the entry had a lock is
+        cleared for the same reason the reverse case is.
         """
+        allocation_failure.forget(
+            self.hass, self._entry_id, allocation_failure.RECONCILIATION
+        )
         try:
             reservations = self._prepare_reservations_for_adoption(new_calendar, [])
             self._apply_checkin_protection(reservations)
