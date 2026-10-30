@@ -144,11 +144,11 @@ class RentalControlCoordinator(
     @property
     def device_info(self) -> dr.DeviceInfo:
         """Return the device info block."""
-        return {
-            "identifiers": {(DOMAIN, self.unique_id)},
-            "name": self.name,
-            "sw_version": self.version,
-        }
+        return dr.DeviceInfo(
+            identifiers={(DOMAIN, self.unique_id)},
+            name=self.name,
+            sw_version=self.version,
+        )
 
     @property
     def entry_id(self) -> str:
