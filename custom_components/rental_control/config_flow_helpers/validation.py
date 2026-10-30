@@ -34,8 +34,10 @@ from ..const import CONF_TRIM_NAMES
 from ..const import DEFAULT_CODE_LENGTH
 from ..const import DEFAULT_GENERATE
 from ..const import DEFAULT_MAX_NAME_LENGTH
+from ..const import LOCK_ENTRY_NONE
 from ..const import MIN_NAME_LENGTH
 from ..const import REQUEST_TIMEOUT
+from ..helpers import configured_lock_entry
 from .models import FlowValidationResult
 from .models import URLValidationResult
 from .schemas import generator_convert
@@ -49,7 +51,7 @@ _LOGGER = logging.getLogger("custom_components.rental_control.config_flow")
 def normalize_lock_entry(value: Any) -> str:
     """Normalize cleared lock entry values to '(none)'."""
     if value is None or (isinstance(value, str) and not value.strip()):
-        return "(none)"
+        return LOCK_ENTRY_NONE
     return str(value)
 
 
@@ -243,7 +245,7 @@ def apply_successful_conversions(flow: Any, user_input: dict[str, Any]) -> None:
     """Apply conversions that only occur when validation has no errors."""
     drop_uninformative_bookings_only(flow, user_input)
 
-    if user_input[CONF_LOCK_ENTRY] == "(none)":
+    if configured_lock_entry(user_input[CONF_LOCK_ENTRY]) is None:
         user_input[CONF_LOCK_ENTRY] = None
 
     if user_input[CONF_LOCK_ENTRY] is not None:

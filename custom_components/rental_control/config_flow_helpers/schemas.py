@@ -63,6 +63,7 @@ from ..const import DEFAULT_REFRESH_FREQUENCY
 from ..const import DEFAULT_SHOULD_UPDATE_CODE
 from ..const import DEFAULT_START_SLOT
 from ..const import DEFAULT_TRIM_NAMES
+from ..const import LOCK_ENTRY_NONE
 from ..const import LOCK_MANAGER
 from ..const import MIN_NAME_LENGTH
 from .models import SchemaBuildContext
@@ -75,7 +76,7 @@ SORTED_TZ = sorted(available_timezones())
 
 def available_lock_managers(hass: HomeAssistant) -> list[str]:
     """Find lock manager configurations to use."""
-    data = ["(none)"]
+    data = [LOCK_ENTRY_NONE]
     if LOCK_MANAGER not in hass.data:
         return data
 
@@ -232,7 +233,8 @@ def _day_lock_fields(context: SchemaBuildContext) -> dict[Any, Any]:
             CONF_DAYS, default=_get_default(context, CONF_DAYS, DEFAULT_DAYS)
         ): cv.positive_int,
         vol.Optional(
-            CONF_LOCK_ENTRY, default=_get_default(context, CONF_LOCK_ENTRY, "(none)")
+            CONF_LOCK_ENTRY,
+            default=_get_default(context, CONF_LOCK_ENTRY, LOCK_ENTRY_NONE),
         ): SelectSelector(
             SelectSelectorConfig(
                 options=[

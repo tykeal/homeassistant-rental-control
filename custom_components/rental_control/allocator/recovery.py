@@ -7,13 +7,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 import logging
 from typing import TYPE_CHECKING
-from typing import Any
-from typing import cast
-
-from homeassistant.util import slugify
 
 from ..const import CONF_LOCK_ENTRY
 from ..const import DOMAIN
+from ..helpers import configured_lock_entry
+from ..helpers import configured_lock_slug
 from .models import AllocationRequest
 from .models import AllocationResult
 
@@ -32,20 +30,14 @@ def entry_has_lock(data: object) -> bool:
     """
     if not isinstance(data, Mapping):
         return False
-    lock_entry = data.get(CONF_LOCK_ENTRY)
-    return (
-        isinstance(lock_entry, str)
-        and bool(lock_entry.strip())
-        and lock_entry.strip() != "(none)"
-    )
+    return configured_lock_entry(data.get(CONF_LOCK_ENTRY)) is not None
 
 
 def configured_lockname(data: object) -> str | None:
     """Return the slugified lock an entry is currently configured for."""
-    if not entry_has_lock(data):
+    if not isinstance(data, Mapping):
         return None
-    lock_entry = cast(Mapping[str, Any], data)[CONF_LOCK_ENTRY]
-    return str(slugify(str(lock_entry).strip()))
+    return configured_lock_slug(data.get(CONF_LOCK_ENTRY))
 
 
 def unobserved_lock_entries(allocator: DoorCodeAllocator) -> frozenset[str]:
