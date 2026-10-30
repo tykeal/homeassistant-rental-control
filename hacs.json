@@ -2,6 +2,5 @@
   "name": "Rental Control",
   "zip_release": true,
   "filename": "rental_control.zip",
-  "homeassistant": "2026.4.0",
-  "render_readme": true
+  "homeassistant": "2026.10.0"
 }
