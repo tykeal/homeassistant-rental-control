@@ -24,8 +24,8 @@ and sensors for managing rental properties.
         - [Lock Code Buffer Times](#lock-code-buffer-times)
         - [Keymaster Event Diagnostics](#keymaster-event-diagnostics)
 - [Installation](#installation)
-    - [MANUAL INSTALLATION](#manual-installation)
-    - [INSTALLATION VIA Home Assistant Community Store (HACS)](#installation-via-home-assistant-community-store-hacs)
+    - [Keymaster (optional)](#keymaster-optional)
+    - [Calendar Triggers in Home Assistant 2026.11](#calendar-triggers-in-home-assistant-202611)
 - [Setup](#setup)
 - [Reconfiguration](#reconfiguration)
 - [Downloading Diagnostics](#downloading-diagnostics)
@@ -467,29 +467,42 @@ integration only records events from monitored locks.
 
 ## Installation
 
-To make full use of this integration, install
-[Keymaster](https://github.com/FutureTense/keymaster) as this integration
-depends upon it.
+Rental Control is in the default catalog of the Home Assistant Marketplace
+(Home Assistant 2026.11 and later) and of HACS.
 
-### MANUAL INSTALLATION
+1. In Home Assistant, go to **Settings** > **Marketplace**, or press the
+   following button [![Open your Home Assistant instance and open a
+repository inside the Home Assistant Marketplace or
+HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tykeal&repository=homeassistant-rental-control&category=integration)
+1. Search for `Rental Control` and install it
+1. Rental Control has a config flow, so it goes straight to setup with no
+   restart. Select **Add Integration** and follow the [Setup](#setup)
+   section to finish the configuration
 
-1. Download the
-   [latest release](https://github.com/tykeal/homeassistant-rental-control/releases/latest)
-1. Unpack the release and copy the `custom_components/rental_control` directory
-   into the `custom_components` directory of your Home Assistant
-   installation
-1. Restart Home Assistant
-1. Follow the instructions in the setup section to finish the configuration
+On Home Assistant before 2026.11, install through
+[HACS](https://hacs.xyz/) instead: the button above opens HACS on those
+versions. After installing, restart Home Assistant, then follow the
+[Setup](#setup) section.
 
-### INSTALLATION VIA Home Assistant Community Store (HACS)
+### Keymaster (optional)
 
-1. Ensure that [HACS](https://hacs.xyz/) is present
-1. Then press the following button [![Open your Home Assistant instance and open
-a repository inside the Home Assistant Community
-Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tykeal&repository=homeassistant-rental-control&category=Integration)
-1. Install the `Rental Control` integration
-1. Restart Home Assistant
-1. Follow the instructions in the setup section to finish the configuration
+[Keymaster](https://github.com/FutureTense/keymaster) is optional. Rental
+Control needs it only to program lock slots automatically; see
+[Keymaster Integration](#keymaster-integration) and, for Booking.com
+feeds, [Bookings-Only Calendars](#bookings-only-calendars). Without
+Keymaster, the integration still provides calendars, sensors and door
+codes, for example to drive a lock from a blueprint.
+
+### Calendar Triggers in Home Assistant 2026.11
+
+From Home Assistant 2026.11, `calendar.event_started` and
+`calendar.event_ended` triggers no longer default to
+`offset_type: before`; the sign of the offset now sets the direction.
+Check any YAML automation on a Rental Control calendar that uses an
+offset without `offset_type`. The change does not affect triggers you
+created in the UI. See the
+[2026.11 release notes](https://rc.home-assistant.io/blog/2026/10/28/release-202611/)
+for details.
 
 ## Setup
 
