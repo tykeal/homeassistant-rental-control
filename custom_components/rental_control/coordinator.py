@@ -327,10 +327,6 @@ class RentalControlCoordinator(
         """Best-effort save of cache-only slot metadata to the HA Store."""
         await self._async_save_slot_store_impl()
 
-    async def async_adopt_keymaster_slots(self) -> None:
-        """Adopt populated Keymaster slots on first upgrade."""
-        await self._async_adopt_keymaster_slots_impl()
-
     def _find_observed_slot_by_name(
         self,
         query_or_slots: ObservedSlotQuery | list[_ManagedSlot],

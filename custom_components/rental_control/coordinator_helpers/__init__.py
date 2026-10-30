@@ -22,7 +22,6 @@ from . import models
 from . import reservations
 from . import slot_matching
 from . import store_sync
-from .models import AdoptionMappingDecision
 from .models import BootstrapDecision
 from .models import CalendarParseContext
 from .models import CheckinProtectionSnapshot
@@ -35,7 +34,6 @@ from .models import StoreSyncPlan
 from .models import normalize_event_override_update
 
 __all__ = [
-    "AdoptionMappingDecision",
     "BootstrapDecision",
     "CalendarParseContext",
     "CheckinProtectionSnapshot",

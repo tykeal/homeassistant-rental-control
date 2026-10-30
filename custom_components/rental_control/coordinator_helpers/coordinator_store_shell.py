@@ -20,7 +20,6 @@ from ..reconciliation import ManagedSlot as _ManagedSlot
 from ..reconciliation import Reservation as _Reservation
 from ..reconciliation import SlotStatus as _SlotStatus
 from ..util import OperationResult
-from . import keymaster_bootstrap
 from . import store_sync
 from .models import _adopted_slot_placeholder
 
@@ -92,63 +91,6 @@ class CoordinatorStoreMixin:
                 self._entry_id,
                 err,
             )
-
-    async def _async_adopt_keymaster_slots_impl(self) -> None:
-        """Adopt populated Keymaster slots on first upgrade.
-
-        Called when the Store is empty (first upgrade from a version
-        that did not persist slot mappings).  Iterates the managed slot
-        range and records each populated slot without modifying any
-        Keymaster state.
-
-        Slots with both a name and a non-empty code are recorded as
-        ``occupied``.  Slots with a name but no code (phantom slots)
-        are recorded as ``pending_clear`` so they are fenced without
-        being wiped immediately.  Empty slots (no name) are skipped.
-        Raw PINs are never stored; only ``has_code: True/False`` is
-        persisted.
-        """
-        if not self.lockname:
-            return
-
-        now_str = dt.now().isoformat()
-        prefix = f"{self.event_prefix} " if self.event_prefix else ""
-        mappings: dict[str, Any] = {}
-        persisted = self._slot_mappings.get("mappings", {})
-        existing_slots: set[int] = {
-            mapping["slot"]
-            for mapping in persisted.values()
-            if isinstance(mapping, dict) and isinstance(mapping.get("slot"), int)
-        }
-
-        for i in range(self.start_slot, self.start_slot + self.max_events):
-            snapshot = self._read_slot_snapshot(i)
-            decision = keymaster_bootstrap.plan_adoption(
-                snapshot, existing_slots, self._entry_id, prefix, now_str
-            )
-            if decision is None or decision.identity_key in persisted:
-                continue
-            mappings[decision.identity_key] = decision.mapping
-
-        if mappings:
-            self._slot_mappings.setdefault("mappings", {}).update(mappings)
-            if "schema_version" not in self._slot_mappings:
-                self._slot_mappings.update(
-                    {
-                        "schema_version": STORE_SCHEMA_VERSION,
-                        "entry_id": self._entry_id,
-                        "lockname": self.lockname,
-                        "start_slot": self.start_slot,
-                        "max_slots": self.max_events,
-                        "updated_at": now_str,
-                        "blocked_slots": {},
-                    }
-                )
-            await self.async_save_slot_store()
-            if self.event_overrides is not None:
-                self.event_overrides.load_persisted_mappings(
-                    self._slot_mappings.get("mappings", {})
-                )
 
     def _adopt_observed_coded_slots(self, managed_slots: list[_ManagedSlot]) -> None:
         """Adopt readable coded slots that have no persisted mapping yet."""
