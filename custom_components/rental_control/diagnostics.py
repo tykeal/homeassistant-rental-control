@@ -144,6 +144,9 @@ async def async_get_config_entry_diagnostics(
         "slots": _slot_diagnostics(coordinator, set(exclusions)),
         "reservations": _reservation_diagnostics(coordinator),
         "allocation_failure": allocation_failure.diagnostics(entry.entry_id),
+        "reconciliation_failure": allocation_failure.diagnostics(
+            entry.entry_id, allocation_failure.RECONCILIATION
+        ),
         "generator_divergence": generator_divergence.diagnostics(entry.entry_id),
     }
     masker = _IdentityMasker()
