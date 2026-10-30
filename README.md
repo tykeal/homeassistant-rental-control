@@ -513,9 +513,11 @@ The integration guarantees the following:
   `slot_name` derived from the calendar `UID` survives date changes;
   one derived from the dates does not.
 - **Checkout-day retention.** An event stays in the event sensors and
-  the calendar entity for the whole local day on which it ends, until
-  local midnight. A noon checkout stays visible for twelve hours after
-  `end`.
+  in the calendar's event list (calendar cards, `calendar.get_events`)
+  for the whole local day on which it ends, until local midnight. A
+  noon checkout stays visible for twelve hours after `end`. The
+  calendar entity's own state and current-event attributes move on at
+  `end`, so do not drive removal from them.
 - **A cancelled booking disappears.** Once a reservation leaves the
   feed, its event leaves the sensors, so delete its code from your
   lock through your own records.
@@ -529,9 +531,12 @@ The integration guarantees the following:
 Events sort by start time, so on a turnover day the departing stay
 remains in `event_0` until midnight and the arriving guest appears in
 `event_1`. Watch every event sensor, and make your lock actions
-idempotent per `slot_name`.
+idempotent per reservation. Key them on `uid` when your feed provides
+one, otherwise on `slot_name` together with `start` and `end`: two
+stays can share a guest name.
 
-A sketch for a lock that accepts time-bounded codes. Replace
+A sketch for a lock that accepts time-bounded codes. It reprograms
+the code whenever the code or the stay's dates change. Replace
 `script.lock_add_code` and `script.lock_remove_expired_codes` with the
 actions your lock provides:
 
@@ -544,6 +549,16 @@ actions your lock provides:
         - sensor.my_calendar_rental_control_event_0
         - sensor.my_calendar_rental_control_event_1
       attribute: slot_code
+    - trigger: state
+      entity_id:
+        - sensor.my_calendar_rental_control_event_0
+        - sensor.my_calendar_rental_control_event_1
+      attribute: start
+    - trigger: state
+      entity_id:
+        - sensor.my_calendar_rental_control_event_0
+        - sensor.my_calendar_rental_control_event_1
+      attribute: end
   conditions:
     - condition: template
       value_template: >
