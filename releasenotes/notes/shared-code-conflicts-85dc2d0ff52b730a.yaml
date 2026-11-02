@@ -1,0 +1,14 @@
+---
+fixes:
+  - |
+    A door code still shown by a lock slot whose booking is suppressed
+    is now kept reserved even when another booking also holds that
+    code. Before, the code could be handed to a third booking after the
+    other booking ended.
+  - |
+    A door code shared by more than one booking is now checked again on
+    every refresh, not only when a booking first joins it. After
+    upgrading, you may get one notification for each shared code that
+    an earlier release wrongly kept quiet. You also get one when phone
+    numbers that explained the sharing disappear from a calendar feed.
+    A code that stays shared is not reported again on each refresh.
