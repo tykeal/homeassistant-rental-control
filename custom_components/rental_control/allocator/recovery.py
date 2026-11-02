@@ -82,6 +82,21 @@ def is_observed(adopted: ObservedLock | None, data: object) -> bool:
     )
 
 
+def needs_readoption(allocator: DoorCodeAllocator, entry_id: str, data: object) -> bool:
+    """Return whether a config change exposes slots no cycle has read.
+
+    The options listener updates an entry in place, without the reload
+    that would re-register it. Moving it to another lock, or widening
+    its range, exposes slots that may hold codes the registry never saw,
+    whether or not a lost registry is still being rebuilt.
+    """
+    return (
+        configured_lockname(data) is not None
+        and entry_id not in allocator._pending_adoption
+        and not is_observed(allocator._adopted_locks.get(entry_id), data)
+    )
+
+
 def gate_entries(hass: object, *, include_disabled: bool) -> set[str]:
     """Return lock-backed entries the adoption gate must wait for.
 
@@ -397,6 +412,7 @@ __all__ = [
     "gate_entries",
     "keeps_gate_closed",
     "origin_proven",
+    "needs_readoption",
     "pending_lock_codes",
     "read_lock_codes",
     "rebuilt_registry_trusted",

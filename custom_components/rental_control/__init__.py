@@ -33,6 +33,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from .allocator import async_get_or_create_allocator
 from .allocator import code_origin
 from .allocator import get_allocator
+from .allocator import recovery
 from .const import CONF_CREATION_DATETIME
 from .const import CONF_GENERATE
 from .const import CONF_LOCK_ENTRY
@@ -295,6 +296,11 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
         title=new_data[CONF_NAME],
         options={},
     )
+    allocator = get_allocator(hass)
+    if allocator is not None and recovery.needs_readoption(
+        allocator, config_entry.entry_id, new_data
+    ):
+        await allocator.async_register_entry(config_entry.entry_id)
 
     await coordinator.update_config(new_data)
 

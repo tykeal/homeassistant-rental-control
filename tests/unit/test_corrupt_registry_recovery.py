@@ -19,7 +19,9 @@ from typing import cast
 
 import pytest
 
+from custom_components.rental_control import update_listener
 from custom_components.rental_control.allocator import allocator as allocator_module
+from custom_components.rental_control.allocator import recovery
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import CycleObservation
@@ -249,3 +251,59 @@ async def test_trusted_cycle_saves_grants_beside_a_declined_recovery() -> None:
     assert granted.slot_code is not None
     assert saved
     assert allocator._registry_lost is True
+
+
+@pytest.mark.parametrize(
+    ("lock", "max_events", "expected"),
+    [("front", 2, True), ("back", 1, True), ("front", 1, False)],
+    ids=["widened", "moved", "unchanged"],
+)
+async def test_config_change_after_rebuild_needs_readoption(
+    lock: str, max_events: int, *, expected: bool
+) -> None:
+    """Exposing unread slots re-gates an entry after recovery too."""
+    allocator = _corrupt(_allocator("entry-lock"))
+    await _cycle(
+        allocator, [], entry_id="entry-lock", lockname="front", managed_slots=[_FREE]
+    )
+    assert allocator._registry_lost is False
+    data = _lock_data(lock, max_events=max_events)
+
+    assert recovery.needs_readoption(allocator, "entry-lock", data) is expected
+    if expected:
+        await allocator.async_register_entry("entry-lock")
+        reservations = [_reservation(published=False)]
+        await _cycle(allocator, reservations, entry_id="entry-free")
+        assert reservations[0].slot_code is None
+
+
+async def test_options_listener_regates_a_widened_entry() -> None:
+    """The options listener re-registers an entry whose range widened."""
+    allocator = _allocator("entry-lock")
+    await _cycle(
+        allocator, [], entry_id="entry-lock", lockname="front", managed_slots=[_FREE]
+    )
+    entry = allocator.hass.config_entries.async_get_entry("entry-lock")
+    entry.options = {**_lock_data("front", max_events=2), "name": "Rental"}
+    entry.unique_id = "entry-lock"
+    allocator.hass.config_entries.async_update_entry = lambda entry, **changes: setattr(
+        entry, "data", changes["data"]
+    )
+    coordinator = SimpleNamespace(created="now", lockname=None)
+
+    async def _update_config(_data: object) -> None:
+        """Accept the new configuration."""
+
+    coordinator.update_config = _update_config
+    entry_data = {"coordinator": coordinator, "unsub_listeners": []}
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(
+            "custom_components.rental_control.get_entry_data",
+            lambda _hass, _entry_id: entry_data,
+        )
+        patcher.setattr(
+            "custom_components.rental_control.get_allocator", lambda _hass: allocator
+        )
+        await update_listener(cast(Any, allocator.hass), cast(Any, entry))
+
+    assert allocator._pending_adoption == {"entry-lock"}
