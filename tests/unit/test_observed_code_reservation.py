@@ -16,6 +16,7 @@ import pytest
 from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.coordinator_helpers import code_allocation
+from custom_components.rental_control.coordinator_helpers import cycle_requests
 from custom_components.rental_control.coordinator_helpers import slot_notifications
 from custom_components.rental_control.coordinator_helpers.reissue import (
     AdoptionRequests,
@@ -161,7 +162,7 @@ def test_rotation_pending_slot_reserves_its_observed_code() -> None:
 
     requests = cast(
         AdoptionRequests,
-        code_allocation.build_adoption_requests(
+        cycle_requests.build_adoption_requests(
             "entry-a", "front", 4, [target_slot], [target]
         ),
     )
@@ -178,7 +179,7 @@ def test_non_decimal_invalid_code_slot_reserves_nothing() -> None:
     """A non-decimal observed code cannot collide, so it reserves nothing."""
     requests = cast(
         AdoptionRequests,
-        code_allocation.build_adoption_requests(
+        cycle_requests.build_adoption_requests(
             "entry-a",
             "front",
             4,
@@ -200,7 +201,7 @@ def test_wrong_length_invalid_code_slot_is_reserved() -> None:
     """
     requests = cast(
         AdoptionRequests,
-        code_allocation.build_adoption_requests(
+        cycle_requests.build_adoption_requests(
             "entry-a",
             "front",
             4,

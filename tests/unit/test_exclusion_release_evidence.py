@@ -108,7 +108,7 @@ async def test_orphan_cleanup_retains_an_excluded_slots_code() -> None:
 def test_observation_builder_knows_nothing_of_exclusions() -> None:
     """The shared observation must never be filtered by exclusions."""
     source = Path(
-        "custom_components/rental_control/coordinator_helpers/code_allocation.py"
+        "custom_components/rental_control/coordinator_helpers/cycle_requests.py"
     ).read_text(encoding="utf-8")
     builder = source.split("def build_cycle_observation(", 1)[1].split("\ndef ", 1)[0]
 

@@ -100,7 +100,7 @@ def _loaded_entry_ids(hass: HomeAssistant) -> set[str]:
 
 def _collect_observations(hass: HomeAssistant) -> list[CycleObservation]:
     """Return current observations from loaded Rental Control coordinators."""
-    from ..coordinator_helpers.code_allocation import build_cycle_observation
+    from ..coordinator_helpers.cycle_requests import build_cycle_observation
 
     observations: list[CycleObservation] = []
     for entry_id, entry_data in hass.data.get(DOMAIN, {}).items():

@@ -147,7 +147,7 @@ async def _guard_refusal(
     hass: HomeAssistant, target: exclusion_targets.ExclusionTarget, slot: int
 ) -> str | None:
     """Return why this slot may not be excluded, or None when it may."""
-    from ..coordinator_helpers.code_allocation import build_cycle_observation
+    from ..coordinator_helpers.cycle_requests import build_cycle_observation
     from .reissue_preview import observe_managed_slots_without_mutation
     from .singleton import async_get_or_create_allocator
 

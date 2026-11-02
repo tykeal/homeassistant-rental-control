@@ -24,6 +24,7 @@ from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import CycleRequest
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator_helpers import code_allocation
+from custom_components.rental_control.coordinator_helpers import cycle_requests
 from custom_components.rental_control.coordinator_helpers import slot_notifications
 from custom_components.rental_control.coordinator_helpers import unreadable_slots
 from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
@@ -257,7 +258,7 @@ def test_rekey_requests_are_deterministic() -> None:
     first = _reservation("identity-a", code="1111")
     first.fingerprint_history = {"old-a2", "old-a1", "identity-a"}
 
-    requests = code_allocation.build_rekey_requests([second, first])
+    requests = cycle_requests.build_rekey_requests([second, first])
 
     assert requests == [
         ("old-a1", "identity-a"),
@@ -577,7 +578,7 @@ def test_invalid_code_slots_are_recorded_as_suppressed() -> None:
     for observed in ("22222", "12AB"):
         requests = cast(
             AdoptionRequests,
-            code_allocation.build_adoption_requests(
+            cycle_requests.build_adoption_requests(
                 "entry-a",
                 "front",
                 4,
