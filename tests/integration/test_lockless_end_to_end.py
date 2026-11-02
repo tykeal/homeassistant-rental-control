@@ -13,6 +13,7 @@ allocator that withholds a code is visible (issue #849).
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 from aioresponses import aioresponses
@@ -24,6 +25,8 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.rental_control.allocator.registry import AllocationRegistry
 from custom_components.rental_control.allocator.singleton import get_allocator
 from custom_components.rental_control.codegen import generate_date_based_code
+from custom_components.rental_control.const import CHECKIN_SENSOR
+from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_OUT
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
@@ -81,7 +84,9 @@ def _entry(entry_id: str, *, lock_key_present: bool = False) -> MockConfigEntry:
     )
 
 
-async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+async def _setup(
+    hass: HomeAssistant, entry: MockConfigEntry, body: str | None = None
+) -> None:
     """Set the entry up against a frozen clock and a stubbed calendar."""
     entry.add_to_hass(hass)
     with (
@@ -95,14 +100,20 @@ async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
         mock_session.get(
             _URL,
             status=200,
-            body=future_ics(days_ahead=_DAYS_AHEAD, duration=_DURATION),
+            body=(
+                body
+                if body is not None
+                else future_ics(days_ahead=_DAYS_AHEAD, duration=_DURATION)
+            ),
             repeat=True,
         )
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
 
-async def _refresh(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+async def _refresh(
+    hass: HomeAssistant, entry: MockConfigEntry, body: str | None = None
+) -> None:
     """Drive one more coordinator refresh against the same frozen clock."""
     coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
     with (
@@ -116,7 +127,11 @@ async def _refresh(hass: HomeAssistant, entry: MockConfigEntry) -> None:
         mock_session.get(
             _URL,
             status=200,
-            body=future_ics(days_ahead=_DAYS_AHEAD, duration=_DURATION),
+            body=(
+                body
+                if body is not None
+                else future_ics(days_ahead=_DAYS_AHEAD, duration=_DURATION)
+            ),
             repeat=True,
         )
         await coordinator.async_refresh()
@@ -191,3 +206,47 @@ async def test_no_lock_entry_republishes_after_registry_loss(
 
     assert _event_sensor_code(hass, entry) == _expected_code()
     assert allocator._registry_lost is False
+
+
+async def test_no_lock_entry_keeps_a_checked_out_code_through_checkout_day(
+    hass: HomeAssistant,
+) -> None:
+    """A checked-out stay keeps its code while its event is still listed.
+
+    The stay ended at 11:00 and the clock reads 12:00 on the same day,
+    so the event is retained until local midnight. A no-lock entry has
+    no slot to release at checkout, so the code must stay published
+    for as long as the event does (issue #847). Once the booking has
+    left the feed the entry stops tracking it as usual.
+    """
+    entry = _entry("lockless_checked_out")
+    departing = future_ics(days_ahead=-3, duration=3)
+
+    await _setup(hass, entry, departing)
+    code = _event_sensor_code(hass, entry)
+    assert code is not None
+
+    coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+    (reservation,) = coordinator._latest_res_by_key.values()
+    hass.data[DOMAIN][entry.entry_id][CHECKIN_SENSOR] = SimpleNamespace(
+        state=CHECKIN_STATE_CHECKED_OUT,
+        extra_state_attributes={
+            "guest_name": reservation.slot_name,
+            "start": reservation.start,
+            "end": reservation.end,
+            "summary": reservation.summary,
+        },
+    )
+
+    await _refresh(hass, entry, departing)
+
+    assert reservation.identity_key in coordinator._latest_res_by_key
+    assert coordinator._latest_res_by_key[reservation.identity_key].checked_out
+    assert _event_sensor_code(hass, entry) == code
+
+    arriving = future_ics(summary="Reserved: Next Guest")
+    for _ in range(3):
+        await _refresh(hass, entry, arriving)
+
+    assert reservation.identity_key not in coordinator._latest_res_by_key
+    assert reservation.identity_key not in coordinator._slot_mappings["mappings"]

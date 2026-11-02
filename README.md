@@ -491,13 +491,15 @@ Each event sensor carries these attributes. While the sensor shows
 The integration guarantees the following:
 
 - **When `slot_code` is present.** From the first refresh after a
-  reservation enters the calendar window until the stay ends, as long
-  as the event yields a `slot_name`. An event that yields no slot name,
-  such as a bare `Reserved` with no reservation code, never gets one.
-- **When `slot_code` is absent.** At checkout the check-in sensor moves
-  to `checked_out` (at the end time, or earlier through the manual
-  checkout action), and from the next refresh the code may be empty
-  while the event is still listed. When the integration declines to
+  reservation enters the calendar window for as long as its event
+  appears in the event sensors, provided the event yields a
+  `slot_name`. Checking out does not remove it: when the check-in
+  sensor moves to `checked_out` (at the end time, or earlier through
+  the manual checkout action), the code stays published until the
+  event leaves the sensors at the end of the checkout day. An event
+  that yields no slot name, such as a bare `Reserved` with no
+  reservation code, never gets one.
+- **When `slot_code` is absent.** When the integration declines to
   issue a code, the field is empty and the log carries a warning or
   error saying why. A refresh that fails outright keeps publishing the
   last codes it issued.

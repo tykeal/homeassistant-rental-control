@@ -25,13 +25,20 @@ def select_checkin_match(
     guest_name: str,
     tracked_start: datetime | None,
     tracked_end: datetime | None,
+    *,
+    started_by: datetime | None = None,
 ) -> Reservation | None:
     """Return the reservation that matches the tracked check-in, if any.
 
     Exact start/end matches win for duplicate names. When tracked times are
-    unavailable, a unique name match is allowed.
+    unavailable, a unique name match is allowed. ``started_by`` limits that
+    name-only fallback to stays that have begun by then, so a stale
+    checked-out sensor cannot claim an upcoming booking.
     """
     name_matches = [res for res in reservations if res.slot_name == guest_name]
+    fallback_matches = [
+        res for res in name_matches if started_by is None or res.start <= started_by
+    ]
     exact_matches = [
         res
         for res in name_matches
@@ -42,7 +49,7 @@ def select_checkin_match(
     ]
     matches = exact_matches
     if tracked_start is None or tracked_end is None:
-        matches = name_matches if len(name_matches) == 1 else []
+        matches = fallback_matches if len(fallback_matches) == 1 else []
     return matches[0] if matches else None
 
 

@@ -339,10 +339,8 @@ class CoordinatorRefreshMixin:
                 )
             )
             reissue.consume_cycle_result(self, result)
-            res_by_key: dict[str, _Reservation] = {
-                reservation.identity_key: reservation
-                for reservation in select_eligible_reservations(reservations)
-            }
+            kept = select_eligible_reservations(reservations, include_checked_out=True)
+            res_by_key: dict[str, _Reservation] = {r.identity_key: r for r in kept}
             self._sync_lockless_slot_store(res_by_key)
             self._latest_res_by_key = res_by_key
             self._latest_plan = None

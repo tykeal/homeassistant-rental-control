@@ -25,6 +25,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rental_control.const import CHECKIN_SENSOR
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
+from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_OUT
 from custom_components.rental_control.const import CONF_CODE_BUFFER_AFTER
 from custom_components.rental_control.const import CONF_CODE_BUFFER_BEFORE
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
@@ -502,6 +503,48 @@ async def test_checkin_protection_matches_duplicate_by_start_end(
 
     assert not reservations[0].protected_active
     assert reservations[1].protected_active
+
+
+async def test_dateless_checkout_does_not_claim_an_upcoming_stay(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A checked-out sensor without dates cannot mark a future stay.
+
+    The name-only fallback used to accept any uniquely named stay, so a
+    stale checked-out sensor could flag a booking that has not started
+    and keep it out of planning indefinitely (issue #847).
+    """
+    from custom_components.rental_control.reconciliation import Reservation
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.now() + timedelta(days=3)
+    end = start + timedelta(days=2)
+    reservations = [
+        Reservation(
+            identity_key="carol",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Carol",
+            slot_name="Carol",
+            display_slot_name="Carol",
+            slot_code="3333",
+        )
+    ]
+    hass.data[DOMAIN] = {
+        coordinator._entry_id: {
+            CHECKIN_SENSOR: MagicMock(
+                state=CHECKIN_STATE_CHECKED_OUT,
+                extra_state_attributes={"guest_name": "Carol", "summary": "Carol"},
+            )
+        }
+    }
+
+    coordinator._apply_checkin_protection(reservations)
+
+    assert not reservations[0].checked_out
 
 
 async def test_checkin_protection_synthesizes_missing_active_physical_stay(
@@ -6515,13 +6558,13 @@ class TestCoordinatorReconciliation:
         }
 
         frozen_time = datetime(2025, 6, 20, 12, 0, 0, tzinfo=dt_util.UTC)
-        future_start = frozen_time + timedelta(days=3)
-        future_end = frozen_time + timedelta(days=8)
+        stay_start = frozen_time - timedelta(days=3)
+        stay_end = frozen_time + timedelta(days=2)
         ics_body = (
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n"
             "BEGIN:VEVENT\r\n"
-            f"DTSTART;VALUE=DATE:{future_start.strftime('%Y%m%d')}\r\n"
-            f"DTEND;VALUE=DATE:{future_end.strftime('%Y%m%d')}\r\n"
+            f"DTSTART;VALUE=DATE:{stay_start.strftime('%Y%m%d')}\r\n"
+            f"DTEND;VALUE=DATE:{stay_end.strftime('%Y%m%d')}\r\n"
             "SUMMARY:Carol White\r\nUID:carol-test-uid\r\n"
             "END:VEVENT\r\nEND:VCALENDAR\r\n"
         )
