@@ -75,7 +75,9 @@ async def async_resolve_codes(
         for directive in request.forced_reissues
     )
     observation = build_cycle_observation(entry_id, lockname, managed_slots)
-    exclusions = _revalidated_exclusions(hass, entry_id, lockname, observation)
+    exclusions = slot_exclusions.revalidate_persisted(
+        hass, entry_id, lockname, observation
+    )
     slot_exclusions.report_excluded_slots(hass, entry_id, lockname, exclusions)
     request = replace(request, excluded_slots=frozenset(exclusions))
     allocator = get_allocator(hass)
@@ -190,34 +192,6 @@ def _active_keys(reservations: list[Reservation], lockname: str | None) -> set[s
         reservations, include_checked_out=lockname is None
     )
     return {reservation.identity_key for reservation in kept}
-
-
-def _revalidated_exclusions(
-    hass: object,
-    entry_id: str,
-    lockname: str | None,
-    observation: CycleObservation,
-) -> dict[int, str | None]:
-    """Re-derive an entry's exclusions from the observation this cycle used."""
-    stored = slot_exclusions.load(hass, entry_id)
-    if not stored:
-        return {}
-    kept, cleared = slot_exclusions.revalidate(stored, observation)
-    for slot, reason in sorted(cleared.items()):
-        _LOGGER.info(
-            "Cleared the slot exclusion for entry %s slot %s on lock %s "
-            "because the slot is %s (recorded reason: %s)",
-            entry_id,
-            slot,
-            lockname or "unknown lock",
-            "no longer in the managed range"
-            if slot not in observation.managed_slots
-            else "readable again",
-            reason or "none given",
-        )
-    if cleared:
-        slot_exclusions.persist_excluded_slots(hass, entry_id, kept)
-    return kept
 
 
 def _apply_adoption_results(

@@ -18,7 +18,6 @@ from custom_components.rental_control.allocator.models import AllocationOwner
 from custom_components.rental_control.allocator.models import AllocationRecord
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
-from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import slot_exclusions
 from custom_components.rental_control.coordinator_helpers import slot_notifications
 
@@ -129,7 +128,7 @@ def test_revalidation_logs_name_slots_not_codes(
     )
 
     with caplog.at_level(logging.INFO):
-        kept = code_allocation._revalidated_exclusions(
+        kept = slot_exclusions.revalidate_persisted(
             hass, "entry-a", "front", observation
         )
 

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import logging
+from typing import TYPE_CHECKING
 from typing import Any
 
 from ..allocator.exclusions import parse_excluded_slots
@@ -12,6 +14,11 @@ from ..const import CONF_EXCLUDED_SLOTS
 from ..const import DOMAIN
 from ..const import NAME
 from .slot_notifications import SlotNotice
+
+if TYPE_CHECKING:
+    from ..allocator.models import CycleObservation
+
+_LOGGER = logging.getLogger(__name__)
 
 _EXCLUDED_NOTICE = SlotNotice(
     prefix=f"{DOMAIN}_excluded_slots", title=f"{NAME} excluded lock slots"
@@ -62,6 +69,34 @@ def persist_excluded_slots(
         data.pop(CONF_EXCLUDED_SLOTS, None)
     hass.config_entries.async_update_entry(entry, data=data)
     return True
+
+
+def revalidate_persisted(
+    hass: Any,
+    entry_id: str,
+    lockname: str | None,
+    observation: CycleObservation,
+) -> dict[int, str | None]:
+    """Re-derive an entry's exclusions from the observation this cycle used."""
+    stored = load(hass, entry_id)
+    if not stored:
+        return {}
+    kept, cleared = revalidate(stored, observation)
+    for slot, reason in sorted(cleared.items()):
+        _LOGGER.info(
+            "Cleared the slot exclusion for entry %s slot %s on lock %s "
+            "because the slot is %s (recorded reason: %s)",
+            entry_id,
+            slot,
+            lockname or "unknown lock",
+            "no longer in the managed range"
+            if slot not in observation.managed_slots
+            else "readable again",
+            reason or "none given",
+        )
+    if cleared:
+        persist_excluded_slots(hass, entry_id, kept)
+    return kept
 
 
 def excluded_slots_notification_id(entry_id: str) -> str:
@@ -129,4 +164,5 @@ __all__ = [
     "persist_excluded_slots",
     "report_excluded_slots",
     "revalidate",
+    "revalidate_persisted",
 ]
