@@ -190,6 +190,18 @@ class AdoptionRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservedLock:
+    """The lock and managed slots a complete adoption cycle read.
+
+    Adoption vouches only for the slots that cycle actually read, so a
+    range later widened or moved past them is unobserved (#856).
+    """
+
+    lockname: str
+    slots: frozenset[int]
+
+
+@dataclass(frozen=True, slots=True)
 class CycleObservation:
     """Physical slot state observed for one entry refresh cycle.
 

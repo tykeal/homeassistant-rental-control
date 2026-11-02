@@ -51,6 +51,15 @@ _END = _START + timedelta(days=3)
 _CODE = "9999"
 
 
+def _lock_data(lock: str, *, start_slot: int = 1, max_events: int = 1) -> dict:
+    """Return entry data for a lock managing a slot range."""
+    return {
+        "keymaster_entry_id": lock,
+        "start_slot": start_slot,
+        "max_events": max_events,
+    }
+
+
 def _fake_hass(
     *lock_entry_ids: str,
     disabled_lock: bool = False,
@@ -69,7 +78,7 @@ def _fake_hass(
         SimpleNamespace(
             entry_id=entry_id,
             disabled_by=None,
-            data=MappingProxyType({"keymaster_entry_id": "front"}),
+            data=MappingProxyType(_lock_data("front")),
         )
         for entry_id in lock_entry_ids
     ]
@@ -78,7 +87,7 @@ def _fake_hass(
             SimpleNamespace(
                 entry_id="entry-disabled",
                 disabled_by="user",
-                data=MappingProxyType({"keymaster_entry_id": "back"}),
+                data=MappingProxyType(_lock_data("back")),
             )
         )
     if broken_lock:
@@ -86,7 +95,7 @@ def _fake_hass(
             SimpleNamespace(
                 entry_id="entry-broken",
                 disabled_by=None,
-                data=MappingProxyType({"keymaster_entry_id": "side"}),
+                data=MappingProxyType(_lock_data("side")),
             )
         )
     hass.config_entries = SimpleNamespace(
@@ -480,7 +489,7 @@ async def test_a_reloaded_lock_entry_must_adopt_again() -> None:
         lockname="front",
         managed_slots=[_slot(1, "1234")],
     )
-    assert allocator._adopted_locks["entry-lock"] == "front"
+    assert allocator._adopted_locks["entry-lock"].lockname == "front"
 
     await allocator.async_register_entry("entry-lock")
     allocator._registry_lost = True
@@ -516,7 +525,7 @@ async def test_an_incomplete_cycle_withdraws_adopted_standing() -> None:
         lockname="front",
         managed_slots=[_slot(1, "1234")],
     )
-    assert allocator._adopted_locks["entry-lock"] == "front"
+    assert allocator._adopted_locks["entry-lock"].lockname == "front"
 
     allocator._registry_lost = True
     allocator._registry_missing = False
@@ -553,14 +562,14 @@ async def test_switching_locks_withdraws_adopted_standing() -> None:
         lockname="front",
         managed_slots=[_slot(1, "1234")],
     )
-    assert allocator._adopted_locks["entry-lock"] == "front"
+    assert allocator._adopted_locks["entry-lock"].lockname == "front"
 
     entry = next(
         entry
         for entry in allocator.hass.config_entries.async_entries(DOMAIN)
         if entry.entry_id == "entry-lock"
     )
-    entry.data = MappingProxyType({"keymaster_entry_id": "Back Door"})
+    entry.data = MappingProxyType(_lock_data("Back Door"))
     allocator._registry_lost = True
     allocator._registry_missing = False
 
@@ -570,6 +579,64 @@ async def test_switching_locks_withdraws_adopted_standing() -> None:
     assert reservations[0].slot_code is None
     assert reservations[0].code_source == "unallocated"
     assert allocator._registry_lost is True
+
+
+@pytest.mark.parametrize(
+    ("start_slot", "max_events", "observed"),
+    [(1, 2, True), (1, 1, True), (1, 3, False), (2, 2, False)],
+)
+async def test_adoption_is_bound_to_the_slot_range(
+    start_slot: int, max_events: int, observed: bool
+) -> None:
+    """Widening or moving the range withdraws adopted standing (#856).
+
+    Slots brought under management may hold codes the registry has
+    never seen, so until a cycle reads them the lock is not observed
+    and lockless recovery must wait. Narrowing exposes nothing new.
+    """
+    allocator = _allocator("entry-lock")
+    free = ManagedSlot(slot=2, managed=True, status=SlotStatus.FREE)
+    await _cycle(
+        allocator,
+        [_reservation("identity-lock", code="1234")],
+        entry_id="entry-lock",
+        lockname="front",
+        managed_slots=[_slot(1, "1234"), free],
+    )
+    entry = next(
+        entry
+        for entry in allocator.hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id == "entry-lock"
+    )
+    entry.data = MappingProxyType(
+        _lock_data("front", start_slot=start_slot, max_events=max_events)
+    )
+    allocator._registry_lost = True
+    allocator._registry_missing = False
+
+    reservations = [_reservation()]
+    await _cycle(allocator, reservations, entry_id="entry-free")
+
+    assert (reservations[0].slot_code == _CODE) is observed
+    assert allocator._registry_lost is not observed
+    if observed:
+        return
+
+    await _cycle(
+        allocator,
+        [],
+        entry_id="entry-lock",
+        lockname="front",
+        managed_slots=[
+            ManagedSlot(slot=slot, managed=True, status=SlotStatus.FREE)
+            for slot in range(start_slot, start_slot + max_events)
+        ],
+    )
+    reservations = [_reservation()]
+    await _cycle(allocator, reservations, entry_id="entry-free")
+
+    assert reservations[0].slot_code == _CODE
+    assert allocator._registry_lost is False
 
 
 async def test_collision_resolved_identity_is_not_given_the_preference() -> None:

@@ -14,6 +14,7 @@ from homeassistant.util import dt as dt_util
 import pytest
 
 from custom_components.rental_control.allocator import allocator as allocator_module
+from custom_components.rental_control.allocator import recovery
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AdoptionRequest
 from custom_components.rental_control.allocator.models import AllocationOrigin
@@ -1625,4 +1626,4 @@ async def test_adopted_entry_clears_blocking_slot_tracking() -> None:
     )
 
     assert allocator._pending_adoption_slots == {}
-    assert allocator._describe_pending_entry("entry-a") == "entry-a"
+    assert recovery.describe_pending_entry(allocator, "entry-a") == "entry-a"

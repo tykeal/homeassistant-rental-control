@@ -62,6 +62,10 @@ def allocator_diagnostics(allocator: DoorCodeAllocator) -> dict[str, Any]:
             if not explained
         ),
         "pending_adoption": sorted(allocator._pending_adoption),
+        "adopted_locks": {
+            entry_id: {"lockname": observed.lockname, "slots": sorted(observed.slots)}
+            for entry_id, observed in sorted(allocator._adopted_locks.items())
+        },
         "excluded_slots": _excluded_slots(allocator),
         "gate_deadline": allocator._gate_deadline,
         "registry_lost": allocator._registry_lost,
