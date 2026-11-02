@@ -108,7 +108,28 @@ def _allocator_code_ref(allocator: object, code: str) -> str:
     return "<unavailable>"
 
 
+def withhold_codes(reservations: list[Reservation]) -> None:
+    """Hold every reservation codeless for this cycle."""
+    for reservation in reservations:
+        reservation.slot_code = None
+        reservation.code_source = "unallocated"
+
+
+def clear_unresolved(reservations: list[Reservation], result: CycleResult) -> None:
+    """Hold codeless every reservation the cycle neither adopted nor issued."""
+    for reservation in reservations:
+        if reservation.identity_key in result.adopted or (
+            reservation.identity_key in result.allocated
+            and result.allocated[reservation.identity_key].code is not None
+        ):
+            continue
+        reservation.slot_code = None
+        reservation.code_source = "unallocated"
+
+
 __all__ = [
     "apply_adoption_results",
     "apply_allocation_results",
+    "clear_unresolved",
+    "withhold_codes",
 ]
