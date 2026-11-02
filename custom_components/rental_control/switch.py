@@ -16,6 +16,7 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -24,6 +25,7 @@ from .const import COORDINATOR
 from .const import DOMAIN
 from .const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from .const import KEYMASTER_MONITORING_SWITCH
+from .entity_lifecycle import async_chain_entity_id_changed
 from .util import gen_uuid
 from .util import get_entry_data
 
@@ -148,6 +150,15 @@ class KeymasterMonitoringSwitch(SwitchEntity, RestoreEntity):
             self.entity_id,
         )
 
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep this entity in place when its entity_id changes.
+
+        Nothing here is keyed on our own entity_id, so only the parent
+        hook runs.
+        """
+        async_chain_entity_id_changed(super(), old_entity_id)
+
 
 class EarlyCheckoutExpirySwitch(SwitchEntity, RestoreEntity):
     """Switch to enable/disable early checkout lock code expiry.
@@ -229,3 +240,12 @@ class EarlyCheckoutExpirySwitch(SwitchEntity, RestoreEntity):
             self._attr_is_on,
             self.entity_id,
         )
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep this entity in place when its entity_id changes.
+
+        Nothing here is keyed on our own entity_id, so only the parent
+        hook runs.
+        """
+        async_chain_entity_id_changed(super(), old_entity_id)
