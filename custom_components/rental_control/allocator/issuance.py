@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from . import adoption
+from . import adoption_reports
 from . import recovery
 from . import reissue
 from . import services
@@ -217,6 +218,7 @@ async def resolve_cycle(
             allocator, reissue_outcomes, staged_reissues, allocated
         )
         released = allocator._sweep_unlocked(request.observation, request.active_keys)
+        adoption_reports.rejudge_conflicts(allocator, request.observation.entry_id)
         reissue_outcomes = _release_and_report_holds(
             allocator, request, reissue_outcomes
         )

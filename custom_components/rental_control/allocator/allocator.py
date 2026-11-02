@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from ..const import DOMAIN
 from ..const import NAME
 from . import adoption
+from . import adoption_reports
 from . import diagnostics
 from . import entry_info
 from . import issuance
@@ -66,6 +67,7 @@ class DoorCodeAllocator:
         self._registry_missing = False
         self._gate_warning_sent = False
         self._reported_identity_mismatches: set[tuple[str, str, str]] = set()
+        self._conflict_verdicts: dict[str, adoption_reports.ConflictVerdict] = {}
 
     async def async_load(self) -> None:
         """Load the persisted registry before the allocator is used."""
