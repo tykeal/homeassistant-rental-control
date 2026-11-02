@@ -11,6 +11,10 @@ one of the codes read from it.
 
 from __future__ import annotations
 
+from types import MappingProxyType
+
+import pytest
+
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import ReissuePreviewRequest
 from custom_components.rental_control.reconciliation import ManagedSlot
@@ -19,6 +23,7 @@ from custom_components.rental_control.reconciliation import SlotStatus
 from tests.unit.test_lockless_registry_recovery import _CODE
 from tests.unit.test_lockless_registry_recovery import _allocator
 from tests.unit.test_lockless_registry_recovery import _cycle
+from tests.unit.test_lockless_registry_recovery import _lock_data
 from tests.unit.test_lockless_registry_recovery import _reservation
 from tests.unit.test_lockless_registry_recovery import _slot
 
@@ -96,6 +101,25 @@ async def test_reloading_the_entry_forgets_its_read_lock() -> None:
     await _cycle(allocator, reservations, entry_id="entry-free")
 
     assert reservations[0].slot_code is None
+
+
+@pytest.mark.parametrize(
+    ("lock", "max_events"), [("back", 1), ("front", 2)], ids=["moved", "widened"]
+)
+async def test_options_change_makes_the_read_lock_unread(
+    lock: str, max_events: int
+) -> None:
+    """A lock or range changed in place must be read again (#856)."""
+    allocator = _allocator("entry-lock")
+    await _read_unmatched_lock(allocator)
+    entry = allocator.hass.config_entries.async_get_entry("entry-lock")
+    entry.data = MappingProxyType(_lock_data(lock, max_events=max_events))
+
+    reservations = [_reservation(published=False)]
+    await _cycle(allocator, reservations, entry_id="entry-free")
+
+    assert reservations[0].slot_code is None
+    assert allocator.diagnostics["pending_adoption_read"] == []
 
 
 async def test_lost_registry_keeps_the_gate_global() -> None:

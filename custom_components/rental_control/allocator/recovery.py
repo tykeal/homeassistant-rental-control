@@ -257,28 +257,42 @@ def adoption_blocks(allocator: DoorCodeAllocator, entry_id: str) -> bool:
     holds are known, and an entry still pending only because one of
     them matches no reservation withholds issuance for itself alone;
     ``pending_lock_codes`` keeps those codes from being issued to
-    anyone else (#846). A lost registry keeps the gate global.
+    anyone else (#846). The read is bound to the lock and slot range it
+    covered, as adoption is (#856): an options change that moves the
+    entry to another lock or widens its range makes it unread again.
+    A lost registry keeps the gate global.
     """
     pending = allocator._pending_adoption
     if not pending:
         return False
     if allocator._registry_lost or entry_id in pending:
         return True
-    read = getattr(allocator, "_read_pending_locks", {})
-    return any(other not in read for other in pending)
+    return any(read_lock_codes(allocator, other) is None for other in pending)
 
 
 def pending_lock_codes(allocator: DoorCodeAllocator) -> frozenset[str]:
     """Return codes read from pending locks that the registry does not hold."""
-    read: Mapping[str, frozenset[str]] = getattr(allocator, "_read_pending_locks", {})
     records = allocator._registry.records
     return frozenset(
         code
-        for entry_id, codes in read.items()
-        if entry_id in allocator._pending_adoption
-        for code in codes
+        for entry_id in allocator._pending_adoption
+        for code in read_lock_codes(allocator, entry_id) or ()
         if code not in records
     )
+
+
+def read_lock_codes(
+    allocator: DoorCodeAllocator, entry_id: str
+) -> frozenset[str] | None:
+    """Return the codes read in full from an entry's current lock, if any."""
+    read: Mapping[str, tuple[ObservedLock, frozenset[str]]] = getattr(
+        allocator, "_read_pending_locks", {}
+    )
+    if entry_id not in read:
+        return None
+    observed, codes = read[entry_id]
+    entry = entry_info.config_entry(allocator.hass, entry_id)
+    return codes if is_observed(observed, getattr(entry, "data", None)) else None
 
 
 def issuance_block(
@@ -340,6 +354,7 @@ __all__ = [
     "keeps_gate_closed",
     "origin_proven",
     "pending_lock_codes",
+    "read_lock_codes",
     "issuance_block",
     "lockless_recovery_allowed",
     "unobserved_lock_entries",

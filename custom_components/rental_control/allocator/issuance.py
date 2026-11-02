@@ -344,7 +344,10 @@ def _track_read_pending_lock(
         and entry_id in allocator._pending_adoption
         and not observation.unreadable_slots - request.excluded_slots
     ):
-        allocator._read_pending_locks[entry_id] = frozenset(observation.observed_codes)
+        allocator._read_pending_locks[entry_id] = (
+            ObservedLock(observation.lockname, observation.managed_slots),
+            frozenset(observation.observed_codes),
+        )
     else:
         allocator._read_pending_locks.pop(entry_id, None)
 
