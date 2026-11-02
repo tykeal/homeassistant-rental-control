@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from ..const import ICON
 from ..const import NAME
+from ..entity_lifecycle import async_chain_entity_id_changed
 from ..reconciliation import make_reservation_fingerprint
 from ..util import gen_uuid
 from ..util import get_slot_name
@@ -87,6 +88,15 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
         # available so the sensor shows current events immediately.
         if self.coordinator.last_update_success and self.coordinator.data is not None:
             self._handle_coordinator_update()
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep this entity in place when its entity_id changes.
+
+        Nothing here is keyed on our own entity_id, so only the parent
+        hook runs.
+        """
+        async_chain_entity_id_changed(super(), old_entity_id)
 
     def _description(self) -> str | None:
         """Return the current event description attribute."""
