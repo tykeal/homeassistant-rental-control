@@ -165,16 +165,7 @@ async def resolve_cycle(
 ) -> CycleResult:
     """Resolve one refresh cycle atomically under the allocator lock."""
     async with allocator._lock:
-        reissue_outcomes = (
-            reissue.fail_closed_forced_reissues(request)
-            if allocator._registry_lost
-            else []
-        )
-        staged_reissues: list[reissue.StagedReissue] = []
-        if not allocator._registry_lost:
-            applied, staged_reissues = reissue.apply_forced_reissues(allocator, request)
-            reissue_outcomes.extend(applied)
-
+        reissue_outcomes, staged_reissues = _stage_forced_reissues(allocator, request)
         adopted = _apply_adoptions(allocator, request)
 
         for old_key, new_key in request.rekeys:
@@ -183,54 +174,20 @@ async def resolve_cycle(
         for reservation in request.observed_reservations:
             adoption.reserve_observed_code(allocator, reservation)
 
-        unaccounted = unaccounted_slots(
-            allocator, request.observation, excluded=request.excluded_slots
-        )
-        _track_pending_adoption_slots(
-            allocator,
-            request.observation.entry_id,
-            request.observation.unreadable_slots - request.excluded_slots,
-        )
-        _record_adoption(allocator, request, unaccounted=unaccounted)
-
+        unaccounted = _account_for_observation(allocator, request)
         allocator._warn_if_gate_expired()
-        issuance_allowed = not unaccounted
-        lockless_cycle = request.observation.lockname is None
-        allocated: dict[str, AllocationResult] = {}
-        reissuing = frozenset(
-            stage.allocation_identity_key
-            for stage in staged_reissues
-            if stage.allocation_identity_key is not None
+        allocated = _allocate_cycle(
+            allocator,
+            request,
+            adopted=adopted,
+            staged_reissues=staged_reissues,
+            issuance_allowed=not unaccounted,
         )
-        for allocation in request.allocations:
-            if allocation.identity_key in adopted:
-                continue
-            allocation = replace(
-                allocation,
-                issuance_allowed=allocation.issuance_allowed and issuance_allowed,
-            )
-            allocated[allocation.identity_key] = allocate_request(
-                allocator,
-                allocation,
-                lockless_cycle=lockless_cycle,
-                reissuing=reissuing,
-            )
         rollbacks = reissue.rollback_blocked_reissues(
             allocator, request, staged_reissues, allocated
         )
         if rollbacks:
-            reissue_outcomes = [
-                outcome
-                for outcome in reissue_outcomes
-                if not any(
-                    rollback.identity_key == outcome.identity_key
-                    and rollback.entry_id == outcome.entry_id
-                    and rollback.lockname == outcome.lockname
-                    and rollback.slot == outcome.slot
-                    for rollback in rollbacks
-                )
-            ]
-            reissue_outcomes.extend(rollbacks)
+            reissue_outcomes = reissue.replace_rolled_back(reissue_outcomes, rollbacks)
         reissue_outcomes = reissue.finalize_forced_reissue_outcomes(
             allocator, reissue_outcomes, staged_reissues, allocated
         )
@@ -256,6 +213,65 @@ async def resolve_cycle(
             unaccounted_slots=unaccounted,
             reissues=tuple(reissue_outcomes),
         )
+
+
+def _stage_forced_reissues(
+    allocator: DoorCodeAllocator, request: CycleRequest
+) -> tuple[list[ReissueOutcome], list[reissue.StagedReissue]]:
+    """Fail forced re-issues closed if the registry is lost, else stage them."""
+    if allocator._registry_lost:
+        return reissue.fail_closed_forced_reissues(request), []
+    applied, staged_reissues = reissue.apply_forced_reissues(allocator, request)
+    return list(applied), staged_reissues
+
+
+def _account_for_observation(
+    allocator: DoorCodeAllocator, request: CycleRequest
+) -> frozenset[int]:
+    """Record what this cycle read of the lock; return unaccounted slots."""
+    observation = request.observation
+    unaccounted = unaccounted_slots(
+        allocator, observation, excluded=request.excluded_slots
+    )
+    _track_pending_adoption_slots(
+        allocator,
+        observation.entry_id,
+        observation.unreadable_slots - request.excluded_slots,
+    )
+    _record_adoption(allocator, request, unaccounted=unaccounted)
+    return unaccounted
+
+
+def _allocate_cycle(
+    allocator: DoorCodeAllocator,
+    request: CycleRequest,
+    *,
+    adopted: dict[str, AllocationResult],
+    staged_reissues: list[reissue.StagedReissue],
+    issuance_allowed: bool,
+) -> dict[str, AllocationResult]:
+    """Allocate every requested identity that this cycle did not adopt."""
+    lockless_cycle = request.observation.lockname is None
+    reissuing = frozenset(
+        stage.allocation_identity_key
+        for stage in staged_reissues
+        if stage.allocation_identity_key is not None
+    )
+    allocated: dict[str, AllocationResult] = {}
+    for allocation in request.allocations:
+        if allocation.identity_key in adopted:
+            continue
+        allocation = replace(
+            allocation,
+            issuance_allowed=allocation.issuance_allowed and issuance_allowed,
+        )
+        allocated[allocation.identity_key] = allocate_request(
+            allocator,
+            allocation,
+            lockless_cycle=lockless_cycle,
+            reissuing=reissuing,
+        )
+    return allocated
 
 
 def _persist_registry(
