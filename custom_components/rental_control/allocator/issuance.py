@@ -84,6 +84,8 @@ def allocate_request(
     )
     if declined is not None:
         return declined
+    if recovering and not recovery.origin_proven(request):
+        return AllocationResult(code=None, reason="recovery_fail_closed")
     code, origin = select_code(
         allocator._registry,
         request.preferred_code,

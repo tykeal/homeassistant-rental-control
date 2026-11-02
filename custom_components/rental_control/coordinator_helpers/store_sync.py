@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 from typing import cast
 
+from ..const import ISSUED_ORIGINS
 from ..const import SLOT_STATUS_OCCUPIED
 from ..const import STORE_SCHEMA_VERSION
 from ..reconciliation import DesiredPlan
@@ -186,6 +187,24 @@ def migrate_to_v1(
     }
 
 
+def migrate_to_v2(raw: dict[str, Any]) -> dict[str, Any]:
+    """Migrate a schema version 1 Store payload to schema version 2.
+
+    Version 2 records how each identity's issued code was chosen
+    (``issued_origin``). Version 1 never recorded it, and nothing here
+    can reconstruct it, so every mapping is marked unknown. The next
+    cycle with a readable registry records the real origin; until then
+    recovery after a registry loss refuses rather than guesses.
+    """
+    mappings = raw["mappings"]
+    for mapping in mappings.values():
+        mapping["issued_origin"] = None
+    if mappings:
+        raw["migration_notes"].append("issued_origin_unrecorded")
+    raw["schema_version"] = 2
+    return raw
+
+
 def normalize_loaded_store(
     raw: Any, defaults: tuple[str, str | None, int, int, str]
 ) -> dict[str, Any] | None:
@@ -224,6 +243,8 @@ def normalize_loaded_store(
     for mapping in mappings.values():
         if not isinstance(mapping, dict):
             return None
+        if mapping.get("issued_origin") not in ISSUED_ORIGINS:
+            mapping["issued_origin"] = None
         last_obs = mapping.get("last_observed_actual")
         if last_obs is not None:
             if not isinstance(last_obs, dict):
@@ -234,6 +255,8 @@ def normalize_loaded_store(
     raw.setdefault("mappings", {})
     raw.setdefault("aliases", {})
     raw.setdefault("migration_notes", [])
+    if raw.get("schema_version", 0) < 2:
+        raw = migrate_to_v2(raw)
     return cast("dict[str, Any]", raw)
 
 

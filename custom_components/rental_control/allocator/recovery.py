@@ -12,6 +12,7 @@ from ..const import CONF_LOCK_ENTRY
 from ..const import DOMAIN
 from ..helpers import configured_lock_entry
 from ..helpers import configured_lock_slug
+from .models import AllocationOrigin
 from .models import AllocationRequest
 from .models import AllocationResult
 
@@ -38,6 +39,30 @@ def configured_lockname(data: object) -> str | None:
     if not isinstance(data, Mapping):
         return None
     return configured_lock_slug(data.get(CONF_LOCK_ENTRY))
+
+
+def origin_proven(request: AllocationRequest) -> bool:
+    """Return whether recovery may restore this request's preference.
+
+    Two lockless entries can prefer the same code; the second was then
+    issued a collision-resolved alternative. After a registry loss the
+    preference may look free to either, so a published identity is
+    given it back only if the per-entry store recorded that it was
+    originally issued its preference (#855). Anything else would
+    silently change a code the guest holds.
+    """
+    if not request.previously_published:
+        return True
+    if request.issued_origin is AllocationOrigin.PREFERRED:
+        return True
+    _LOGGER.warning(
+        "Declined recovery for generator-only entry %s:%s: the code it was "
+        "last issued is not recorded as its preferred code, so restoring "
+        "the preference could change a code the guest already holds",
+        request.entry_id,
+        request.identity_key,
+    )
+    return False
 
 
 def unobserved_lock_entries(allocator: DoorCodeAllocator) -> frozenset[str]:
@@ -150,6 +175,7 @@ def issuance_block(
 __all__ = [
     "configured_lockname",
     "entry_has_lock",
+    "origin_proven",
     "issuance_block",
     "lockless_recovery_allowed",
     "unobserved_lock_entries",

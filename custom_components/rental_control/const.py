@@ -148,7 +148,14 @@ EARLY_CHECKOUT_GRACE_MINUTES = 15
 STORE_CODE_REGISTRY_KEY = "rental_control.code_registry"
 CODE_REGISTRY_SCHEMA_VERSION = 1
 STORE_SLOT_MAPPINGS_KEY = "rental_control.slot_mappings"
-STORE_SCHEMA_VERSION = 1
+# Home Assistant Store envelope version. It stays at 1 because Store
+# raises on a version change without a migrate hook; the payload's own
+# ``schema_version`` is migrated by ``store_sync.normalize_loaded_store``.
+STORE_FILE_VERSION = 1
+# Version 2 records each lockless identity's ``issued_origin`` (#855).
+STORE_SCHEMA_VERSION = 2
+# Allocation origins the per-entry store may record for an issued code.
+ISSUED_ORIGINS = frozenset({"preferred", "collision_resolved"})
 
 # Slot status string constants (mirror SlotStatus enum values)
 SLOT_STATUS_OCCUPIED = "occupied"

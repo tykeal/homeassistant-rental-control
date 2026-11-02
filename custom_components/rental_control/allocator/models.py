@@ -88,6 +88,12 @@ class AllocationRequest:
     ghost reservation retained through a feed miss. Normal issuance
     ignores the distinction, but recovery after a registry loss must not
     treat a placeholder as the code a guest already holds.
+
+    ``issued_origin`` is how the code last published for the identity
+    was chosen, as the per-entry store recorded it, or ``None`` when
+    nothing was recorded. Recovery uses it to restore only a code the
+    guest provably held: a regenerated preference is the guest's code
+    only if the guest was originally issued that preference.
     """
 
     entry_id: str
@@ -100,6 +106,7 @@ class AllocationRequest:
     slot: int | None = None
     issuance_allowed: bool = True
     preferred_code_known: bool = True
+    issued_origin: AllocationOrigin | None = None
 
 
 @dataclass(frozen=True, slots=True)

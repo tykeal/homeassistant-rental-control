@@ -47,6 +47,10 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 _EXHAUSTED_NOTIFICATION_ID = f"{DOMAIN}_code_registry_exhausted"
 _UNREADABLE_NOTIFICATION_ID = f"{DOMAIN}_unreadable_slots"
+_ISSUED_ORIGINS = {
+    origin.value: origin
+    for origin in (AllocationOrigin.PREFERRED, AllocationOrigin.COLLISION_RESOLVED)
+}
 
 
 async def async_resolve_codes(
@@ -477,6 +481,7 @@ def build_allocation_requests(
                 lockname=lockname if planned_slot is not None else None,
                 slot=planned_slot,
                 preferred_code_known=preferred is not None,
+                issued_origin=_ISSUED_ORIGINS.get(reservation.issued_origin or ""),
             )
         )
     return requests
@@ -563,17 +568,28 @@ def _apply_result(
     identity_key: str,
     result: AllocationResult,
 ) -> None:
-    """Write an allocator result back to the in-cycle reservation object."""
+    """Write an allocator result back to the in-cycle reservation object.
+
+    The registry hands an identity its recorded code with the origin it
+    had when first issued, even after the generator's preference has
+    since drifted. Only a code equal to today's preference is recorded
+    as preferred; anything else is unknown, so recovery withholds it.
+    """
     for reservation in reservations:
         if reservation.identity_key != identity_key:
             continue
+        preference = reservation.slot_code
         reservation.slot_code = result.code
         if result.origin is AllocationOrigin.ADOPTED:
             reservation.code_source = "adopted"
         elif result.origin is AllocationOrigin.PREFERRED:
             reservation.code_source = "allocated"
+            reservation.issued_origin = (
+                AllocationOrigin.PREFERRED.value if result.code == preference else None
+            )
         elif result.origin is AllocationOrigin.COLLISION_RESOLVED:
             reservation.code_source = "collision_resolved"
+            reservation.issued_origin = AllocationOrigin.COLLISION_RESOLVED.value
         elif result.origin is not None:
             reservation.code_source = result.origin.value
         else:

@@ -427,6 +427,7 @@ class CoordinatorRefreshMixin:
                 )
             reservation.missing_count = 0
             reservation.published_once = mapping.get("published_once") is True
+            reservation.issued_origin = lockless_store.issued_origin(mapping)
 
     async def _ical_parser(
         self, calendar: Calendar, from_date: datetime, to_date: datetime

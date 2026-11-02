@@ -13,6 +13,7 @@ from typing import Any
 
 from homeassistant.util import dt
 
+from ..const import STORE_FILE_VERSION
 from ..const import STORE_SCHEMA_VERSION
 from ..const import STORE_SLOT_MAPPINGS_KEY
 from ..reconciliation import DesiredPlan as _DesiredPlan
@@ -38,7 +39,7 @@ class CoordinatorStoreMixin:
         """Load cache-only slot metadata from the HA Store."""
         self._store = _coordinator_module().Store(
             self.hass,
-            STORE_SCHEMA_VERSION,
+            STORE_FILE_VERSION,
             f"{STORE_SLOT_MAPPINGS_KEY}.{self._entry_id}",
         )
         try:
