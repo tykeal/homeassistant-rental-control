@@ -150,3 +150,19 @@ def test_contested_exact_matches_still_block_the_fallback() -> None:
 
     assert keys == observed
     assert "smith" not in persisted
+
+
+def test_stay_with_its_own_mapping_is_not_taken_over() -> None:
+    """The fallback never replaces a reservation's existing mapping.
+
+    Smith already holds slot 7 through a calendar-written mapping that is
+    not observed this refresh; the stale adopted slot 6 must not delete
+    it and take its place.
+    """
+    persisted = _persisted()
+    persisted["smith"] = {"slot": 7, "fingerprint_history": ["older"]}
+
+    keys = remap(persisted, [_res("smith", "Smith", 30)], {6: "Smith"}, {_KEY})
+
+    assert keys == {_KEY}
+    assert persisted["smith"] == {"slot": 7, "fingerprint_history": ["older"]}

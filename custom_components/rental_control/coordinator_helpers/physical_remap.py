@@ -36,10 +36,11 @@ def _amended_stay_remap(
     the exact match fails and the mapping would otherwise ghost (#867).
     An adopted mapping follows the one current reservation carrying the
     slot's physical name, provided no current reservation still owns the
-    lock's window and no other mapping, exact or not, claims that
-    reservation. Mappings written from the calendar are left alone: an
-    amended stay keeps its key through its UID, so if one is unmatched
-    its stay really left the feed and the ghost path must keep its slot.
+    lock's window, the reservation has no Store mapping of its own and
+    no other mapping, exact or not, claims it. Mappings written from the
+    calendar are left alone: an amended stay keeps its key through its
+    UID, so if one is unmatched its stay really left the feed and the
+    ghost path must keep its slot.
     """
     remap: dict[str, str] = {}
     for mapping_key in unmatched:
@@ -55,7 +56,11 @@ def _amended_stay_remap(
                 mapping, res, actual_slot_names
             )
         ]
-        if len(matches) == 1 and matches[0] not in claimed_targets:
+        if (
+            len(matches) == 1
+            and matches[0] not in claimed_targets
+            and matches[0] not in persisted
+        ):
             remap[mapping_key] = matches[0]
     return _unique_targets(remap)
 
