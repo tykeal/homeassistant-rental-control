@@ -216,7 +216,9 @@ class DoorCodeAllocator:
             self._warn_if_gate_expired()
             result = self._allocate_unlocked(request)
             if result.code is not None and (
-                not self._registry_lost or self._registry_missing
+                not self._registry_lost
+                or self._registry_missing
+                or recovery.rebuilt_registry_trusted(self)
             ):
                 self._store.async_save(self._registry)
                 self._registry_lost = False

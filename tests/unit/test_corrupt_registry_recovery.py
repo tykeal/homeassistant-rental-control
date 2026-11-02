@@ -13,11 +13,15 @@ reached never adopts, so it keeps issuance withheld.
 from __future__ import annotations
 
 from types import MappingProxyType
+from types import SimpleNamespace
+from typing import Any
+from typing import cast
 
 import pytest
 
 from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
+from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import CycleRequest
 from custom_components.rental_control.reconciliation import ManagedSlot
@@ -176,3 +180,56 @@ async def test_lock_lost_after_adoption_returns_to_the_gate(
     allocator._gate_deadline = 1.0
     allocator._warn_if_gate_expired()
     assert "lock unreachable" in raised[0]
+
+
+async def test_trusted_registry_saves_a_single_allocation() -> None:
+    """A code issued outside a cycle is saved once the registry is trusted."""
+    allocator = _corrupt(_allocator())
+    saved: list[object] = []
+    allocator._store = cast(Any, SimpleNamespace(async_save=saved.append))
+
+    result = await allocator.async_allocate(
+        AllocationRequest(
+            entry_id="entry-free",
+            identity_key="identity-a",
+            preferred_code="1111",
+            code_length=4,
+        )
+    )
+
+    assert result.code == "1111"
+    assert saved
+    assert allocator._registry_lost is False
+
+
+async def test_reopened_lock_is_named_after_an_earlier_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lock returning to the gate re-arms a notice already sent."""
+    raised: list[str] = []
+    monkeypatch.setattr(
+        allocator_module,
+        "async_create",
+        lambda _hass, message, **_kwargs: raised.append(message),
+    )
+    allocator = _corrupt(_allocator("entry-lock", "entry-other"))
+    await _cycle(
+        allocator, [], entry_id="entry-lock", lockname="front", managed_slots=[_FREE]
+    )
+    allocator._gate_deadline = 1.0
+    allocator._warn_if_gate_expired()
+    assert len(raised) == 1
+    assert "entry entry-lo" not in raised[0]
+
+    await _cycle(
+        allocator,
+        [],
+        entry_id="entry-lock",
+        lockname="front",
+        managed_slots=[ManagedSlot(slot=1, managed=True, status=SlotStatus.UNKNOWN)],
+    )
+    allocator._gate_deadline = 1.0
+    allocator._warn_if_gate_expired()
+
+    assert len(raised) == 2
+    assert "entry entry-lo" in raised[1]

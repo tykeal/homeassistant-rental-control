@@ -237,10 +237,13 @@ def reopen_adoption(allocator: DoorCodeAllocator, entry_id: str) -> None:
     While the registry is lost, an entry that loses its adoption keeps
     the rebuilt registry untrusted. Putting it back in the gate keeps
     issuance withheld through the same path as before it adopted, and
-    lets the pending notification name it and say why.
+    lets the pending notification name it and say why: a notice that
+    already went out without it is re-armed so it is sent again.
     """
+    if entry_id in allocator._pending_adoption:
+        return
     allocator._pending_adoption.add(entry_id)
-    if allocator._gate_deadline == 0.0:
+    if allocator._gate_deadline == 0.0 or allocator._gate_warning_sent:
         allocator._gate_deadline = monotonic() + ADOPTION_GATE_WARNING_SECONDS
         allocator._gate_warning_sent = False
 
