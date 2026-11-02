@@ -13,14 +13,12 @@ from homeassistant.components.persistent_notification import async_create
 from ..allocator import code_origin
 from ..allocator import entry_info
 from ..allocator import get_allocator
-from ..allocator.models import AllocationOrigin
-from ..allocator.models import AllocationResult
 from ..allocator.models import CycleRequest
-from ..allocator.models import CycleResult
 from ..const import DOMAIN
 from ..const import NAME
 from . import adoption_gate
 from . import cycle_requests
+from . import cycle_results
 from . import generator_divergence
 from . import reissue
 from . import slot_exclusions
@@ -129,7 +127,7 @@ async def async_resolve_codes(
             ),
         )
     )
-    _apply_adoption_results(allocator, entry_id, reservations, result)
+    cycle_results.apply_adoption_results(allocator, entry_id, reservations, result)
     if result.unaccounted_slots:
         _LOGGER.warning(
             "Shared code allocator withheld issuance for entry %s because "
@@ -143,7 +141,9 @@ async def async_resolve_codes(
         lockname,
         sorted(observation.unreadable_slots - request.excluded_slots),
     )
-    if _apply_allocation_results(allocator, entry_id, reservations, result):
+    if cycle_results.apply_allocation_results(
+        allocator, entry_id, reservations, result
+    ):
         _LOGGER.warning(
             "Shared code allocator exhausted the configured code space for "
             "entry %s. New duplicate codes were not issued.",
@@ -172,94 +172,3 @@ async def async_resolve_codes(
     return CodeResolutionResult(
         observation, getattr(result, "reissues", ()), consumed_target_keys
     )
-
-
-def _apply_adoption_results(
-    allocator: object,
-    entry_id: str,
-    reservations: list[Reservation],
-    result: CycleResult,
-) -> None:
-    """Apply and log adoption results from a cycle."""
-    for identity_key, adoption_result in result.adopted.items():
-        if adoption_result.code is None:
-            continue
-        _LOGGER.info(
-            "Adopted shared code_ref %s for entry %s identity %s",
-            _allocator_code_ref(allocator, adoption_result.code),
-            entry_id,
-            identity_key,
-        )
-        _apply_result(reservations, identity_key, adoption_result)
-
-
-def _apply_allocation_results(
-    allocator: object,
-    entry_id: str,
-    reservations: list[Reservation],
-    result: CycleResult,
-) -> bool:
-    """Apply and log allocation results; return whether space exhausted."""
-    exhausted = False
-    for identity_key, allocation_result in result.allocated.items():
-        if identity_key in result.adopted:
-            continue
-        if allocation_result.code is None:
-            exhausted = exhausted or allocation_result.reason == "exhausted"
-            continue
-        _LOGGER.info(
-            "Resolved shared code_ref %s for entry %s identity %s origin %s",
-            _allocator_code_ref(allocator, allocation_result.code),
-            entry_id,
-            identity_key,
-            allocation_result.origin,
-        )
-        _apply_result(reservations, identity_key, allocation_result)
-    return exhausted
-
-
-def _apply_result(
-    reservations: list[Reservation],
-    identity_key: str,
-    result: AllocationResult,
-) -> None:
-    """Write an allocator result back to the in-cycle reservation object.
-
-    The registry hands an identity its recorded code with the origin it
-    had when first issued, even after the generator's preference has
-    since drifted. Only a code equal to today's preference is recorded
-    as preferred, and a known mismatch is recorded as unknown, so
-    recovery withholds it. A ghost carries no preference and keeps the
-    origin it was hydrated with.
-    """
-    for reservation in reservations:
-        if reservation.identity_key != identity_key:
-            continue
-        preference = reservation.slot_code
-        reservation.slot_code = result.code
-        if result.origin is AllocationOrigin.ADOPTED:
-            reservation.code_source = "adopted"
-        elif result.origin is AllocationOrigin.PREFERRED:
-            reservation.code_source = "allocated"
-            if preference is not None:
-                reservation.issued_origin = (
-                    AllocationOrigin.PREFERRED.value
-                    if result.code == preference
-                    else None
-                )
-        elif result.origin is AllocationOrigin.COLLISION_RESOLVED:
-            reservation.code_source = "collision_resolved"
-            reservation.issued_origin = AllocationOrigin.COLLISION_RESOLVED.value
-        elif result.origin is not None:
-            reservation.code_source = result.origin.value
-        else:
-            reservation.code_source = "unallocated"
-        return
-
-
-def _allocator_code_ref(allocator: object, code: str) -> str:
-    """Return a masked allocator code reference for logs."""
-    code_ref = getattr(allocator, "code_ref", None)
-    if callable(code_ref):
-        return str(code_ref(code))
-    return "<unavailable>"
