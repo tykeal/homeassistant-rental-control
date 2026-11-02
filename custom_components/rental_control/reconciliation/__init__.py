@@ -18,9 +18,6 @@ from .plan_models import DesiredPlan
 from .plan_models import ManagedSlot
 from .plan_models import PlannedSlot
 from .plan_models import Reservation
-from .rematch import find_reservation_rematch
-from .rematch_models import RematchKind
-from .rematch_models import RematchResult
 from .stateless import StatelessPlanRequest
 from .stateless import compute_stateless_plan
 from .stateless_models import DesiredReservation
@@ -42,8 +39,6 @@ __all__ = [
     "ObservedSlot",
     "ObservedSlotStatus",
     "PlannedSlot",
-    "RematchKind",
-    "RematchResult",
     "Reservation",
     "SlotAction",
     "SlotMapping",
@@ -55,7 +50,6 @@ __all__ = [
     "compute_desired_plan",
     "compute_stateless_plan",
     "extract_booking_aliases",
-    "find_reservation_rematch",
     "make_reservation_fingerprint",
     "normalize_slot_name_for_fingerprint",
 ]

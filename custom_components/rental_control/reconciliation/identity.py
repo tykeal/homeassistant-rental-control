@@ -157,7 +157,7 @@ def extract_booking_aliases(summary: str, description: str) -> set[str]:
       nine uppercase alphanumeric characters (e.g. ``HMXXXXXXXX``).
 
     The extracted aliases are stored as :attr:`Reservation.booking_aliases`
-    and used as secondary signals in :func:`find_reservation_rematch`.
+    and persisted with the reservation's slot mapping identity.
 
     Args:
         summary: Raw iCal SUMMARY field value.

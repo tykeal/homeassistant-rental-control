@@ -23,8 +23,6 @@ _OWNER_SYMBOLS = {
     "ObservedSlot": "stateless_models",
     "ObservedSlotStatus": "enums",
     "PlannedSlot": "plan_models",
-    "RematchKind": "rematch_models",
-    "RematchResult": "rematch_models",
     "Reservation": "plan_models",
     "SlotAction": "action_models",
     "SlotMapping": "store_models",
@@ -35,7 +33,6 @@ _OWNER_SYMBOLS = {
     "compute_desired_plan": "desired",
     "compute_stateless_plan": "stateless",
     "extract_booking_aliases": "identity",
-    "find_reservation_rematch": "rematch",
     "make_reservation_fingerprint": "identity",
     "normalize_slot_name_for_fingerprint": "identity",
 }

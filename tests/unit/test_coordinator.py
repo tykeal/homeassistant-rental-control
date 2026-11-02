@@ -6813,8 +6813,8 @@ class TestCoordinatorRehydration:
     ) -> None:
         """T087-4: Identity aliases (uid_aliases, booking_aliases) survive load.
 
-        These aliases are used by find_reservation_rematch for UID-churn
-        and booking-platform alias matching after a restart.
+        These aliases feed UID-churn and booking-platform alias handling
+        after a restart.
         """
         from custom_components.rental_control.coordinator import (
             RentalControlCoordinator,
