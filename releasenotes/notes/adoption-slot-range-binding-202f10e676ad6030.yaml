@@ -1,0 +1,10 @@
+---
+fixes:
+  - |
+    After the door code registry is lost, an entry with a lock now counts
+    as having read its lock only for the slot range it actually read.
+    Widening or moving an entry's starting slot or number of managed
+    slots withdraws that standing until a refresh reads the new slots,
+    so entries without a lock do not get a code that one of the newly
+    managed slots may already hold. Narrowing the range keeps it.
+    Diagnostics now list the lock and slots each entry has read.
