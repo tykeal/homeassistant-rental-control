@@ -42,8 +42,15 @@ from .store import RegistryStore
 from .store import code_ref_for
 
 _LOGGER = logging.getLogger(__name__)
-_ADOPTION_GATE_WARNING_SECONDS = 300.0
+_ADOPTION_GATE_WARNING_SECONDS = recovery.ADOPTION_GATE_WARNING_SECONDS
 _GATE_NOTIFICATION_ID = f"{DOMAIN}_code_registry_adoption_pending"
+_REGISTRY_LOST_NOTICE = (
+    " The door code registry was lost or found corrupt, so codes resume "
+    "only once every entry with a lock has read its whole slot range "
+    "again. A lock that cannot be reached keeps codes withheld until it "
+    "is back online; exclude a permanently dead slot with the "
+    "rental_control.set_slot_exclusion action."
+)
 
 
 class DoorCodeAllocator:
@@ -209,7 +216,9 @@ class DoorCodeAllocator:
             self._warn_if_gate_expired()
             result = self._allocate_unlocked(request)
             if result.code is not None and (
-                not self._registry_lost or self._registry_missing
+                not self._registry_lost
+                or self._registry_missing
+                or recovery.rebuilt_registry_trusted(self)
             ):
                 self._store.async_save(self._registry)
                 self._registry_lost = False
@@ -251,6 +260,7 @@ class DoorCodeAllocator:
                 "locks still has a slot that has not been read, no other "
                 "entry issues new door codes either, because every entry "
                 "shares one door code space."
+                + (_REGISTRY_LOST_NOTICE if self._registry_lost else "")
             ),
             title=f"{NAME} code adoption pending",
             notification_id=_GATE_NOTIFICATION_ID,

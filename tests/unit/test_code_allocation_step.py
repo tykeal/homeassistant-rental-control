@@ -1249,8 +1249,17 @@ async def test_recovery_fail_closed_for_published_identity() -> None:
 
 
 async def test_corrupt_registry_fails_closed_for_new_identity() -> None:
-    """Corrupt registry recovery blocks all new issuance."""
+    """A corrupt registry blocks new issuance while a lock is unobserved."""
     allocator = _allocator()
+    allocator.hass.config_entries = SimpleNamespace(
+        async_entries=lambda _domain=None: [
+            SimpleNamespace(
+                entry_id="entry-lock",
+                disabled_by=None,
+                data={"keymaster_entry_id": "front", "start_slot": 1, "max_events": 1},
+            )
+        ]
+    )
     allocator._registry_lost = True
     allocator._registry_missing = False
 

@@ -76,6 +76,7 @@ def allocator_diagnostics(allocator: DoorCodeAllocator) -> dict[str, Any]:
         "gate_deadline": allocator._gate_deadline,
         "registry_lost": allocator._registry_lost,
         "registry_missing": allocator._registry_missing,
+        "unobserved_lock_entries": sorted(recovery.unobserved_lock_entries(allocator)),
     }
 
 

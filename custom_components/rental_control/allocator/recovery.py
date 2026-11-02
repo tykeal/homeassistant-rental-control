@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import logging
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from ..const import CONF_EXCLUDED_SLOTS
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
 
 _LOGGER = logging.getLogger(__name__)
+ADOPTION_GATE_WARNING_SECONDS = 300.0
 
 
 def entry_has_lock(data: object) -> bool:
@@ -80,6 +82,21 @@ def is_observed(adopted: ObservedLock | None, data: object) -> bool:
     )
 
 
+def needs_readoption(allocator: DoorCodeAllocator, entry_id: str, data: object) -> bool:
+    """Return whether a config change exposes slots no cycle has read.
+
+    The options listener updates an entry in place, without the reload
+    that would re-register it. Moving it to another lock, or widening
+    its range, exposes slots that may hold codes the registry never saw,
+    whether or not a lost registry is still being rebuilt.
+    """
+    return (
+        configured_lockname(data) is not None
+        and entry_id not in allocator._pending_adoption
+        and not is_observed(allocator._adopted_locks.get(entry_id), data)
+    )
+
+
 def gate_entries(hass: object, *, include_disabled: bool) -> set[str]:
     """Return lock-backed entries the adoption gate must wait for.
 
@@ -125,6 +142,9 @@ def describe_pending_entry(
     slots = sorted(allocator._pending_adoption_slots.get(entry_id, ()))
     if not slots:
         return label
+    configured = configured_slots(entry_info.entry_config(allocator.hass, entry_id))
+    if configured and configured <= set(slots):
+        return f"{label} (lock unreachable: none of its slots can be read)"
     noun = "slots" if len(slots) > 1 else "slot"
     return f"{label} (unreadable {noun} {', '.join(map(str, slots))})"
 
@@ -210,6 +230,37 @@ def unobserved_lock_entries(allocator: DoorCodeAllocator) -> frozenset[str]:
         if entry_has_lock(data := getattr(entry, "data", {}))
         and not is_observed(adopted.get(entry.entry_id), data)
     )
+
+
+def rebuilt_registry_trusted(allocator: DoorCodeAllocator) -> bool:
+    """Return whether a registry rebuilt after a loss accounts for every lock.
+
+    Adoption re-registers every code a lock presents, so once no entry
+    is pending and every configured lock-backed entry has adopted its
+    current lock and slot range (#856), the rebuilt registry holds every
+    code those locks present. That holds whether the stored registry was
+    absent or corrupt (#851). A slot the operator excluded counts as
+    read, as it does for adoption; a lock that cannot be reached never
+    adopts, so it keeps the registry untrusted.
+    """
+    return not allocator._pending_adoption and not unobserved_lock_entries(allocator)
+
+
+def reopen_adoption(allocator: DoorCodeAllocator, entry_id: str) -> None:
+    """Return an adopted entry to the gate after its lock stops reading.
+
+    While the registry is lost, an entry that loses its adoption keeps
+    the rebuilt registry untrusted. Putting it back in the gate keeps
+    issuance withheld through the same path as before it adopted, and
+    lets the pending notification name it and say why: a notice that
+    already went out without it is re-armed so it is sent again.
+    """
+    if entry_id in allocator._pending_adoption:
+        return
+    allocator._pending_adoption.add(entry_id)
+    if allocator._gate_deadline == 0.0 or allocator._gate_warning_sent:
+        allocator._gate_deadline = monotonic() + ADOPTION_GATE_WARNING_SECONDS
+        allocator._gate_warning_sent = False
 
 
 def lockless_recovery_allowed(
@@ -327,7 +378,8 @@ def issuance_block(
     if adoption_blocks(allocator, request.entry_id):
         return AllocationResult(code=None, reason="adoption_pending"), False
     if not allocator._registry_lost or not (
-        request.previously_published or not allocator._registry_missing
+        request.previously_published
+        or not (allocator._registry_missing or rebuilt_registry_trusted(allocator))
     ):
         return None, False
     if not lockless_recovery_allowed(allocator, request, lockless_cycle=lockless_cycle):
@@ -348,6 +400,7 @@ def issuance_block(
 
 
 __all__ = [
+    "ADOPTION_GATE_WARNING_SECONDS",
     "adoption_blocks",
     "continuity_required",
     "configured_lockname",
@@ -359,8 +412,11 @@ __all__ = [
     "gate_entries",
     "keeps_gate_closed",
     "origin_proven",
+    "needs_readoption",
     "pending_lock_codes",
     "read_lock_codes",
+    "rebuilt_registry_trusted",
+    "reopen_adoption",
     "issuance_block",
     "lockless_recovery_allowed",
     "unobserved_lock_entries",
