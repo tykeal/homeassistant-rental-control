@@ -1,0 +1,13 @@
+---
+fixes:
+  - |
+    A config entry with a lock that is still waiting for its first
+    adoption cycle no longer withholds door codes from every other entry
+    once the integration has read every slot of its lock. If the entry
+    is waiting only because its lock holds a code that matches no
+    reservation, it withholds codes for itself alone, and no other entry
+    receives a code read from that lock. A lock that the integration has
+    not read in full still withholds codes from every entry, because any
+    code could already sit in it, and so does a lost or corrupt code
+    registry. Diagnostics list the waiting entries whose lock the
+    integration has read in full.
