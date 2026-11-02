@@ -24,6 +24,7 @@ from .models import CycleObservation
 from .models import CycleRequest
 from .models import CycleResult
 from .models import ForcedReissueDirective
+from .models import ObservedLock
 from .models import ReissueOutcome
 from .registry import AllocationRegistry
 
@@ -302,9 +303,10 @@ def _record_adoption(
 ) -> None:
     """Update what the allocator has observed of an entry's lock.
 
-    A complete cycle with nothing unaccounted records the lock it read,
-    which is what the recovery safeguards check against the lock the
-    entry is currently configured for. An incomplete cycle withdraws
+    A complete cycle with nothing unaccounted records the lock and the
+    managed slots it read, which is what the recovery safeguards check
+    against the lock and slot range the entry is currently configured
+    for. An incomplete cycle withdraws
     that record instead: it leaves a code in the lock that the registry
     never saw, so the entry no longer vouches for it.
     """
@@ -316,7 +318,9 @@ def _record_adoption(
     if not sound:
         return
     if lockname is not None:
-        allocator._adopted_locks[entry_id] = lockname
+        allocator._adopted_locks[entry_id] = ObservedLock(
+            lockname, request.observation.managed_slots
+        )
     allocator._pending_adoption.discard(entry_id)
     if not allocator._pending_adoption:
         allocator._gate_deadline = 0.0

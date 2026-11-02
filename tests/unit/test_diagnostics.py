@@ -23,6 +23,7 @@ from custom_components.rental_control import diagnostics as diagnostics_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.candidates import candidate_codes
 from custom_components.rental_control.allocator.models import AllocationRequest
+from custom_components.rental_control.allocator.models import ObservedLock
 from custom_components.rental_control.codegen import generate_date_based_code
 from custom_components.rental_control.const import ALLOCATOR
 from custom_components.rental_control.const import COORDINATOR
@@ -193,7 +194,7 @@ async def _allocator(
     # The entry is lock-backed, so the adoption gate holds it until a cycle
     # has observed the lock; stand in for that cycle to reach allocation.
     allocator._pending_adoption.discard(entry_id)
-    allocator._adopted_locks[entry_id] = "front_door"
+    allocator._adopted_locks[entry_id] = ObservedLock("front_door", frozenset({10}))
     await allocator.async_allocate(
         AllocationRequest(
             entry_id="entry-diag",
@@ -219,6 +220,9 @@ async def test_diagnostics_report_allocator_and_slot_state(
     result = await async_get_config_entry_diagnostics(hass, entry)
 
     assert result["allocator"]["record_count"] == 1
+    assert result["allocator"]["adopted_locks"] == {
+        "entry-diag": {"lockname": "front_door", "slots": [10]}
+    }
     token = result["reservations"][0]["identity_key"]
     assert token == TOKEN_A
     assert result["reconciliation"]["selected"] == {token: 10}

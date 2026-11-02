@@ -19,7 +19,6 @@ from ..const import NAME
 from . import adoption
 from . import adoption_reports
 from . import diagnostics
-from . import entry_info
 from . import issuance
 from . import orphans
 from . import recovery
@@ -33,6 +32,7 @@ from .models import AllocationResult
 from .models import CycleObservation
 from .models import CycleRequest
 from .models import CycleResult
+from .models import ObservedLock
 from .models import OrphanCleanupReport
 from .models import ReissuePreview
 from .models import ReissuePreviewRequest
@@ -57,7 +57,7 @@ class DoorCodeAllocator:
         self._lock = asyncio.Lock()
         self._registry_lost = False
         self._pending_adoption = self._seed_pending_adoption()
-        self._adopted_locks: dict[str, str] = {}
+        self._adopted_locks: dict[str, ObservedLock] = {}
         self._pending_adoption_slots: dict[str, frozenset[int]] = {}
         self._gate_deadline = (
             monotonic() + _ADOPTION_GATE_WARNING_SECONDS
@@ -226,7 +226,7 @@ class DoorCodeAllocator:
         ):
             return
         pending = ", ".join(
-            self._describe_pending_entry(entry_id)
+            recovery.describe_pending_entry(self, entry_id)
             for entry_id in sorted(self._pending_adoption)
         )
         _LOGGER.warning(
@@ -235,7 +235,7 @@ class DoorCodeAllocator:
             pending,
         )
         named = ", ".join(
-            self._describe_pending_entry(entry_id, friendly=True)
+            recovery.describe_pending_entry(self, entry_id, friendly=True)
             for entry_id in sorted(self._pending_adoption)
         )
         async_create(
@@ -250,25 +250,6 @@ class DoorCodeAllocator:
             notification_id=_GATE_NOTIFICATION_ID,
         )
         self._gate_warning_sent = True
-
-    def _describe_pending_entry(self, entry_id: str, *, friendly: bool = False) -> str:
-        """Return a pending entry label annotated with its blocking slots.
-
-        The log is addressed to a maintainer and keeps the entry id; a
-        notification is addressed to the user, who knows the entry by
-        the name they gave it.
-        """
-        label = entry_info.entry_name(self.hass, entry_id) if friendly else entry_id
-        if recovery.entry_is_disabled(self.hass, entry_id):
-            return (
-                f"{label} (disabled: enable it so its lock is read, or clear "
-                "its codes from the lock and delete it)"
-            )
-        slots = sorted(self._pending_adoption_slots.get(entry_id, ()))
-        if not slots:
-            return label
-        noun = "slots" if len(slots) > 1 else "slot"
-        return f"{label} (unreadable {noun} {', '.join(map(str, slots))})"
 
     async def async_sweep(
         self, observation: CycleObservation, active_keys: set[str]

@@ -9,12 +9,16 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..const import CONF_LOCK_ENTRY
+from ..const import CONF_MAX_EVENTS
+from ..const import CONF_START_SLOT
 from ..const import DOMAIN
 from ..helpers import configured_lock_entry
 from ..helpers import configured_lock_slug
+from . import entry_info
 from .models import AllocationOrigin
 from .models import AllocationRequest
 from .models import AllocationResult
+from .models import ObservedLock
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
@@ -39,6 +43,39 @@ def configured_lockname(data: object) -> str | None:
     if not isinstance(data, Mapping):
         return None
     return configured_lock_slug(data.get(CONF_LOCK_ENTRY))
+
+
+def configured_slots(data: object) -> frozenset[int] | None:
+    """Return the managed slot range an entry is configured for.
+
+    ``None`` means the range cannot be read, which no adoption covers.
+    """
+    if not isinstance(data, Mapping):
+        return None
+    try:
+        start = int(str(data.get(CONF_START_SLOT)))
+        count = int(str(data.get(CONF_MAX_EVENTS)))
+    except ValueError:
+        return None
+    return frozenset(range(start, start + count))
+
+
+def is_observed(adopted: ObservedLock | None, data: object) -> bool:
+    """Return whether an adoption covers the entry's current lock and range.
+
+    The lock must be the one read, and every configured slot must have
+    been read: widening or moving the range exposes slots that may hold
+    codes the registry never saw (#856). Narrowing it does not.
+    """
+    lockname = configured_lockname(data)
+    slots = configured_slots(data)
+    return (
+        adopted is not None
+        and lockname is not None
+        and adopted.lockname == lockname
+        and slots is not None
+        and slots <= adopted.slots
+    )
 
 
 def gate_entries(hass: object, *, include_disabled: bool) -> set[str]:
@@ -66,6 +103,28 @@ def entry_is_disabled(hass: object, entry_id: str) -> bool:
     get_entry = getattr(entries, "async_get_entry", None)
     entry = get_entry(entry_id) if callable(get_entry) else None
     return entry is not None and getattr(entry, "disabled_by", None) is not None
+
+
+def describe_pending_entry(
+    allocator: DoorCodeAllocator, entry_id: str, *, friendly: bool = False
+) -> str:
+    """Return a pending entry label annotated with its blocking slots.
+
+    The log is addressed to a maintainer and keeps the entry id; a
+    notification is addressed to the user, who knows the entry by
+    the name they gave it.
+    """
+    label = entry_info.entry_name(allocator.hass, entry_id) if friendly else entry_id
+    if entry_is_disabled(allocator.hass, entry_id):
+        return (
+            f"{label} (disabled: enable it so its lock is read, or clear "
+            "its codes from the lock and delete it)"
+        )
+    slots = sorted(allocator._pending_adoption_slots.get(entry_id, ()))
+    if not slots:
+        return label
+    noun = "slots" if len(slots) > 1 else "slot"
+    return f"{label} (unreadable {noun} {', '.join(map(str, slots))})"
 
 
 def keeps_gate_closed(allocator: DoorCodeAllocator, entry_id: str) -> bool:
@@ -134,20 +193,20 @@ def unobserved_lock_entries(allocator: DoorCodeAllocator) -> frozenset[str]:
     unregisters an entry whose setup fails, so the gate can be empty
     while codes stay programmed in a lock. Adoption is therefore tracked
     positively in ``_adopted_locks``, from cycles that actually
-    completed, and against the lock that was read: an entry whose
-    options later point at a different lock has not observed that one,
-    and an entry whose latest cycle was incomplete has stopped observing
-    its own.
+    completed, and against the lock and slots that were read: an entry
+    whose options later point at a different lock or a wider range has
+    not observed it, and an entry whose latest cycle was incomplete has
+    stopped observing its own.
     """
     entries = getattr(allocator.hass, "config_entries", None)
     if entries is None:
         return frozenset()
-    adopted: Mapping[str, str] = getattr(allocator, "_adopted_locks", {})
+    adopted: Mapping[str, ObservedLock] = getattr(allocator, "_adopted_locks", {})
     return frozenset(
         entry.entry_id
         for entry in entries.async_entries(DOMAIN)
-        if (lockname := configured_lockname(getattr(entry, "data", {}))) is not None
-        and adopted.get(entry.entry_id) != lockname
+        if entry_has_lock(data := getattr(entry, "data", {}))
+        and not is_observed(adopted.get(entry.entry_id), data)
     )
 
 
@@ -236,6 +295,9 @@ def issuance_block(
 __all__ = [
     "continuity_required",
     "configured_lockname",
+    "configured_slots",
+    "describe_pending_entry",
+    "is_observed",
     "entry_has_lock",
     "entry_is_disabled",
     "gate_entries",
