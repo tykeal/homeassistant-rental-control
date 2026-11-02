@@ -21,6 +21,7 @@ from custom_components.rental_control.allocator.models import AllocationOwner
 from custom_components.rental_control.allocator.models import AllocationRecord
 from custom_components.rental_control.allocator.reissue import forced_release_hold_key
 from custom_components.rental_control.coordinator_helpers import code_allocation
+from custom_components.rental_control.coordinator_helpers import cycle_requests
 from custom_components.rental_control.coordinator_helpers import reissue
 from custom_components.rental_control.coordinator_helpers.checkin_protection import (
     build_protected_reservation,
@@ -121,7 +122,7 @@ def test_adoption_requests_skip_only_suppressed_target() -> None:
     """Suppression skips the target's adoption and leaves peers unchanged."""
     first = _reservation("identity-a", "Target Guest", "1234")
     second = _reservation("identity-b", "Other Guest", "5678")
-    requests = code_allocation.build_adoption_requests(
+    requests = cycle_requests.build_adoption_requests(
         "entry-a",
         "front",
         4,
@@ -208,7 +209,7 @@ def test_slot_suppression_skips_protected_adoption_only() -> None:
     protected = _reservation("identity-b", "Target Guest", "1234")
     protected.protected_active = True
 
-    live_requests = code_allocation.build_adoption_requests(
+    live_requests = cycle_requests.build_adoption_requests(
         "entry-a",
         "front",
         4,
@@ -216,7 +217,7 @@ def test_slot_suppression_skips_protected_adoption_only() -> None:
         [live],
         reissue.ReissueSuppression(frozenset(), frozenset({1})),
     )
-    protected_requests = code_allocation.build_adoption_requests(
+    protected_requests = cycle_requests.build_adoption_requests(
         "entry-a",
         "front",
         4,
@@ -233,7 +234,7 @@ def test_suppressed_target_consumes_slot_before_peer_fallback() -> None:
     """A peer cannot adopt the suppressed target's old physical code."""
     first = _reservation("identity-a", "Same Guest", "1234")
     second = _reservation("identity-b", "Same Guest", "5678")
-    requests = code_allocation.build_adoption_requests(
+    requests = cycle_requests.build_adoption_requests(
         "entry-a",
         "front",
         4,

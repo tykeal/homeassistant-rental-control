@@ -18,7 +18,7 @@ import pytest
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import ReissuePreviewRequest
 from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
-from custom_components.rental_control.coordinator_helpers import code_allocation
+from custom_components.rental_control.coordinator_helpers import slot_exclusions
 from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import SlotStatus
 
@@ -134,7 +134,7 @@ async def test_removed_exclusion_makes_the_read_lock_unread() -> None:
     )
     with pytest.MonkeyPatch.context() as patcher:
         patcher.setattr(
-            code_allocation, "_revalidated_exclusions", lambda *_args: {2: None}
+            slot_exclusions, "revalidate_persisted", lambda *_args: {2: None}
         )
         await _read_unmatched_lock(allocator, unreadable=True)
     assert allocator.diagnostics["pending_adoption_read"] == ["entry-lock"]

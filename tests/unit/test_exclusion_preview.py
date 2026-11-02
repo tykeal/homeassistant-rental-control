@@ -39,7 +39,7 @@ def _isolate_preview(monkeypatch: pytest.MonkeyPatch) -> None:
         reissue_preview, "build_preview_request", lambda *_a, **_k: "request"
     )
     monkeypatch.setattr(
-        reissue_preview.code_allocation,
+        reissue_preview.cycle_requests,
         "build_cycle_observation",
         lambda entry_id, lockname, _slots: CycleObservation(
             entry_id=entry_id,
@@ -160,7 +160,7 @@ async def test_preview_forwards_exclusions_to_the_adoption_check(
         reissue_preview, "build_preview_request", lambda *_a, **_k: "request"
     )
     monkeypatch.setattr(
-        reissue_preview.code_allocation,
+        reissue_preview.cycle_requests,
         "build_cycle_observation",
         lambda entry_id, lockname, _slots: CycleObservation(
             entry_id=entry_id,
@@ -171,12 +171,12 @@ async def test_preview_forwards_exclusions_to_the_adoption_check(
         ),
     )
     monkeypatch.setattr(
-        reissue_preview.code_allocation, "build_adoption_requests", lambda *_a: []
+        reissue_preview.cycle_requests, "build_adoption_requests", lambda *_a: []
     )
     monkeypatch.setattr(reissue_preview, "preview_reservations", lambda *_a: [])
     monkeypatch.setattr(
-        reissue_preview.code_allocation,
-        "_adoption_complete",
+        reissue_preview.adoption_gate,
+        "is_complete",
         _capture(seen),
     )
 

@@ -36,10 +36,10 @@ from freezegun import freeze_time
 import pytest
 
 from custom_components.rental_control.codegen import generate_slot_code
-from custom_components.rental_control.coordinator_helpers.code_allocation import (
+from custom_components.rental_control.coordinator_helpers.cycle_requests import (
     build_adoption_requests,
 )
-from custom_components.rental_control.coordinator_helpers.code_allocation import (
+from custom_components.rental_control.coordinator_helpers.cycle_requests import (
     build_rekey_requests,
 )
 from custom_components.rental_control.coordinator_helpers.models import (

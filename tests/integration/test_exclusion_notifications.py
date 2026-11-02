@@ -17,6 +17,8 @@ from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import slot_exclusions
+from custom_components.rental_control.coordinator_helpers import slot_notifications
+from custom_components.rental_control.coordinator_helpers import unreadable_slots
 from custom_components.rental_control.coordinator_helpers.reissue import (
     CodeResolutionRequest,
 )
@@ -44,9 +46,8 @@ def notifications(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         live.pop(notification_id, None)
 
     monkeypatch.setattr(code_allocation, "async_create", _create)
-    monkeypatch.setattr(code_allocation, "async_dismiss", _dismiss)
-    monkeypatch.setattr(slot_exclusions, "async_create", _create)
-    monkeypatch.setattr(slot_exclusions, "async_dismiss", _dismiss)
+    monkeypatch.setattr(slot_notifications, "async_create", _create)
+    monkeypatch.setattr(slot_notifications, "async_dismiss", _dismiss)
     return live
 
 
@@ -112,7 +113,7 @@ async def test_unexcluded_dead_slot_reports_only_the_block(
     await _cycle(_hass(None), _slots())
 
     assert set(notifications) == {
-        code_allocation.unreadable_slots_notification_id("entry-a")
+        unreadable_slots.unreadable_slots_notification_id("entry-a")
     }
 
 
@@ -155,7 +156,9 @@ async def test_unreadable_notice_names_only_blocking_slots(
 
     await _cycle(_hass([{"slot": _DEAD_SLOT}]), slots)
 
-    message = notifications[code_allocation.unreadable_slots_notification_id("entry-a")]
+    message = notifications[
+        unreadable_slots.unreadable_slots_notification_id("entry-a")
+    ]
     assert "slot 12" in message
     assert str(_DEAD_SLOT) not in message
 
@@ -194,5 +197,5 @@ async def test_withdrawing_the_last_exclusion_dismisses_the_notice(
     await _cycle(hass, _slots())
 
     assert set(notifications) == {
-        code_allocation.unreadable_slots_notification_id("entry-a")
+        unreadable_slots.unreadable_slots_notification_id("entry-a")
     }

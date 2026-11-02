@@ -16,7 +16,8 @@ import pytest
 from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.coordinator_helpers import code_allocation
-from custom_components.rental_control.coordinator_helpers import slot_exclusions
+from custom_components.rental_control.coordinator_helpers import cycle_requests
+from custom_components.rental_control.coordinator_helpers import slot_notifications
 from custom_components.rental_control.coordinator_helpers.reissue import (
     AdoptionRequests,
 )
@@ -36,10 +37,9 @@ from tests.fixtures.fake_hass import fake_config
 @pytest.fixture(autouse=True)
 def _inert_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep persistent notifications out of these allocator tests."""
-    monkeypatch.setattr(slot_exclusions, "async_create", lambda *_a, **_k: None)
-    monkeypatch.setattr(slot_exclusions, "async_dismiss", lambda *_a, **_k: None)
     monkeypatch.setattr(code_allocation, "async_create", lambda *_a, **_k: None)
-    monkeypatch.setattr(code_allocation, "async_dismiss", lambda *_a, **_k: None)
+    monkeypatch.setattr(slot_notifications, "async_create", lambda *_a, **_k: None)
+    monkeypatch.setattr(slot_notifications, "async_dismiss", lambda *_a, **_k: None)
     monkeypatch.setattr(allocator_module, "async_create", lambda *_a, **_k: None)
 
 
@@ -162,7 +162,7 @@ def test_rotation_pending_slot_reserves_its_observed_code() -> None:
 
     requests = cast(
         AdoptionRequests,
-        code_allocation.build_adoption_requests(
+        cycle_requests.build_adoption_requests(
             "entry-a", "front", 4, [target_slot], [target]
         ),
     )
@@ -179,7 +179,7 @@ def test_non_decimal_invalid_code_slot_reserves_nothing() -> None:
     """A non-decimal observed code cannot collide, so it reserves nothing."""
     requests = cast(
         AdoptionRequests,
-        code_allocation.build_adoption_requests(
+        cycle_requests.build_adoption_requests(
             "entry-a",
             "front",
             4,
@@ -201,7 +201,7 @@ def test_wrong_length_invalid_code_slot_is_reserved() -> None:
     """
     requests = cast(
         AdoptionRequests,
-        code_allocation.build_adoption_requests(
+        cycle_requests.build_adoption_requests(
             "entry-a",
             "front",
             4,

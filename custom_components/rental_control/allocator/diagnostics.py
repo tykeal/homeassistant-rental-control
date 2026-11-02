@@ -137,7 +137,7 @@ def _forced_release_holds(allocator: DoorCodeAllocator) -> list[dict[str, Any]]:
 
 def _collect_observations(allocator: DoorCodeAllocator) -> list[Any]:
     """Return current coordinator observations for diagnostics."""
-    from ..coordinator_helpers.code_allocation import build_cycle_observation
+    from ..coordinator_helpers.cycle_requests import build_cycle_observation
 
     observations = []
     for entry_id, entry_data in allocator.hass.data.get(DOMAIN, {}).items():

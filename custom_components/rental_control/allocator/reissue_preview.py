@@ -8,7 +8,8 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
-from ..coordinator_helpers import code_allocation
+from ..coordinator_helpers import adoption_gate
+from ..coordinator_helpers import cycle_requests
 from ..coordinator_helpers import keymaster_observation
 from ..coordinator_helpers import physical_remap
 from ..coordinator_helpers import reissue as coordinator_reissue
@@ -107,7 +108,7 @@ async def preview_request_and_result(
         return request, ReissuePreview(reason="recovery_fail_closed")
     if target.identity_key is not None and request.preferred_code is None:
         return request, ReissuePreview(reason="no_existing_allocation")
-    observation = code_allocation.build_cycle_observation(
+    observation = cycle_requests.build_cycle_observation(
         target.entry_id, target.lockname, observed_slots
     )
     excluded = frozenset(slot_exclusions.load(coordinator.hass, target.entry_id))
@@ -173,7 +174,7 @@ def _adoption_would_complete(
         else frozenset(),
     )
     reservations = preview_reservations(coordinator, target, observed_slots)
-    adoptions = code_allocation.build_adoption_requests(
+    adoptions = cycle_requests.build_adoption_requests(
         target.entry_id,
         target.lockname,
         coordinator.code_length,
@@ -181,7 +182,7 @@ def _adoption_would_complete(
         reservations,
         suppression,
     )
-    return code_allocation._adoption_complete(
+    return adoption_gate.is_complete(
         observation, adoptions, observed_slots, suppression, excluded=excluded
     )
 

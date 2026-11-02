@@ -46,8 +46,8 @@ from .coordinator import RentalControlCoordinator
 from .coordinator_helpers import allocation_failure
 from .coordinator_helpers import generator_divergence
 from .coordinator_helpers.adoption_gate import forget_entry as forget_gate_report
-from .coordinator_helpers.code_allocation import dismiss_unreadable_slots
 from .coordinator_helpers.slot_exclusions import dismiss_excluded_slots
+from .coordinator_helpers.unreadable_slots import dismiss_unreadable_slots
 from .helpers import configured_lock_entry
 from .listeners import (
     async_register_keymaster_listener as async_register_keymaster_listener,

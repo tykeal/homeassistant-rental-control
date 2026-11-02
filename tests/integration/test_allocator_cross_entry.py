@@ -16,6 +16,7 @@ import pytest
 
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AllocationOrigin
+from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.store import RegistryStore
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.reconciliation import ManagedSlot
@@ -82,7 +83,7 @@ async def test_full_code_space_is_shared_not_partitioned() -> None:
     """Every entry can use any code not already held by another identity."""
     allocator = _allocator()
     first = await allocator.async_allocate(
-        code_allocation.AllocationRequest(
+        AllocationRequest(
             entry_id="entry-a",
             identity_key="identity-a",
             preferred_code="1234",
@@ -90,7 +91,7 @@ async def test_full_code_space_is_shared_not_partitioned() -> None:
         )
     )
     second = await allocator.async_allocate(
-        code_allocation.AllocationRequest(
+        AllocationRequest(
             entry_id="entry-b",
             identity_key="identity-b",
             preferred_code="5678",

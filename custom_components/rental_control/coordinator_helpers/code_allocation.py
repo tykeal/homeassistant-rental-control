@@ -7,38 +7,29 @@ from __future__ import annotations
 from dataclasses import replace
 import logging
 from typing import TYPE_CHECKING
-import uuid
+from typing import Any
 
 from homeassistant.components.persistent_notification import async_create
-from homeassistant.components.persistent_notification import async_dismiss
-from homeassistant.util import dt
 
 from ..allocator import code_origin
 from ..allocator import entry_info
 from ..allocator import get_allocator
-from ..allocator.models import AdoptionRequest
-from ..allocator.models import AllocationOrigin
-from ..allocator.models import AllocationRequest
-from ..allocator.models import AllocationResult
 from ..allocator.models import CycleObservation
 from ..allocator.models import CycleRequest
 from ..allocator.models import CycleResult
 from ..const import DOMAIN
 from ..const import NAME
-from ..reconciliation import SlotStatus
-from ..reconciliation import compute_desired_plan
-from ..reconciliation.desired import select_eligible_reservations
 from . import adoption_gate
+from . import cycle_requests
+from . import cycle_results
 from . import generator_divergence
 from . import reissue
 from . import slot_exclusions
-from .models import ObservedSlotQuery
+from . import unreadable_slots
 from .reissue import CodeResolutionRequest
 from .reissue import CodeResolutionResult
-from .reissue import ReissueSuppression
 from .rotation_guard import RotationGuardTarget
 from .rotation_guard import require_owned_code_for_rotation
-from .slot_matching import find_observed_slot
 
 if TYPE_CHECKING:
     from ..reconciliation import ManagedSlot
@@ -46,11 +37,6 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _EXHAUSTED_NOTIFICATION_ID = f"{DOMAIN}_code_registry_exhausted"
-_UNREADABLE_NOTIFICATION_ID = f"{DOMAIN}_unreadable_slots"
-_ISSUED_ORIGINS = {
-    origin.value: origin
-    for origin in (AllocationOrigin.PREFERRED, AllocationOrigin.COLLISION_RESOLVED)
-}
 
 
 async def async_resolve_codes(
@@ -65,82 +51,126 @@ async def async_resolve_codes(
     request = reissue.coerce_code_resolution_request(
         request, entry_id, lockname, code_length, managed_slots, reservations
     )
-    hass = request.hass
-    entry_id = request.entry_id
-    lockname = request.lockname
-    code_length = request.code_length
-    managed_slots = request.managed_slots
-    reservations = request.reservations
     consumed_target_keys = tuple(
         reissue.target_key(directive.identity_key, directive.lockname, directive.slot)
         for directive in request.forced_reissues
     )
-    observation = build_cycle_observation(entry_id, lockname, managed_slots)
-    exclusions = _revalidated_exclusions(hass, entry_id, lockname, observation)
-    slot_exclusions.report_excluded_slots(hass, entry_id, lockname, exclusions)
-    request = replace(request, excluded_slots=frozenset(exclusions))
-    allocator = get_allocator(hass)
+    observation = cycle_requests.build_cycle_observation(
+        request.entry_id, request.lockname, request.managed_slots
+    )
+    request = _with_revalidated_exclusions(request, observation)
+    allocator = get_allocator(request.hass)
     if allocator is None:
-        _LOGGER.error(
-            "Rental Control entry %s cannot issue door codes because the "
-            "shared door code allocator is not available. No door codes will "
-            "be created or updated for any entry until Home Assistant is "
-            "restarted; please report this with the preceding log lines",
-            entry_id,
-        )
-        for reservation in reservations:
-            reservation.slot_code = None
-            reservation.code_source = "unallocated"
+        _withhold_without_allocator(request)
         return CodeResolutionResult(observation, (), consumed_target_keys)
+    request = _guard_and_rotate(request, allocator)
+    result = await allocator.async_resolve_cycle(
+        _gated_cycle_request(request, observation)
+    )
+    _record_cycle_outcome(request, observation, allocator, result)
+    return CodeResolutionResult(
+        observation, getattr(result, "reissues", ()), consumed_target_keys
+    )
+
+
+def _with_revalidated_exclusions(
+    request: CodeResolutionRequest, observation: CycleObservation
+) -> CodeResolutionRequest:
+    """Return the request carrying this cycle's still-justified exclusions."""
+    exclusions = slot_exclusions.revalidate_persisted(
+        request.hass, request.entry_id, request.lockname, observation
+    )
+    slot_exclusions.report_excluded_slots(
+        request.hass, request.entry_id, request.lockname, exclusions
+    )
+    return replace(request, excluded_slots=frozenset(exclusions))
+
+
+def _withhold_without_allocator(request: CodeResolutionRequest) -> None:
+    """Log the missing shared allocator and hold every reservation codeless."""
+    _LOGGER.error(
+        "Rental Control entry %s cannot issue door codes because the "
+        "shared door code allocator is not available. No door codes will "
+        "be created or updated for any entry until Home Assistant is "
+        "restarted; please report this with the preceding log lines",
+        request.entry_id,
+    )
+    cycle_results.withhold_codes(request.reservations)
+
+
+def _guard_and_rotate(
+    request: CodeResolutionRequest, allocator: Any
+) -> CodeResolutionRequest:
+    """Enforce owned-code rotation and add earned generator rotations."""
     require_owned_code_for_rotation(
-        RotationGuardTarget(allocator, entry_id, lockname, managed_slots),
-        reservations,
-        _matched_code_slot,
+        RotationGuardTarget(
+            allocator, request.entry_id, request.lockname, request.managed_slots
+        ),
+        request.reservations,
+        cycle_requests.matched_code_slot,
     )
-    code_origin.record_cycle_evidence(entry_id, reservations)
-    request = generator_divergence.rotate_stale_codes(
-        request, allocator, _matched_code_slot
+    code_origin.record_cycle_evidence(request.entry_id, request.reservations)
+    return generator_divergence.rotate_stale_codes(
+        request, allocator, cycle_requests.matched_code_slot
     )
-    adoptions = build_adoption_requests(
+
+
+def _gated_cycle_request(
+    request: CodeResolutionRequest, observation: CycleObservation
+) -> CycleRequest:
+    """Build the allocator cycle request, allocating only past the gate."""
+    entry_id = request.entry_id
+    lockname = request.lockname
+    adoptions = cycle_requests.build_adoption_requests(
         entry_id,
         lockname,
-        code_length,
-        managed_slots,
-        reservations,
+        request.code_length,
+        request.managed_slots,
+        request.reservations,
         request.suppression,
     )
     gate_status = adoption_gate.evaluate(
         observation,
         adoptions,
-        managed_slots,
+        request.managed_slots,
         request.suppression,
         excluded=request.excluded_slots,
     )
     adoption_gate.report(entry_id, lockname, gate_status)
-    adoption_complete = gate_status.complete
     allocations = (
-        build_allocation_requests(
-            entry_id, lockname, code_length, managed_slots, reservations
+        cycle_requests.build_allocation_requests(
+            entry_id,
+            lockname,
+            request.code_length,
+            request.managed_slots,
+            request.reservations,
         )
-        if adoption_complete
+        if gate_status.complete
         else []
     )
-    result = await allocator.async_resolve_cycle(
-        CycleRequest(
-            observation=observation,
-            adoptions=adoptions,
-            rekeys=build_rekey_requests(reservations),
-            allocations=allocations,
-            active_keys=_active_keys(reservations, lockname),
-            adoption_complete=adoption_complete,
-            forced_reissues=request.forced_reissues,
-            excluded_slots=request.excluded_slots,
-            observed_reservations=tuple(
-                getattr(adoptions, "observed_reservations", ())
-            ),
-        )
+    return CycleRequest(
+        observation=observation,
+        adoptions=adoptions,
+        rekeys=cycle_requests.build_rekey_requests(request.reservations),
+        allocations=allocations,
+        active_keys=cycle_requests.active_keys(request.reservations, lockname),
+        adoption_complete=gate_status.complete,
+        forced_reissues=request.forced_reissues,
+        excluded_slots=request.excluded_slots,
+        observed_reservations=tuple(getattr(adoptions, "observed_reservations", ())),
     )
-    _apply_adoption_results(allocator, entry_id, reservations, result)
+
+
+def _record_cycle_outcome(
+    request: CodeResolutionRequest,
+    observation: CycleObservation,
+    allocator: Any,
+    result: CycleResult,
+) -> None:
+    """Apply the cycle result to reservations and report what it withheld."""
+    entry_id = request.entry_id
+    reservations = request.reservations
+    cycle_results.apply_adoption_results(allocator, entry_id, reservations, result)
     if result.unaccounted_slots:
         _LOGGER.warning(
             "Shared code allocator withheld issuance for entry %s because "
@@ -148,463 +178,35 @@ async def async_resolve_codes(
             entry_id,
             sorted(result.unaccounted_slots),
         )
-    report_unreadable_slots(
-        hass,
+    unreadable_slots.report_unreadable_slots(
+        request.hass,
         entry_id,
-        lockname,
+        request.lockname,
         sorted(observation.unreadable_slots - request.excluded_slots),
     )
-    if _apply_allocation_results(allocator, entry_id, reservations, result):
-        _LOGGER.warning(
-            "Shared code allocator exhausted the configured code space for "
-            "entry %s. New duplicate codes were not issued.",
-            entry_id,
-        )
-        name = entry_info.entry_name(hass, entry_id)
-        async_create(
-            hass,
-            (
-                f"Rental Control ran out of unused door codes for {name}, so "
-                "no code was issued for at least one booking. Shorten the "
-                "booking window, reduce the number of tracked events, or use "
-                "a longer code length to free up codes."
-            ),
-            title=f"{NAME} code allocation exhausted",
-            notification_id=f"{_EXHAUSTED_NOTIFICATION_ID}_{entry_id}",
-        )
-    for reservation in reservations:
-        if reservation.identity_key in result.adopted or (
-            reservation.identity_key in result.allocated
-            and result.allocated[reservation.identity_key].code is not None
-        ):
-            continue
-        reservation.slot_code = None
-        reservation.code_source = "unallocated"
-    return CodeResolutionResult(
-        observation, getattr(result, "reissues", ()), consumed_target_keys
-    )
+    if cycle_results.apply_allocation_results(
+        allocator, entry_id, reservations, result
+    ):
+        _notify_exhausted(request.hass, entry_id)
+    cycle_results.clear_unresolved(reservations, result)
 
 
-def _active_keys(reservations: list[Reservation], lockname: str | None) -> set[str]:
-    """Return the identities whose codes the allocator keeps this cycle."""
-    kept = select_eligible_reservations(
-        reservations, include_checked_out=lockname is None
-    )
-    return {reservation.identity_key for reservation in kept}
-
-
-def _revalidated_exclusions(
-    hass: object,
-    entry_id: str,
-    lockname: str | None,
-    observation: CycleObservation,
-) -> dict[int, str | None]:
-    """Re-derive an entry's exclusions from the observation this cycle used."""
-    stored = slot_exclusions.load(hass, entry_id)
-    if not stored:
-        return {}
-    kept, cleared = slot_exclusions.revalidate(stored, observation)
-    for slot, reason in sorted(cleared.items()):
-        _LOGGER.info(
-            "Cleared the slot exclusion for entry %s slot %s on lock %s "
-            "because the slot is %s (recorded reason: %s)",
-            entry_id,
-            slot,
-            lockname or "unknown lock",
-            "no longer in the managed range"
-            if slot not in observation.managed_slots
-            else "readable again",
-            reason or "none given",
-        )
-    if cleared:
-        slot_exclusions.persist_excluded_slots(hass, entry_id, kept)
-    return kept
-
-
-def unreadable_slots_notification_id(entry_id: str) -> str:
-    """Return the persistent notification id for an entry's unreadable slots."""
-    return f"{_UNREADABLE_NOTIFICATION_ID}_{entry_id}"
-
-
-def dismiss_unreadable_slots(hass: object, entry_id: str) -> None:
-    """Clear an entry's unreadable-slot notification."""
-    if not hasattr(hass, "bus"):
-        return
-    async_dismiss(hass, unreadable_slots_notification_id(entry_id))
-
-
-def report_unreadable_slots(
-    hass: object,
-    entry_id: str,
-    lockname: str | None,
-    slots: list[int],
-) -> None:
-    """Reconcile the persistent notification for unreadable managed slots."""
-    if not hasattr(hass, "bus"):
-        return
-    if not slots:
-        dismiss_unreadable_slots(hass, entry_id)
-        return
-    slot_list = ", ".join(str(slot) for slot in slots)
-    label = "slots" if len(slots) > 1 else "slot"
-    lock_label = lockname or "unknown lock"
+def _notify_exhausted(hass: Any, entry_id: str) -> None:
+    """Warn that the code space ran out for an entry this cycle."""
     _LOGGER.warning(
-        "Entry %s cannot read managed %s %s on lock %s; issuance is withheld",
+        "Shared code allocator exhausted the configured code space for "
+        "entry %s. New duplicate codes were not issued.",
         entry_id,
-        label,
-        slot_list,
-        lock_label,
     )
     name = entry_info.entry_name(hass, entry_id)
-    message = (
-        f"Rental Control entry {name} cannot read managed {label} "
-        f"{slot_list} on lock {lock_label}. Door code issuance is withheld "
-        "while those slots stay unreadable, because an unreadable slot may "
-        "still hold a code the integration cannot see. If this condition is "
-        "present when Home Assistant starts, issuance is withheld for ALL "
-        "Rental Control entries, not just this one, because every entry "
-        "shares one door code space. To recover, restore readable Keymaster "
-        f"entities for {label} {slot_list}; deleting those entities does not "
-        "help, because the slots stay in the managed range and report as "
-        "unknown. If the slots are gone for good, reconfigure this entry's "
-        "start slot or event count so that the managed range no longer "
-        "covers them, or call the rental_control.set_slot_exclusion action "
-        "to exclude each dead slot from the issuance gate."
-    )
     async_create(
         hass,
-        message,
-        title=f"{NAME} unreadable lock slots",
-        notification_id=unreadable_slots_notification_id(entry_id),
-    )
-
-
-def _apply_adoption_results(
-    allocator: object,
-    entry_id: str,
-    reservations: list[Reservation],
-    result: CycleResult,
-) -> None:
-    """Apply and log adoption results from a cycle."""
-    for identity_key, adoption_result in result.adopted.items():
-        if adoption_result.code is None:
-            continue
-        _LOGGER.info(
-            "Adopted shared code_ref %s for entry %s identity %s",
-            _allocator_code_ref(allocator, adoption_result.code),
-            entry_id,
-            identity_key,
-        )
-        _apply_result(reservations, identity_key, adoption_result)
-
-
-def _apply_allocation_results(
-    allocator: object,
-    entry_id: str,
-    reservations: list[Reservation],
-    result: CycleResult,
-) -> bool:
-    """Apply and log allocation results; return whether space exhausted."""
-    exhausted = False
-    for identity_key, allocation_result in result.allocated.items():
-        if identity_key in result.adopted:
-            continue
-        if allocation_result.code is None:
-            exhausted = exhausted or allocation_result.reason == "exhausted"
-            continue
-        _LOGGER.info(
-            "Resolved shared code_ref %s for entry %s identity %s origin %s",
-            _allocator_code_ref(allocator, allocation_result.code),
-            entry_id,
-            identity_key,
-            allocation_result.origin,
-        )
-        _apply_result(reservations, identity_key, allocation_result)
-    return exhausted
-
-
-def _adoption_complete(
-    observation: CycleObservation,
-    adoptions: list[AdoptionRequest],
-    managed_slots: list[ManagedSlot],
-    suppression: ReissueSuppression | None = None,
-    *,
-    excluded: frozenset[int] = frozenset(),
-) -> bool:
-    """Return whether all readable managed codes were accounted for."""
-    return adoption_gate.evaluate(
-        observation,
-        adoptions,
-        managed_slots,
-        suppression,
-        excluded=excluded,
-    ).complete
-
-
-def build_cycle_observation(
-    entry_id: str,
-    lockname: str | None,
-    managed_slots: list[ManagedSlot],
-) -> CycleObservation:
-    """Build the allocator's physical-state observation for this entry."""
-    managed = [slot for slot in managed_slots if slot.managed]
-    observed_codes: dict[str, int] = {}
-    for slot in managed:
-        if slot.actual_code is not None and slot.status is not SlotStatus.UNKNOWN:
-            observed_codes.setdefault(slot.actual_code, slot.slot)
-    return CycleObservation(
-        entry_id=entry_id,
-        lockname=lockname,
-        managed_slots=frozenset(slot.slot for slot in managed),
-        observed_codes=observed_codes,
-        unreadable_slots=frozenset(
-            slot.slot for slot in managed if slot.status is SlotStatus.UNKNOWN
+        (
+            f"Rental Control ran out of unused door codes for {name}, so "
+            "no code was issued for at least one booking. Shorten the "
+            "booking window, reduce the number of tracked events, or use "
+            "a longer code length to free up codes."
         ),
+        title=f"{NAME} code allocation exhausted",
+        notification_id=f"{_EXHAUSTED_NOTIFICATION_ID}_{entry_id}",
     )
-
-
-def build_adoption_requests(
-    entry_id: str,
-    lockname: str | None,
-    code_length: int,
-    managed_slots: list[ManagedSlot],
-    reservations: list[Reservation],
-    suppression: ReissueSuppression | None = None,
-) -> list[AdoptionRequest]:
-    """Return adoption requests for reservations with readable physical codes."""
-    suppression = suppression or ReissueSuppression()
-    if lockname is None:
-        return []
-    consumed_slots: set[int] = set()
-    requests = reissue.AdoptionRequests()
-    for reservation in reservations:
-        slot = _matched_code_slot(reservation, managed_slots, consumed_slots)
-        if slot is None or slot.actual_code is None:
-            continue
-        if reservation.identity_key in suppression.identity_keys or (
-            slot.slot in suppression.slots and reservation.protected_active
-        ):
-            requests.suppressed_slots.add(slot.slot)
-            _reserve_observed_code(requests, entry_id, lockname, reservation, slot)
-            continue
-        if reservation.code_rotation_pending:
-            _LOGGER.info(
-                "Skipping adoption for %s in slot %d because its date-based "
-                "code must rotate for the updated booking window",
-                reservation.identity_key,
-                slot.slot,
-            )
-            requests.suppressed_slots.add(slot.slot)
-            _reserve_observed_code(requests, entry_id, lockname, reservation, slot)
-            continue
-        if not slot.actual_code.isdecimal() or len(slot.actual_code) != code_length:
-            _LOGGER.warning(
-                "Skipping adoption for %s in slot %d because the observed code "
-                "does not match the configured code length",
-                reservation.identity_key,
-                slot.slot,
-            )
-            requests.suppressed_slots.add(slot.slot)
-            _reserve_observed_code(requests, entry_id, lockname, reservation, slot)
-            continue
-        requests.append(
-            AdoptionRequest(
-                entry_id=entry_id,
-                identity_key=reservation.identity_key,
-                code=slot.actual_code,
-                code_length=code_length,
-                lockname=lockname,
-                slot=slot.slot,
-                fingerprint_history=frozenset(reservation.fingerprint_history),
-            )
-        )
-    return requests
-
-
-def _reserve_observed_code(
-    requests: reissue.AdoptionRequests,
-    entry_id: str,
-    lockname: str,
-    reservation: Reservation,
-    slot: ManagedSlot,
-) -> None:
-    """Hold a suppressed slot's observed code against re-issue elsewhere.
-
-    A suppressed slot is exempt from adoption, so nothing records the code
-    it still holds. Without a reservation the allocator is free to hand
-    that same code to another booking, which would program a duplicate
-    code onto the lock. Non-decimal codes are skipped because the
-    allocator can never produce one, so they cannot collide.
-    """
-    code = slot.actual_code
-    if not code or not code.isdecimal():
-        return
-    requests.observed_reservations.append(
-        AdoptionRequest(
-            entry_id=entry_id,
-            identity_key=reservation.identity_key,
-            code=code,
-            code_length=len(code),
-            lockname=lockname,
-            slot=slot.slot,
-        )
-    )
-
-
-def build_allocation_requests(
-    entry_id: str,
-    lockname: str | None,
-    code_length: int,
-    managed_slots: list[ManagedSlot],
-    reservations: list[Reservation],
-) -> list[AllocationRequest]:
-    """Return deterministic allocation requests for selected reservations."""
-    planned_slots = _planned_slots(lockname, managed_slots, reservations)
-    requests: list[AllocationRequest] = []
-    for reservation in sorted(reservations, key=lambda item: item.identity_key):
-        if reservation.identity_key not in planned_slots:
-            continue
-        planned_slot = planned_slots.get(reservation.identity_key)
-        if lockname is not None and planned_slot is None:
-            continue
-        preferred = reservation.slot_code
-        if preferred is None and not reservation.published_once:
-            continue
-        requests.append(
-            AllocationRequest(
-                entry_id=entry_id,
-                identity_key=reservation.identity_key,
-                preferred_code=preferred or ("0" * code_length),
-                code_length=code_length,
-                fingerprint_history=frozenset(reservation.fingerprint_history),
-                previously_published=reservation.published_once,
-                lockname=lockname if planned_slot is not None else None,
-                slot=planned_slot,
-                preferred_code_known=preferred is not None,
-                issued_origin=_ISSUED_ORIGINS.get(reservation.issued_origin or ""),
-            )
-        )
-    return requests
-
-
-def build_rekey_requests(reservations: list[Reservation]) -> list[tuple[str, str]]:
-    """Return historical fingerprint moves for active reservations."""
-    requests: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for reservation in sorted(reservations, key=lambda item: item.identity_key):
-        if reservation.code_rotation_pending:
-            continue
-        for historical_key in sorted(reservation.fingerprint_history):
-            item = (historical_key, reservation.identity_key)
-            if historical_key != reservation.identity_key and item not in seen:
-                requests.append(item)
-                seen.add(item)
-    return requests
-
-
-def _planned_slots(
-    lockname: str | None,
-    managed_slots: list[ManagedSlot],
-    reservations: list[Reservation],
-) -> dict[str, int | None]:
-    """Return planned physical slots for lock-backed selected reservations."""
-    if lockname is None:
-        return {
-            reservation.identity_key: None
-            for reservation in select_eligible_reservations(
-                reservations, include_checked_out=True
-            )
-        }
-    if not managed_slots:
-        return {}
-    plan = compute_desired_plan(
-        reservations=reservations,
-        managed_slots=managed_slots,
-        max_events=len([slot for slot in managed_slots if slot.managed]),
-        plan_id=str(uuid.uuid4()),
-        generated_at=dt.now(),
-    )
-    return dict(plan.selected)
-
-
-def _matched_code_slot(
-    reservation: Reservation,
-    managed_slots: list[ManagedSlot],
-    consumed_slots: set[int],
-) -> ManagedSlot | None:
-    """Return the readable coded slot that physically matches a reservation."""
-    for slot in managed_slots:
-        if (
-            slot.managed
-            and slot.persisted_identity_key == reservation.identity_key
-            and slot.actual_code
-            and slot.status is not SlotStatus.UNKNOWN
-            and slot.slot not in consumed_slots
-        ):
-            consumed_slots.add(slot.slot)
-            return slot
-    matched = find_observed_slot(
-        ObservedSlotQuery(
-            managed_slots=managed_slots,
-            slot_name=reservation.slot_name,
-            display_slot_name=reservation.display_slot_name,
-            consumed_slots=consumed_slots,
-            desired_start=reservation.buffered_start,
-            desired_end=reservation.buffered_end,
-            event_prefix="",
-        )
-    )
-    if (
-        matched is not None
-        and matched.actual_code
-        and matched.status is not SlotStatus.UNKNOWN
-    ):
-        return matched
-    return None
-
-
-def _apply_result(
-    reservations: list[Reservation],
-    identity_key: str,
-    result: AllocationResult,
-) -> None:
-    """Write an allocator result back to the in-cycle reservation object.
-
-    The registry hands an identity its recorded code with the origin it
-    had when first issued, even after the generator's preference has
-    since drifted. Only a code equal to today's preference is recorded
-    as preferred, and a known mismatch is recorded as unknown, so
-    recovery withholds it. A ghost carries no preference and keeps the
-    origin it was hydrated with.
-    """
-    for reservation in reservations:
-        if reservation.identity_key != identity_key:
-            continue
-        preference = reservation.slot_code
-        reservation.slot_code = result.code
-        if result.origin is AllocationOrigin.ADOPTED:
-            reservation.code_source = "adopted"
-        elif result.origin is AllocationOrigin.PREFERRED:
-            reservation.code_source = "allocated"
-            if preference is not None:
-                reservation.issued_origin = (
-                    AllocationOrigin.PREFERRED.value
-                    if result.code == preference
-                    else None
-                )
-        elif result.origin is AllocationOrigin.COLLISION_RESOLVED:
-            reservation.code_source = "collision_resolved"
-            reservation.issued_origin = AllocationOrigin.COLLISION_RESOLVED.value
-        elif result.origin is not None:
-            reservation.code_source = result.origin.value
-        else:
-            reservation.code_source = "unallocated"
-        return
-
-
-def _allocator_code_ref(allocator: object, code: str) -> str:
-    """Return a masked allocator code reference for logs."""
-    code_ref = getattr(allocator, "code_ref", None)
-    if callable(code_ref):
-        return str(code_ref(code))
-    return "<unavailable>"

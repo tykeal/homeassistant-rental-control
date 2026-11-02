@@ -18,8 +18,8 @@ from custom_components.rental_control.allocator.models import AllocationOwner
 from custom_components.rental_control.allocator.models import AllocationRecord
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
-from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import slot_exclusions
+from custom_components.rental_control.coordinator_helpers import slot_notifications
 
 from tests.fixtures.fake_hass import fake_config
 
@@ -84,13 +84,13 @@ def test_notification_quotes_only_the_operator_reason() -> None:
     messages: list[str] = []
     hass = SimpleNamespace(bus=SimpleNamespace())
 
-    original_dismiss = slot_exclusions.async_dismiss
-    original = slot_exclusions.async_create
+    original_dismiss = slot_notifications.async_dismiss
+    original = slot_notifications.async_create
     try:
-        slot_exclusions.async_dismiss = (  # type: ignore[assignment]
+        slot_notifications.async_dismiss = (  # type: ignore[assignment]
             lambda *_args, **_kwargs: None
         )
-        slot_exclusions.async_create = (  # type: ignore[assignment]
+        slot_notifications.async_create = (  # type: ignore[assignment]
             lambda _hass, message, title="", notification_id="": messages.append(
                 message
             )
@@ -99,8 +99,8 @@ def test_notification_quotes_only_the_operator_reason() -> None:
             hass, "entry-a", "front", {_DEAD_SLOT: "dead relay"}
         )
     finally:
-        slot_exclusions.async_create = original  # type: ignore[assignment]
-        slot_exclusions.async_dismiss = (  # type: ignore[assignment]
+        slot_notifications.async_create = original  # type: ignore[assignment]
+        slot_notifications.async_dismiss = (  # type: ignore[assignment]
             original_dismiss
         )
 
@@ -124,11 +124,11 @@ def test_revalidation_logs_name_slots_not_codes(
     )
     hass.config_entries.async_update_entry = lambda _entry, **_kwargs: None
     monkeypatch.setattr(
-        slot_exclusions, "async_dismiss", lambda *_args, **_kwargs: None
+        slot_notifications, "async_dismiss", lambda *_args, **_kwargs: None
     )
 
     with caplog.at_level(logging.INFO):
-        kept = code_allocation._revalidated_exclusions(
+        kept = slot_exclusions.revalidate_persisted(
             hass, "entry-a", "front", observation
         )
 
