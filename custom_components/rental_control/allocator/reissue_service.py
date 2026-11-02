@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.core import ServiceCall
 from homeassistant.core import SupportsResponse
 from homeassistant.helpers import config_validation as cv
-import voluptuous as vol
+import probatio
 
 from ..const import COORDINATOR
 from ..const import DOMAIN
@@ -56,25 +56,27 @@ class ReissueRequest:
 def _positive_slot(value: Any) -> int:
     """Return a positive integer slot, rejecting bools and fractional values."""
     if isinstance(value, bool):
-        raise vol.Invalid("slot must be a positive integer")
+        raise probatio.Invalid("slot must be a positive integer")
     if isinstance(value, int):
         return value
     if isinstance(value, float):
         if not value.is_integer():
-            raise vol.Invalid("slot must be a positive integer")
+            raise probatio.Invalid("slot must be a positive integer")
         return int(value)
     if isinstance(value, str) and value.isdecimal():
         return int(value)
-    raise vol.Invalid("slot must be a positive integer")
+    raise probatio.Invalid("slot must be a positive integer")
 
 
-FORCE_REISSUE_SCHEMA = vol.Schema(
+FORCE_REISSUE_SCHEMA = probatio.Schema(
     {
-        vol.Optional(ATTR_ENTITY_ID): cv.entity_id,
-        vol.Optional(ATTR_LOCKNAME): cv.string,
-        vol.Optional(ATTR_SLOT): vol.All(_positive_slot, vol.Range(min=1)),
-        vol.Optional(ATTR_FORCE, default=False): cv.boolean,
-        vol.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
+        probatio.Optional(ATTR_ENTITY_ID): cv.entity_id,
+        probatio.Optional(ATTR_LOCKNAME): cv.string,
+        probatio.Optional(ATTR_SLOT): probatio.All(
+            _positive_slot, probatio.Range(min=1)
+        ),
+        probatio.Optional(ATTR_FORCE, default=False): cv.boolean,
+        probatio.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
     }
 )
 

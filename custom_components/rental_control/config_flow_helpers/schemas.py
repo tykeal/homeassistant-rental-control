@@ -19,7 +19,7 @@ from homeassistant.helpers.selector import SelectSelector
 from homeassistant.helpers.selector import SelectSelectorConfig
 from homeassistant.helpers.selector import SelectSelectorMode
 from homeassistant.util import dt
-import voluptuous as vol
+import probatio
 
 from ..bookings_only import host_defaults_bookings_only
 from ..const import CODE_GENERATORS
@@ -146,7 +146,7 @@ def build_config_schema(
     fields = _base_fields(context)
     if entry_id is not None:
         fields.update(_options_fields(context))
-    return vol.Schema(fields, extra=vol.schema_builder.ALLOW_EXTRA)
+    return probatio.Schema(fields, extra=probatio.ALLOW_EXTRA)
 
 
 def _normalize_defaults(
@@ -194,32 +194,34 @@ def _base_fields(context: SchemaBuildContext) -> dict[Any, Any]:
 def _identity_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build name and URL schema fields."""
     return {
-        vol.Required(CONF_NAME, default=_get_default(context, CONF_NAME)): cv.string,
-        vol.Required(CONF_URL, default=_get_default(context, CONF_URL)): cv.string,
+        probatio.Required(
+            CONF_NAME, default=_get_default(context, CONF_NAME)
+        ): cv.string,
+        probatio.Required(CONF_URL, default=_get_default(context, CONF_URL)): cv.string,
     }
 
 
 def _refresh_time_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build refresh, timezone, prefix, and time schema fields."""
     return {
-        vol.Optional(
+        probatio.Optional(
             CONF_REFRESH_FREQUENCY,
             default=_get_default(
                 context, CONF_REFRESH_FREQUENCY, DEFAULT_REFRESH_FREQUENCY
             ),
         ): cv.positive_int,
-        vol.Optional(
+        probatio.Optional(
             CONF_TIMEZONE,
             default=_get_default(context, CONF_TIMEZONE, str(dt.DEFAULT_TIME_ZONE)),
-        ): vol.In(SORTED_TZ),
-        vol.Optional(
+        ): probatio.In(SORTED_TZ),
+        probatio.Optional(
             CONF_EVENT_PREFIX,
             default=_get_default(context, CONF_EVENT_PREFIX, DEFAULT_EVENT_PREFIX),
         ): cv.string,
-        vol.Required(
+        probatio.Required(
             CONF_CHECKIN, default=_get_default(context, CONF_CHECKIN, DEFAULT_CHECKIN)
         ): cv.string,
-        vol.Required(
+        probatio.Required(
             CONF_CHECKOUT,
             default=_get_default(context, CONF_CHECKOUT, DEFAULT_CHECKOUT),
         ): cv.string,
@@ -229,10 +231,10 @@ def _refresh_time_fields(context: SchemaBuildContext) -> dict[Any, Any]:
 def _day_lock_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build day count and lock selector schema fields."""
     return {
-        vol.Optional(
+        probatio.Optional(
             CONF_DAYS, default=_get_default(context, CONF_DAYS, DEFAULT_DAYS)
         ): cv.positive_int,
-        vol.Optional(
+        probatio.Optional(
             CONF_LOCK_ENTRY,
             default=_get_default(context, CONF_LOCK_ENTRY, LOCK_ENTRY_NONE),
         ): SelectSelector(
@@ -250,19 +252,19 @@ def _day_lock_fields(context: SchemaBuildContext) -> dict[Any, Any]:
 def _slot_code_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build slot, event, code, generator, and update schema fields."""
     return {
-        vol.Required(
+        probatio.Required(
             CONF_START_SLOT,
             default=_get_default(context, CONF_START_SLOT, DEFAULT_START_SLOT),
         ): cv.positive_int,
-        vol.Required(
+        probatio.Required(
             CONF_MAX_EVENTS,
             default=_get_default(context, CONF_MAX_EVENTS, DEFAULT_MAX_EVENTS),
         ): cv.positive_int,
-        vol.Required(
+        probatio.Required(
             CONF_CODE_LENGTH,
             default=_get_default(context, CONF_CODE_LENGTH, DEFAULT_CODE_LENGTH),
         ): cv.positive_int,
-        vol.Optional(
+        probatio.Optional(
             CONF_CODE_GENERATION,
             default=generator_convert(
                 ident=str(
@@ -270,8 +272,8 @@ def _slot_code_fields(context: SchemaBuildContext) -> dict[Any, Any]:
                 ),
                 to_type=False,
             ),
-        ): vol.In(code_generators()),
-        vol.Optional(
+        ): probatio.In(code_generators()),
+        probatio.Optional(
             CONF_SHOULD_UPDATE_CODE,
             default=_get_default(
                 context, CONF_SHOULD_UPDATE_CODE, DEFAULT_SHOULD_UPDATE_CODE
@@ -283,21 +285,21 @@ def _slot_code_fields(context: SchemaBuildContext) -> dict[Any, Any]:
 def _behavior_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build behavior toggle schema fields."""
     return {
-        vol.Optional(
+        probatio.Optional(
             CONF_HONOR_EVENT_TIMES,
             default=_get_default(
                 context, CONF_HONOR_EVENT_TIMES, DEFAULT_HONOR_EVENT_TIMES
             ),
         ): cv.boolean,
-        vol.Optional(
+        probatio.Optional(
             CONF_DATE_ONLY,
             default=_get_default(context, CONF_DATE_ONLY, DEFAULT_DATE_ONLY),
         ): cv.boolean,
-        vol.Optional(
+        probatio.Optional(
             CONF_IGNORE_NON_RESERVED,
             default=_get_default(context, CONF_IGNORE_NON_RESERVED, True),
         ): cv.boolean,
-        vol.Optional(
+        probatio.Optional(
             CONF_BOOKINGS_ONLY_FEED,
             default=_get_default(
                 context,
@@ -305,38 +307,38 @@ def _behavior_fields(context: SchemaBuildContext) -> dict[Any, Any]:
                 host_defaults_bookings_only(_get_default(context, CONF_URL)),
             ),
         ): cv.boolean,
-        vol.Optional(
+        probatio.Optional(
             CONF_VERIFY_SSL, default=_get_default(context, CONF_VERIFY_SSL, True)
         ): cv.boolean,
-        vol.Optional(
+        probatio.Optional(
             CONF_CLEANING_WINDOW,
             default=_get_default(
                 context, CONF_CLEANING_WINDOW, DEFAULT_CLEANING_WINDOW
             ),
-        ): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=48.0)),
+        ): probatio.All(probatio.Coerce(float), probatio.Range(min=0.5, max=48.0)),
     }
 
 
 def _trim_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build trim-name schema fields."""
     return {
-        vol.Optional(
+        probatio.Optional(
             CONF_TRIM_NAMES,
             default=_get_default(context, CONF_TRIM_NAMES, DEFAULT_TRIM_NAMES),
         ): cv.boolean,
-        vol.Optional(
+        probatio.Optional(
             CONF_MAX_NAME_LENGTH,
             default=_get_default(
                 context, CONF_MAX_NAME_LENGTH, DEFAULT_MAX_NAME_LENGTH
             ),
-        ): vol.All(vol.Coerce(int), vol.Range(min=MIN_NAME_LENGTH)),
+        ): probatio.All(probatio.Coerce(int), probatio.Range(min=MIN_NAME_LENGTH)),
     }
 
 
 def _options_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build options-only schema fields."""
     return {
-        vol.Optional(
+        probatio.Optional(
             CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
             default=_get_default(
                 context,
@@ -344,16 +346,16 @@ def _options_fields(context: SchemaBuildContext) -> dict[Any, Any]:
                 DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
             ),
         ): cv.boolean,
-        vol.Optional(
+        probatio.Optional(
             CONF_CODE_BUFFER_BEFORE,
             default=_get_default(
                 context, CONF_CODE_BUFFER_BEFORE, DEFAULT_CODE_BUFFER_BEFORE
             ),
-        ): vol.All(vol.Coerce(int), vol.Range(min=0)),
-        vol.Optional(
+        ): probatio.All(probatio.Coerce(int), probatio.Range(min=0)),
+        probatio.Optional(
             CONF_CODE_BUFFER_AFTER,
             default=_get_default(
                 context, CONF_CODE_BUFFER_AFTER, DEFAULT_CODE_BUFFER_AFTER
             ),
-        ): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        ): probatio.All(probatio.Coerce(int), probatio.Range(min=0)),
     }

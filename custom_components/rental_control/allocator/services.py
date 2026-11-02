@@ -14,7 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.core import ServiceCall
 from homeassistant.core import SupportsResponse
 from homeassistant.helpers import config_validation as cv
-import voluptuous as vol
+import probatio
 
 from ..const import COORDINATOR
 from ..const import DOMAIN
@@ -50,10 +50,10 @@ def register_allocator_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_CLEAR_ORPHANED_CODES,
         _handle_clear_orphaned_codes(hass),
-        schema=vol.Schema(
+        schema=probatio.Schema(
             {
-                vol.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
-                vol.Optional(ATTR_FORCE_REISSUED_HOLDS, default=False): cv.boolean,
+                probatio.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
+                probatio.Optional(ATTR_FORCE_REISSUED_HOLDS, default=False): cv.boolean,
             }
         ),
         supports_response=SupportsResponse.OPTIONAL,

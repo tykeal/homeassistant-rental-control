@@ -98,7 +98,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["homeassistant.*", "voluptuous.*", "icalendar.*", "x_wr_timezone.*"]
+module = ["homeassistant.*", "probatio.*", "icalendar.*", "x_wr_timezone.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

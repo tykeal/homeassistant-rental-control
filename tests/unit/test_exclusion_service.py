@@ -9,9 +9,9 @@ from typing import Any
 from typing import cast
 
 from homeassistant.core import HomeAssistant
+import probatio
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-import voluptuous as vol
 
 from custom_components.rental_control.allocator import exclusion_service
 from custom_components.rental_control.allocator import reissue_preview
@@ -130,13 +130,13 @@ def test_schema_has_no_force_override() -> None:
 
 def test_schema_requires_a_scalar_slot() -> None:
     """Bulk exclusion is unrepresentable in the schema."""
-    with pytest.raises(vol.Invalid):
+    with pytest.raises(probatio.Invalid):
         SET_SLOT_EXCLUSION_SCHEMA({"lockname": "front"})
-    with pytest.raises(vol.Invalid):
+    with pytest.raises(probatio.Invalid):
         SET_SLOT_EXCLUSION_SCHEMA({"lockname": "front", "slot": [1, 2]})
-    with pytest.raises(vol.Invalid):
+    with pytest.raises(probatio.Invalid):
         SET_SLOT_EXCLUSION_SCHEMA({"lockname": "front", "slot": True})
-    with pytest.raises(vol.Invalid):
+    with pytest.raises(probatio.Invalid):
         SET_SLOT_EXCLUSION_SCHEMA({"lockname": "front", "slot": 11.5})
 
 
