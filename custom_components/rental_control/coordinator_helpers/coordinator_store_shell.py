@@ -93,7 +93,12 @@ class CoordinatorStoreMixin:
             )
 
     def _adopt_observed_coded_slots(self, managed_slots: list[_ManagedSlot]) -> None:
-        """Adopt readable coded slots that have no persisted mapping yet."""
+        """Adopt readable coded slots that have no persisted mapping yet.
+
+        A coded slot adopted on an earlier refresh is attached to its
+        existing adopted mapping instead, so the physical remap can still
+        move that mapping to the reservation now on the lock.
+        """
         persisted: dict[str, Any] = self._slot_mappings.setdefault("mappings", {})
         existing_slots = {
             mapping.get("slot")
@@ -108,21 +113,23 @@ class CoordinatorStoreMixin:
             if (
                 not ms.managed
                 or ms.persisted_identity_key is not None
-                or ms.slot in existing_slots
                 or ms.status is not _SlotStatus.OCCUPIED
                 or ms.actual_code_present is not True
             ):
                 continue
 
-            slot_name = ms.actual_name or _adopted_slot_placeholder(ms.slot)
-            if prefix and slot_name.startswith(prefix):
-                slot_name = slot_name[len(prefix) :]
-
             identity_key = (
                 f"{store_sync.ADOPTED_KEY_PREFIX}{self._entry_id}.slot{ms.slot}"
             )
             if identity_key in persisted:
+                ms.persisted_identity_key = identity_key
                 continue
+            if ms.slot in existing_slots:
+                continue
+
+            slot_name = ms.actual_name or _adopted_slot_placeholder(ms.slot)
+            if prefix and slot_name.startswith(prefix):
+                slot_name = slot_name[len(prefix) :]
 
             persisted[identity_key] = store_sync.build_adopted_mapping(
                 ms, identity_key, slot_name, now_str

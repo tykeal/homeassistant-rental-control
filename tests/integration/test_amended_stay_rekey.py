@@ -127,9 +127,13 @@ def _program_slot(
 
 
 async def _prepare(
-    hass: HomeAssistant, feed: dict[str, str]
+    hass: HomeAssistant, feed: dict[str, str], preloaded: bool
 ) -> tuple[RentalControlCoordinator, list[Any], list[Any], str, str]:
     """Program the lock from the original feed, then amend the target stay.
+
+    With *preloaded* the slots are adopted on an earlier refresh that saw
+    an empty calendar, so the amended refresh starts from adopted mappings
+    already in the Store rather than adopting them itself.
 
     Returns the coordinator, the prepared reservations, the observed slots
     and the target and peer reservations' display names.
@@ -151,6 +155,15 @@ async def _prepare(
     _program_slot(hass, 6, target_name, "1357", _OLD_START, _OLD_END)
     _program_slot(hass, 7, peer_name, "2468", _PEER_START, _PEER_END)
 
+    if preloaded:
+        coordinator._prepare_reservations_for_adoption(
+            [], coordinator._observe_managed_slots()
+        )
+        assert sorted(coordinator._slot_mappings["mappings"]) == [
+            "adopted.amended_entry.slot6",
+            "adopted.amended_entry.slot7",
+        ]
+
     amended = await coordinator._ical_parser(
         _ics(feed, _NEW_START, _NEW_END), _PARSE_FROM, _PARSE_TO
     )
@@ -159,17 +172,21 @@ async def _prepare(
     return coordinator, reservations, observed, target_name, peer_name
 
 
+@pytest.mark.parametrize("preloaded", [False, True], ids=["adopting", "preloaded"])
 @pytest.mark.parametrize("feed", [_NAMED, _ANONYMOUS], ids=["named", "anonymous"])
 async def test_amended_adopted_stay_is_rekeyed_without_a_ghost(
-    hass: HomeAssistant, feed: dict[str, str]
+    hass: HomeAssistant, feed: dict[str, str], preloaded: bool
 ) -> None:
     """The adopted mapping follows the amended stay instead of ghosting.
 
     Before the fix the remap demanded that the lock's window already equal
     the amended window, so the adopted mapping survived under its old key
-    and became a ghost holding slot 6 alongside the live amended stay.
+    and became a ghost holding slot 6 alongside the live amended stay. An
+    adopted mapping already in the Store never reached the remap at all.
     """
-    coordinator, reservations, observed, target_name, _peer = await _prepare(hass, feed)
+    coordinator, reservations, observed, target_name, _peer = await _prepare(
+        hass, feed, preloaded
+    )
 
     ghosts = [res for res in reservations if res.missing_count > 0]
     assert ghosts == []
