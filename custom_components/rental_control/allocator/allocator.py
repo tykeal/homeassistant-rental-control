@@ -58,7 +58,9 @@ class DoorCodeAllocator:
         self._registry_lost = False
         self._pending_adoption = self._seed_pending_adoption()
         self._adopted_locks: dict[str, ObservedLock] = {}
-        self._read_pending_locks: dict[str, tuple[ObservedLock, frozenset[str]]] = {}
+        self._read_pending_locks: dict[
+            str, tuple[ObservedLock, frozenset[str], frozenset[int]]
+        ] = {}
         self._pending_adoption_slots: dict[str, frozenset[int]] = {}
         self._gate_deadline = (
             monotonic() + _ADOPTION_GATE_WARNING_SECONDS

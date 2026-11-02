@@ -8,6 +8,7 @@ from collections.abc import Mapping
 import logging
 from typing import TYPE_CHECKING
 
+from ..const import CONF_EXCLUDED_SLOTS
 from ..const import CONF_LOCK_ENTRY
 from ..const import CONF_MAX_EVENTS
 from ..const import CONF_START_SLOT
@@ -15,6 +16,7 @@ from ..const import DOMAIN
 from ..helpers import configured_lock_entry
 from ..helpers import configured_lock_slug
 from . import entry_info
+from .exclusions import parse_excluded_slots
 from .models import AllocationOrigin
 from .models import AllocationRequest
 from .models import AllocationResult
@@ -285,14 +287,18 @@ def read_lock_codes(
     allocator: DoorCodeAllocator, entry_id: str
 ) -> frozenset[str] | None:
     """Return the codes read in full from an entry's current lock, if any."""
-    read: Mapping[str, tuple[ObservedLock, frozenset[str]]] = getattr(
+    read: Mapping[str, tuple[ObservedLock, frozenset[str], frozenset[int]]] = getattr(
         allocator, "_read_pending_locks", {}
     )
     if entry_id not in read:
         return None
-    observed, codes = read[entry_id]
+    observed, codes, unreadable = read[entry_id]
     entry = entry_info.config_entry(allocator.hass, entry_id)
-    return codes if is_observed(observed, getattr(entry, "data", None)) else None
+    data = getattr(entry, "data", None)
+    if not is_observed(observed, data):
+        return None
+    excluded = parse_excluded_slots(dict(data or {}).get(CONF_EXCLUDED_SLOTS))
+    return codes if unreadable <= excluded.keys() else None
 
 
 def issuance_block(
