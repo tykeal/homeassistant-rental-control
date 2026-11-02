@@ -113,11 +113,31 @@ select = [
     "I",  # isort
     "B",  # flake8-bugbear
     "C4", # flake8-comprehensions
+    "C90", # mccabe complexity
+    "PLR0912", # too many branches
+    "PLR0913", # too many arguments
+    "PLR0915", # too many statements
 ]
 ignore = [
     "E501", # line too long (handled by formatter)
     "E203", # whitespace before ':'
 ]
+
+# Complexity ratchet (#816): each limit equals the worst case measured
+# in custom_components/ when the gate landed, so any growth fails.
+# Lower these as functions are simplified; never raise them.
+[tool.ruff.lint.mccabe]
+max-complexity = 16
+
+[tool.ruff.lint.pylint]
+max-branches = 15
+max-args = 7
+max-statements = 46
+
+[tool.ruff.lint.per-file-ignores]
+# Pytest fixtures arrive as arguments and integration scenarios are
+# long by design, so argument and statement counts are not gated there.
+"tests/**" = ["PLR0913", "PLR0915"]
 
 [tool.ruff.lint.isort]
 force-single-line = true
