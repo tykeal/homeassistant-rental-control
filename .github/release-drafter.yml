@@ -85,10 +85,15 @@ autolabeler:
   - label: "build"
     title:
       - '/^build(\([^)]+\))?:/i'
+# The release body is header + template. The release-drafter workflow
+# appends the reno notes from releasenotes/notes/ to the header (see
+# scripts/render_release_notes.py), placing them between the downloads
+# badge and $CHANGES. '|+' keeps the blank line that separates them.
 # yamllint disable rule:line-length
-template: |
+header: |+
   [![Downloads for this release](https://img.shields.io/github/downloads/$OWNER/$REPOSITORY/v$RESOLVED_VERSION/total.svg)](https://github.com/$OWNER/$REPOSITORY/releases/v$RESOLVED_VERSION)
 
+template: |
   $CHANGES
 
   ## Links

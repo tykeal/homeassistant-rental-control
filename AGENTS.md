@@ -260,6 +260,15 @@ from the repository root using `uv`:
 - All tests must pass before pushing
 - New features should include appropriate test coverage
 
+## Release Notes
+
+Describe user-visible changes with a [reno](https://docs.openstack.org/reno/latest/)
+note in the same pull request: run `uv run reno new <slug>`, fill in
+the sections that apply in Markdown, delete the rest, and check it with
+`uv run reno lint`. A note is **required** for a breaking change (the
+`breaking-change` label); CI fails without one. Upgrade actions belong
+in `upgrade`.
+
 ## Development Workflow Summary
 
 1. Make changes to code

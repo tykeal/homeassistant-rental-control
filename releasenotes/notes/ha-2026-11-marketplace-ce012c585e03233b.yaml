@@ -1,0 +1,19 @@
+---
+upgrade:
+  - |
+    From Home Assistant 2026.11, `calendar.event_started` and
+    `calendar.event_ended` triggers no longer default to
+    `offset_type: before`; the sign of the offset now sets the direction.
+    Check any YAML automation on a Rental Control calendar that uses an
+    offset without `offset_type`. Triggers created in the UI are not
+    affected. See
+    [Calendar Triggers in Home Assistant 2026.11](
+    https://github.com/tykeal/homeassistant-rental-control#calendar-triggers-in-home-assistant-202611)
+    in the README.
+features:
+  - |
+    Rental Control is ready for the Home Assistant Marketplace in Home
+    Assistant 2026.11 and later. The integration ships its own brand
+    images and declares its integration categories, so it installs from
+    **Settings** > **Marketplace** with no restart. On earlier Home
+    Assistant releases, install it through HACS as before.

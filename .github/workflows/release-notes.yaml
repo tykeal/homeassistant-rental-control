@@ -1,0 +1,85 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Release Notes'
+
+# yamllint disable-line rule:truthy
+on:
+  # 'labeled' and 'unlabeled' re-evaluate the breaking-change rule when
+  # the autolabeler (or a maintainer) changes the labels.
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+    branches:
+      - main
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  # Queue rather than cancel, as in autolabeler.yaml: the autolabeler
+  # labels a new pull request moments after it opens, and a cancelled
+  # run beside a passing one marks the head SHA as not successful.
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  release-notes:
+    name: 'Release Notes'
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      # Harden the runner used by this workflow
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: 'audit'
+
+      # reno lint scans the git history, so fetch all of it.
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 'Find release note changes'
+        id: changes
+        run: |
+          # HEAD is the pull request merge commit; its first parent is
+          # the tip of the base branch.
+          added=$(git diff --name-only --diff-filter=A HEAD^1 HEAD \
+            -- 'releasenotes/notes/*.yaml')
+          changed=$(git diff --name-only HEAD^1 HEAD -- releasenotes/)
+          echo "Added notes: ${added:-none}"
+          {
+            echo "added=$([ -n "$added" ] && echo true || echo false)"
+            echo "changed=$([ -n "$changed" ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 'Require a release note for breaking changes'
+        if: >-
+          contains(github.event.pull_request.labels.*.name, 'breaking-change')
+          && steps.changes.outputs.added != 'true'
+        run: |
+          echo "::error::Pull requests labelled 'breaking-change' must" \
+            "add a release note: run 'uv run reno new <slug>' and fill" \
+            "in the upgrade section."
+          exit 1
+
+      # yamllint disable-line rule:line-length
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        if: steps.changes.outputs.changed == 'true'
+        with:
+          python-version: '3.14'
+          enable-cache: false
+
+      - name: 'Lint release notes'
+        if: steps.changes.outputs.changed == 'true'
+        run: uv run --frozen --only-group releasenotes reno lint

@@ -23,7 +23,7 @@ jobs:
       contents: write
       pull-requests: read
     runs-on: 'ubuntu-latest'
-    timeout-minutes: 3
+    timeout-minutes: 10
     steps:
       # Harden the runner used by this workflow
       # yamllint disable-line rule:line-length
@@ -31,5 +31,31 @@ jobs:
         with:
           egress-policy: 'audit'
 
+      # Full history and tags let reno find the notes added since the
+      # latest release tag.
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # No cache: this job holds contents: write.
+      # yamllint disable-line rule:line-length
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+          enable-cache: false
+
+      # The draft body is rebuilt on every push, so release notes live in
+      # releasenotes/notes/ and are rendered into the config each time.
+      - name: 'Render release notes into the Release Drafter config'
+        run: |
+          uv run --frozen --only-group releasenotes \
+            python scripts/render_release_notes.py \
+            --release-drafter-config .github/release-drafter.yml \
+            --output .github/release-drafter-generated.yml
+
       # yamllint disable-line rule:line-length
       - uses: release-drafter/release-drafter@978bb0b30c5ee8cdd332ced253758157150d43f0 # v7.10.0
+        with:
+          config-name: 'file:.github/release-drafter-generated.yml'
