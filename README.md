@@ -936,10 +936,10 @@ uv run reno lint
 ```
 
 Fill in the sections that apply (`upgrade`, `features`, `fixes`,
-`deprecations` or `security`) and delete the rest. A pull request
-labelled `breaking-change` must add a note. The draft GitHub release
-shows every note added since the last release tag, above the list of
-pull requests. To preview it:
+`deprecations` or `security`) and delete the rest. A breaking change
+(a `Type!:` title or the `breaking-change` label) must add a note. The
+draft GitHub release shows every note added since the last release tag,
+above the list of pull requests. To preview it:
 
 ```bash
 uv run python scripts/render_release_notes.py

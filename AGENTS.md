@@ -265,9 +265,9 @@ from the repository root using `uv`:
 Describe user-visible changes with a [reno](https://docs.openstack.org/reno/latest/)
 note in the same pull request: run `uv run reno new <slug>`, fill in
 the sections that apply in Markdown, delete the rest, and check it with
-`uv run reno lint`. A note is **required** for a breaking change (the
-`breaking-change` label); CI fails without one. Upgrade actions belong
-in `upgrade`.
+`uv run reno lint`. A note is **required** for a breaking change (a
+`Type!:` title or the `breaking-change` label); CI fails without one.
+Upgrade actions belong in `upgrade`.
 
 ## Development Workflow Summary
 

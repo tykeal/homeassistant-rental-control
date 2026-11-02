@@ -4,13 +4,34 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+import sys
 from typing import Any
 
 import pytest
 import yaml
 
-from scripts import render_release_notes as rrn
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_renderer() -> Any:
+    """Import scripts/render_release_notes.py by path.
+
+    scripts/ is deliberately not a package: a top-level ``scripts``
+    package in the workspace shadows the ``scripts`` package that some
+    GitHub Actions run with ``python -m``.
+    """
+    path = REPO_ROOT / "scripts" / "render_release_notes.py"
+    spec = importlib.util.spec_from_file_location("render_release_notes", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+rrn = _load_renderer()
 
 SECTIONS = [
     ("upgrade", "Upgrade Notes", 1),
@@ -18,7 +39,6 @@ SECTIONS = [
     ("fixes", "Bug Fixes", 1),
 ]
 SECTION_NAMES = [name for name, _, _ in SECTIONS]
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class FakeLoader:
