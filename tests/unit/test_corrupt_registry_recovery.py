@@ -233,3 +233,19 @@ async def test_reopened_lock_is_named_after_an_earlier_notice(
 
     assert len(raised) == 2
     assert "entry entry-lo" in raised[1]
+
+
+async def test_trusted_cycle_saves_grants_beside_a_declined_recovery() -> None:
+    """A declined identity keeps the flags set but not the grants unsaved."""
+    allocator = _corrupt(_allocator())
+    saved: list[object] = []
+    allocator._store = cast(Any, SimpleNamespace(async_save=saved.append))
+    declined = _reservation("identity-old", code="2222", origin=None)
+    granted = _reservation(published=False)
+
+    await _cycle(allocator, [declined, granted], entry_id="entry-free")
+
+    assert declined.slot_code is None
+    assert granted.slot_code is not None
+    assert saved
+    assert allocator._registry_lost is True

@@ -270,7 +270,11 @@ def _persist_registry(
     The flags clear, whether the stored registry was absent or corrupt,
     once the rebuilt registry accounts for every lock (#851): clearing
     them returns the allocator to normal issuance, where a code still
-    programmed in an unobserved lock would look free.
+    programmed in an unobserved lock would look free. A trusted
+    registry is saved even when the cycle declined a recovery, so the
+    codes it did issue survive a restart; the flags stay set, and a
+    declined generator-only identity stays bound to its proven
+    preference by ``continuity_required`` once they clear.
     """
     if not allocator._registry_lost:
         allocator._store.async_save(allocator._registry)
@@ -279,11 +283,11 @@ def _persist_registry(
         recovery.rebuilt_registry_trusted(allocator)
         and request.adoption_complete
         and not unaccounted
-        and not recovery_declined
     ):
         allocator._store.async_save(allocator._registry)
-        allocator._registry_lost = False
-        allocator._registry_missing = False
+        if not recovery_declined:
+            allocator._registry_lost = False
+            allocator._registry_missing = False
 
 
 def _record_adoption(
