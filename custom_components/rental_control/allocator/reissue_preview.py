@@ -10,10 +10,10 @@ from typing import Any
 
 from ..coordinator_helpers import code_allocation
 from ..coordinator_helpers import keymaster_observation
+from ..coordinator_helpers import physical_remap
 from ..coordinator_helpers import reissue as coordinator_reissue
 from ..coordinator_helpers import reservations as reservations_helper
 from ..coordinator_helpers import slot_exclusions
-from ..coordinator_helpers import slot_matching
 from . import issuance
 from . import reissue_state
 from .models import ReissueOutcome
@@ -220,7 +220,7 @@ def preview_reservations(
         if isinstance(slot.actual_name, str)
     }
     observed_mapping_keys = (
-        slot_matching.remap_observed_mappings_to_physical_reservations(
+        physical_remap.remap_observed_mappings_to_physical_reservations(
             persisted,
             reservations,
             actual_slot_names,
