@@ -1,0 +1,48 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+# reno configuration. Notes are written in Markdown, not reStructuredText,
+# because scripts/render_release_notes.py renders them into the GitHub
+# release body. See the "Release notes" section of README.md.
+default_branch: main
+# Release tags are vX.Y.Z; any vX.Y.ZrcN tags fold into the final release.
+collapse_pre_releases: true
+# Main is the only release branch, so scan its full history.
+stop_at_branch_base: false
+# Section order is the order of the rendered release notes. The optional
+# 'prelude' section is built into reno and always renders first.
+sections:
+  - [upgrade, Upgrade Notes]
+  - [features, New Features]
+  - [fixes, Bug Fixes]
+  - [deprecations, Deprecation Notes]
+  - [security, Security Issues]
+# Release Drafter, not reno, decides the next version number.
+semver_major: []
+semver_minor: []
+semver_patch: []
+# Template used by 'reno new'. Keep only the sections that apply.
+template: |
+  ---
+  # Write each item in Markdown. Delete every section you do not use,
+  # including this comment.
+  # prelude: |
+  #   Optional release summary, rendered above all sections.
+  upgrade:
+    - |
+      Action an operator must take when upgrading, such as a changed
+      option or a minimum Home Assistant version.
+  features:
+    - |
+      A new capability, described from the user's point of view.
+  fixes:
+    - |
+      A user-visible bug that is now fixed.
+  deprecations:
+    - |
+      Something that still works but will be removed later, and what to
+      use instead.
+  security:
+    - |
+      A security issue that is now fixed.

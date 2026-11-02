@@ -66,6 +66,12 @@ packages = ["custom_components"]
 [dependency-groups]
 dev = [
     "homeassistant>=2026.10.0",
+    {include-group = "releasenotes"},
+]
+# reno manages releasenotes/notes/; kept in its own group so CI can
+# install it without Home Assistant (uv run --only-group releasenotes).
+releasenotes = [
+    "reno>=4.1.0",
 ]
 
 [tool.pytest.ini_options]

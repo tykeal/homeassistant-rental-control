@@ -925,3 +925,24 @@ All commits must pass [pre-commit](https://pre-commit.com/) checks:
 pre-commit install
 pre-commit run --all-files
 ```
+
+### Release Notes
+
+Release notes live in `releasenotes/notes/` as
+[reno](https://docs.openstack.org/reno/latest/) snippets, written in
+Markdown. Add one in the same pull request as the change it describes:
+
+```bash
+uv run reno new <slug>
+uv run reno lint
+```
+
+Fill in the sections that apply (`upgrade`, `features`, `fixes`,
+`deprecations` or `security`) and delete the rest. A breaking change
+(a `Type!:` title or the `breaking-change` label) must add a note. The
+draft GitHub release shows every note added since the last release tag,
+above the list of pull requests. To preview it:
+
+```bash
+uv run python scripts/render_release_notes.py
+```

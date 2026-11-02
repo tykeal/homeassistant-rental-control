@@ -41,3 +41,9 @@ path = ".aislop/baseline.json"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Andrew Grimberg <tykeal@bardicgrove.org>"
 SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "releasenotes/notes/*.yaml"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Andrew Grimberg <tykeal@bardicgrove.org>"
+SPDX-License-Identifier = "Apache-2.0"

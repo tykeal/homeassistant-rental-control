@@ -24,3 +24,5 @@ Thumbs.db
 *.swp
 .idea/
 .worktrees/
+# Written by the release-drafter workflow from .github/release-drafter.yml
+.github/release-drafter-generated.yml
