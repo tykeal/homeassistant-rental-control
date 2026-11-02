@@ -126,3 +126,27 @@ def test_calendar_mapping_of_a_departed_stay_is_not_moved() -> None:
 
     assert keys == {"smith-stay-a"}
     assert list(persisted) == ["smith-stay-a"]
+
+
+def test_contested_exact_matches_still_block_the_fallback() -> None:
+    """Exact matches that cancel each other out still claim their stay."""
+    persisted = _persisted()
+    for slot in (7, 8):
+        persisted[f"adopted.entry.slot{slot}"] = {
+            "slot": slot,
+            "last_observed_actual": {
+                "start_state": (_OLD_START + timedelta(days=30)).isoformat(),
+                "end_state": (_OLD_END + timedelta(days=30)).isoformat(),
+            },
+        }
+    observed = {_KEY, "adopted.entry.slot7", "adopted.entry.slot8"}
+
+    keys = remap(
+        persisted,
+        [_res("smith", "Smith", 30)],
+        {6: "Smith", 7: "Smith", 8: "Smith"},
+        observed,
+    )
+
+    assert keys == observed
+    assert "smith" not in persisted
