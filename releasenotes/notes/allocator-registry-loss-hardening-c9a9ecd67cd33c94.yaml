@@ -18,4 +18,5 @@ fixes:
     issuance after the shared code registry is lost or found corrupt,
     because its codes stay on the lock and nothing else records them.
     The code adoption pending notification marks the entry as disabled.
-    Enable the entry so its lock is read again, or delete it.
+    Enable the entry so its lock is read again, or clear its codes from
+    the lock and then delete it.

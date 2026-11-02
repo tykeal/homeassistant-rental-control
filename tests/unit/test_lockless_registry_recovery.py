@@ -792,7 +792,7 @@ async def test_disabling_an_unadopted_entry_keeps_the_gate_closed(
 
     allocator._gate_deadline = 1.0
     allocator._warn_if_gate_expired()
-    assert "disabled: enable it so its lock is read, or delete it" in raised[0]
+    assert "clear its codes from the lock and delete it" in raised[0]
 
     await allocator.async_mark_entry_removed("entry-disabled")
     assert allocator._pending_adoption == set()

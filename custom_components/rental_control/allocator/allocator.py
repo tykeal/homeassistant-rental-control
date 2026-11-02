@@ -260,7 +260,10 @@ class DoorCodeAllocator:
         """
         label = entry_info.entry_name(self.hass, entry_id) if friendly else entry_id
         if recovery.entry_is_disabled(self.hass, entry_id):
-            return f"{label} (disabled: enable it so its lock is read, or delete it)"
+            return (
+                f"{label} (disabled: enable it so its lock is read, or clear "
+                "its codes from the lock and delete it)"
+            )
         slots = sorted(self._pending_adoption_slots.get(entry_id, ()))
         if not slots:
             return label
