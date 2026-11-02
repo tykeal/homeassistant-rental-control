@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
+import probatio
 import pytest
-import voluptuous as vol
 
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AllocationOrigin
@@ -78,7 +78,7 @@ async def test_target_form_refusals(hass: HomeAssistant) -> None:
 
 def test_schema_rejects_multiple_entity_ids() -> None:
     """The schema accepts only a single entity_id value."""
-    with pytest.raises(vol.Invalid):
+    with pytest.raises(probatio.Invalid):
         FORCE_REISSUE_SCHEMA({ATTR_ENTITY_ID: ["sensor.one", "sensor.two"]})
 
 

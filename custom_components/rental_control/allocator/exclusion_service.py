@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.core import ServiceCall
 from homeassistant.core import SupportsResponse
 from homeassistant.helpers import config_validation as cv
-import voluptuous as vol
+import probatio
 
 from ..const import DOMAIN
 from ..coordinator_helpers import exclusion_targets
@@ -47,26 +47,28 @@ class ExclusionRequest:
 def _positive_slot(value: Any) -> int:
     """Return a positive integer slot, rejecting bools and fractional values."""
     if isinstance(value, bool):
-        raise vol.Invalid("slot must be a positive integer")
+        raise probatio.Invalid("slot must be a positive integer")
     if isinstance(value, int):
         return value
     if isinstance(value, float):
         if not value.is_integer():
-            raise vol.Invalid("slot must be a positive integer")
+            raise probatio.Invalid("slot must be a positive integer")
         return int(value)
     if isinstance(value, str) and value.isdecimal():
         return int(value)
-    raise vol.Invalid("slot must be a positive integer")
+    raise probatio.Invalid("slot must be a positive integer")
 
 
-SET_SLOT_EXCLUSION_SCHEMA = vol.Schema(
+SET_SLOT_EXCLUSION_SCHEMA = probatio.Schema(
     {
-        vol.Optional(ATTR_ENTITY_ID): cv.entity_id,
-        vol.Optional(ATTR_LOCKNAME): cv.string,
-        vol.Required(ATTR_SLOT): vol.All(_positive_slot, vol.Range(min=1)),
-        vol.Optional(ATTR_EXCLUDED, default=True): cv.boolean,
-        vol.Optional(ATTR_REASON): cv.string,
-        vol.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
+        probatio.Optional(ATTR_ENTITY_ID): cv.entity_id,
+        probatio.Optional(ATTR_LOCKNAME): cv.string,
+        probatio.Required(ATTR_SLOT): probatio.All(
+            _positive_slot, probatio.Range(min=1)
+        ),
+        probatio.Optional(ATTR_EXCLUDED, default=True): cv.boolean,
+        probatio.Optional(ATTR_REASON): cv.string,
+        probatio.Optional(ATTR_DRY_RUN, default=False): cv.boolean,
     }
 )
 

@@ -13,7 +13,7 @@ from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.core import callback
 from homeassistant.util import dt
-import voluptuous as vol
+import probatio
 
 from .config_flow_helpers import schemas as _schemas
 from .config_flow_helpers.models import ConfigFormContext
@@ -149,7 +149,7 @@ def _get_schema(
     user_input: dict[str, Any] | None,
     default_dict: dict[str, Any] | None,
     entry_id: str | None = None,
-) -> vol.Schema:
+) -> probatio.Schema:
     """Get a schema using the default_dict as a backup."""
     return _schemas.build_config_schema(hass, user_input, default_dict, entry_id)
 

@@ -11,9 +11,9 @@ from typing import Any
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
+import probatio
+from probatio import ALLOW_EXTRA
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-import voluptuous as vol
-from voluptuous.schema_builder import ALLOW_EXTRA
 
 from custom_components.rental_control.config_flow import RentalControlFlowHandler
 from custom_components.rental_control.config_flow import _get_schema
@@ -76,12 +76,12 @@ class _FormFlow:
         return kwargs
 
 
-def _schema_key(schema: vol.Schema, name: str) -> Any:
-    """Return a voluptuous schema marker by name."""
+def _schema_key(schema: probatio.Schema, name: str) -> Any:
+    """Return a schema marker by name."""
     return next(key for key in schema.schema if str(key.schema) == name)
 
 
-def _schema_names(schema: vol.Schema) -> set[str]:
+def _schema_names(schema: probatio.Schema) -> set[str]:
     """Return schema marker names."""
     return {str(key.schema) for key in schema.schema}
 
@@ -171,7 +171,7 @@ def test_initial_schema_preserves_fields_defaults(hass: "HomeAssistant") -> None
     assert _schema_key(schema, CONF_CHECKIN).default() == DEFAULT_CHECKIN
     assert _schema_key(schema, CONF_CODE_LENGTH).default() == DEFAULT_CODE_LENGTH
     assert _schema_key(schema, CONF_CODE_GENERATION).default() == "Start/End Date"
-    assert isinstance(_schema_key(schema, CONF_NAME), vol.Required)
+    assert isinstance(_schema_key(schema, CONF_NAME), probatio.Required)
 
 
 def test_options_schema_preserves_extra_fields_and_precedence(

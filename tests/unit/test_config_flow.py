@@ -13,8 +13,8 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
+import probatio
 import pytest
-import voluptuous as vol
 
 from custom_components.rental_control.config_flow import _normalize_lock_entry
 from custom_components.rental_control.const import CONF_CHECKIN
@@ -185,11 +185,11 @@ async def test_config_flow_validation_missing_name(hass: HomeAssistant) -> None:
     """Test validation error when name is missing.
 
     Verifies that:
-    - Config flow requires name field (voluptuous validation)
+    - Config flow requires name field (schema validation)
     - Empty or missing name field is rejected
     - Form is re-displayed with appropriate error
 
-    Note: In Home Assistant config flows, the schema validation with vol.Required
+    Note: In Home Assistant config flows, the schema validation with probatio.Required
     prevents truly missing required fields. Empty strings are technically valid
     for the string schema but would create useless entries. This test documents
     that the schema requires a name field exists.
@@ -210,18 +210,18 @@ async def test_config_flow_validation_missing_name(hass: HomeAssistant) -> None:
     assert CONF_NAME in schema_keys
     # Check if it's marked as Required using isinstance for robustness
     name_key = [k for k in schema.keys() if str(k.schema) == CONF_NAME][0]
-    assert isinstance(name_key, vol.Required)
+    assert isinstance(name_key, probatio.Required)
 
 
 async def test_config_flow_validation_missing_url(hass: HomeAssistant) -> None:
     """Test validation error when URL is missing.
 
     Verifies that:
-    - Config flow requires url field (voluptuous validation)
+    - Config flow requires url field (schema validation)
     - Empty or missing URL field is rejected
     - Form includes URL as required field
 
-    Note: In Home Assistant config flows, the schema validation with vol.Required
+    Note: In Home Assistant config flows, the schema validation with probatio.Required
     prevents truly missing required fields. This test documents that the schema
     requires a URL field exists.
     """
@@ -241,7 +241,7 @@ async def test_config_flow_validation_missing_url(hass: HomeAssistant) -> None:
     assert CONF_URL in schema_keys
     # Check if it's marked as Required using isinstance for robustness
     url_key = [k for k in schema.keys() if str(k.schema) == CONF_URL][0]
-    assert isinstance(url_key, vol.Required)
+    assert isinstance(url_key, probatio.Required)
 
 
 async def test_config_flow_rejects_http_when_ssl_enabled(hass: HomeAssistant) -> None:
@@ -377,7 +377,7 @@ async def test_config_flow_rejects_malformed_url(hass: HomeAssistant) -> None:
     - Error message indicates URL is malformed
     - Form is re-displayed with error details
 
-    Validated in _start_config_flow(): cv.url() raises vol.Invalid for bad URLs
+    Validated in _start_config_flow(): cv.url() raises probatio.Invalid for bad URLs
     """
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
@@ -1661,7 +1661,7 @@ async def test_config_flow_max_name_length_min_validation(
 
     # Value below minimum must raise
     invalid = {**base_data, CONF_MAX_NAME_LENGTH: MIN_NAME_LENGTH - 1}
-    with pytest.raises(vol.Invalid):
+    with pytest.raises(probatio.Invalid):
         schema(invalid)
 
 

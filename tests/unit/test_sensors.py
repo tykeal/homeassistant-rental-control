@@ -137,18 +137,18 @@ class TestAsyncSetupEntry:
         assert isinstance(added_entities[3], CheckinTrackingSensor)
         # Verify checkout and set_state services were registered
         from homeassistant.helpers import config_validation as cv
-        import voluptuous as vol
+        import probatio
 
         calls = mock_platform.async_register_entity_service.call_args_list
         assert len(calls) == 2
         assert calls[0] == call(
             "checkout",
-            {vol.Optional("force", default=False): cv.boolean},
+            {probatio.Optional("force", default=False): cv.boolean},
             "async_checkout",
         )
         assert calls[1] == call(
             "set_state",
-            {vol.Required("state"): cv.string},
+            {probatio.Required("state"): cv.string},
             "async_set_state",
         )
 

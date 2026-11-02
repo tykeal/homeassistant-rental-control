@@ -14,7 +14,7 @@ from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.typing import DiscoveryInfoType
-import voluptuous as vol
+import probatio
 
 from .const import CHECKIN_SENSOR
 from .const import CONF_MAX_EVENTS
@@ -81,14 +81,14 @@ async def async_setup_entry(
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
         "checkout",
-        {vol.Optional("force", default=False): cv.boolean},
+        {probatio.Optional("force", default=False): cv.boolean},
         "async_checkout",
     )
 
     # Register debug set_state entity service
     platform.async_register_entity_service(
         "set_state",
-        {vol.Required("state"): cv.string},
+        {probatio.Required("state"): cv.string},
         "async_set_state",
     )
 

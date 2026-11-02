@@ -13,7 +13,7 @@ from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
-import voluptuous as vol
+import probatio
 
 from ..allocator import get_allocator
 from ..bookings_only import host_defaults_bookings_only
@@ -115,7 +115,7 @@ async def validate_url(
         if "text/calendar" not in resp.content_type:
             errors[CONF_URL] = "bad_ics"
             return URLValidationResult(error="bad_ics", content_type=resp.content_type)
-    except vol.Invalid as err:
+    except probatio.Invalid as err:
         _LOGGER.exception(err.msg)
         errors[CONF_URL] = "invalid_url"
         return URLValidationResult(error="invalid_url")
@@ -132,13 +132,13 @@ def validate_scalar_fields(user_input: dict[str, Any], errors: dict[str, str]) -
 
     try:
         cv.time(user_input[CONF_CHECKIN])
-    except vol.Invalid as err:
+    except probatio.Invalid as err:
         _LOGGER.exception(err.msg)
         errors[CONF_CHECKIN] = "bad_time"
 
     try:
         cv.time(user_input[CONF_CHECKOUT])
-    except vol.Invalid as err:
+    except probatio.Invalid as err:
         _LOGGER.exception(err.msg)
         errors[CONF_CHECKOUT] = "bad_time"
 
