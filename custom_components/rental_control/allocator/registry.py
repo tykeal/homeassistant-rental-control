@@ -13,6 +13,37 @@ from .models import AllocationRecord
 from .models import AllocationRequest
 
 
+def is_observed_alias(identity_key: str) -> bool:
+    """Return whether an identity key is a slot's observed-code alias.
+
+    An alias records that a lock slot physically presents a code; it is
+    not a reservation the code was issued to. It keeps the code out of
+    issuance while the lock still presents it, but it is never an
+    issuance owner, so it neither forms nor blocks a shared-code
+    conflict.
+    """
+    parts = identity_key.split(":")
+    return len(parts) == 5 and parts[1] == "observed"
+
+
+def _is_physical_only(identity_key: str) -> bool:
+    """Return whether an owner only marks a code still present on a lock.
+
+    Observed aliases and forced-release holds both keep a code reserved
+    while a lock slot presents it, but neither is a guest the code is
+    issued to: a hold's booking has already moved to a replacement code.
+    """
+    parts = identity_key.split(":")
+    return len(parts) == 5 and parts[1] in ("observed", "reissued")
+
+
+def issuance_owners(record: AllocationRecord) -> list[AllocationOwner]:
+    """Return the owners a record's code was actually issued to."""
+    return [
+        owner for owner in record.owners if not _is_physical_only(owner.identity_key)
+    ]
+
+
 def _validate_code(code: str, code_length: int) -> None:
     """Raise when a code is not decimal digits of the requested length."""
     if not isinstance(code_length, int) or isinstance(code_length, bool):
@@ -158,5 +189,9 @@ class AllocationRegistry:
         return True
 
     def conflicts(self) -> list[AllocationRecord]:
-        """Return records with more than one owner."""
-        return [record for record in self.records.values() if len(record.owners) > 1]
+        """Return records issued to more than one owner."""
+        return [
+            record
+            for record in self.records.values()
+            if len(issuance_owners(record)) > 1
+        ]

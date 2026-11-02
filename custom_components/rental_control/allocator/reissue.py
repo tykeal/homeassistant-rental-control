@@ -18,6 +18,8 @@ from .models import CycleRequest
 from .models import ForcedReissueDirective
 from .models import ForcedReleaseExemption
 from .models import ReissueOutcome
+from .registry import is_observed_alias
+from .registry import issuance_owners
 from .reissue_holds import forced_hold_matches_slot as forced_hold_matches_slot
 from .reissue_holds import forced_hold_retention_reason as forced_hold_retention_reason
 from .reissue_holds import forced_release_hold_key as forced_release_hold_key
@@ -219,7 +221,22 @@ def _conflict_exempt(
     owners: list[AllocationOwner],
     forced_release: ForcedReleaseExemption | None,
 ) -> bool:
-    """Return whether a forced-release exemption matches one hold owner."""
+    """Return whether releasing owners is exempt from the conflict guard.
+
+    Observed aliases and forced-release holds are not issuance owners.
+    Releasing an alias never resolves a conflict between bookings, and
+    a booking sharing its code only with aliases or holds is not part
+    of a conflict, so neither case is held back as an
+    ``adoption_conflict``. The alias or hold itself keeps the code
+    reserved for as long as the lock presents it. A hold is still
+    released only as the named forced-release hold owner.
+    """
+    if owners and all(is_observed_alias(owner.identity_key) for owner in owners):
+        return True
+    if len(issuance_owners(record)) <= 1 and not any(
+        is_forced_release_hold(owner.identity_key) for owner in owners
+    ):
+        return True
     if forced_release is None or len(owners) != 1:
         return False
     owner = owners[0]
