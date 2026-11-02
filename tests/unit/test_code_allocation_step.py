@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from datetime import timedelta
 from types import SimpleNamespace
@@ -23,7 +24,7 @@ from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import CycleRequest
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator_helpers import code_allocation
-from custom_components.rental_control.coordinator_helpers import slot_exclusions
+from custom_components.rental_control.coordinator_helpers import slot_notifications
 from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
     CoordinatorRefreshMixin,
 )
@@ -127,12 +128,26 @@ class _LocklessCoordinator(CoordinatorRefreshMixin):
 
 
 @pytest.fixture(autouse=True)
-def _inert_exclusion_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the exclusion notice out of this module's notification counts."""
-    monkeypatch.setattr(slot_exclusions, "async_create", lambda *_args, **_kwargs: None)
+def _inert_slot_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep slot notices off the notification platform unless captured."""
     monkeypatch.setattr(
-        slot_exclusions, "async_dismiss", lambda *_args, **_kwargs: None
+        slot_notifications, "async_create", lambda *_args, **_kwargs: None
     )
+    monkeypatch.setattr(
+        slot_notifications, "async_dismiss", lambda *_args, **_kwargs: None
+    )
+
+
+def _unreadable_only(record: Callable[..., object]) -> Callable[..., None]:
+    """Forward only unreadable-slot notices, keeping exclusion notices out."""
+
+    def _forward(hass: Any, *args: Any, **kwargs: Any) -> None:
+        """Record one notification call when it targets unreadable slots."""
+        notification_id = kwargs.get("notification_id") or args[-1]
+        if notification_id.startswith(f"{DOMAIN}_unreadable_slots"):
+            record(hass, *args, **kwargs)
+
+    return _forward
 
 
 def _reservation(identity_key: str, code: str = "9999") -> Reservation:
@@ -1395,9 +1410,11 @@ async def test_unreadable_slots_raise_notification(
     """Unreadable managed slots notify the operator by slot number."""
     created: list[tuple[str, dict[str, Any]]] = []
     monkeypatch.setattr(
-        code_allocation,
+        slot_notifications,
         "async_create",
-        lambda _hass, message, **kwargs: created.append((message, kwargs)),
+        _unreadable_only(
+            lambda _hass, message, **kwargs: created.append((message, kwargs))
+        ),
     )
     monkeypatch.setattr(
         code_allocation,
@@ -1432,9 +1449,11 @@ async def test_unreadable_slots_notification_names_the_entry(
     entry_id = "0123456789abcdef0123456789abcdef"
     created: list[tuple[str, dict[str, Any]]] = []
     monkeypatch.setattr(
-        code_allocation,
+        slot_notifications,
         "async_create",
-        lambda _hass, message, **kwargs: created.append((message, kwargs)),
+        _unreadable_only(
+            lambda _hass, message, **kwargs: created.append((message, kwargs))
+        ),
     )
     hass = _notifying_hass()
     entry = SimpleNamespace(entry_id=entry_id, title="Unit A", data={}, options={})
@@ -1457,14 +1476,18 @@ async def test_owned_unreadable_slot_keeps_notification(
     created: list[tuple[str, dict[str, Any]]] = []
     dismissed: list[str] = []
     monkeypatch.setattr(
-        code_allocation,
+        slot_notifications,
         "async_create",
-        lambda _hass, message, **kwargs: created.append((message, kwargs)),
+        _unreadable_only(
+            lambda _hass, message, **kwargs: created.append((message, kwargs))
+        ),
     )
     monkeypatch.setattr(
-        code_allocation,
+        slot_notifications,
         "async_dismiss",
-        lambda _hass, notification_id: dismissed.append(notification_id),
+        _unreadable_only(
+            lambda _hass, notification_id: dismissed.append(notification_id)
+        ),
     )
     allocator = _allocator()
     monkeypatch.setattr(code_allocation, "get_allocator", lambda _hass: allocator)
@@ -1500,9 +1523,11 @@ async def test_unreadable_notification_dismissed_when_clear(
     """A repaired slot dismisses the stale unreadable-slot notification."""
     dismissed: list[str] = []
     monkeypatch.setattr(
-        code_allocation,
+        slot_notifications,
         "async_dismiss",
-        lambda _hass, notification_id: dismissed.append(notification_id),
+        _unreadable_only(
+            lambda _hass, notification_id: dismissed.append(notification_id)
+        ),
     )
     monkeypatch.setattr(
         code_allocation,
@@ -1528,14 +1553,14 @@ async def test_unreadable_notification_skipped_without_bus(
     """Non-Home-Assistant callers never touch the notification platform."""
     calls: list[str] = []
     monkeypatch.setattr(
-        code_allocation,
+        slot_notifications,
         "async_create",
-        lambda *_args, **_kwargs: calls.append("create"),
+        _unreadable_only(lambda *_args, **_kwargs: calls.append("create")),
     )
     monkeypatch.setattr(
-        code_allocation,
+        slot_notifications,
         "async_dismiss",
-        lambda *_args, **_kwargs: calls.append("dismiss"),
+        _unreadable_only(lambda *_args, **_kwargs: calls.append("dismiss")),
     )
     monkeypatch.setattr(
         code_allocation,
@@ -1561,9 +1586,11 @@ def test_dismiss_unreadable_slots_uses_entry_notification_id(
     """Entry teardown clears the entry's own unreadable-slot notification."""
     dismissed: list[str] = []
     monkeypatch.setattr(
-        code_allocation,
+        slot_notifications,
         "async_dismiss",
-        lambda _hass, notification_id: dismissed.append(notification_id),
+        _unreadable_only(
+            lambda _hass, notification_id: dismissed.append(notification_id)
+        ),
     )
 
     code_allocation.dismiss_unreadable_slots(_notifying_hass(), "entry-a")

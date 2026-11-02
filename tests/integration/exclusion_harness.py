@@ -24,7 +24,7 @@ from custom_components.rental_control.const import ALLOCATOR
 from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator_helpers import code_allocation
-from custom_components.rental_control.coordinator_helpers import slot_exclusions
+from custom_components.rental_control.coordinator_helpers import slot_notifications
 from custom_components.rental_control.coordinator_helpers.reissue import (
     CodeResolutionRequest,
 )
@@ -180,9 +180,9 @@ def _capture_notifications(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         """Forget one dismissed notification."""
         live.pop(notification_id, None)
 
-    for module in (code_allocation, slot_exclusions):
-        monkeypatch.setattr(module, "async_create", _create)
-        monkeypatch.setattr(module, "async_dismiss", _dismiss)
+    monkeypatch.setattr(code_allocation, "async_create", _create)
+    monkeypatch.setattr(slot_notifications, "async_create", _create)
+    monkeypatch.setattr(slot_notifications, "async_dismiss", _dismiss)
     return live
 
 

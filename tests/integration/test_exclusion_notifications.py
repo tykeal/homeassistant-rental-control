@@ -17,6 +17,7 @@ from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import slot_exclusions
+from custom_components.rental_control.coordinator_helpers import slot_notifications
 from custom_components.rental_control.coordinator_helpers.reissue import (
     CodeResolutionRequest,
 )
@@ -44,9 +45,8 @@ def notifications(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         live.pop(notification_id, None)
 
     monkeypatch.setattr(code_allocation, "async_create", _create)
-    monkeypatch.setattr(code_allocation, "async_dismiss", _dismiss)
-    monkeypatch.setattr(slot_exclusions, "async_create", _create)
-    monkeypatch.setattr(slot_exclusions, "async_dismiss", _dismiss)
+    monkeypatch.setattr(slot_notifications, "async_create", _create)
+    monkeypatch.setattr(slot_notifications, "async_dismiss", _dismiss)
     return live
 
 

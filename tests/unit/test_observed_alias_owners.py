@@ -29,7 +29,7 @@ from custom_components.rental_control.allocator.models import AllocationOwner
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.registry import is_observed_alias
 from custom_components.rental_control.coordinator_helpers import code_allocation
-from custom_components.rental_control.coordinator_helpers import slot_exclusions
+from custom_components.rental_control.coordinator_helpers import slot_notifications
 from custom_components.rental_control.coordinator_helpers.reissue import (
     CodeResolutionRequest,
 )
@@ -49,10 +49,9 @@ _ALIAS = "identity-a:observed:entry-a:front:1"
 def _inert_notifications(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Record allocator notifications and silence the others."""
     raised: list[str] = []
-    monkeypatch.setattr(slot_exclusions, "async_create", lambda *_a, **_k: None)
-    monkeypatch.setattr(slot_exclusions, "async_dismiss", lambda *_a, **_k: None)
     monkeypatch.setattr(code_allocation, "async_create", lambda *_a, **_k: None)
-    monkeypatch.setattr(code_allocation, "async_dismiss", lambda *_a, **_k: None)
+    monkeypatch.setattr(slot_notifications, "async_create", lambda *_a, **_k: None)
+    monkeypatch.setattr(slot_notifications, "async_dismiss", lambda *_a, **_k: None)
     monkeypatch.setattr(
         allocator_module,
         "async_create",

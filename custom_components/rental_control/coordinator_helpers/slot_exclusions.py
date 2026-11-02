@@ -6,17 +6,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.persistent_notification import async_create
-from homeassistant.components.persistent_notification import async_dismiss
-
 from ..allocator.exclusions import parse_excluded_slots
 from ..allocator.exclusions import serialize_excluded_slots
 from ..const import CONF_EXCLUDED_SLOTS
 from ..const import DOMAIN
 from ..const import NAME
+from .slot_notifications import SlotNotice
 
-_EXCLUDED_NOTIFICATION_ID = f"{DOMAIN}_excluded_slots"
-# aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
+_EXCLUDED_NOTICE = SlotNotice(
+    prefix=f"{DOMAIN}_excluded_slots", title=f"{NAME} excluded lock slots"
+)
 
 
 def load(hass: Any, entry_id: str) -> dict[int, str | None]:
@@ -67,14 +66,12 @@ def persist_excluded_slots(
 
 def excluded_slots_notification_id(entry_id: str) -> str:
     """Return the persistent notification id for an entry's exclusions."""
-    return f"{_EXCLUDED_NOTIFICATION_ID}_{entry_id}"
+    return _EXCLUDED_NOTICE.notification_id(entry_id)
 
 
 def dismiss_excluded_slots(hass: Any, entry_id: str) -> None:
     """Clear an entry's slot-exclusion notification."""
-    if not hasattr(hass, "bus"):
-        return
-    async_dismiss(hass, excluded_slots_notification_id(entry_id))
+    _EXCLUDED_NOTICE.dismiss(hass, entry_id)
 
 
 def report_excluded_slots(
@@ -84,8 +81,6 @@ def report_excluded_slots(
     exclusions: dict[int, str | None],
 ) -> None:
     """Reconcile the standing notification for excluded managed slots."""
-    if not hasattr(hass, "bus"):
-        return
     if not exclusions:
         dismiss_excluded_slots(hass, entry_id)
         return
@@ -105,12 +100,7 @@ def report_excluded_slots(
         "the managed range. Saving this entry's options also clears it, "
         "which returns the entry to withholding issuance."
     )
-    async_create(
-        hass,
-        message,
-        title=f"{NAME} excluded lock slots",
-        notification_id=excluded_slots_notification_id(entry_id),
-    )
+    _EXCLUDED_NOTICE.publish(hass, entry_id, message)
 
 
 def _entry(hass: Any, entry_id: str) -> Any | None:

@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 import uuid
 
 from homeassistant.components.persistent_notification import async_create
-from homeassistant.components.persistent_notification import async_dismiss
 from homeassistant.util import dt
 
 from ..allocator import code_origin
@@ -32,6 +31,7 @@ from . import adoption_gate
 from . import generator_divergence
 from . import reissue
 from . import slot_exclusions
+from . import slot_notifications
 from .models import ObservedSlotQuery
 from .reissue import CodeResolutionRequest
 from .reissue import CodeResolutionResult
@@ -46,7 +46,9 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _EXHAUSTED_NOTIFICATION_ID = f"{DOMAIN}_code_registry_exhausted"
-_UNREADABLE_NOTIFICATION_ID = f"{DOMAIN}_unreadable_slots"
+_UNREADABLE_NOTICE = slot_notifications.SlotNotice(
+    prefix=f"{DOMAIN}_unreadable_slots", title=f"{NAME} unreadable lock slots"
+)
 _ISSUED_ORIGINS = {
     origin.value: origin
     for origin in (AllocationOrigin.PREFERRED, AllocationOrigin.COLLISION_RESOLVED)
@@ -223,14 +225,12 @@ def _revalidated_exclusions(
 
 def unreadable_slots_notification_id(entry_id: str) -> str:
     """Return the persistent notification id for an entry's unreadable slots."""
-    return f"{_UNREADABLE_NOTIFICATION_ID}_{entry_id}"
+    return _UNREADABLE_NOTICE.notification_id(entry_id)
 
 
 def dismiss_unreadable_slots(hass: object, entry_id: str) -> None:
     """Clear an entry's unreadable-slot notification."""
-    if not hasattr(hass, "bus"):
-        return
-    async_dismiss(hass, unreadable_slots_notification_id(entry_id))
+    _UNREADABLE_NOTICE.dismiss(hass, entry_id)
 
 
 def report_unreadable_slots(
@@ -240,7 +240,7 @@ def report_unreadable_slots(
     slots: list[int],
 ) -> None:
     """Reconcile the persistent notification for unreadable managed slots."""
-    if not hasattr(hass, "bus"):
+    if not slot_notifications.can_notify(hass):
         return
     if not slots:
         dismiss_unreadable_slots(hass, entry_id)
@@ -271,12 +271,7 @@ def report_unreadable_slots(
         "covers them, or call the rental_control.set_slot_exclusion action "
         "to exclude each dead slot from the issuance gate."
     )
-    async_create(
-        hass,
-        message,
-        title=f"{NAME} unreadable lock slots",
-        notification_id=unreadable_slots_notification_id(entry_id),
-    )
+    _UNREADABLE_NOTICE.publish(hass, entry_id, message)
 
 
 def _apply_adoption_results(

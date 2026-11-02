@@ -16,7 +16,7 @@ import pytest
 from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.coordinator_helpers import code_allocation
-from custom_components.rental_control.coordinator_helpers import slot_exclusions
+from custom_components.rental_control.coordinator_helpers import slot_notifications
 from custom_components.rental_control.coordinator_helpers.reissue import (
     AdoptionRequests,
 )
@@ -36,10 +36,9 @@ from tests.fixtures.fake_hass import fake_config
 @pytest.fixture(autouse=True)
 def _inert_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep persistent notifications out of these allocator tests."""
-    monkeypatch.setattr(slot_exclusions, "async_create", lambda *_a, **_k: None)
-    monkeypatch.setattr(slot_exclusions, "async_dismiss", lambda *_a, **_k: None)
     monkeypatch.setattr(code_allocation, "async_create", lambda *_a, **_k: None)
-    monkeypatch.setattr(code_allocation, "async_dismiss", lambda *_a, **_k: None)
+    monkeypatch.setattr(slot_notifications, "async_create", lambda *_a, **_k: None)
+    monkeypatch.setattr(slot_notifications, "async_dismiss", lambda *_a, **_k: None)
     monkeypatch.setattr(allocator_module, "async_create", lambda *_a, **_k: None)
 
 
