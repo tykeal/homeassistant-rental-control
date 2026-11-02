@@ -25,6 +25,7 @@ from custom_components.rental_control.allocator.models import CycleRequest
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import slot_notifications
+from custom_components.rental_control.coordinator_helpers import unreadable_slots
 from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
     CoordinatorRefreshMixin,
 )
@@ -1461,7 +1462,7 @@ async def test_unreadable_slots_notification_names_the_entry(
         entry if requested == entry_id else None
     )
 
-    code_allocation.report_unreadable_slots(hass, entry_id, "front", [3])
+    unreadable_slots.report_unreadable_slots(hass, entry_id, "front", [3])
 
     assert len(created) == 1
     message, _kwargs = created[0]
@@ -1593,8 +1594,8 @@ def test_dismiss_unreadable_slots_uses_entry_notification_id(
         ),
     )
 
-    code_allocation.dismiss_unreadable_slots(_notifying_hass(), "entry-a")
-    code_allocation.dismiss_unreadable_slots(SimpleNamespace(), "entry-b")
+    unreadable_slots.dismiss_unreadable_slots(_notifying_hass(), "entry-a")
+    unreadable_slots.dismiss_unreadable_slots(SimpleNamespace(), "entry-b")
 
     assert dismissed == [f"{DOMAIN}_unreadable_slots_entry-a"]
 

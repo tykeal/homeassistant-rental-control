@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import slot_exclusions
+from custom_components.rental_control.coordinator_helpers import unreadable_slots
 from custom_components.rental_control.reconciliation import ActionKind
 from custom_components.rental_control.reconciliation import compute_desired_plan
 
@@ -35,7 +35,7 @@ async def test_single_exclusion_carries_the_whole_arc(
     assert frozen.slot_code is None
     assert frozen.code_source == "unallocated"
     assert DEAD_SLOT in result.observation.unreadable_slots
-    assert code_allocation.unreadable_slots_notification_id("entry-a") in set(
+    assert unreadable_slots.unreadable_slots_notification_id("entry-a") in set(
         world.notifications
     )
 
@@ -58,7 +58,7 @@ async def test_single_exclusion_carries_the_whole_arc(
     relapsed = reservation("identity-d")
     await world.cycle("entry-a", dead, [relapsed])
     assert relapsed.slot_code is None
-    assert code_allocation.unreadable_slots_notification_id("entry-a") in set(
+    assert unreadable_slots.unreadable_slots_notification_id("entry-a") in set(
         world.notifications
     )
 
