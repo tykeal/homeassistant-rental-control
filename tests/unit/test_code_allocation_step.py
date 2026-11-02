@@ -197,10 +197,21 @@ async def test_phase3_adopts_without_allocation(
     assert reservation.code_source == "adopted"
 
 
-async def test_checked_out_reservation_not_active(
+@pytest.mark.parametrize(
+    ("lockname", "expected"),
+    [("front", set()), (None, {"identity-a"})],
+)
+async def test_checked_out_reservation_active_only_without_lock(
     monkeypatch: Any,
+    lockname: str | None,
+    expected: set[str],
 ) -> None:
-    """Checked-out reservations are swept instead of kept active."""
+    """A checked-out stay is swept on a lock but kept without one.
+
+    A lock-backed entry frees the departing guest's slot, so its code is
+    released. An entry without a lock has no slot to free and keeps the
+    code while the event is listed (issue #847).
+    """
     allocator = FakeAllocator()
     monkeypatch.setattr(
         code_allocation,
@@ -213,13 +224,13 @@ async def test_checked_out_reservation_not_active(
     await code_allocation.async_resolve_codes(
         SimpleNamespace(),
         "entry-a",
-        None,
+        lockname,
         4,
         [],
         [reservation],
     )
 
-    assert allocator.requests[0].active_keys == set()
+    assert allocator.requests[0].active_keys == expected
 
 
 def test_rekey_requests_are_deterministic() -> None:
@@ -242,7 +253,7 @@ def test_rekey_requests_are_deterministic() -> None:
 async def test_lockless_allocation_applies_checkout(
     monkeypatch: Any,
 ) -> None:
-    """Lockless allocation marks checkout before resolving active keys."""
+    """Lockless allocation marks checkout but keeps publishing the stay."""
     coordinator = _LocklessCoordinator()
     seen_checked_out: list[bool] = []
 
@@ -266,7 +277,8 @@ async def test_lockless_allocation_applies_checkout(
     await coordinator._run_lockless_allocation([])
 
     assert seen_checked_out == [True]
-    assert coordinator.synced == {}
+    assert coordinator.synced == {"identity-a": coordinator.reservation}
+    assert coordinator._latest_res_by_key == coordinator.synced
 
 
 async def test_adoption_result_is_not_overwritten(

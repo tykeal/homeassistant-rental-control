@@ -114,11 +114,21 @@ def build_desired_plan_request(
     )
 
 
-def select_eligible_reservations(reservations: list[Reservation]) -> list[Reservation]:
-    """Return reservations eligible for slot planning."""
+def select_eligible_reservations(
+    reservations: list[Reservation], *, include_checked_out: bool = False
+) -> list[Reservation]:
+    """Return reservations eligible for slot planning.
+
+    A checked-out stay gives up its lock slot, so it is dropped by
+    default. An entry without a lock has no slot to give up and keeps
+    publishing the stay's code while the event is listed, so it passes
+    ``include_checked_out=True``.
+    """
     result: list[Reservation] = []
     for res in reservations:
-        if not res.eligible or res.checked_out:
+        if not res.eligible:
+            continue
+        if res.checked_out and not include_checked_out:
             continue
         if res.missing_count >= 3 and not res.protected_active:
             continue

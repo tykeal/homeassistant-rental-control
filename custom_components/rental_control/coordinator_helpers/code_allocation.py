@@ -127,10 +127,7 @@ async def async_resolve_codes(
             adoptions=adoptions,
             rekeys=build_rekey_requests(reservations),
             allocations=allocations,
-            active_keys={
-                reservation.identity_key
-                for reservation in select_eligible_reservations(reservations)
-            },
+            active_keys=_active_keys(reservations, lockname),
             adoption_complete=adoption_complete,
             forced_reissues=request.forced_reissues,
             excluded_slots=request.excluded_slots,
@@ -182,6 +179,14 @@ async def async_resolve_codes(
     return CodeResolutionResult(
         observation, getattr(result, "reissues", ()), consumed_target_keys
     )
+
+
+def _active_keys(reservations: list[Reservation], lockname: str | None) -> set[str]:
+    """Return the identities whose codes the allocator keeps this cycle."""
+    kept = select_eligible_reservations(
+        reservations, include_checked_out=lockname is None
+    )
+    return {reservation.identity_key for reservation in kept}
 
 
 def _revalidated_exclusions(
@@ -501,7 +506,9 @@ def _planned_slots(
     if lockname is None:
         return {
             reservation.identity_key: None
-            for reservation in select_eligible_reservations(reservations)
+            for reservation in select_eligible_reservations(
+                reservations, include_checked_out=True
+            )
         }
     if not managed_slots:
         return {}
