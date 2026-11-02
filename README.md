@@ -254,6 +254,14 @@ An unmatched code usually belongs to a booking that has gone away, and clears
 itself once Keymaster finishes clearing the slot. If it persists, clear that
 code at the lock.
 
+When Home Assistant loses the shared code registry, or finds it corrupt, a
+**disabled** config entry that drives a lock also holds the gate shut. Disabling an entry leaves its
+codes on the lock, and with the registry gone nothing else records them, so
+any code issued could already open that lock. The `code adoption pending`
+notification marks such an entry as disabled. Enable it so the integration
+reads its lock again, or delete the entry once you have cleared its codes from
+the lock.
+
 ### Slot Exclusion Action
 
 The `rental_control.set_slot_exclusion` service action tells one entry to stop

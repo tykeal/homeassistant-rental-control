@@ -22,9 +22,12 @@ from typing import cast
 from homeassistant.util import dt as dt_util
 import pytest
 
+from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator.allocator import DOMAIN
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AllocationRequest
+from custom_components.rental_control.allocator.registry import AllocationRegistry
+from custom_components.rental_control.allocator.store import RegistryLoadResult
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import lockless_store
 from custom_components.rental_control.coordinator_helpers import reissue
@@ -80,7 +83,12 @@ def _fake_hass(
                 data=MappingProxyType({"keymaster_entry_id": "side"}),
             )
         )
-    hass.config_entries = SimpleNamespace(async_entries=lambda _domain=None: entries)
+    hass.config_entries = SimpleNamespace(
+        async_entries=lambda _domain=None: entries,
+        async_get_entry=lambda entry_id: next(
+            (entry for entry in entries if entry.entry_id == entry_id), None
+        ),
+    )
     return hass
 
 
@@ -643,3 +651,66 @@ def test_issued_origin_survives_the_lockless_store() -> None:
         [reloaded], store["mappings"]
     )
     assert reloaded.issued_origin == "collision_resolved"
+
+
+async def _loaded(allocator: DoorCodeAllocator, *, lost: bool) -> DoorCodeAllocator:
+    """Load a registry that was, or was not, lost."""
+    result = RegistryLoadResult(
+        AllocationRegistry(), registry_lost=lost, registry_missing=lost
+    )
+
+    async def _load() -> RegistryLoadResult:
+        """Return the canned load result."""
+        return result
+
+    allocator._store = cast(
+        Any, SimpleNamespace(async_load=_load, async_save=lambda _registry: None)
+    )
+    await allocator.async_load()
+    return allocator
+
+
+async def test_disabled_lock_entry_joins_the_gate_after_registry_loss() -> None:
+    """A lost registry cannot vouch for a disabled lock's codes (#854).
+
+    Even a reservation never published, which normal issuance would
+    serve while the registry is missing, waits for that lock.
+    """
+    allocator = await _loaded(_allocator(disabled_lock=True), lost=True)
+    assert allocator._pending_adoption == {"entry-disabled"}
+
+    reservations = [_reservation(published=False)]
+    await _cycle(allocator, reservations, entry_id="entry-free")
+
+    assert reservations[0].slot_code is None
+    assert allocator._registry_lost is True
+
+
+async def test_disabled_lock_entry_stays_out_of_an_intact_registry_gate() -> None:
+    """An intact registry still records a disabled lock's codes."""
+    allocator = await _loaded(_allocator(disabled_lock=True), lost=False)
+
+    assert allocator._pending_adoption == set()
+
+
+async def test_disabling_an_unadopted_entry_keeps_the_gate_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unloading a disabled entry keeps it pending until it is deleted."""
+    raised: list[str] = []
+    monkeypatch.setattr(
+        allocator_module,
+        "async_create",
+        lambda _hass, message, **_kwargs: raised.append(message),
+    )
+    allocator = await _loaded(_allocator(disabled_lock=True), lost=True)
+
+    await allocator.async_unregister_entry("entry-disabled")
+    assert allocator._pending_adoption == {"entry-disabled"}
+
+    allocator._gate_deadline = 1.0
+    allocator._warn_if_gate_expired()
+    assert "disabled: enable it so its lock is read, or delete it" in raised[0]
+
+    await allocator.async_mark_entry_removed("entry-disabled")
+    assert allocator._pending_adoption == set()
