@@ -96,6 +96,11 @@ class CoordinatorCheckinMixin:
                 matched.protected_active = True
             elif checked_out:
                 matched.checked_out = True
+                _LOGGER.debug(
+                    "Check-in sensor for %s reports reservation %s checked out",
+                    self._name,
+                    matched.identity_key,
+                )
             return
 
         if (
