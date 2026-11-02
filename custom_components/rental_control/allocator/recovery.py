@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import logging
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from ..const import CONF_EXCLUDED_SLOTS
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
 
 _LOGGER = logging.getLogger(__name__)
+ADOPTION_GATE_WARNING_SECONDS = 300.0
 
 
 def entry_has_lock(data: object) -> bool:
@@ -125,6 +127,9 @@ def describe_pending_entry(
     slots = sorted(allocator._pending_adoption_slots.get(entry_id, ()))
     if not slots:
         return label
+    configured = configured_slots(entry_info.entry_config(allocator.hass, entry_id))
+    if configured and configured <= set(slots):
+        return f"{label} (lock unreachable: none of its slots can be read)"
     noun = "slots" if len(slots) > 1 else "slot"
     return f"{label} (unreadable {noun} {', '.join(map(str, slots))})"
 
@@ -210,6 +215,34 @@ def unobserved_lock_entries(allocator: DoorCodeAllocator) -> frozenset[str]:
         if entry_has_lock(data := getattr(entry, "data", {}))
         and not is_observed(adopted.get(entry.entry_id), data)
     )
+
+
+def rebuilt_registry_trusted(allocator: DoorCodeAllocator) -> bool:
+    """Return whether a registry rebuilt after a loss accounts for every lock.
+
+    Adoption re-registers every code a lock presents, so once no entry
+    is pending and every configured lock-backed entry has adopted its
+    current lock and slot range (#856), the rebuilt registry holds every
+    code those locks present. That holds whether the stored registry was
+    absent or corrupt (#851). A slot the operator excluded counts as
+    read, as it does for adoption; a lock that cannot be reached never
+    adopts, so it keeps the registry untrusted.
+    """
+    return not allocator._pending_adoption and not unobserved_lock_entries(allocator)
+
+
+def reopen_adoption(allocator: DoorCodeAllocator, entry_id: str) -> None:
+    """Return an adopted entry to the gate after its lock stops reading.
+
+    While the registry is lost, an entry that loses its adoption keeps
+    the rebuilt registry untrusted. Putting it back in the gate keeps
+    issuance withheld through the same path as before it adopted, and
+    lets the pending notification name it and say why.
+    """
+    allocator._pending_adoption.add(entry_id)
+    if allocator._gate_deadline == 0.0:
+        allocator._gate_deadline = monotonic() + ADOPTION_GATE_WARNING_SECONDS
+        allocator._gate_warning_sent = False
 
 
 def lockless_recovery_allowed(
@@ -327,7 +360,8 @@ def issuance_block(
     if adoption_blocks(allocator, request.entry_id):
         return AllocationResult(code=None, reason="adoption_pending"), False
     if not allocator._registry_lost or not (
-        request.previously_published or not allocator._registry_missing
+        request.previously_published
+        or not (allocator._registry_missing or rebuilt_registry_trusted(allocator))
     ):
         return None, False
     if not lockless_recovery_allowed(allocator, request, lockless_cycle=lockless_cycle):
@@ -348,6 +382,7 @@ def issuance_block(
 
 
 __all__ = [
+    "ADOPTION_GATE_WARNING_SECONDS",
     "adoption_blocks",
     "continuity_required",
     "configured_lockname",
@@ -361,6 +396,8 @@ __all__ = [
     "origin_proven",
     "pending_lock_codes",
     "read_lock_codes",
+    "rebuilt_registry_trusted",
+    "reopen_adoption",
     "issuance_block",
     "lockless_recovery_allowed",
     "unobserved_lock_entries",

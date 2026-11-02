@@ -248,7 +248,6 @@ async def resolve_cycle(
             request,
             unaccounted=unaccounted,
             recovery_declined=recovery_declined,
-            lockless_cycle=lockless_cycle,
         )
         return CycleResult(
             adopted=adopted,
@@ -265,27 +264,19 @@ def _persist_registry(
     *,
     unaccounted: frozenset[int],
     recovery_declined: bool,
-    lockless_cycle: bool,
 ) -> None:
     """Save the registry and clear recovery flags once the cycle is sound.
 
-    A lockless cycle may complete recovery even when the stored registry
-    was corrupt rather than absent. Either way the flags may only clear
-    once no entry is still awaiting its first cycle and every configured
-    lock-backed entry has actually adopted, since clearing them returns
-    the allocator to normal issuance, where a code still programmed in
-    an unobserved lock would look free.
+    The flags clear, whether the stored registry was absent or corrupt,
+    once the rebuilt registry accounts for every lock (#851): clearing
+    them returns the allocator to normal issuance, where a code still
+    programmed in an unobserved lock would look free.
     """
     if not allocator._registry_lost:
         allocator._store.async_save(allocator._registry)
         return
-    recoverable = (
-        (allocator._registry_missing or lockless_cycle)
-        and not allocator._pending_adoption
-        and not recovery.unobserved_lock_entries(allocator)
-    )
     if (
-        recoverable
+        recovery.rebuilt_registry_trusted(allocator)
         and request.adoption_complete
         and not unaccounted
         and not recovery_declined
@@ -316,6 +307,8 @@ def _record_adoption(
     sound = request.adoption_complete and not unaccounted
     if lockname is not None and not sound:
         allocator._adopted_locks.pop(entry_id, None)
+        if allocator._registry_lost:
+            recovery.reopen_adoption(allocator, entry_id)
     if sound:
         if lockname is not None:
             allocator._adopted_locks[entry_id] = ObservedLock(

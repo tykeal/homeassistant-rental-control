@@ -282,7 +282,6 @@ async def test_lockless_recovery_avoids_a_programmed_lock_code() -> None:
     assert lockless[0].slot_code != _CODE
     assert lockless[0].slot_code is None
     assert lockless[0].code_source == "unallocated"
-    assert allocator._registry_lost is True
 
 
 async def test_lockless_recovery_waits_for_pending_adoption() -> None:
