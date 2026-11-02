@@ -82,6 +82,25 @@ def keeps_gate_closed(allocator: DoorCodeAllocator, entry_id: str) -> bool:
     )
 
 
+def continuity_required(request: AllocationRequest, reissuing: frozenset[str]) -> bool:
+    """Return whether a request must prove it keeps the guest's code.
+
+    A generator-only identity that was published but has no registry
+    record lost it with the registry: recovery flags clear on the first
+    sound cycle of any entry, which may come before this identity is
+    restored or after it was refused. Its code is then recorded nowhere,
+    so it is bound to its proven preference on every cycle, not just
+    while the flags are set. A deliberate re-issue is exempt, since the
+    operator asked for a new code.
+    """
+    return (
+        request.previously_published
+        and request.lockname is None
+        and request.slot is None
+        and request.identity_key not in reissuing
+    )
+
+
 def origin_proven(request: AllocationRequest) -> bool:
     """Return whether recovery may restore this request's preference.
 
@@ -215,6 +234,7 @@ def issuance_block(
 
 
 __all__ = [
+    "continuity_required",
     "configured_lockname",
     "entry_has_lock",
     "entry_is_disabled",

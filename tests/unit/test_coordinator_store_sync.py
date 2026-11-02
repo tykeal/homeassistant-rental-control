@@ -113,6 +113,8 @@ def test_schema_v1_mappings_migrate_with_unknown_issued_origin() -> None:
         ("collision_resolved", "collision_resolved"),
         ("adopted", None),
         (7, None),
+        ([], None),
+        ({}, None),
     ],
 )
 def test_schema_v2_keeps_only_valid_issued_origins(

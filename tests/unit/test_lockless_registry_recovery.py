@@ -31,8 +31,14 @@ from custom_components.rental_control.allocator.store import RegistryLoadResult
 from custom_components.rental_control.coordinator_helpers import code_allocation
 from custom_components.rental_control.coordinator_helpers import lockless_store
 from custom_components.rental_control.coordinator_helpers import reissue
+from custom_components.rental_control.coordinator_helpers import (
+    reservations as reservations_module,
+)
 from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
     CoordinatorRefreshMixin,
+)
+from custom_components.rental_control.coordinator_helpers.models import (
+    ReservationBuildContext,
 )
 from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
@@ -574,8 +580,8 @@ async def test_collision_resolved_identity_is_not_given_the_preference() -> None
     refreshes first, so the recorded origin alone decides who gets it.
     """
     healthy = _allocator()
-    first = [_reservation("identity-a")]
-    second = [_reservation("identity-b")]
+    first = [_reservation("identity-a", published=False)]
+    second = [_reservation("identity-b", published=False)]
     await _cycle(healthy, first, entry_id="entry-a")
     await _cycle(healthy, second, entry_id="entry-b")
     assert first[0].issued_origin == "preferred"
@@ -594,6 +600,38 @@ async def test_collision_resolved_identity_is_not_given_the_preference() -> None
     assert early[0].slot_code == _CODE
 
 
+@pytest.mark.parametrize("refused_first", [False, True])
+async def test_flags_cleared_elsewhere_keep_a_resolved_code_withheld(
+    refused_first: bool,
+) -> None:
+    """Another entry's clean cycle cannot hand over the preference (#855).
+
+    Recovery flags clear on the first sound cycle of any entry, whether
+    that comes before a collision-resolved booking refreshes or after
+    it was refused. Either way the booking is still missing from the
+    rebuilt registry and must stay withheld on every retry, while a
+    booking recorded as preferred gets its own code back.
+    """
+    allocator = _allocator()
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+    resolved = [_reservation("identity-b", origin="collision_resolved")]
+    if refused_first:
+        await _cycle(allocator, resolved, entry_id="entry-b")
+    await _cycle(allocator, [], entry_id="entry-free")
+    assert allocator._registry_lost is False
+
+    for _retry in range(2):
+        resolved = [_reservation("identity-b", origin="collision_resolved")]
+        await _cycle(allocator, resolved, entry_id="entry-b")
+        assert resolved[0].slot_code is None
+    assert allocator._registry.code_for_identity("identity-b") is None
+
+    preferred = [_reservation("identity-a")]
+    await _cycle(allocator, preferred, entry_id="entry-a")
+    assert preferred[0].slot_code == _CODE
+
+
 async def test_a_drifted_preference_is_not_recorded_as_preferred() -> None:
     """A kept code no longer matching the generator is not provable (#855).
 
@@ -603,7 +641,7 @@ async def test_a_drifted_preference_is_not_recorded_as_preferred() -> None:
     the kept code must not be recorded as preferred.
     """
     allocator = _allocator()
-    first = [_reservation(origin=None)]
+    first = [_reservation(published=False)]
     await _cycle(allocator, first, entry_id="entry-a")
     assert first[0].issued_origin == "preferred"
 
@@ -651,6 +689,50 @@ def test_issued_origin_survives_the_lockless_store() -> None:
         [reloaded], store["mappings"]
     )
     assert reloaded.issued_origin == "collision_resolved"
+
+
+async def test_a_ghost_keeps_its_recorded_origin() -> None:
+    """A feed miss neither drops nor overwrites the recorded origin.
+
+    A ghost carries no preference, so the code the registry hands back
+    cannot be compared with one; the hydrated origin must survive the
+    cycle and the next store sync.
+    """
+    allocator = _allocator()
+    await _cycle(allocator, [_reservation(published=False)], entry_id="entry-a")
+    store: dict[str, Any] = {}
+    lockless_store.sync_lockless_slot_store(
+        store,
+        {"identity-a": _reservation()},
+        entry_id="entry-a",
+        start_slot=1,
+        max_events=3,
+    )
+    ghosts = reservations_module.build_ghost_reservations(
+        set(),
+        store["mappings"],
+        "RC ",
+        None,
+        ReservationBuildContext(
+            entry_id="entry-a",
+            timezone=dt_util.UTC,
+            event_prefix="RC",
+            trim_names=False,
+            max_name_length=0,
+            code_buffer_before=0,
+            code_buffer_after=0,
+            should_update_code=False,
+            code_generator="date",
+            code_length=4,
+            active_windows_for_name=lambda _name: set(),
+        ),
+    ).reservations
+    assert [ghost.issued_origin for ghost in ghosts] == ["preferred"]
+
+    await _cycle(allocator, ghosts, entry_id="entry-a")
+
+    assert ghosts[0].slot_code == _CODE
+    assert ghosts[0].issued_origin == "preferred"
 
 
 async def _loaded(allocator: DoorCodeAllocator, *, lost: bool) -> DoorCodeAllocator:

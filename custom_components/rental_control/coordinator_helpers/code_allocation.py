@@ -573,7 +573,9 @@ def _apply_result(
     The registry hands an identity its recorded code with the origin it
     had when first issued, even after the generator's preference has
     since drifted. Only a code equal to today's preference is recorded
-    as preferred; anything else is unknown, so recovery withholds it.
+    as preferred, and a known mismatch is recorded as unknown, so
+    recovery withholds it. A ghost carries no preference and keeps the
+    origin it was hydrated with.
     """
     for reservation in reservations:
         if reservation.identity_key != identity_key:
@@ -584,9 +586,12 @@ def _apply_result(
             reservation.code_source = "adopted"
         elif result.origin is AllocationOrigin.PREFERRED:
             reservation.code_source = "allocated"
-            reservation.issued_origin = (
-                AllocationOrigin.PREFERRED.value if result.code == preference else None
-            )
+            if preference is not None:
+                reservation.issued_origin = (
+                    AllocationOrigin.PREFERRED.value
+                    if result.code == preference
+                    else None
+                )
         elif result.origin is AllocationOrigin.COLLISION_RESOLVED:
             reservation.code_source = "collision_resolved"
             reservation.issued_origin = AllocationOrigin.COLLISION_RESOLVED.value

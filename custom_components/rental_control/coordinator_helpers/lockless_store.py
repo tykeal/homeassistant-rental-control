@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 def issued_origin(mapping: dict[str, Any]) -> str | None:
     """Return a mapping's recorded issued-code origin, if it is valid."""
     origin = mapping.get("issued_origin")
-    return origin if origin in ISSUED_ORIGINS else None
+    return origin if isinstance(origin, str) and origin in ISSUED_ORIGINS else None
 
 
 def sync_lockless_slot_store(

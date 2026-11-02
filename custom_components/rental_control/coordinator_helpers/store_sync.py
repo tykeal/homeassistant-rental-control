@@ -243,7 +243,8 @@ def normalize_loaded_store(
     for mapping in mappings.values():
         if not isinstance(mapping, dict):
             return None
-        if mapping.get("issued_origin") not in ISSUED_ORIGINS:
+        origin = mapping.get("issued_origin")
+        if not isinstance(origin, str) or origin not in ISSUED_ORIGINS:
             mapping["issued_origin"] = None
         last_obs = mapping.get("last_observed_actual")
         if last_obs is not None:
