@@ -1,0 +1,12 @@
+---
+fixes:
+  - |
+    A corrupt door code registry no longer withholds new door codes
+    indefinitely on sites where every entry has a lock. Once every entry
+    with a lock has read its whole slot range, the rebuilt registry is
+    trusted and issuance resumes. Slots excluded with
+    ``rental_control.set_slot_exclusion`` count as read, so an excluded
+    dead slot no longer holds recovery back. A lock that cannot be read
+    still withholds new codes, and the adoption notification now says
+    so and names the unreachable lock. Diagnostics list the entries
+    whose lock or slot range has not been read yet.
