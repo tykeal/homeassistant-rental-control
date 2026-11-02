@@ -238,24 +238,6 @@ def _apply_allocation_results(
     return exhausted
 
 
-def _adoption_complete(
-    observation: CycleObservation,
-    adoptions: list[AdoptionRequest],
-    managed_slots: list[ManagedSlot],
-    suppression: ReissueSuppression | None = None,
-    *,
-    excluded: frozenset[int] = frozenset(),
-) -> bool:
-    """Return whether all readable managed codes were accounted for."""
-    return adoption_gate.evaluate(
-        observation,
-        adoptions,
-        managed_slots,
-        suppression,
-        excluded=excluded,
-    ).complete
-
-
 def build_cycle_observation(
     entry_id: str,
     lockname: str | None,

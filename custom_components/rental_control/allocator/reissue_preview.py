@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
+from ..coordinator_helpers import adoption_gate
 from ..coordinator_helpers import code_allocation
 from ..coordinator_helpers import keymaster_observation
 from ..coordinator_helpers import physical_remap
@@ -181,7 +182,7 @@ def _adoption_would_complete(
         reservations,
         suppression,
     )
-    return code_allocation._adoption_complete(
+    return adoption_gate.is_complete(
         observation, adoptions, observed_slots, suppression, excluded=excluded
     )
 

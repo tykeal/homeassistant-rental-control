@@ -84,6 +84,24 @@ def evaluate(
     )
 
 
+def is_complete(
+    observation: CycleObservation,
+    adoptions: list[AdoptionRequest],
+    managed_slots: list[ManagedSlot],
+    suppression: ReissueSuppression | None = None,
+    *,
+    excluded: frozenset[int] = frozenset(),
+) -> bool:
+    """Return whether all readable managed codes were accounted for."""
+    return evaluate(
+        observation,
+        adoptions,
+        managed_slots,
+        suppression,
+        excluded=excluded,
+    ).complete
+
+
 def report(
     entry_id: str,
     lockname: str | None,
@@ -162,6 +180,7 @@ __all__ = [
     "AdoptionGateStatus",
     "evaluate",
     "forget_entry",
+    "is_complete",
     "report",
     "reset_reporting",
 ]

@@ -14,7 +14,7 @@ from custom_components.rental_control.allocator.models import AllocationOrigin
 from custom_components.rental_control.allocator.models import AllocationOwner
 from custom_components.rental_control.allocator.models import AllocationRecord
 from custom_components.rental_control.allocator.models import CycleObservation
-from custom_components.rental_control.coordinator_helpers import code_allocation
+from custom_components.rental_control.coordinator_helpers import adoption_gate
 from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import SlotStatus
 
@@ -164,27 +164,21 @@ def test_empty_exclusion_leaves_adoption_gate_unchanged() -> None:
     """Gate member two with an empty set still fails on unreadable slots."""
     observation = _observation(unreadable=frozenset({2}))
 
-    assert not code_allocation._adoption_complete(
-        observation, [], [], excluded=frozenset()
-    )
+    assert not adoption_gate.is_complete(observation, [], [], excluded=frozenset())
 
 
 def test_adoption_gate_passes_once_the_slot_is_excluded() -> None:
     """Excluding the only unreadable slot lets adoption complete."""
     observation = _observation(unreadable=frozenset({2}))
 
-    assert code_allocation._adoption_complete(
-        observation, [], [], excluded=frozenset({2})
-    )
+    assert adoption_gate.is_complete(observation, [], [], excluded=frozenset({2}))
 
 
 def test_adoption_gate_still_fails_on_a_second_unreadable_slot() -> None:
     """One exclusion does not unblock an unrelated unreadable slot."""
     observation = _observation(unreadable=frozenset({2, 3}))
 
-    assert not code_allocation._adoption_complete(
-        observation, [], [], excluded=frozenset({2})
-    )
+    assert not adoption_gate.is_complete(observation, [], [], excluded=frozenset({2}))
 
 
 def test_exclusion_does_not_bypass_unadopted_readable_codes() -> None:
@@ -197,6 +191,6 @@ def test_exclusion_does_not_bypass_unadopted_readable_codes() -> None:
         unreadable_slots=frozenset({2}),
     )
 
-    assert not code_allocation._adoption_complete(
+    assert not adoption_gate.is_complete(
         observation, [], [_slot(1, "1234")], excluded=frozenset({2})
     )

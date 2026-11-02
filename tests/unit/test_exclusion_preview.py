@@ -175,8 +175,8 @@ async def test_preview_forwards_exclusions_to_the_adoption_check(
     )
     monkeypatch.setattr(reissue_preview, "preview_reservations", lambda *_a: [])
     monkeypatch.setattr(
-        reissue_preview.code_allocation,
-        "_adoption_complete",
+        reissue_preview.adoption_gate,
+        "is_complete",
         _capture(seen),
     )
 
