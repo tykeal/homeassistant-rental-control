@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from datetime import tzinfo
 import logging
 from typing import Any
 
@@ -104,16 +105,10 @@ def _ghost_from_mapping(
     ctx: ReservationBuildContext,
 ) -> _Reservation | None:
     """Return a ghost reservation from a persisted mapping, or None when fenced."""
-    identity = mapping.get("identity", {})
-    if not isinstance(identity, dict):
-        identity = {}
-    slot_name_raw = identity.get("slot_name", "")
-    slot_name = slot_name_raw if isinstance(slot_name_raw, str) else ""
-    summary_raw = identity.get("summary", "")
-    summary = summary_raw if isinstance(summary_raw, str) else ""
-    last_actual = mapping.get("last_observed_actual", {})
-    if not isinstance(last_actual, dict):
-        last_actual = {}
+    identity = _dict_field(mapping, "identity")
+    slot_name = _str_field(identity, "slot_name")
+    summary = _str_field(identity, "summary")
+    last_actual = _dict_field(mapping, "last_observed_actual")
     actual_name = last_actual.get("name_state")
     if _ghost_physical_name_mismatch(
         actual_name, slot_name, prefix, observed_mapping_keys, key, ctx
@@ -128,33 +123,10 @@ def _ghost_from_mapping(
             new_mc,
         )
         return None
-    start_raw = last_actual.get("start_state")
-    end_raw = last_actual.get("end_state")
-    if not slot_name or start_raw is None or end_raw is None:
-        _LOGGER.debug(
-            "Ghost reservation %s: missing slot_name or dates; slot remains "
-            "fenced with missing_count=%d",
-            key,
-            new_mc,
-        )
+    stay = _ghost_stay(key, slot_name, last_actual, new_mc, ctx.timezone)
+    if stay is None:
         return None
-
-    start_dt = _coerce_persisted_datetime(start_raw)
-    end_dt = _coerce_persisted_datetime(end_raw)
-    if start_dt is not None and start_dt.tzinfo is None:
-        start_dt = start_dt.replace(tzinfo=ctx.timezone)
-    if end_dt is not None and end_dt.tzinfo is None:
-        end_dt = end_dt.replace(tzinfo=ctx.timezone)
-    if start_dt is None or end_dt is None or start_dt >= end_dt:
-        _LOGGER.debug(
-            "Ghost reservation %s: invalid dates (start=%s end=%s); "
-            "slot remains fenced with missing_count=%d",
-            key,
-            start_raw,
-            end_raw,
-            new_mc,
-        )
-        return None
+    start_dt, end_dt = stay
 
     try:
         ghost = _Reservation(
@@ -184,6 +156,56 @@ def _ghost_from_mapping(
         return None
     _LOGGER.debug("Ghost reservation %s created with missing_count=%d", key, new_mc)
     return ghost
+
+
+def _dict_field(container: dict[str, Any], name: str) -> dict[str, Any]:
+    """Return a persisted nested mapping, or an empty one when corrupt."""
+    value = container.get(name, {})
+    return value if isinstance(value, dict) else {}
+
+
+def _str_field(container: dict[str, Any], name: str) -> str:
+    """Return a persisted string field, or an empty string when corrupt."""
+    value = container.get(name, "")
+    return value if isinstance(value, str) else ""
+
+
+def _ghost_stay(
+    key: str,
+    slot_name: str,
+    last_actual: dict[str, Any],
+    new_mc: int,
+    timezone: tzinfo,
+) -> tuple[datetime, datetime] | None:
+    """Return a ghost's last observed stay, or None when it stays fenced."""
+    start_raw = last_actual.get("start_state")
+    end_raw = last_actual.get("end_state")
+    if not slot_name or start_raw is None or end_raw is None:
+        _LOGGER.debug(
+            "Ghost reservation %s: missing slot_name or dates; slot remains "
+            "fenced with missing_count=%d",
+            key,
+            new_mc,
+        )
+        return None
+
+    start_dt = _coerce_persisted_datetime(start_raw)
+    end_dt = _coerce_persisted_datetime(end_raw)
+    if start_dt is not None and start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=timezone)
+    if end_dt is not None and end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone)
+    if start_dt is None or end_dt is None or start_dt >= end_dt:
+        _LOGGER.debug(
+            "Ghost reservation %s: invalid dates (start=%s end=%s); "
+            "slot remains fenced with missing_count=%d",
+            key,
+            start_raw,
+            end_raw,
+            new_mc,
+        )
+        return None
+    return start_dt, end_dt
 
 
 def _ghost_physical_name_mismatch(

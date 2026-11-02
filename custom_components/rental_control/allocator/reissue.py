@@ -309,3 +309,22 @@ def _outcome(
         disposition,
         retention_reason,
     )
+
+
+def replace_rolled_back(
+    outcomes: list[ReissueOutcome], rollbacks: list[ReissueOutcome]
+) -> list[ReissueOutcome]:
+    """Swap the outcomes of rolled-back re-issues for their rollbacks."""
+    kept = [
+        outcome
+        for outcome in outcomes
+        if not any(
+            rollback.identity_key == outcome.identity_key
+            and rollback.entry_id == outcome.entry_id
+            and rollback.lockname == outcome.lockname
+            and rollback.slot == outcome.slot
+            for rollback in rollbacks
+        )
+    ]
+    kept.extend(rollbacks)
+    return kept
