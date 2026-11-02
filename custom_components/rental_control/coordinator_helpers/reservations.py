@@ -139,6 +139,30 @@ def build_reservations(
     return reservations
 
 
+@dataclass(frozen=True)
+class _EventStay:
+    """One calendar event's resolved slot name, identifiers and windows."""
+
+    event: Any
+    slot_name: str
+    display_slot_name: str
+    uid: str | None
+    start: datetime
+    end: datetime
+    buffered_start: datetime
+    buffered_end: datetime
+
+
+@dataclass(frozen=True)
+class _CodeChoice:
+    """The code chosen for a reservation and whether it must rotate."""
+
+    slot_code: str
+    code_source: str
+    rotation_pending: bool = False
+    rotation_origin: tuple[int, str] | None = None
+
+
 def _build_one_reservation(
     event: Any,
     ctx: ReservationBuildContext,
@@ -148,90 +172,142 @@ def _build_one_reservation(
     windows: _NameWindows,
 ) -> _Reservation | None:
     """Return one reservation for an event, or None when invalid."""
+    stay = _event_stay(event, ctx, prefix)
+    if stay is None:
+        return None
+    matched_physical = _match_observed_slot(
+        stay, ctx, prefix, observed_slots, consumed, windows
+    )
+    return _new_reservation(stay, ctx, _choose_code(stay, ctx, matched_physical))
+
+
+def _event_stay(
+    event: Any, ctx: ReservationBuildContext, prefix: str
+) -> _EventStay | None:
+    """Return an event's resolved stay, or None when it has no slot name."""
     slot_name = _resolve_slot_name(event, ctx)
     if not slot_name:
         return None
-
     start = _coerce_event_datetime(event.start, ctx)
     end = _coerce_event_datetime(event.end, ctx)
     buffered_start, buffered_end = _buffered_window(start, end, ctx)
-    identity_key = make_reservation_fingerprint(ctx.entry_id, slot_name, start, end)
-    uid = normalize_uid(getattr(event, "uid", None))
-    uid_aliases: set[str] = {uid} if uid else set()
-    booking_aliases = extract_booking_aliases(event.summary, event.description or "")
-    display_slot_name = _display_slot_name(slot_name, prefix, ctx)
-
-    phone_last_four = extract_last_four(event.description)
-    slot_code = generate_slot_code(
-        ctx.code_generator, ctx.code_length, start, end, event.description, uid
+    return _EventStay(
+        event=event,
+        slot_name=slot_name,
+        display_slot_name=_display_slot_name(slot_name, prefix, ctx),
+        uid=normalize_uid(getattr(event, "uid", None)),
+        start=start,
+        end=end,
+        buffered_start=buffered_start,
+        buffered_end=buffered_end,
     )
-    code_source = "generated"
-    key = normalize_slot_name_for_fingerprint(slot_name)
-    active_windows = ctx.active_windows_for_name(slot_name)
-    matched_physical = find_observed_slot(
+
+
+def _match_observed_slot(
+    stay: _EventStay,
+    ctx: ReservationBuildContext,
+    prefix: str,
+    observed_slots: list[ManagedSlot],
+    consumed: set[int],
+    windows: _NameWindows,
+) -> ManagedSlot | None:
+    """Return the physical slot already programmed for this stay, if any."""
+    key = normalize_slot_name_for_fingerprint(stay.slot_name)
+    active_windows = ctx.active_windows_for_name(stay.slot_name)
+    return find_observed_slot(
         ObservedSlotQuery(
             managed_slots=observed_slots,
-            slot_name=slot_name,
-            display_slot_name=display_slot_name,
+            slot_name=stay.slot_name,
+            display_slot_name=stay.display_slot_name,
             consumed_slots=consumed,
-            desired_start=buffered_start,
-            desired_end=buffered_end,
+            desired_start=stay.buffered_start,
+            desired_end=stay.buffered_end,
             require_date_match=windows.counts.get(key, 0) > 1,
             reserved_date_windows=windows.date_windows.get(key),
             ordered_date_windows=windows.ordered_windows.get(key),
             block_unknown_date_fallback=_blocks_unknown_date(
-                active_windows, buffered_start, buffered_end
+                active_windows, stay.buffered_start, stay.buffered_end
             ),
             expected_name_count=windows.counts.get(key, 1),
             event_prefix=prefix,
         )
     )
-    if matched_physical is not None and matched_physical.actual_code:
-        slot_code, code_source, rotation_pending = _resolve_observed_code(
-            _ObservedCodeQuery(
-                matched_physical=matched_physical,
-                event=event,
-                uid=uid,
-                ctx=ctx,
-                generated=(slot_code, code_source),
-                buffered_start=buffered_start,
-            )
+
+
+def _choose_code(
+    stay: _EventStay,
+    ctx: ReservationBuildContext,
+    matched_physical: ManagedSlot | None,
+) -> _CodeChoice:
+    """Return the generated code, or the observed one it must respect."""
+    slot_code = generate_slot_code(
+        ctx.code_generator,
+        ctx.code_length,
+        stay.start,
+        stay.end,
+        stay.event.description,
+        stay.uid,
+    )
+    if matched_physical is None or not matched_physical.actual_code:
+        return _CodeChoice(slot_code, "generated")
+    slot_code, code_source, rotation_pending = _resolve_observed_code(
+        _ObservedCodeQuery(
+            matched_physical=matched_physical,
+            event=stay.event,
+            uid=stay.uid,
+            ctx=ctx,
+            generated=(slot_code, "generated"),
+            buffered_start=stay.buffered_start,
         )
-    else:
-        rotation_pending = False
-    rotation_origin = (
+    )
+    return _CodeChoice(
+        slot_code,
+        code_source,
+        rotation_pending,
         (matched_physical.slot, matched_physical.actual_code)
-        if rotation_pending and matched_physical and matched_physical.actual_code
-        else None
+        if rotation_pending
+        else None,
     )
 
+
+def _new_reservation(
+    stay: _EventStay, ctx: ReservationBuildContext, code: _CodeChoice
+) -> _Reservation | None:
+    """Return the reservation for a stay, or None when its window is invalid."""
+    event = stay.event
+    identity_key = make_reservation_fingerprint(
+        ctx.entry_id, stay.slot_name, stay.start, stay.end
+    )
+    uid_aliases: set[str] = {stay.uid} if stay.uid else set()
+    booking_aliases = extract_booking_aliases(event.summary, event.description or "")
+    phone_last_four = extract_last_four(event.description)
     try:
         res = _Reservation(
             identity_key=identity_key,
-            start=start,
-            end=end,
-            buffered_start=buffered_start,
-            buffered_end=buffered_end,
+            start=stay.start,
+            end=stay.end,
+            buffered_start=stay.buffered_start,
+            buffered_end=stay.buffered_end,
             summary=event.summary,
-            slot_name=slot_name,
-            display_slot_name=display_slot_name,
-            slot_code=slot_code,
+            slot_name=stay.slot_name,
+            display_slot_name=stay.display_slot_name,
+            slot_code=code.slot_code,
             uid_aliases=uid_aliases,
             booking_aliases=booking_aliases,
             fingerprint_history=set(),
             missing_count=0,
-            code_source=code_source,
-            code_provenance=code_source,
-            code_rotation_pending=rotation_pending,
-            code_rotation_origin=rotation_origin,
+            code_source=code.code_source,
+            code_provenance=code.code_source,
+            code_rotation_pending=code.rotation_pending,
+            code_rotation_origin=code.rotation_origin,
             phone_last_four=phone_last_four,
         )
     except ValueError:
         _LOGGER.warning(
             "Skipping invalid reservation for %s: start=%s >= end=%s",
             event.summary,
-            start,
-            end,
+            stay.start,
+            stay.end,
         )
         return None
     res.sensor_lookup_keys.update({identity_key, *(uid_aliases or set())})
