@@ -118,7 +118,9 @@ class CoordinatorStoreMixin:
             if prefix and slot_name.startswith(prefix):
                 slot_name = slot_name[len(prefix) :]
 
-            identity_key = f"adopted.{self._entry_id}.slot{ms.slot}"
+            identity_key = (
+                f"{store_sync.ADOPTED_KEY_PREFIX}{self._entry_id}.slot{ms.slot}"
+            )
             if identity_key in persisted:
                 continue
 

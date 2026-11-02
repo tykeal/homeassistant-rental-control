@@ -22,6 +22,8 @@ from ..util import OperationResult
 from .models import StoreSyncPlan
 from .models import _store_datetime
 
+ADOPTED_KEY_PREFIX = "adopted."
+
 
 def observed_actual_snapshot(ms: ManagedSlot) -> dict[str, Any]:
     """Return the ``last_observed_actual`` snapshot for a managed slot."""

@@ -32,8 +32,8 @@ from . import allocation_failure
 from . import calendar_parsing
 from . import code_allocation
 from . import lockless_store
+from . import physical_remap
 from . import reissue
-from . import slot_matching
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -392,7 +392,7 @@ class CoordinatorRefreshMixin:
             if isinstance(slot.actual_name, str)
         }
         observed_mapping_keys = (
-            slot_matching.remap_observed_mappings_to_physical_reservations(
+            physical_remap.remap_observed_mappings_to_physical_reservations(
                 persisted,
                 reservations,
                 actual_slot_names,

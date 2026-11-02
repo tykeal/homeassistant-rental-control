@@ -1,0 +1,10 @@
+---
+fixes:
+  - |
+    A stay whose dates change upstream now keeps its lock slot when that
+    slot's code was adopted from Keymaster, for example after an upgrade
+    or a restored backup. Rental Control moves the slot to the amended
+    stay and writes the new dates to the lock. Previously the slot stayed
+    tied to the old dates as a missing reservation that competed with
+    the amended stay for slots. Booking.com stays without a guest name
+    are covered too.
