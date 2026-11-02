@@ -1,0 +1,21 @@
+---
+upgrade:
+  - |
+    The integration now records whether each issued door code was the
+    booking's preferred code or a replacement chosen to avoid a
+    clash. Codes issued before this upgrade have no such record. If
+    the shared code registry is later lost, a guest booking without a
+    lock withholds such an older code rather than risk handing out a
+    different one. Codes issued after the upgrade recover as before.
+fixes:
+  - |
+    After the shared code registry is lost, a booking without a lock no
+    longer gets a different door code from the one its guest already
+    received when that code had been changed to avoid a clash. The
+    integration now withholds the code instead of silently changing it.
+  - |
+    A disabled config entry that drives a lock now holds door code
+    issuance after the shared code registry is lost or found corrupt,
+    because its codes stay on the lock and nothing else records them.
+    The code adoption pending notification marks the entry as disabled.
+    Enable the entry so its lock is read again, or delete it.
