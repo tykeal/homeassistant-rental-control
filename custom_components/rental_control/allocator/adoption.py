@@ -120,19 +120,32 @@ def reserve_observed_code(
 
     The code is recorded at its own length so that it is unavailable to
     every entry sharing the lock, without assigning it to any
-    reservation. A code that already has a registry record is left alone,
-    because an existing record already keeps it out of issuance and
-    adding an owner would create a spurious adoption conflict.
+    reservation. The alias is recorded even when another booking already
+    owns the code: that owner may be released once its own slot clears,
+    and the code must stay reserved for as long as this slot still
+    presents it. An alias is not an issuance owner, so sharing a record
+    with one neither raises a conflict nor holds the owner back.
+
+    Nothing is added when an owner already stands for this same physical
+    slot, because that owner is retained while the slot presents the
+    code anyway.
     """
     if not request.code.isdecimal():
         return
     alias_key = issuance.observed_alias_key(request)
     _release_moved_observed_alias(allocator, request)
     record = allocator._registry.records.get(request.code)
-    if record is not None and not any(
-        owner.identity_key == alias_key for owner in record.owners
+    if record is not None and any(
+        owner.identity_key != alias_key
+        and owner.entry_id == request.entry_id
+        and owner.lockname == request.lockname
+        and owner.slot == request.slot
+        for owner in record.owners
     ):
         return
+    joining = record is None or not any(
+        owner.identity_key == alias_key for owner in record.owners
+    )
     now = datetime.now(UTC).isoformat()
     owner = AllocationOwner(
         entry_id=request.entry_id,
@@ -151,7 +164,7 @@ def reserve_observed_code(
         allocator.code_ref(request.code),
         now,
     )
-    if record is None:
+    if joining:
         _LOGGER.info(
             "Reserved observed code_ref %s for %s at %s:%s because its "
             "slot is exempt from adoption this cycle",

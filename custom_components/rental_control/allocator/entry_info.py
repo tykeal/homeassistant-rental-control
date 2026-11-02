@@ -31,6 +31,7 @@ _LAST_FOUR_CODE_LENGTH = 4
 __all__ = [
     "CODE_GENERATOR_LAST_FOUR",
     "code_generator",
+    "config_entry",
     "configured_code_length",
     "describe_owner",
     "describe_slot",
@@ -41,7 +42,7 @@ __all__ = [
 ]
 
 
-def _config_entry(hass: Any, entry_id: str) -> Any | None:
+def config_entry(hass: Any, entry_id: str) -> Any | None:
     """Return one config entry, or None when it cannot be looked up."""
     entries = getattr(hass, "config_entries", None)
     getter = getattr(entries, "async_get_entry", None)
@@ -61,7 +62,7 @@ def entry_config(hass: Any, entry_id: str) -> Mapping[str, Any] | None:
     only for a key ``data`` does not carry, which covers an entry read
     between a reconfigure and that fold.
     """
-    entry = _config_entry(hass, entry_id)
+    entry = config_entry(hass, entry_id)
     if entry is None:
         return None
     data = getattr(entry, "data", None)
@@ -82,7 +83,7 @@ def entry_name(hass: Any, entry_id: str) -> str:
     rather than thirty-two, and it keeps two unnamed entries in one
     message distinguishable.
     """
-    entry = _config_entry(hass, entry_id)
+    entry = config_entry(hass, entry_id)
     title = getattr(entry, "title", None) if entry is not None else None
     if isinstance(title, str) and title.strip():
         return title.strip()

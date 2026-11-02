@@ -32,6 +32,7 @@ from .reissue_state import observed_alias_base_identity
 
 __all__ = [
     "forget_entry",
+    "has_cycle_evidence",
     "owner_code_is_phone_derived",
     "record_cycle_evidence",
     "reset_cycle_evidence",
@@ -61,6 +62,11 @@ def record_cycle_evidence(entry_id: str, reservations: list[Any]) -> None:
 def forget_entry(entry_id: str) -> None:
     """Drop one entry's in-flight evidence as it goes away."""
     _cycle_evidence.pop(entry_id, None)
+
+
+def has_cycle_evidence(entry_id: str) -> bool:
+    """Return whether an entry has published evidence from a cycle."""
+    return entry_id in _cycle_evidence
 
 
 def reset_cycle_evidence() -> None:
