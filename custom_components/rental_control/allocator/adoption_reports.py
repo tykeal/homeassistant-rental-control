@@ -172,11 +172,21 @@ def report_adoption_conflict(
     allocator: DoorCodeAllocator,
     record: AllocationRecord,
 ) -> None:
-    """Log and notify that an observed code has multiple owners."""
-    explained = _conflict_is_expected(allocator, record)
+    """Log and notify that an observed code has multiple owners.
+
+    Between bookings, only issuance owners are judged and the verdict is
+    remembered for re-judgement, so an alias or hold without phone
+    evidence cannot make otherwise explained sharing look unexplained.
+    A code shared by one booking and an alias or hold is still the same
+    code presented by two slots of a lock, so it is announced as it
+    forms, judged over every owner, but is never re-judged.
+    """
     owners = issuance_owners(record)
-    if len(owners) > 1:
-        allocator._conflict_verdicts[record.code_ref] = _verdict(owners, explained)
+    if len(owners) < 2:
+        _announce_conflict(allocator, record, _conflict_is_expected(allocator, record))
+        return
+    explained = _conflict_is_expected(allocator, record, owners)
+    allocator._conflict_verdicts[record.code_ref] = _verdict(owners, explained)
     _announce_conflict(allocator, record, explained)
 
 

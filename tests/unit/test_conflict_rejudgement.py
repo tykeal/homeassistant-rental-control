@@ -20,6 +20,7 @@ import pytest
 from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator import code_origin
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
+from custom_components.rental_control.allocator.models import AdoptionRequest
 from custom_components.rental_control.allocator.models import AllocationOrigin
 from custom_components.rental_control.allocator.models import AllocationOwner
 from custom_components.rental_control.allocator.models import CycleObservation
@@ -247,3 +248,25 @@ async def test_hold_made_from_shared_alias_is_not_a_conflict(
     record = allocator._registry.records[_CODE]
     reason = allocator._release_guard_reason(record, record.owners[:1], [])
     assert reason != "adoption_conflict"
+
+
+async def test_alias_does_not_unexplain_bookings_as_they_join(
+    notifications: list[str],
+) -> None:
+    """A phoneless alias beside two phone-explained bookings stays silent."""
+    allocator = _shared(
+        _hass(a="on", b="on"),
+        ("a", "guest-a"),
+        ("b", "guest-x:observed:b:front:2"),
+    )
+    code_origin.record_cycle_evidence(
+        "a", [SimpleNamespace(identity_key="guest-a", phone_last_four=_CODE)]
+    )
+    code_origin.record_cycle_evidence(
+        "b", [SimpleNamespace(identity_key="guest-b", phone_last_four=_CODE)]
+    )
+    await allocator.async_adopt(AdoptionRequest("b", "guest-b", _CODE, 4, "front", 3))
+    await _cycle(allocator, "b", {"guest-b": _CODE})
+
+    assert len(allocator._registry.records[_CODE].owners) == 3
+    assert notifications == []
