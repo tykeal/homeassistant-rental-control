@@ -83,13 +83,18 @@ class CoordinatorCheckinMixin:
             summary=str(attrs.get("summary") or guest_name),
             attributes=attrs,
         )
+        checked_out = snapshot.state == CHECKIN_STATE_CHECKED_OUT
         matched = checkin_protection.select_checkin_match(
-            reservations, snapshot.guest_name, snapshot.start, snapshot.end
+            reservations,
+            snapshot.guest_name,
+            snapshot.start,
+            snapshot.end,
+            started_by=dt.now() if checked_out else None,
         )
         if matched is not None:
             if snapshot.state == CHECKIN_STATE_CHECKED_IN:
                 matched.protected_active = True
-            elif snapshot.state == CHECKIN_STATE_CHECKED_OUT:
+            elif checked_out:
                 matched.checked_out = True
             return
 

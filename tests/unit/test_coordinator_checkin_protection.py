@@ -48,6 +48,26 @@ def test_select_checkin_match_unique_name_without_times() -> None:
     assert checkin_protection.select_checkin_match([res], "Solo", None, None) is res
 
 
+def test_select_checkin_match_fallback_skips_unstarted_stays() -> None:
+    """The name-only fallback only considers stays begun by ``started_by``."""
+    now = datetime(2026, 1, 10, tzinfo=timezone.utc)
+    past = _reservation("Guest", now - timedelta(days=3), now - timedelta(hours=1))
+    future = _reservation("Guest", now + timedelta(days=5), now + timedelta(days=7))
+
+    assert (
+        checkin_protection.select_checkin_match(
+            [future], "Guest", None, None, started_by=now
+        )
+        is None
+    )
+    assert (
+        checkin_protection.select_checkin_match(
+            [past, future], "Guest", None, None, started_by=now
+        )
+        is past
+    )
+
+
 def test_select_checkin_match_none_when_ambiguous() -> None:
     """Ambiguous duplicate names without tracked times do not match."""
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)
