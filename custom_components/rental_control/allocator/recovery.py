@@ -246,6 +246,41 @@ def lockless_recovery_allowed(
     )
 
 
+def adoption_blocks(allocator: DoorCodeAllocator, entry_id: str) -> bool:
+    """Return whether a pending adoption withholds issuance for an entry.
+
+    Every entry shares one door code space, so a code issued to any
+    entry must not already sit in some lock for someone else. A lock
+    that has not been read in full since its entry was registered may
+    hold any code, so it withholds issuance for every entry. Once a
+    cycle has read every managed slot it does not exclude, the codes it
+    holds are known, and an entry still pending only because one of
+    them matches no reservation withholds issuance for itself alone;
+    ``pending_lock_codes`` keeps those codes from being issued to
+    anyone else (#846). A lost registry keeps the gate global.
+    """
+    pending = allocator._pending_adoption
+    if not pending:
+        return False
+    if allocator._registry_lost or entry_id in pending:
+        return True
+    read = getattr(allocator, "_read_pending_locks", {})
+    return any(other not in read for other in pending)
+
+
+def pending_lock_codes(allocator: DoorCodeAllocator) -> frozenset[str]:
+    """Return codes read from pending locks that the registry does not hold."""
+    read: Mapping[str, frozenset[str]] = getattr(allocator, "_read_pending_locks", {})
+    records = allocator._registry.records
+    return frozenset(
+        code
+        for entry_id, codes in read.items()
+        if entry_id in allocator._pending_adoption
+        for code in codes
+        if code not in records
+    )
+
+
 def issuance_block(
     allocator: DoorCodeAllocator,
     request: AllocationRequest,
@@ -269,7 +304,7 @@ def issuance_block(
         return AllocationResult(code=None, reason="published_code_unknown"), False
     if not request.issuance_allowed:
         return AllocationResult(code=None, reason="unaccounted_slots"), False
-    if allocator._pending_adoption:
+    if adoption_blocks(allocator, request.entry_id):
         return AllocationResult(code=None, reason="adoption_pending"), False
     if not allocator._registry_lost or not (
         request.previously_published or not allocator._registry_missing
@@ -293,6 +328,7 @@ def issuance_block(
 
 
 __all__ = [
+    "adoption_blocks",
     "continuity_required",
     "configured_lockname",
     "configured_slots",
@@ -303,6 +339,7 @@ __all__ = [
     "gate_entries",
     "keeps_gate_closed",
     "origin_proven",
+    "pending_lock_codes",
     "issuance_block",
     "lockless_recovery_allowed",
     "unobserved_lock_entries",

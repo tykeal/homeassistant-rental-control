@@ -216,8 +216,8 @@ Watch the scope:
 - When a slot goes unreadable before Home Assistant starts, or before the
   affected entry finishes one clean adoption cycle, the integration withholds
   codes for **all** Rental Control entries, not just the affected one. Every
-  entry shares one door code space, so the integration must account for every
-  entry before it can safely issue any code. You may then also see a
+  entry shares one door code space, so the integration must know every code
+  on every lock before it can safely issue any code. You may then also see a
   `code adoption pending` notification that lists the entries still waiting,
   annotated with their unreadable slot numbers.
 - When a slot goes unreadable later, after that entry already adopted its
@@ -247,8 +247,12 @@ each slot — `unreadable` or `holds a code that matches no current reservation`
 The warning repeats only when the set of blocking slots changes, and an
 informational line records the moment that entry's gate reopens. Issuance then
 resumes on the next refresh, unless another entry has yet to finish its first
-adoption cycle; until every entry has adopted once, no entry issues codes,
-because all entries share one door code space.
+adoption cycle. Until every entry has adopted once, no entry issues codes
+while any of those entries still has a managed slot that the integration has
+not read, because all entries share one door code space and that slot could
+hold any code. Once the integration has read every slot of an entry that still
+holds an unmatched code, that entry withholds codes only for itself; the other entries resume
+issuing, and none of them receives a code read from its lock.
 
 An unmatched code usually belongs to a booking that has gone away, and clears
 itself once Keymaster finishes clearing the slot. If it persists, clear that
