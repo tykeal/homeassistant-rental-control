@@ -15,6 +15,7 @@ from ..coordinator_helpers import reissue as coordinator_reissue
 from ..coordinator_helpers import reservations as reservations_helper
 from ..coordinator_helpers import slot_exclusions
 from . import issuance
+from . import recovery
 from . import reissue_state
 from .models import ReissueOutcome
 from .models import ReissuePreview
@@ -23,7 +24,7 @@ from .models import ReissuePreviewRequest
 
 def preview_reissue(allocator: Any, request: ReissuePreviewRequest) -> ReissuePreview:
     """Select the replacement a re-issue would allocate without mutation."""
-    if allocator._pending_adoption:
+    if recovery.adoption_blocks(allocator, request.entry_id):
         return ReissuePreview(reason="adoption_pending")
     if allocator._registry_lost:
         return ReissuePreview(reason="recovery_fail_closed")
@@ -38,7 +39,7 @@ def preview_reissue(allocator: Any, request: ReissuePreviewRequest) -> ReissuePr
         request.preferred_code,
         request.code_length,
         request.identity_key,
-        exclude=frozenset(replaced_codes),
+        exclude=frozenset(replaced_codes) | recovery.pending_lock_codes(allocator),
     )
     if code is None or origin is None:
         return ReissuePreview(reason="exhausted", replaced_code_ref=replaced_ref)
@@ -100,7 +101,7 @@ async def preview_request_and_result(
         else []
     )
     request = build_preview_request(coordinator, target, observed_slots)
-    if allocator._pending_adoption:
+    if recovery.adoption_blocks(allocator, target.entry_id):
         return request, ReissuePreview(reason="adoption_pending")
     if allocator._registry_lost:
         return request, ReissuePreview(reason="recovery_fail_closed")

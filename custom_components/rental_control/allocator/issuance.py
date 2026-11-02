@@ -98,7 +98,7 @@ def allocate_request(
         request.preferred_code,
         request.code_length,
         request.identity_key,
-        exclude=frozenset(),
+        exclude=recovery.pending_lock_codes(allocator),
     )
     if continuity and origin is not AllocationOrigin.PREFERRED:
         _LOGGER.warning(
@@ -308,23 +308,49 @@ def _record_adoption(
     against the lock and slot range the entry is currently configured
     for. An incomplete cycle withdraws
     that record instead: it leaves a code in the lock that the registry
-    never saw, so the entry no longer vouches for it.
+    never saw, so the entry no longer vouches for it. Either way, what
+    was read of a lock whose entry stays pending is kept up to date.
     """
     entry_id = request.observation.entry_id
     lockname = request.observation.lockname
     sound = request.adoption_complete and not unaccounted
     if lockname is not None and not sound:
         allocator._adopted_locks.pop(entry_id, None)
-    if not sound:
-        return
-    if lockname is not None:
-        allocator._adopted_locks[entry_id] = ObservedLock(
-            lockname, request.observation.managed_slots
+    if sound:
+        if lockname is not None:
+            allocator._adopted_locks[entry_id] = ObservedLock(
+                lockname, request.observation.managed_slots
+            )
+        allocator._pending_adoption.discard(entry_id)
+        if not allocator._pending_adoption:
+            allocator._gate_deadline = 0.0
+            allocator._gate_warning_sent = False
+    _track_read_pending_lock(allocator, request)
+
+
+def _track_read_pending_lock(
+    allocator: DoorCodeAllocator, request: CycleRequest
+) -> None:
+    """Remember the codes of a pending lock whose every slot was read.
+
+    Only a lock read in full while its entry is still pending is kept,
+    so that entry stops withholding issuance from unrelated entries
+    without letting them take a code it holds (#846).
+    """
+    observation = request.observation
+    entry_id = observation.entry_id
+    if (
+        observation.lockname is not None
+        and entry_id in allocator._pending_adoption
+        and not observation.unreadable_slots - request.excluded_slots
+    ):
+        allocator._read_pending_locks[entry_id] = (
+            ObservedLock(observation.lockname, observation.managed_slots),
+            frozenset(observation.observed_codes),
+            frozenset(observation.unreadable_slots),
         )
-    allocator._pending_adoption.discard(entry_id)
-    if not allocator._pending_adoption:
-        allocator._gate_deadline = 0.0
-        allocator._gate_warning_sent = False
+    else:
+        allocator._read_pending_locks.pop(entry_id, None)
 
 
 def _track_pending_adoption_slots(

@@ -8,6 +8,7 @@ from collections.abc import Mapping
 import logging
 from typing import TYPE_CHECKING
 
+from ..const import CONF_EXCLUDED_SLOTS
 from ..const import CONF_LOCK_ENTRY
 from ..const import CONF_MAX_EVENTS
 from ..const import CONF_START_SLOT
@@ -15,6 +16,7 @@ from ..const import DOMAIN
 from ..helpers import configured_lock_entry
 from ..helpers import configured_lock_slug
 from . import entry_info
+from .exclusions import parse_excluded_slots
 from .models import AllocationOrigin
 from .models import AllocationRequest
 from .models import AllocationResult
@@ -246,6 +248,59 @@ def lockless_recovery_allowed(
     )
 
 
+def adoption_blocks(allocator: DoorCodeAllocator, entry_id: str) -> bool:
+    """Return whether a pending adoption withholds issuance for an entry.
+
+    Every entry shares one door code space, so a code issued to any
+    entry must not already sit in some lock for someone else. A lock
+    that has not been read in full since its entry was registered may
+    hold any code, so it withholds issuance for every entry. Once a
+    cycle has read every managed slot it does not exclude, the codes it
+    holds are known, and an entry still pending only because one of
+    them matches no reservation withholds issuance for itself alone;
+    ``pending_lock_codes`` keeps those codes from being issued to
+    anyone else (#846). The read is bound to the lock and slot range it
+    covered, as adoption is (#856): an options change that moves the
+    entry to another lock or widens its range makes it unread again.
+    A lost registry keeps the gate global.
+    """
+    pending = allocator._pending_adoption
+    if not pending:
+        return False
+    if allocator._registry_lost or entry_id in pending:
+        return True
+    return any(read_lock_codes(allocator, other) is None for other in pending)
+
+
+def pending_lock_codes(allocator: DoorCodeAllocator) -> frozenset[str]:
+    """Return codes read from pending locks that the registry does not hold."""
+    records = allocator._registry.records
+    return frozenset(
+        code
+        for entry_id in allocator._pending_adoption
+        for code in read_lock_codes(allocator, entry_id) or ()
+        if code not in records
+    )
+
+
+def read_lock_codes(
+    allocator: DoorCodeAllocator, entry_id: str
+) -> frozenset[str] | None:
+    """Return the codes read in full from an entry's current lock, if any."""
+    read: Mapping[str, tuple[ObservedLock, frozenset[str], frozenset[int]]] = getattr(
+        allocator, "_read_pending_locks", {}
+    )
+    if entry_id not in read:
+        return None
+    observed, codes, unreadable = read[entry_id]
+    entry = entry_info.config_entry(allocator.hass, entry_id)
+    data = getattr(entry, "data", None)
+    if not is_observed(observed, data):
+        return None
+    excluded = parse_excluded_slots(dict(data or {}).get(CONF_EXCLUDED_SLOTS))
+    return codes if unreadable <= excluded.keys() else None
+
+
 def issuance_block(
     allocator: DoorCodeAllocator,
     request: AllocationRequest,
@@ -269,7 +324,7 @@ def issuance_block(
         return AllocationResult(code=None, reason="published_code_unknown"), False
     if not request.issuance_allowed:
         return AllocationResult(code=None, reason="unaccounted_slots"), False
-    if allocator._pending_adoption:
+    if adoption_blocks(allocator, request.entry_id):
         return AllocationResult(code=None, reason="adoption_pending"), False
     if not allocator._registry_lost or not (
         request.previously_published or not allocator._registry_missing
@@ -293,6 +348,7 @@ def issuance_block(
 
 
 __all__ = [
+    "adoption_blocks",
     "continuity_required",
     "configured_lockname",
     "configured_slots",
@@ -303,6 +359,8 @@ __all__ = [
     "gate_entries",
     "keeps_gate_closed",
     "origin_proven",
+    "pending_lock_codes",
+    "read_lock_codes",
     "issuance_block",
     "lockless_recovery_allowed",
     "unobserved_lock_entries",

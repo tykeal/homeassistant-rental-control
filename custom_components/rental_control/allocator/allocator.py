@@ -58,6 +58,9 @@ class DoorCodeAllocator:
         self._registry_lost = False
         self._pending_adoption = self._seed_pending_adoption()
         self._adopted_locks: dict[str, ObservedLock] = {}
+        self._read_pending_locks: dict[
+            str, tuple[ObservedLock, frozenset[str], frozenset[int]]
+        ] = {}
         self._pending_adoption_slots: dict[str, frozenset[int]] = {}
         self._gate_deadline = (
             monotonic() + _ADOPTION_GATE_WARNING_SECONDS
@@ -96,6 +99,7 @@ class DoorCodeAllocator:
         async with self._lock:
             self._pending_adoption.add(entry_id)
             self._adopted_locks.pop(entry_id, None)
+            self._read_pending_locks.pop(entry_id, None)
             if self._gate_deadline == 0.0:
                 self._gate_deadline = monotonic() + _ADOPTION_GATE_WARNING_SECONDS
                 self._gate_warning_sent = False
@@ -242,9 +246,11 @@ class DoorCodeAllocator:
             self.hass,
             (
                 "Rental Control is still waiting to read the door codes "
-                f"already programmed for: {named}. No new door codes are "
-                "issued for any entry until that finishes, because every "
-                "entry shares one door code space."
+                f"already programmed for: {named}. Those entries issue no "
+                "new door codes until that finishes. While any of their "
+                "locks still has a slot that has not been read, no other "
+                "entry issues new door codes either, because every entry "
+                "shares one door code space."
             ),
             title=f"{NAME} code adoption pending",
             notification_id=_GATE_NOTIFICATION_ID,

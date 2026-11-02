@@ -10,6 +10,7 @@ from typing import Any
 from ..const import CONF_EXCLUDED_SLOTS
 from ..const import COORDINATOR
 from ..const import DOMAIN
+from . import recovery
 from . import reissue
 from .exclusions import parse_excluded_slots
 
@@ -62,6 +63,11 @@ def allocator_diagnostics(allocator: DoorCodeAllocator) -> dict[str, Any]:
             if not explained
         ),
         "pending_adoption": sorted(allocator._pending_adoption),
+        "pending_adoption_read": sorted(
+            entry_id
+            for entry_id in allocator._pending_adoption
+            if recovery.read_lock_codes(allocator, entry_id) is not None
+        ),
         "adopted_locks": {
             entry_id: {"lockname": observed.lockname, "slots": sorted(observed.slots)}
             for entry_id, observed in sorted(allocator._adopted_locks.items())
