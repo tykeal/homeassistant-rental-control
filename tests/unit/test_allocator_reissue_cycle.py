@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
@@ -345,6 +346,36 @@ async def test_same_cycle_hold_release_is_persisted() -> None:
     assert len(saved_identities) == 1
     assert saved_identities[0] == {"identity-a"}
     assert any(outcome.disposition == "released" for outcome in result.reissues)
+    assert allocator._registry.code_for_identity("identity-a") == "5678"
+
+
+async def test_lockless_forced_reissue_may_change_a_resolved_code() -> None:
+    """A deliberate re-issue is exempt from the continuity binding (#855).
+
+    A published generator-only booking without a registry record is
+    otherwise held to its proven preference, which a collision-resolved
+    booking can never show.
+    """
+    allocator = _allocator()
+    allocator._registry.records["1234"] = _record(
+        "1234", _owner("entry-a", "identity-a", lockname=None, slot=None)
+    )
+    allocator._registry.rebuild_index()
+    request = replace(
+        _request("identity-a", "5678", lockname=None, slot=None),
+        previously_published=True,
+        issued_origin=AllocationOrigin.COLLISION_RESOLVED,
+    )
+
+    await allocator.async_resolve_cycle(
+        _cycle(
+            observation=CycleObservation("entry-a", None, frozenset(), {}, frozenset()),
+            forced_reissues=(_D("entry-a", "identity-a", None, None),),
+            allocations=[request],
+            active_keys={"identity-a"},
+        )
+    )
+
     assert allocator._registry.code_for_identity("identity-a") == "5678"
 
 

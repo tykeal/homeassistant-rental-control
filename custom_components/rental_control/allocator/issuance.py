@@ -69,8 +69,13 @@ def allocate_request(
     request: AllocationRequest,
     *,
     lockless_cycle: bool = False,
+    reissuing: frozenset[str] = frozenset(),
 ) -> AllocationResult:
-    """Allocate a code while the allocator lock is already held."""
+    """Allocate a code while the allocator lock is already held.
+
+    ``reissuing`` names identities whose code an operator deliberately
+    released this cycle, which are free to receive a different one.
+    """
     existing = allocator._registry.record_for_identity(request.identity_key)
     if existing is not None:
         owner = next(
@@ -84,6 +89,9 @@ def allocate_request(
     )
     if declined is not None:
         return declined
+    continuity = recovering or recovery.continuity_required(request, reissuing)
+    if continuity and not recovery.origin_proven(request):
+        return AllocationResult(code=None, reason="recovery_fail_closed")
     code, origin = select_code(
         allocator._registry,
         request.preferred_code,
@@ -91,7 +99,7 @@ def allocate_request(
         request.identity_key,
         exclude=frozenset(),
     )
-    if recovering and origin is not AllocationOrigin.PREFERRED:
+    if continuity and origin is not AllocationOrigin.PREFERRED:
         _LOGGER.warning(
             "Declined recovery for generator-only entry %s:%s: its preferred "
             "code is already taken, so re-issuing would hand the guest a "
@@ -188,6 +196,11 @@ async def resolve_cycle(
         issuance_allowed = not unaccounted
         lockless_cycle = request.observation.lockname is None
         allocated: dict[str, AllocationResult] = {}
+        reissuing = frozenset(
+            stage.allocation_identity_key
+            for stage in staged_reissues
+            if stage.allocation_identity_key is not None
+        )
         for allocation in request.allocations:
             if allocation.identity_key in adopted:
                 continue
@@ -196,7 +209,10 @@ async def resolve_cycle(
                 issuance_allowed=allocation.issuance_allowed and issuance_allowed,
             )
             allocated[allocation.identity_key] = allocate_request(
-                allocator, allocation, lockless_cycle=lockless_cycle
+                allocator,
+                allocation,
+                lockless_cycle=lockless_cycle,
+                reissuing=reissuing,
             )
         rollbacks = reissue.rollback_blocked_reissues(
             allocator, request, staged_reissues, allocated

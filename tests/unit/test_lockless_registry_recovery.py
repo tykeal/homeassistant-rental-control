@@ -22,11 +22,24 @@ from typing import cast
 from homeassistant.util import dt as dt_util
 import pytest
 
+from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator.allocator import DOMAIN
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AllocationRequest
+from custom_components.rental_control.allocator.registry import AllocationRegistry
+from custom_components.rental_control.allocator.store import RegistryLoadResult
 from custom_components.rental_control.coordinator_helpers import code_allocation
+from custom_components.rental_control.coordinator_helpers import lockless_store
 from custom_components.rental_control.coordinator_helpers import reissue
+from custom_components.rental_control.coordinator_helpers import (
+    reservations as reservations_module,
+)
+from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
+    CoordinatorRefreshMixin,
+)
+from custom_components.rental_control.coordinator_helpers.models import (
+    ReservationBuildContext,
+)
 from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
 from custom_components.rental_control.reconciliation import SlotStatus
@@ -76,7 +89,12 @@ def _fake_hass(
                 data=MappingProxyType({"keymaster_entry_id": "side"}),
             )
         )
-    hass.config_entries = SimpleNamespace(async_entries=lambda _domain=None: entries)
+    hass.config_entries = SimpleNamespace(
+        async_entries=lambda _domain=None: entries,
+        async_get_entry=lambda entry_id: next(
+            (entry for entry in entries if entry.entry_id == entry_id), None
+        ),
+    )
     return hass
 
 
@@ -100,8 +118,13 @@ def _reservation(
     code: str | None = _CODE,
     *,
     published: bool = True,
+    origin: str | None = "preferred",
 ) -> Reservation:
-    """Build a reservation carrying a deterministic generated code."""
+    """Build a reservation carrying a deterministic generated code.
+
+    A published reservation is recorded, by default, as having been
+    issued its preferred code, as the per-entry store records it.
+    """
     reservation = Reservation(
         identity_key=identity_key,
         start=_START,
@@ -114,6 +137,7 @@ def _reservation(
         slot_code=code,
     )
     reservation.published_once = published
+    reservation.issued_origin = origin if published else None
     return reservation
 
 
@@ -546,3 +570,229 @@ async def test_switching_locks_withdraws_adopted_standing() -> None:
     assert reservations[0].slot_code is None
     assert reservations[0].code_source == "unallocated"
     assert allocator._registry_lost is True
+
+
+async def test_collision_resolved_identity_is_not_given_the_preference() -> None:
+    """Recovery restores a preference only to the identity issued it (#855).
+
+    Two entries prefer one code; the second is issued an alternative.
+    After a registry loss the preference looks free to whichever entry
+    refreshes first, so the recorded origin alone decides who gets it.
+    """
+    healthy = _allocator()
+    first = [_reservation("identity-a", published=False)]
+    second = [_reservation("identity-b", published=False)]
+    await _cycle(healthy, first, entry_id="entry-a")
+    await _cycle(healthy, second, entry_id="entry-b")
+    assert first[0].issued_origin == "preferred"
+    assert second[0].issued_origin == "collision_resolved"
+
+    allocator = _allocator()
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+    late = [_reservation("identity-b", origin=second[0].issued_origin)]
+    await _cycle(allocator, late, entry_id="entry-b")
+    early = [_reservation("identity-a", origin=first[0].issued_origin)]
+    await _cycle(allocator, early, entry_id="entry-a")
+
+    assert late[0].slot_code is None
+    assert late[0].code_source == "unallocated"
+    assert early[0].slot_code == _CODE
+
+
+@pytest.mark.parametrize("refused_first", [False, True])
+async def test_flags_cleared_elsewhere_keep_a_resolved_code_withheld(
+    refused_first: bool,
+) -> None:
+    """Another entry's clean cycle cannot hand over the preference (#855).
+
+    Recovery flags clear on the first sound cycle of any entry, whether
+    that comes before a collision-resolved booking refreshes or after
+    it was refused. Either way the booking is still missing from the
+    rebuilt registry and must stay withheld on every retry, while a
+    booking recorded as preferred gets its own code back.
+    """
+    allocator = _allocator()
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+    resolved = [_reservation("identity-b", origin="collision_resolved")]
+    if refused_first:
+        await _cycle(allocator, resolved, entry_id="entry-b")
+    await _cycle(allocator, [], entry_id="entry-free")
+    assert allocator._registry_lost is False
+
+    for _retry in range(2):
+        resolved = [_reservation("identity-b", origin="collision_resolved")]
+        await _cycle(allocator, resolved, entry_id="entry-b")
+        assert resolved[0].slot_code is None
+    assert allocator._registry.code_for_identity("identity-b") is None
+
+    preferred = [_reservation("identity-a")]
+    await _cycle(allocator, preferred, entry_id="entry-a")
+    assert preferred[0].slot_code == _CODE
+
+
+async def test_a_drifted_preference_is_not_recorded_as_preferred() -> None:
+    """A kept code no longer matching the generator is not provable (#855).
+
+    The registry keeps handing an identity the code it was first issued
+    even after its generated preference changes, as when a feed stops
+    carrying phone digits. Recovery would issue the new preference, so
+    the kept code must not be recorded as preferred.
+    """
+    allocator = _allocator()
+    first = [_reservation(published=False)]
+    await _cycle(allocator, first, entry_id="entry-a")
+    assert first[0].issued_origin == "preferred"
+
+    drifted = [_reservation(code="9876", origin="preferred")]
+    await _cycle(allocator, drifted, entry_id="entry-a")
+
+    assert drifted[0].slot_code == _CODE
+    assert drifted[0].issued_origin is None
+
+
+async def test_recovery_refuses_an_unrecorded_origin() -> None:
+    """A published code of unknown origin is withheld, not guessed."""
+    allocator = _allocator()
+    allocator._registry_lost = True
+    allocator._registry_missing = True
+
+    reservations = [_reservation(origin=None)]
+    await _cycle(allocator, reservations)
+
+    assert reservations[0].slot_code is None
+    assert allocator._registry.code_for_identity("identity-a") is None
+
+
+def test_issued_origin_survives_the_lockless_store() -> None:
+    """The per-entry store records the origin, and keeps it when unissued."""
+    store: dict[str, Any] = {}
+    issued = _reservation(origin="collision_resolved")
+    lockless_store.sync_lockless_slot_store(
+        store, {"identity-a": issued}, entry_id="e", start_slot=1, max_events=3
+    )
+    mapping = store["mappings"]["identity-a"]
+    assert lockless_store.issued_origin(mapping) == "collision_resolved"
+    assert "code" not in mapping and _CODE not in str(mapping)
+
+    withheld = _reservation(code=None, origin="collision_resolved")
+    lockless_store.sync_lockless_slot_store(
+        store, {"identity-a": withheld}, entry_id="e", start_slot=1, max_events=3
+    )
+    assert lockless_store.issued_origin(store["mappings"]["identity-a"]) == (
+        "collision_resolved"
+    )
+
+    reloaded = _reservation(origin=None)
+    CoordinatorRefreshMixin._hydrate_reservations_from_mappings(
+        [reloaded], store["mappings"]
+    )
+    assert reloaded.issued_origin == "collision_resolved"
+
+
+async def test_a_ghost_keeps_its_recorded_origin() -> None:
+    """A feed miss neither drops nor overwrites the recorded origin.
+
+    A ghost carries no preference, so the code the registry hands back
+    cannot be compared with one; the hydrated origin must survive the
+    cycle and the next store sync.
+    """
+    allocator = _allocator()
+    await _cycle(allocator, [_reservation(published=False)], entry_id="entry-a")
+    store: dict[str, Any] = {}
+    lockless_store.sync_lockless_slot_store(
+        store,
+        {"identity-a": _reservation()},
+        entry_id="entry-a",
+        start_slot=1,
+        max_events=3,
+    )
+    ghosts = reservations_module.build_ghost_reservations(
+        set(),
+        store["mappings"],
+        "RC ",
+        None,
+        ReservationBuildContext(
+            entry_id="entry-a",
+            timezone=dt_util.UTC,
+            event_prefix="RC",
+            trim_names=False,
+            max_name_length=0,
+            code_buffer_before=0,
+            code_buffer_after=0,
+            should_update_code=False,
+            code_generator="date",
+            code_length=4,
+            active_windows_for_name=lambda _name: set(),
+        ),
+    ).reservations
+    assert [ghost.issued_origin for ghost in ghosts] == ["preferred"]
+
+    await _cycle(allocator, ghosts, entry_id="entry-a")
+
+    assert ghosts[0].slot_code == _CODE
+    assert ghosts[0].issued_origin == "preferred"
+
+
+async def _loaded(allocator: DoorCodeAllocator, *, lost: bool) -> DoorCodeAllocator:
+    """Load a registry that was, or was not, lost."""
+    result = RegistryLoadResult(
+        AllocationRegistry(), registry_lost=lost, registry_missing=lost
+    )
+
+    async def _load() -> RegistryLoadResult:
+        """Return the canned load result."""
+        return result
+
+    allocator._store = cast(
+        Any, SimpleNamespace(async_load=_load, async_save=lambda _registry: None)
+    )
+    await allocator.async_load()
+    return allocator
+
+
+async def test_disabled_lock_entry_joins_the_gate_after_registry_loss() -> None:
+    """A lost registry cannot vouch for a disabled lock's codes (#854).
+
+    Even a reservation never published, which normal issuance would
+    serve while the registry is missing, waits for that lock.
+    """
+    allocator = await _loaded(_allocator(disabled_lock=True), lost=True)
+    assert allocator._pending_adoption == {"entry-disabled"}
+
+    reservations = [_reservation(published=False)]
+    await _cycle(allocator, reservations, entry_id="entry-free")
+
+    assert reservations[0].slot_code is None
+    assert allocator._registry_lost is True
+
+
+async def test_disabled_lock_entry_stays_out_of_an_intact_registry_gate() -> None:
+    """An intact registry still records a disabled lock's codes."""
+    allocator = await _loaded(_allocator(disabled_lock=True), lost=False)
+
+    assert allocator._pending_adoption == set()
+
+
+async def test_disabling_an_unadopted_entry_keeps_the_gate_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unloading a disabled entry keeps it pending until it is deleted."""
+    raised: list[str] = []
+    monkeypatch.setattr(
+        allocator_module,
+        "async_create",
+        lambda _hass, message, **_kwargs: raised.append(message),
+    )
+    allocator = await _loaded(_allocator(disabled_lock=True), lost=True)
+
+    await allocator.async_unregister_entry("entry-disabled")
+    assert allocator._pending_adoption == {"entry-disabled"}
+
+    allocator._gate_deadline = 1.0
+    allocator._warn_if_gate_expired()
+    assert "clear its codes from the lock and delete it" in raised[0]
+
+    await allocator.async_mark_entry_removed("entry-disabled")
+    assert allocator._pending_adoption == set()

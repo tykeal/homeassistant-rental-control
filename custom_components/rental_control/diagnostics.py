@@ -379,6 +379,7 @@ def _reservation_diagnostics(coordinator: Any | None) -> list[dict[str, Any]] | 
                 "checked_out": res.checked_out,
                 "missing_count": res.missing_count,
                 "published_once": res.published_once,
+                "issued_origin": res.issued_origin,
             }
         )
     rows.sort(key=lambda row: str(row["identity_key"]))

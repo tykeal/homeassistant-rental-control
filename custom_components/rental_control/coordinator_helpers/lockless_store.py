@@ -9,11 +9,18 @@ from typing import Any
 
 from homeassistant.util import dt
 
+from ..const import ISSUED_ORIGINS
 from ..const import SLOT_STATUS_OCCUPIED
 from ..const import STORE_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from ..reconciliation import Reservation
+
+
+def issued_origin(mapping: dict[str, Any]) -> str | None:
+    """Return a mapping's recorded issued-code origin, if it is valid."""
+    origin = mapping.get("issued_origin")
+    return origin if isinstance(origin, str) and origin in ISSUED_ORIGINS else None
 
 
 def sync_lockless_slot_store(
@@ -49,6 +56,7 @@ def sync_lockless_slot_store(
             "missing_count": reservation.missing_count,
             "published_once": reservation.published_once
             or reservation.slot_code is not None,
+            "issued_origin": reservation.issued_origin,
             "pending_set_since": None,
             "pending_clear_since": None,
             "fingerprint_history": sorted(reservation.fingerprint_history),

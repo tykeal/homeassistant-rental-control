@@ -22,6 +22,7 @@ from . import diagnostics
 from . import entry_info
 from . import issuance
 from . import orphans
+from . import recovery
 from . import reissue
 from . import services
 from .models import AdoptionRequest
@@ -36,7 +37,6 @@ from .models import OrphanCleanupReport
 from .models import ReissuePreview
 from .models import ReissuePreviewRequest
 from .models import ReleaseReport
-from .recovery import entry_has_lock as _entry_has_lock
 from .registry import AllocationRegistry
 from .store import RegistryStore
 from .store import code_ref_for
@@ -55,6 +55,7 @@ class DoorCodeAllocator:
         self._registry = AllocationRegistry()
         self._store = RegistryStore(hass)
         self._lock = asyncio.Lock()
+        self._registry_lost = False
         self._pending_adoption = self._seed_pending_adoption()
         self._adopted_locks: dict[str, str] = {}
         self._pending_adoption_slots: dict[str, frozenset[int]] = {}
@@ -63,7 +64,6 @@ class DoorCodeAllocator:
             if self._pending_adoption
             else 0.0
         )
-        self._registry_lost = False
         self._registry_missing = False
         self._gate_warning_sent = False
         self._reported_identity_mismatches: set[tuple[str, str, str]] = set()
@@ -75,15 +75,17 @@ class DoorCodeAllocator:
         self._registry = result.registry
         self._registry_lost = result.registry_lost
         self._registry_missing = result.registry_missing
+        if self._registry_lost:
+            self._pending_adoption |= self._seed_pending_adoption()
+            if self._pending_adoption and self._gate_deadline == 0.0:
+                self._gate_deadline = monotonic() + _ADOPTION_GATE_WARNING_SECONDS
 
     def _seed_pending_adoption(self) -> set[str]:
-        """Return currently configured Rental Control entries awaiting adoption."""
-        return {
-            entry.entry_id
-            for entry in self.hass.config_entries.async_entries(DOMAIN)
-            if getattr(entry, "disabled_by", None) is None
-            and _entry_has_lock(getattr(entry, "data", {}))
-        }
+        """Return configured lock-backed entries awaiting adoption.
+
+        Disabled entries are included once the registry is lost (#854).
+        """
+        return recovery.gate_entries(self.hass, include_disabled=self._registry_lost)
 
     async def async_register_entry(self, entry_id: str) -> None:
         """Mark an entry as awaiting its first allocator cycle.
@@ -101,6 +103,8 @@ class DoorCodeAllocator:
     async def async_unregister_entry(self, entry_id: str) -> None:
         """Remove an entry from the pending adoption gate."""
         async with self._lock:
+            if recovery.keeps_gate_closed(self, entry_id):
+                return
             self._pending_adoption.discard(entry_id)
             self._pending_adoption_slots.pop(entry_id, None)
             self._adopted_locks.pop(entry_id, None)
@@ -255,6 +259,11 @@ class DoorCodeAllocator:
         the name they gave it.
         """
         label = entry_info.entry_name(self.hass, entry_id) if friendly else entry_id
+        if recovery.entry_is_disabled(self.hass, entry_id):
+            return (
+                f"{label} (disabled: enable it so its lock is read, or clear "
+                "its codes from the lock and delete it)"
+            )
         slots = sorted(self._pending_adoption_slots.get(entry_id, ()))
         if not slots:
             return label

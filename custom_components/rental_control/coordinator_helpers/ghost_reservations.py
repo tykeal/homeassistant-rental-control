@@ -15,6 +15,7 @@ from ..const import SLOT_STATUS_PENDING_SET
 from ..reconciliation import Reservation as _Reservation
 from ..reconciliation import normalize_slot_name_for_fingerprint
 from ..util import dt as _dt
+from .lockless_store import issued_origin
 from .models import GhostReservationResult
 from .models import ReservationBuildContext
 from .models import _format_display_slot_name
@@ -176,6 +177,7 @@ def _ghost_from_mapping(
             ),
             missing_count=new_mc,
             published_once=mapping.get("published_once") is True,
+            issued_origin=issued_origin(mapping),
         )
     except ValueError:
         _LOGGER.debug("Ghost reservation %s: invalid Reservation fields; skipping", key)

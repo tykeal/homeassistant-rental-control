@@ -12,6 +12,7 @@ from ..const import CONF_LOCK_ENTRY
 from ..const import DOMAIN
 from ..helpers import configured_lock_entry
 from ..helpers import configured_lock_slug
+from .models import AllocationOrigin
 from .models import AllocationRequest
 from .models import AllocationResult
 
@@ -40,18 +41,103 @@ def configured_lockname(data: object) -> str | None:
     return configured_lock_slug(data.get(CONF_LOCK_ENTRY))
 
 
+def gate_entries(hass: object, *, include_disabled: bool) -> set[str]:
+    """Return lock-backed entries the adoption gate must wait for.
+
+    A disabled entry runs no cycles, but unloading it clears no lock
+    slot, so its codes stay programmed. While the registry is intact it
+    still records them; once the registry is lost nothing does, and the
+    gate must also wait for disabled entries (#854).
+    """
+    entries = getattr(hass, "config_entries", None)
+    if entries is None:
+        return set()
+    return {
+        entry.entry_id
+        for entry in entries.async_entries(DOMAIN)
+        if entry_has_lock(getattr(entry, "data", {}))
+        and (include_disabled or getattr(entry, "disabled_by", None) is None)
+    }
+
+
+def entry_is_disabled(hass: object, entry_id: str) -> bool:
+    """Return whether a configured entry is currently disabled."""
+    entries = getattr(hass, "config_entries", None)
+    get_entry = getattr(entries, "async_get_entry", None)
+    entry = get_entry(entry_id) if callable(get_entry) else None
+    return entry is not None and getattr(entry, "disabled_by", None) is not None
+
+
+def keeps_gate_closed(allocator: DoorCodeAllocator, entry_id: str) -> bool:
+    """Return whether an unloading entry must stay pending adoption.
+
+    Disabling an entry unloads it. If the registry is lost and the entry
+    has not adopted, the codes in its lock are recorded nowhere, so it
+    stays in the gate until it is enabled and adopts, or is deleted.
+    """
+    return (
+        allocator._registry_lost
+        and entry_id in gate_entries(allocator.hass, include_disabled=True)
+        and entry_is_disabled(allocator.hass, entry_id)
+    )
+
+
+def continuity_required(request: AllocationRequest, reissuing: frozenset[str]) -> bool:
+    """Return whether a request must prove it keeps the guest's code.
+
+    A generator-only identity that was published but has no registry
+    record lost it with the registry: recovery flags clear on the first
+    sound cycle of any entry, which may come before this identity is
+    restored or after it was refused. Its code is then recorded nowhere,
+    so it is bound to its proven preference on every cycle, not just
+    while the flags are set. A deliberate re-issue is exempt, since the
+    operator asked for a new code.
+    """
+    return (
+        request.previously_published
+        and request.lockname is None
+        and request.slot is None
+        and request.identity_key not in reissuing
+    )
+
+
+def origin_proven(request: AllocationRequest) -> bool:
+    """Return whether recovery may restore this request's preference.
+
+    Two lockless entries can prefer the same code; the second was then
+    issued a collision-resolved alternative. After a registry loss the
+    preference may look free to either, so a published identity is
+    given it back only if the per-entry store recorded that it was
+    originally issued its preference (#855). Anything else would
+    silently change a code the guest holds.
+    """
+    if not request.previously_published:
+        return True
+    if request.issued_origin is AllocationOrigin.PREFERRED:
+        return True
+    _LOGGER.warning(
+        "Declined recovery for generator-only entry %s:%s: the code it was "
+        "last issued is not recorded as its preferred code, so restoring "
+        "the preference could change a code the guest already holds",
+        request.entry_id,
+        request.identity_key,
+    )
+    return False
+
+
 def unobserved_lock_entries(allocator: DoorCodeAllocator) -> frozenset[str]:
     """Return configured lock-backed entries that have not adopted.
 
     An empty pending-adoption set does not prove every lock has been
-    read. ``_seed_pending_adoption`` never enrolls a disabled entry, and
-    ``async_setup_entry`` unregisters an entry whose setup fails, so
-    both leave the gate empty while their codes stay programmed in a
-    lock. Adoption is therefore tracked positively in
-    ``_adopted_locks``, from cycles that actually completed, and against
-    the lock that was read: an entry whose options later point at a
-    different lock has not observed that one, and an entry whose latest
-    cycle was incomplete has stopped observing its own.
+    read. ``_seed_pending_adoption`` enrolls a disabled entry only once
+    the registry is known to be lost, and ``async_setup_entry``
+    unregisters an entry whose setup fails, so the gate can be empty
+    while codes stay programmed in a lock. Adoption is therefore tracked
+    positively in ``_adopted_locks``, from cycles that actually
+    completed, and against the lock that was read: an entry whose
+    options later point at a different lock has not observed that one,
+    and an entry whose latest cycle was incomplete has stopped observing
+    its own.
     """
     entries = getattr(allocator.hass, "config_entries", None)
     if entries is None:
@@ -148,8 +234,13 @@ def issuance_block(
 
 
 __all__ = [
+    "continuity_required",
     "configured_lockname",
     "entry_has_lock",
+    "entry_is_disabled",
+    "gate_entries",
+    "keeps_gate_closed",
+    "origin_proven",
     "issuance_block",
     "lockless_recovery_allowed",
     "unobserved_lock_entries",

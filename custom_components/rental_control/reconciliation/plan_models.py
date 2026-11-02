@@ -89,6 +89,12 @@ class Reservation:
         code_rotation_origin: The ``(slot, code)`` the rotation signal
             was derived from, so the allocator can confirm it is
             suppressing adoption of that exact physical PIN.
+        issued_origin: How the code last issued to this reservation was
+            chosen, ``"preferred"`` or ``"collision_resolved"``, as
+            recorded in the per-entry cache, or ``None`` when unknown.
+            It survives a lost shared registry, so lockless recovery
+            can tell whether the regenerated preference is the code
+            the guest actually holds.
         phone_last_four: The guest phone digits this cycle's feed text
             yields for the reservation, or ``None`` when the feed
             supplies none. It is the only durable evidence of whether a
@@ -121,6 +127,7 @@ class Reservation:
     code_rotation_pending: bool = False
     code_rotation_origin: tuple[int, str] | None = field(default=None, repr=False)
     phone_last_four: str | None = field(default=None, repr=False)
+    issued_origin: str | None = None
 
     def __post_init__(self) -> None:
         """Validate Reservation field invariants.

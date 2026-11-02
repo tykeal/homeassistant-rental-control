@@ -7,6 +7,8 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timezone
 
+import pytest
+
 from custom_components.rental_control.const import STORE_SCHEMA_VERSION
 from custom_components.rental_control.coordinator_helpers import store_sync
 from custom_components.rental_control.coordinator_helpers.models import StoreSyncPlan
@@ -75,15 +77,58 @@ def test_normalize_loaded_store_accepts_current_schema() -> None:
 
 
 def test_normalize_loaded_store_still_migrates_legacy_schema() -> None:
-    """Legacy schema payloads continue to migrate to version 1."""
+    """Legacy schema payloads continue to migrate to the current version."""
     result = store_sync.normalize_loaded_store(
         {"schema_version": 0, "mappings": {"k": {"slot": 5}}},
         ("entry-1", "lock", 1, 4, "2026-01-01T00:00:00"),
     )
 
     assert result is not None
-    assert result["schema_version"] == 1
-    assert result["mappings"] == {"k": {"slot": 5}}
+    assert result["schema_version"] == 2
+    assert result["mappings"] == {"k": {"slot": 5, "issued_origin": None}}
+
+
+def test_schema_v1_mappings_migrate_with_unknown_issued_origin() -> None:
+    """Version 1 never recorded an origin, so migration cannot invent one."""
+    result = store_sync.normalize_loaded_store(
+        {
+            "schema_version": 1,
+            "mappings": {"k": {"slot": None, "published_once": True}},
+            "migration_notes": [],
+        },
+        ("entry-1", None, 1, 4, "2026-01-01T00:00:00"),
+    )
+
+    assert result is not None
+    assert result["schema_version"] == 2
+    assert result["mappings"]["k"]["issued_origin"] is None
+    assert result["mappings"]["k"]["published_once"] is True
+    assert result["migration_notes"] == ["issued_origin_unrecorded"]
+
+
+@pytest.mark.parametrize(
+    ("stored", "loaded"),
+    [
+        ("preferred", "preferred"),
+        ("collision_resolved", "collision_resolved"),
+        ("adopted", None),
+        (7, None),
+        ([], None),
+        ({}, None),
+    ],
+)
+def test_schema_v2_keeps_only_valid_issued_origins(
+    stored: object, loaded: str | None
+) -> None:
+    """A recorded origin survives a reload; anything else reads as unknown."""
+    result = store_sync.normalize_loaded_store(
+        {"schema_version": 2, "mappings": {"k": {"issued_origin": stored}}},
+        ("entry-1", None, 1, 4, "2026-01-01T00:00:00"),
+    )
+
+    assert result is not None
+    assert result["mappings"]["k"]["issued_origin"] == loaded
+    assert result["migration_notes"] == []
 
 
 def test_build_store_sync_plan_empty() -> None:
