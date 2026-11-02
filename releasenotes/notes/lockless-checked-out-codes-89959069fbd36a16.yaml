@@ -1,0 +1,9 @@
+---
+fixes:
+  - |
+    On an entry without a configured lock, as described in "Using Door
+    Codes Without Keymaster" in the README, a stay's door code is now
+    kept after checkout while the stay is still shown in the sensors,
+    through checkout day. Before, the code was released as soon as the
+    guest checked out. A checked-out stay with no dates can also no
+    longer claim a future stay's code by guest name alone. See #847.
