@@ -70,7 +70,7 @@ jobs:
       - name: 'Verify pushed tag'
         id: 'tag-validate'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/tag-validate-action@63470621b8ebc5c4fc86ebb616727dd0a7285dd9  # v1.1.7
+        uses: lfreleng-actions/tag-validate-action@eab7d92e02c8b447a4de04e68bd5ee7eae3450eb  # v1.1.8
         with:
           token: "${{ secrets.GITHUB_TOKEN }}"
           require_type: 'semver'
