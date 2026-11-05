@@ -29,7 +29,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "homeassistant>=2026.10.0",
+    "homeassistant>=2026.11.0",
 ]
 
 test = [
@@ -68,7 +68,7 @@ packages = ["custom_components"]
 
 [dependency-groups]
 dev = [
-    "homeassistant>=2026.10.0",
+    "homeassistant>=2026.11.0",
     {include-group = "releasenotes"},
 ]
 # reno manages releasenotes/notes/; kept in its own group so CI can

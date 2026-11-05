@@ -1229,7 +1229,7 @@ releasenotes = [
 [package.metadata]
 requires-dist = [
     { name = "aioresponses", marker = "extra == 'test'" },
-    { name = "homeassistant", marker = "extra == 'dev'", specifier = ">=2026.10.0" },
+    { name = "homeassistant", marker = "extra == 'dev'", specifier = ">=2026.11.0" },
     { name = "homeassistant", marker = "extra == 'test'", specifier = ">=2026.11.0" },
     { name = "icalendar", specifier = ">=6.1.0,<8.0.0" },
     { name = "icalendar", marker = "extra == 'test'", specifier = "==6.3.1" },
@@ -1242,7 +1242,7 @@ provides-extras = ["dev", "test"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "homeassistant", specifier = ">=2026.10.0" },
+    { name = "homeassistant", specifier = ">=2026.11.0" },
     { name = "reno", specifier = ">=4.1.0" },
 ]
 releasenotes = [{ name = "reno", specifier = ">=4.1.0" }]
