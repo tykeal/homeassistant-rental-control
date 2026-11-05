@@ -33,7 +33,7 @@ jobs:
     # Conventional Commits policy, so this caller passes none. See
     # generic-workflows' docs/semantic-pull-request.md.
     # yamllint disable-line rule:line-length
-    uses: lfreleng-actions/generic-workflows/.github/workflows/semantic-pull-request.yaml@9d4a5d5b7e30bcd26a0abffb5bf263fd11c13852  # v0.5.0
+    uses: lfreleng-actions/generic-workflows/.github/workflows/semantic-pull-request.yaml@04672a980550ff9bd89d24bacd39fb03e25b0b0b  # v0.6.1
     permissions:
       contents: read
       pull-requests: read  # Gate step queries the PR API (avoids 403)
