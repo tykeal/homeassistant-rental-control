@@ -19,8 +19,8 @@ from unittest.mock import MagicMock
 from freezegun import freeze_time
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.rental_control.const import CHECKIN_STATE_AWAITING
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN

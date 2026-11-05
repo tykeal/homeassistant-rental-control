@@ -13,7 +13,7 @@ from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 import probatio
 from probatio import ALLOW_EXTRA
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.config_flow import RentalControlFlowHandler
 from custom_components.rental_control.config_flow import _get_schema

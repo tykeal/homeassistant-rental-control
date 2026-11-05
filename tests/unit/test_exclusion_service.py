@@ -11,7 +11,7 @@ from typing import cast
 from homeassistant.core import HomeAssistant
 import probatio
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.allocator import exclusion_service
 from custom_components.rental_control.allocator import reissue_preview

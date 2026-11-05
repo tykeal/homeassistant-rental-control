@@ -20,7 +20,7 @@ from aioresponses import aioresponses
 from homeassistant.helpers import entity_registry as er
 import homeassistant.util.dt as dt_util
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.allocator.registry import AllocationRegistry
 from custom_components.rental_control.allocator.singleton import get_allocator

@@ -910,7 +910,7 @@ Here are some examples of automations that work with Rental Control.
 ### Running Tests
 
 This project uses [pytest](https://docs.pytest.org/) with
-[pytest-homeassistant-custom-component](https://github.com/MatthewFlamworthy/pytest-homeassistant-custom-component)
+[pytest-homeassistant](https://github.com/home-assistant/core/tree/dev/packages/pytest-homeassistant)
 for testing.
 
 ```bash

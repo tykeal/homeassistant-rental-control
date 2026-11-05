@@ -34,13 +34,13 @@ dev = [
 
 test = [
     "aioresponses",
-    # 2026.9 switched schema validation to Probatio and dropped the
-    # accidental cv.vol re-export; test against a core that has it.
-    "homeassistant>=2026.10.0",
+    # pytest-homeassistant is versioned with, and pins, Home Assistant
+    # core; keep this floor in step with it.
+    "homeassistant>=2026.11.0",
     # Match Home Assistant's pinned version so tests exercise the
     # icalendar release users actually run.
     "icalendar==6.3.1",
-    "pytest-homeassistant-custom-component",
+    "pytest-homeassistant>=2026.11.0",
     # CI resolver picks pytest-timeout 1.4.2 without this constraint;
     # 1.4.2 imports distutils which was removed in Python 3.12
     "pytest-timeout>=2.3.0",
@@ -75,7 +75,9 @@ releasenotes = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-qq"
+# Let Home Assistant install its httpx alias before respx is imported
+# (pytest-homeassistant README).
+addopts = "-qq -p no:respx"
 console_output_style = "count"
 testpaths = ["tests"]
 asyncio_mode = "auto"

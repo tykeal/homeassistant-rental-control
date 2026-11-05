@@ -12,7 +12,7 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AllocationRequest

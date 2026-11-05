@@ -30,7 +30,7 @@ from custom_components.rental_control.sensors.checkinsensor import CheckinTracki
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 
 def _setup_entry(

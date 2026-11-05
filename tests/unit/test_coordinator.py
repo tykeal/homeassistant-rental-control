@@ -21,7 +21,7 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt
 import homeassistant.util.dt as dt_util
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.const import CHECKIN_SENSOR
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN

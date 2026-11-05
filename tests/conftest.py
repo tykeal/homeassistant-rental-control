@@ -22,7 +22,7 @@ import aioresponses.core as aioresponses_core
 from multidict import CIMultiDict
 from multidict import CIMultiDictProxy
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.const import CONF_CLEANING_WINDOW
 from custom_components.rental_control.const import DEFAULT_CLEANING_WINDOW
@@ -35,10 +35,6 @@ from tests.fixtures import calendar_data
 if TYPE_CHECKING:
     from homeassistant.core import CALLBACK_TYPE
     from homeassistant.core import HomeAssistant
-
-
-# Enable custom components for testing
-pytest_plugins = ("pytest_homeassistant_custom_component",)
 
 
 def _aioresponses_build_response_aiohttp313(  # noqa: PLR0913
@@ -159,10 +155,13 @@ def _reset_module_level_reporting():
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
-    """Enable custom integrations for all tests automatically.
+    """Start a Home Assistant instance for every test.
 
-    This fixture uses pytest-homeassistant-custom-component's
-    enable_custom_integrations fixture and applies it to all tests.
+    pytest-homeassistant enables custom integrations by default, but
+    ``enable_custom_integrations`` still depends on ``hass``. Some unit
+    tests rely on a running instance without requesting it (for
+    example, formatting a translated ``ServiceNotFound`` needs
+    ``async_get_hass``), so keep requesting it for all tests.
     """
     yield
 
@@ -177,8 +176,8 @@ def _cancel_checkin_timers(
     Tests create sensors via helper functions that bypass the HA
     entity platform, so ``async_will_remove_from_hass`` is never
     called during teardown. This leaves ``async_track_point_in_time``
-    handles active, which newer versions of
-    pytest-homeassistant-custom-component flag as errors.
+    handles active, which the pytest-homeassistant plugin flags
+    as errors.
 
     This fixture wraps ``async_track_point_in_time`` to accumulate
     every unsub handle created during the test, then cancels them
