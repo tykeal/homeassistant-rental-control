@@ -40,6 +40,9 @@ test = [
     # Match Home Assistant's pinned version so tests exercise the
     # icalendar release users actually run.
     "icalendar==6.3.1",
+    # pytest-homeassistant-custom-component used to pull this in; the
+    # README's coverage command needs it.
+    "pytest-cov",
     "pytest-homeassistant>=2026.11.0",
     # CI resolver picks pytest-timeout 1.4.2 without this constraint;
     # 1.4.2 imports distutils which was removed in Python 3.12

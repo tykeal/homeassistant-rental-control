@@ -33,6 +33,7 @@ x-wr-timezone
 # one of them is ours to act on.
 aioresponses
 homeassistant
+pytest-cov
 pytest-homeassistant
 pytest-timeout
 
