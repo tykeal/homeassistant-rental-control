@@ -3,9 +3,9 @@
 
 """Integration tests for renaming entity_ids through the entity registry.
 
-Home Assistant 2026.11 changes an entity_id in place and calls
-``async_entity_id_changed``; older releases remove and re-add the entity.
-Either way the renamed entities must keep working under their new id.
+Home Assistant changes an entity_id in place and calls
+``async_entity_id_changed`` instead of removing and re-adding the entity.
+The renamed entities must keep working under their new id.
 """
 
 from __future__ import annotations
@@ -46,7 +46,6 @@ _ENTITY_CLASSES: list[type[Entity]] = [
     KeymasterMonitoringSwitch,
     EarlyCheckoutExpirySwitch,
 ]
-_SUPPORTS_IN_PLACE = hasattr(Entity, "async_entity_id_changed")
 
 
 @pytest.fixture
@@ -152,17 +151,12 @@ async def test_renamed_entity_keeps_working(
         assert entry_data[CHECKIN_SENSOR] is live
         assert scheduled_before is not None
         assert live._tracked_event_start == scheduled_before.target_time
-        if _SUPPORTS_IN_PLACE:
-            # The pre-2026.11 remove/re-add fallback cancels the timer.
-            scheduled_after = live._timer_manager.scheduled
-            assert scheduled_after is not None
-            assert scheduled_after.purpose == scheduled_before.purpose
-            assert scheduled_after.target_time == scheduled_before.target_time
+        scheduled_after = live._timer_manager.scheduled
+        assert scheduled_after is not None
+        assert scheduled_after.purpose == scheduled_before.purpose
+        assert scheduled_after.target_time == scheduled_before.target_time
 
 
-@pytest.mark.skipif(
-    not _SUPPORTS_IN_PLACE, reason="in-place entity_id changes need HA 2026.11+"
-)
 @pytest.mark.usefixtures("frozen_calendar")
 @pytest.mark.parametrize("entity_class", _ENTITY_CLASSES, ids=lambda c: c.__name__)
 async def test_rename_updates_entity_in_place(
