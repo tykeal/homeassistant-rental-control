@@ -1,0 +1,8 @@
+---
+upgrade:
+  - |
+    Home Assistant 2026.11 or later is now required. Upgrade Home
+    Assistant before upgrading Rental Control. On older Home Assistant
+    releases, HACS and the Marketplace keep offering the last compatible
+    release (v3.9.x), because the integration's declared minimum Home
+    Assistant version excludes this one.

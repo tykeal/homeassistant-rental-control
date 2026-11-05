@@ -24,7 +24,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .. import const as rc_const
-from ..entity_lifecycle import async_chain_entity_id_changed
 from ..util import add_call as add_call  # re-exported for tests/runtime patching
 from ..util import gen_uuid
 from ..util import get_entry_data
@@ -396,10 +395,12 @@ class CheckinTrackingSensor(
     def async_entity_id_changed(self, old_entity_id: str) -> None:
         """Keep this entity in place when its entity_id changes.
 
-        Nothing here is keyed on our own entity_id, so only the parent
-        hook runs.
+        Home Assistant only changes an entity_id in place when the class
+        implementing the add/remove hooks also defines this method, so
+        it is defined here. Nothing here is keyed on our own entity_id,
+        so only the parent hook runs.
         """
-        async_chain_entity_id_changed(super(), old_entity_id)
+        super().async_entity_id_changed(old_entity_id)
 
     @callback
     def async_handle_keymaster_unlock(

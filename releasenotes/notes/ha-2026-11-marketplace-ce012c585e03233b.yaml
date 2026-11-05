@@ -12,8 +12,7 @@ upgrade:
     in the README.
 features:
   - |
-    Rental Control is ready for the Home Assistant Marketplace in Home
-    Assistant 2026.11 and later. The integration ships its own brand
-    images and declares its integration categories, so it installs from
-    **Settings** > **Marketplace** with no restart. On earlier Home
-    Assistant releases, install it through HACS as before.
+    Rental Control is ready for the Home Assistant Marketplace. The
+    integration ships its own brand images and declares its integration
+    categories, so it installs from **Settings** > **Marketplace** with
+    no restart.
