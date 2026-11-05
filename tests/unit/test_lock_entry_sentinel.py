@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control import _entry_has_lock
 from custom_components.rental_control.allocator.recovery import configured_lockname

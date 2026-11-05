@@ -17,7 +17,7 @@ from homeassistant.components.diagnostics.const import REDACTED
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.json import ExtendedJSONEncoder
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control import diagnostics as diagnostics_module
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator

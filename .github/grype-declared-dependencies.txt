@@ -33,7 +33,8 @@ x-wr-timezone
 # one of them is ours to act on.
 aioresponses
 homeassistant
-pytest-homeassistant-custom-component
+pytest-cov
+pytest-homeassistant
 pytest-timeout
 
 # [build-system] requires.

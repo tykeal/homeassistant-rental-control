@@ -32,7 +32,7 @@ from custom_components.rental_control.util import gen_uuid
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 
 # ---------------------------------------------------------------------------

@@ -24,8 +24,8 @@ from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.const import STATE_UNKNOWN
 from homeassistant.helpers import entity_registry as er
 import homeassistant.util.dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import CONF_MAX_EVENTS
@@ -2246,7 +2246,7 @@ class TestRestartWithPersistedMappingAndUidChurn:
 
     def _make_entry(self, entry_id: str = "rc-restart-t083") -> "MockConfigEntry":
         """Build a minimal config entry scoped to the restart/UID-churn scenario."""
-        from pytest_homeassistant_custom_component.common import MockConfigEntry
+        from pytest_homeassistant.common import MockConfigEntry
 
         return MockConfigEntry(
             domain="rental_control",

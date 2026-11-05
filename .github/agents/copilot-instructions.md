@@ -15,7 +15,7 @@ Auto-generated from all feature plans. Last updated: 2026-05-15
 ## Active Technologies
 - Python ≥3.13.2 + icalendar ≥6.1.0, x-wr-timezone ≥2.0.0 (002-code-health)
 - Home Assistant ≥2025.8.0 (platform + test harness) (002-code-health)
-- Test stack: pytest-homeassistant-custom-component, aioresponses (002-code-health)
+- Test stack: pytest-homeassistant, aioresponses (002-code-health)
 - Storage: N/A — Home Assistant config entries (002-code-health)
 - Python ≥3.13.2 + Home Assistant ≥ 2025.8.0, icalendar ≥6.1.0, x-wr-timezone ≥2.0.0 (003-coordinator-migration)
 - N/A (all state in-memory, config via HA config entries) (003-coordinator-migration)

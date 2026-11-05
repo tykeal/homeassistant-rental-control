@@ -17,8 +17,8 @@ from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.const import STATE_UNKNOWN
 import homeassistant.util.dt as dt_util
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.rental_control import async_arm_startup_readability_refresh
 from custom_components.rental_control import update_listener
