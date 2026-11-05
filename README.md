@@ -607,22 +607,17 @@ actions your lock provides:
 
 ## Installation
 
-Rental Control is in the default catalog of the Home Assistant Marketplace
-(Home Assistant 2026.11 and later) and of HACS.
+Rental Control requires Home Assistant 2026.11 or later and is in the
+default catalog of the Home Assistant Marketplace.
 
 1. In Home Assistant, go to **Settings** > **Marketplace**, or press the
    following button [![Open your Home Assistant instance and open a
-repository inside the Home Assistant Marketplace or
-HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tykeal&repository=homeassistant-rental-control&category=integration)
+repository inside the Home Assistant
+Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=tykeal&repository=homeassistant-rental-control&category=integration)
 1. Search for `Rental Control` and install it
 1. Rental Control has a config flow, so it goes straight to setup with no
    restart. Select **Add Integration** and follow the [Setup](#setup)
    section to finish the configuration
-
-On Home Assistant before 2026.11, install through
-[HACS](https://hacs.xyz/) instead: the button above opens HACS on those
-versions. After installing, restart Home Assistant, then follow the
-[Setup](#setup) section.
 
 ### Keymaster (optional)
 
