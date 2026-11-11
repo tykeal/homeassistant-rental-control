@@ -271,7 +271,7 @@ jobs:
       - name: "Grype audit SBOM"
         id: grype-audit
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/grype-scan-action@5c81b23afb2ea771b2d247807a12d90783328675  # v0.5.0
+        uses: lfreleng-actions/grype-scan-action@f65dca2762823cfc8f376e32fee9baa6f3292696  # v0.6.2
         with:
           sbom: 'sbom-cyclonedx.json'
           fail-on: 'medium'
