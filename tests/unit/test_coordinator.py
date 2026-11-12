@@ -7097,7 +7097,7 @@ class TestCoordinatorPersistenceUpdate:
 
         coordinator._adopt_observed_coded_slots(coordinator._observe_managed_slots())
 
-        events = []
+        events: list[CalendarEvent] = []
         for summary, start_day in (
             ("RC Alexander Very Long Guest Name", 1),
             ("RC Repeat Guest Family A", 10),
@@ -7229,7 +7229,7 @@ class TestCoordinatorPersistenceUpdate:
             hass.states.async_set(f"text.test_lock_code_slot_{slot}_name", "unknown")
             hass.states.async_set(f"text.test_lock_code_slot_{slot}_pin", "unknown")
 
-        events = []
+        events: list[CalendarEvent] = []
         for index, (slot, guest) in enumerate(
             ((10, "Recovered Unknown A"), (11, "Recovered Unknown B"))
         ):
@@ -7378,7 +7378,7 @@ class TestCoordinatorPersistenceUpdate:
             coordinator._slot_mappings["mappings"]
         )
 
-        events = []
+        events: list[CalendarEvent] = []
         for index, slot in enumerate(reset_states):
             event = MagicMock()
             event.summary = f"Mixed Reset Guest {slot}"
@@ -7707,7 +7707,7 @@ class TestCoordinatorPersistenceUpdate:
             "blocked_slots": {},
         }
 
-        events = []
+        events: list[CalendarEvent] = []
         for summary, start, end in (
             ("RC Repeat Guest Family A", start_a, end_a),
             ("RC Repeat Guest Family B", start_b, end_b),
@@ -7875,7 +7875,7 @@ class TestCoordinatorPersistenceUpdate:
             coordinator._slot_mappings["mappings"]
         )
 
-        events = []
+        events: list[CalendarEvent] = []
         for slot, guest in ((10, "Recovered Guest A"), (11, "Recovered Guest B")):
             event = MagicMock()
             event.summary = guest

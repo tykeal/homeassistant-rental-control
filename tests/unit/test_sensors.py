@@ -102,7 +102,7 @@ class TestAsyncSetupPlatform:
 
     async def test_returns_true(self) -> None:
         """Verify async_setup_platform returns True (config flow only)."""
-        result = await async_setup_platform(None, None, None)
+        result = await async_setup_platform(MagicMock(), {}, MagicMock())
         assert result is True
 
 

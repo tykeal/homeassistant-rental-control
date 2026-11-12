@@ -34,7 +34,10 @@ from tests.fixtures.stubs import as_mock
 from tests.fixtures.stubs import stub_method
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity import Entity
     from pytest_homeassistant.common import MockConfigEntry
 
 
@@ -358,9 +361,11 @@ class TestSwitchPlatformSetup:
 
         added_entities: list = []
 
-        def mock_add_entities(entities: list) -> None:
+        def mock_add_entities(
+            new_entities: Iterable[Entity], update_before_add: bool = False
+        ) -> None:
             """Capture entities passed to async_add_entities."""
-            added_entities.extend(entities)
+            added_entities.extend(new_entities)
 
         await async_setup_entry(hass, mock_checkin_config_entry, mock_add_entities)
 
@@ -383,9 +388,11 @@ class TestSwitchPlatformSetup:
 
         added_entities: list = []
 
-        def mock_add_entities(entities: list) -> None:
+        def mock_add_entities(
+            new_entities: Iterable[Entity], update_before_add: bool = False
+        ) -> None:
             """Capture entities for empty-string lockname test."""
-            added_entities.extend(entities)
+            added_entities.extend(new_entities)
 
         await async_setup_entry(hass, mock_checkin_config_entry, mock_add_entities)
 
@@ -408,9 +415,11 @@ class TestSwitchPlatformSetup:
 
         added_entities: list = []
 
-        def mock_add_entities(entities: list) -> None:
+        def mock_add_entities(
+            new_entities: Iterable[Entity], update_before_add: bool = False
+        ) -> None:
             """Capture entities for truthy lockname test."""
-            added_entities.extend(entities)
+            added_entities.extend(new_entities)
 
         await async_setup_entry(hass, mock_checkin_config_entry, mock_add_entities)
 
@@ -442,9 +451,11 @@ class TestSwitchPlatformSetup:
 
         added_entities: list = []
 
-        def mock_add_entities(entities: list) -> None:
+        def mock_add_entities(
+            new_entities: Iterable[Entity], update_before_add: bool = False
+        ) -> None:
             """Capture entities for switch count test."""
-            added_entities.extend(entities)
+            added_entities.extend(new_entities)
 
         await async_setup_entry(hass, mock_checkin_config_entry, mock_add_entities)
 
@@ -672,9 +683,11 @@ class TestEarlyCheckoutExpirySwitchPlatformSetup:
 
         added_entities: list = []
 
-        def mock_add_entities(entities: list) -> None:
+        def mock_add_entities(
+            new_entities: Iterable[Entity], update_before_add: bool = False
+        ) -> None:
             """Collect entities added by platform setup."""
-            added_entities.extend(entities)
+            added_entities.extend(new_entities)
 
         await async_setup_entry(hass, mock_checkin_config_entry, mock_add_entities)
 
@@ -700,9 +713,11 @@ class TestEarlyCheckoutExpirySwitchPlatformSetup:
 
         added_entities: list = []
 
-        def mock_add_entities(entities: list) -> None:
+        def mock_add_entities(
+            new_entities: Iterable[Entity], update_before_add: bool = False
+        ) -> None:
             """Collect entities added by platform setup."""
-            added_entities.extend(entities)
+            added_entities.extend(new_entities)
 
         await async_setup_entry(hass, mock_checkin_config_entry, mock_add_entities)
 
