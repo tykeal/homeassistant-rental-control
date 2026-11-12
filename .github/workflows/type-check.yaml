@@ -83,4 +83,4 @@ jobs:
           # Whole-tree check, matching the pre-commit hook: a typing
           # change in custom_components/ must not silently break a
           # caller in tests/.
-          uv run --no-sync mypy --show-error-codes custom_components/ tests/
+          uv run --no-sync mypy --show-error-codes custom_components/ scripts/ tests/

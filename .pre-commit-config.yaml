@@ -102,7 +102,7 @@ repos:
         pass_filenames: false
         require_serial: true
         types_or: [python, pyi]
-        entry: uv run --extra test mypy --show-error-codes custom_components/ tests/
+        entry: uv run --extra test mypy --show-error-codes custom_components/ scripts/ tests/
 
   - repo: https://github.com/fsfe/reuse-tool
     rev: ea739bff9c6daa1c4c8a5c5dfd069f3fb0374728  # frozen: v6.3.0
