@@ -21,7 +21,13 @@ on:
       - synchronize
       - reopened
       - edited
-  pull_request_target:
+  # SECURITY: pull_request_target is required so that labelling works on
+  # pull requests from forks, where the 'pull_request' token is
+  # read-only. It is safe here because no job in this workflow checks
+  # out any code from the pull request head: the autolabeler reads the
+  # PR title and body through the GitHub API only. The 'if:' guard on
+  # the job below keeps the privileged trigger to fork pull requests.
+  pull_request_target:  # zizmor: ignore[dangerous-triggers]
     types:
       - opened
       - synchronize
