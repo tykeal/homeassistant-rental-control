@@ -13,6 +13,12 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # A week of cooldown before Dependabot proposes a newly published
+    # release. A compromised or broken release is usually yanked or
+    # superseded within days, so waiting keeps the automation from
+    # being the fastest path into the repository for one.
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "Chore"
     open-pull-requests-limit: 15
@@ -27,6 +33,12 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # A week of cooldown before Dependabot proposes a newly published
+    # release. A compromised or broken release is usually yanked or
+    # superseded within days, so waiting keeps the automation from
+    # being the fastest path into the repository for one.
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "Chore"
     open-pull-requests-limit: 15

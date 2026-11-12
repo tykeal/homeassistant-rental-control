@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: read  # Metadata action reads PR files and commits
     timeout-minutes: 5
     steps:
       # yamllint disable-line rule:line-length
@@ -51,7 +51,7 @@ jobs:
     name: 'Validate Tag Push'
     runs-on: 'ubuntu-latest'
     permissions:
-      contents: write
+      contents: write  # 'Ensure draft release exists' creates the release
     timeout-minutes: 5
     outputs:
       tag: "${{ steps.tag-validate.outputs.tag_name }}"
@@ -127,8 +127,8 @@ jobs:
       artefact_path: "${{ steps.python-build.outputs.artefact_path }}"
     permissions:
       contents: read
-      id-token: write
-      attestations: write
+      id-token: write  # Sigstore keyless signing of the artefacts
+      attestations: write  # Publishes build provenance attestations
     timeout-minutes: 12
     env:
       GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
@@ -272,8 +272,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      # Read maintainer-approved bypass issues.
-      issues: read
+      issues: read  # Reads maintainer-approved Grype bypass issues
     steps:
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
@@ -422,7 +421,7 @@ jobs:
       - 'python-build'
       - 'build-zip'
     permissions:
-      contents: write
+      contents: write  # Uploads build artefacts as release assets
     timeout-minutes: 5
     env:
       GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
@@ -466,7 +465,7 @@ jobs:
       - 'attach-artefacts'
     runs-on: 'ubuntu-latest'
     permissions:
-      contents: write
+      contents: write  # Promotes the draft release to published
     timeout-minutes: 2
     outputs:
       # yamllint disable-line rule:line-length
