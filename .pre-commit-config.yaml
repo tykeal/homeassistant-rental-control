@@ -15,7 +15,8 @@ ci:
   # pre-commit.ci runs Python 3.12 which cannot parse Python 3.14
   # syntax (PEP 758 unparenthesized except) emitted by ruff format
   # targeting py314. These hooks still run locally and in GitHub
-  # Actions on Python 3.14.
+  # Actions on Python 3.14. mypy is also a local hook that needs uv,
+  # which pre-commit.ci lacks; the Type Check workflow runs it instead.
   skip:
     - ruff-format
     - interrogate
@@ -88,12 +89,20 @@ repos:
         additional_dependencies:
           - setuptools
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: ad26ebfa797fcb9b8f83275937c1c1d6e126719c  # frozen: v2.4.1
+  # mypy runs in the project environment resolved from uv.lock, not an
+  # isolated hook environment, so it checks against the same
+  # interpreter, Home Assistant and stubs as the test suite. pre-commit.ci
+  # has no uv, so the hook is in the ci skip list above; the Type Check
+  # workflow (.github/workflows/type-check.yaml) enforces it in CI.
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies:
-          - types-pytz
+        name: mypy
+        language: system
+        pass_filenames: false
+        require_serial: true
+        types_or: [python, pyi]
+        entry: uv run --extra test mypy --show-error-codes custom_components/ tests/
 
   - repo: https://github.com/fsfe/reuse-tool
     rev: ea739bff9c6daa1c4c8a5c5dfd069f3fb0374728  # frozen: v6.3.0
