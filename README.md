@@ -942,6 +942,17 @@ pre-commit install
 pre-commit run --all-files
 ```
 
+### Type Checking
+
+[mypy](https://mypy-lang.org/) checks the integration, its tests and the
+helper scripts against the locked dependencies in `uv.lock`. The `mypy`
+pre-commit hook runs it for you, and the **Type Check** workflow
+enforces it on every pull request. To run it directly:
+
+```bash
+uv run --extra test mypy --show-error-codes custom_components/ scripts/ tests/
+```
+
 ### Release Notes
 
 Release notes live in `releasenotes/notes/` as

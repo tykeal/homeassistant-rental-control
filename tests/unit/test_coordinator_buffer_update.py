@@ -19,6 +19,8 @@ from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator import RentalControlCoordinator
 from custom_components.rental_control.event_overrides import EventOverrides
 
+from tests.fixtures.stubs import stub_method
+
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
@@ -92,7 +94,7 @@ async def test_buffer_change_calls_update_buffer_times(
     """
     mock_entry.add_to_hass(hass)
     coordinator = RentalControlCoordinator(hass, mock_entry)
-    coordinator.async_request_refresh = AsyncMock()
+    stub_method(coordinator, "async_request_refresh", AsyncMock())
 
     new_config = _make_update_config(buffer_before=30, buffer_after=60)
     with patch.object(
@@ -113,7 +115,7 @@ async def test_buffer_no_change_skips_update_buffer_times(
     """
     mock_entry.add_to_hass(hass)
     coordinator = RentalControlCoordinator(hass, mock_entry)
-    coordinator.async_request_refresh = AsyncMock()
+    stub_method(coordinator, "async_request_refresh", AsyncMock())
 
     new_config = _make_update_config(buffer_before=0, buffer_after=0)
     with patch.object(

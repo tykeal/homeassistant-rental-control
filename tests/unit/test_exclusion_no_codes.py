@@ -79,30 +79,24 @@ def test_diagnostics_report_slots_without_codes() -> None:
     assert _CODE not in str(diagnostics)
 
 
-def test_notification_quotes_only_the_operator_reason() -> None:
+def test_notification_quotes_only_the_operator_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The notification repeats the operator's note and nothing else."""
     messages: list[str] = []
     hass = SimpleNamespace(bus=SimpleNamespace())
 
-    original_dismiss = slot_notifications.async_dismiss
-    original = slot_notifications.async_create
-    try:
-        slot_notifications.async_dismiss = (  # type: ignore[assignment]
-            lambda *_args, **_kwargs: None
-        )
-        slot_notifications.async_create = (  # type: ignore[assignment]
-            lambda _hass, message, title="", notification_id="": messages.append(
-                message
-            )
-        )
-        slot_exclusions.report_excluded_slots(
-            hass, "entry-a", "front", {_DEAD_SLOT: "dead relay"}
-        )
-    finally:
-        slot_notifications.async_create = original  # type: ignore[assignment]
-        slot_notifications.async_dismiss = (  # type: ignore[assignment]
-            original_dismiss
-        )
+    monkeypatch.setattr(
+        slot_notifications, "async_dismiss", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        slot_notifications,
+        "async_create",
+        lambda _hass, message, title="", notification_id="": messages.append(message),
+    )
+    slot_exclusions.report_excluded_slots(
+        hass, "entry-a", "front", {_DEAD_SLOT: "dead relay"}
+    )
 
     assert messages
     assert "dead relay" in messages[0]

@@ -167,7 +167,7 @@ The hooks enforce (non-exhaustive list):
 - **gitlint** — Commit message format validation (see rules above)
 - **reuse** — SPDX license header compliance
 - **ruff** — Python linting and formatting
-- **mypy** — Python type checking
+- **mypy** — Python type checking (runs in the uv project environment)
 - **interrogate** — Docstring coverage (100% required)
 - **yamllint** — YAML linting
 - **actionlint** — GitHub Actions workflow validation
@@ -257,6 +257,10 @@ from the repository root using `uv`:
 
 - Run tests before committing: `uv run pytest tests/`
 - Run linting before committing: `uv run ruff check custom_components/ tests/`
+- Run type checking before committing:
+  `uv run --extra test mypy --show-error-codes custom_components/ scripts/ tests/`
+  (the `mypy` pre-commit hook and the **Type Check** CI workflow run the
+  same command against the locked environment; it must report no errors)
 - All tests must pass before pushing
 - New features should include appropriate test coverage
 
@@ -274,6 +278,8 @@ Upgrade actions belong in `upgrade`.
 1. Make changes to code
 2. Run tests locally to verify: `uv run pytest tests/ -x -q`
 3. Run linting: `uv run ruff check custom_components/ tests/`
+   and type checking:
+   `uv run --extra test mypy --show-error-codes custom_components/ scripts/ tests/`
 4. Stage changes: `git add <files>`
 5. Commit with sign-off and co-authorship:
 

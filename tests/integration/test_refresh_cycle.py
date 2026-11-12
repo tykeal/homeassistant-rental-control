@@ -38,6 +38,7 @@ from custom_components.rental_control.coordinator import RentalControlCoordinato
 from custom_components.rental_control.util import OperationResult
 
 from tests.fixtures import calendar_data
+from tests.fixtures.stubs import stub_method
 from tests.integration.helpers import FROZEN_START_OF_DAY
 from tests.integration.helpers import FROZEN_TIME
 from tests.integration.helpers import future_ics
@@ -2940,7 +2941,7 @@ class TestManualOverrideSurvival:
         ).add_to_hass(hass)
 
         coordinator = RentalControlCoordinator(hass, entry)
-        coordinator.async_request_refresh = AsyncMock()
+        stub_method(coordinator, "async_request_refresh", AsyncMock())
         assert coordinator.event_overrides is not None
         hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {COORDINATOR: coordinator}
 
@@ -3160,7 +3161,7 @@ class TestManualOverrideSurvival:
         ).add_to_hass(hass)
 
         coordinator = RentalControlCoordinator(hass, entry)
-        coordinator.async_request_refresh = AsyncMock()
+        stub_method(coordinator, "async_request_refresh", AsyncMock())
         assert coordinator.event_overrides is not None
         hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {COORDINATOR: coordinator}
 

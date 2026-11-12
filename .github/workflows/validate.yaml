@@ -44,8 +44,17 @@ jobs:
           persist-credentials: false
 
       - name: 'Validate with hassfest'
+        # 'home-assistant/actions' carries exactly one tag, 1.0.0, cut
+        # in 2020 and never moved; the hassfest action has been
+        # developed on the default branch (master) ever since. There is
+        # no recent tag to pin to, so the SHA is taken from that branch
+        # and 'stale-action-refs' -- which only asks that a pinned hash
+        # also be reachable from a tag -- cannot be satisfied here
+        # without regressing the action by six years. The pin itself is
+        # still a full commit SHA, so 'unpinned-uses' is honoured and
+        # the ref cannot move under us.
         # yamllint disable-line rule:line-length
-        uses: home-assistant/actions/hassfest@86d4564712fa02543c808e3a693dd04f9d3f8361  # master (no tags published)
+        uses: home-assistant/actions/hassfest@86d4564712fa02543c808e3a693dd04f9d3f8361  # zizmor: ignore[stale-action-refs]
 
   hacs:
     name: 'HACS'
@@ -67,6 +76,6 @@ jobs:
 
       - name: 'Validate with HACS'
         # yamllint disable-line rule:line-length
-        uses: hacs/action@d556e736723344f83838d08488c983a15381059a  # v22.5.0
+        uses: hacs/action@d556e736723344f83838d08488c983a15381059a  # 22.5.0
         with:
           category: 'integration'

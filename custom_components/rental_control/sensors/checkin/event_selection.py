@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import date
 from datetime import datetime
 
 from homeassistant.components.calendar import CalendarEvent
@@ -13,9 +14,21 @@ from homeassistant.components.calendar import CalendarEvent
 from ...bookings_only import resolve_slot_name
 
 
-def event_key(summary: str, start: datetime) -> str:
+def event_key(summary: str, start: date) -> str:
     """Return the behavior-compatible identity key for an event."""
     return f"{summary}|{start.isoformat()}"
+
+
+def event_datetime(value: date) -> datetime:
+    """Return an event bound typed as the datetime it always is.
+
+    ``CalendarEvent`` allows all-day ``date`` bounds, but the calendar
+    parser only emits timezone-aware datetimes, and every consumer here
+    compares bounds against ``now``, which a bare date cannot do.
+    """
+    if not isinstance(value, datetime):
+        raise TypeError(f"expected a timed event bound, got {value!r}")
+    return value
 
 
 def get_relevant_event(

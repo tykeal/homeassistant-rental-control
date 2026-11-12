@@ -12,6 +12,7 @@ from collections.abc import Coroutine
 from collections.abc import Mapping
 from datetime import datetime
 from datetime import timedelta
+from datetime import tzinfo
 import importlib
 import logging
 from typing import Any
@@ -64,6 +65,11 @@ def _coordinator_module() -> Any:
 
 class CoordinatorConfigMixin:
     """Provide extracted coordinator shell behavior."""
+
+    # Declared to match the other bases: CoordinatorSetupMixin owns the
+    # tzinfo-typed timezone and DataUpdateCoordinator the interval.
+    timezone: tzinfo
+    update_interval: timedelta | None
 
     async def _update_config_impl(self, config: Mapping[str, Any]) -> None:
         """Update config entries."""

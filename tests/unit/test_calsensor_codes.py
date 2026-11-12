@@ -17,6 +17,8 @@ from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import NAME
 from custom_components.rental_control.sensors.calsensor import RentalControlCalSensor
 
+from tests.fixtures.stubs import stub_method
+
 START = datetime(2026, 9, 17, 16, tzinfo=timezone.utc)
 END = datetime(2026, 9, 20, 11, tzinfo=timezone.utc)
 
@@ -46,7 +48,7 @@ def test_sensor_path_never_invokes_code_generation(hass) -> None:
         "name": f"{NAME} Test Rental",
     }
     sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
-    sensor.async_write_ha_state = MagicMock()
+    stub_method(sensor, "async_write_ha_state", MagicMock())
 
     with patch(
         "custom_components.rental_control.codegen.generate_slot_code",

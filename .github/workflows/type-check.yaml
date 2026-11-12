@@ -1,0 +1,86 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+# Static type checking with mypy.
+#
+# The mypy pre-commit hook is in the 'ci: skip' list because it shells
+# out to 'uv run' and pre-commit.ci has no uv in its sandbox, so this
+# workflow is where typing is enforced.
+#
+# Running mypy through uv resolves the environment from uv.lock, so CI
+# type checks against the exact Home Assistant and Python versions the
+# project pins. An isolated environment built from a separate
+# dependency list silently checks the wrong stubs.
+name: 'Type Check'
+
+# yamllint disable-line rule:truthy
+on:
+  # 'edited' is deliberately absent: title and body edits cannot
+  # affect type checking, and cancel-in-progress would then kill the
+  # live run for the same SHA.
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches:
+      - main
+  workflow_dispatch:
+
+# No 'paths' filter by design. A skipped workflow reports no status,
+# so a required check would stay pending on PRs touching only
+# excluded paths and block their merge.
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  # The job name is the status check context required by the branch
+  # ruleset. Renaming it orphans that requirement.
+  mypy:
+    name: 'Type Check'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Python 3.14 lacks prebuilt wheels for parts of the Home Assistant
+    # dependency tree, so a cache miss builds them from source.
+    timeout-minutes: 45
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Checkout repository'
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 'Install uv'
+        # yamllint disable-line rule:line-length
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+          python-version: '3.14'
+
+      - name: 'Install locked dependencies'
+        shell: bash
+        run: |
+          # Install locked dependencies
+          set -euo pipefail
+          # --locked fails on a stale uv.lock instead of type checking
+          # against a resolution nobody committed. The test extra
+          # provides pytest and the HA test harness used by tests/.
+          uv sync --locked --extra test
+
+      - name: 'Run mypy'
+        shell: bash
+        run: |
+          # Run mypy
+          set -euo pipefail
+          # Whole-tree check, matching the pre-commit hook: a typing
+          # change in custom_components/ must not silently break a
+          # caller in tests/.
+          uv run --no-sync mypy --show-error-codes custom_components/ scripts/ tests/

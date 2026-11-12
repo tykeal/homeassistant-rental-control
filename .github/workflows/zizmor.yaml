@@ -1,0 +1,106 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+# Static security analysis of this repository's GitHub Actions workflows.
+#
+# zizmor audits workflow definitions for the failure modes that code
+# review keeps catching by hand: template injection through '${{ }}' in
+# run: blocks, credential persistence after checkout, over-broad job
+# permissions, dangerous triggers and unpinned action references. This
+# job turns those conventions into a gate.
+#
+# '.github/zizmor.yml' sets the 'unpinned-uses' policy to 'hash-pin'
+# for every action, so a tag or branch reference fails here as well,
+# which makes a separate action pin audit unnecessary.
+#
+# Accepted findings are suppressed with inline '# zizmor: ignore[rule]'
+# comments at the exact line they excuse, never by disabling a rule
+# repository-wide. See '.github/zizmor.yml' for the current list.
+name: 'Zizmor'
+
+# yamllint disable-line rule:truthy
+on:
+  # 'edited' is deliberately absent. It fires on PR title/body changes,
+  # which cannot affect workflow security, and 'cancel-in-progress'
+  # would then kill the live run for the same SHA, leaving a cancelled
+  # check behind.
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches:
+      - main
+  workflow_dispatch:
+
+# No 'paths' filter by design, even though this job only ever reads
+# '.github/'. A skipped workflow reports no status at all, so a path
+# filter would leave this required check permanently pending on any
+# PR that touches only excluded paths.
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  # The job name becomes the status check context. Keep it stable:
+  # renaming it would orphan the entry in the branch ruleset that
+  # requires it.
+  zizmor:
+    name: 'Zizmor'
+    runs-on: 'ubuntu-latest'
+    permissions:
+      # Read the workflow files under audit, and let zizmor's online
+      # audits resolve action refs through the GitHub API.
+      contents: read
+    timeout-minutes: 10
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
+        with:
+          egress-policy: 'audit'
+
+      - name: 'Checkout repository'
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Nothing in this job writes to git.
+          persist-credentials: false
+
+      - name: 'Run zizmor'
+        # yamllint disable-line rule:line-length
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd  # v0.8.1
+        with:
+          inputs: '.'
+          # The analyzer version, pinned separately from the action
+          # above so the version that decides whether a pull request
+          # can merge is visible in the diff rather than hidden behind
+          # the action's 'latest' default.
+          #
+          # The action installs zizmor from a hash-pinned lockfile it
+          # ships per zizmor release, so this may only name a version
+          # the pinned action carries a lockfile for. Dependabot bumps
+          # the 'uses:' ref above but not this input: treat each
+          # zizmor-action update as the prompt to raise this version
+          # and the 'zizmor-pre-commit' rev in '.pre-commit-config.yaml'
+          # together.
+          version: '1.31.1'
+          # Named explicitly so the gate does not move when the
+          # action's defaults change. Over 'regular', 'auditor' adds
+          # 'undocumented-permissions' and 'stale-action-refs'. The
+          # matching '--persona=auditor' is set on the
+          # 'zizmor-pre-commit' hook; the two must agree, because
+          # zizmor has no config-file key for the persona.
+          persona: 'auditor'
+          # Online audits resolve 'uses:' refs against the GitHub API,
+          # which is what makes 'ref-version-mismatch',
+          # 'stale-action-refs' and the 'hash-pin' policy able to tell
+          # a tag from a SHA.
+          online-audits: 'true'
+          config: '.github/zizmor.yml'
+          # Report findings as inline annotations on the diff rather
+          # than uploading SARIF to code scanning, which would need
+          # security-events: write plus a token that pull requests from
+          # forks do not get.
+          advanced-security: 'false'
+          annotations: 'true'

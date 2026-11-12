@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.typing import DiscoveryInfoType
@@ -45,7 +46,7 @@ async def async_setup_entry(
 ) -> bool:
     """Set up the iCal Sensor."""
     config = config_entry.data
-    max_events = config.get(CONF_MAX_EVENTS)
+    max_events: int = config[CONF_MAX_EVENTS]
 
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
     # Data is guaranteed available via async_config_entry_first_refresh()
@@ -53,7 +54,7 @@ async def async_setup_entry(
         _LOGGER.error("Unable to fetch iCal")
         return False
 
-    sensors = []
+    sensors: list[Entity] = []
     for eventnumber in range(max_events):
         sensors.append(
             RentalControlCalSensor(

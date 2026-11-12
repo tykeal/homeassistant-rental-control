@@ -268,6 +268,7 @@ def physical_slot_name_matches_name(
 
 def observed_value_as_datetime(value: Any) -> datetime | None:
     """Return a datetime for an observed Store value, if parseable."""
+    parsed: datetime | None
     if isinstance(value, datetime):
         parsed = value
     elif isinstance(value, str):
