@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import time
 import inspect
 import json
@@ -289,10 +290,10 @@ def mock_config_entry_full() -> MockConfigEntry:
 
 
 @pytest.fixture
-def mock_aiohttp_session() -> aioresponses:
+def mock_aiohttp_session() -> Iterator[aioresponses]:
     """Return a mock aiohttp session for testing HTTP requests.
 
-    Returns:
+    Yields:
         aioresponses: Mock aiohttp client session context manager.
     """
     with aioresponses() as mock_session:

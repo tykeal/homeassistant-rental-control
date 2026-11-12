@@ -75,6 +75,7 @@ async def test_service_dry_run_changes_nothing(
         blocking=True,
         return_response=True,
     )
+    assert response is not None
 
     assert response["dry_run"] is True
     assert response["cleared"] == [
@@ -107,6 +108,7 @@ async def test_service_ordinary_orphan_response_omits_lock_fields(
         blocking=True,
         return_response=True,
     )
+    assert response is not None
 
     assert response["retained"] == [
         {
@@ -157,6 +159,7 @@ async def test_service_forced_hold_response_keeps_lock_fields(
         blocking=True,
         return_response=True,
     )
+    assert response is not None
 
     assert response["cleared"] == [
         {
@@ -374,7 +377,7 @@ async def test_orphan_report_and_logs_do_not_expose_codes(
         assert outcome.reason != "1357"
     for record in caplog.records:
         assert record.msg != "1357"
-        assert "1357" not in tuple(str(arg) for arg in record.args)
+        assert "1357" not in tuple(str(arg) for arg in record.args or ())
 
 
 def _allocator(hass: HomeAssistant) -> DoorCodeAllocator:

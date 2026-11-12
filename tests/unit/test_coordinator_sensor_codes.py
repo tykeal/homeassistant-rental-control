@@ -16,6 +16,8 @@ from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
 from custom_components.rental_control.reconciliation import SlotStatus
 
+from tests.fixtures.fake_hass import as_hass
+
 START = datetime(2026, 9, 17, 16, tzinfo=timezone.utc)
 END = datetime(2026, 9, 20, 11, tzinfo=timezone.utc)
 
@@ -153,8 +155,8 @@ def _with_lock_pin(coordinator: RentalControlCoordinator, pin: str | None) -> No
     """Attach a fake Keymaster PIN entity state to the coordinator."""
     coordinator.lockname = "front_door"
     state = None if pin is None else SimpleNamespace(state=pin)
-    coordinator.hass = SimpleNamespace(
-        states=SimpleNamespace(get=lambda _entity_id: state)
+    coordinator.hass = as_hass(
+        SimpleNamespace(states=SimpleNamespace(get=lambda _entity_id: state))
     )
 
 

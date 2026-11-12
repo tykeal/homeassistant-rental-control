@@ -27,6 +27,8 @@ from custom_components.rental_control.sensors.calsensor_helpers.models import (
 from custom_components.rental_control.sensors.checkinsensor import CheckinTrackingSensor
 from custom_components.rental_control.util import gen_uuid
 
+from tests.fixtures.stubs import stub_method
+
 
 def _make_event(
     *,
@@ -100,7 +102,7 @@ class TestAsyncSetupPlatform:
 
     async def test_returns_true(self) -> None:
         """Verify async_setup_platform returns True (config flow only)."""
-        result = await async_setup_platform(None, None, None)
+        result = await async_setup_platform(MagicMock(), {}, MagicMock())
         assert result is True
 
 
@@ -251,8 +253,8 @@ class TestSensorInit:
         coordinator = _make_coordinator(data=[event], last_update_success=True)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
-        sensor.async_on_remove = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
+        stub_method(sensor, "async_on_remove", MagicMock())
         coordinator.async_add_listener = MagicMock(return_value=MagicMock())
 
         await sensor.async_added_to_hass()
@@ -264,8 +266,8 @@ class TestSensorInit:
         coordinator = _make_coordinator(data=None, last_update_success=True)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
-        sensor.async_on_remove = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
+        stub_method(sensor, "async_on_remove", MagicMock())
         coordinator.async_add_listener = MagicMock(return_value=MagicMock())
 
         await sensor.async_added_to_hass()
@@ -278,8 +280,8 @@ class TestSensorInit:
         coordinator = _make_coordinator(data=[event], last_update_success=False)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
-        sensor.async_on_remove = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
+        stub_method(sensor, "async_on_remove", MagicMock())
         coordinator.async_add_listener = MagicMock(return_value=MagicMock())
 
         await sensor.async_added_to_hass()
@@ -693,7 +695,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -711,7 +713,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -730,7 +732,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -744,7 +746,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -759,7 +761,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -778,7 +780,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -801,7 +803,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -820,7 +822,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -835,7 +837,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event], code_generator="date_based")
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -849,7 +851,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event], last_update_success=True)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -863,7 +865,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event0, event1])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 1)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -878,7 +880,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -892,7 +894,7 @@ class TestHandleCoordinatorUpdateWithEvents:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.get_slot_name",
@@ -916,7 +918,7 @@ class TestHandleCoordinatorUpdateNoEvents:
         coordinator = _make_coordinator(data=[])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -927,7 +929,7 @@ class TestHandleCoordinatorUpdateNoEvents:
         coordinator = _make_coordinator(data=[], event_prefix="Rental")
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -938,7 +940,7 @@ class TestHandleCoordinatorUpdateNoEvents:
         coordinator = _make_coordinator(data=[])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -959,7 +961,7 @@ class TestHandleCoordinatorUpdateNoEvents:
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor._parsed_attributes = {"guest_email": "old@example.com"}
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -971,7 +973,7 @@ class TestHandleCoordinatorUpdateNoEvents:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 5)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -982,7 +984,7 @@ class TestHandleCoordinatorUpdateNoEvents:
         coordinator = _make_coordinator(last_update_success=False, data=[])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
         original_state = sensor.state
 
         sensor._handle_coordinator_update()
@@ -1010,7 +1012,7 @@ class TestHandleCoordinatorUpdateOverrides:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1028,7 +1030,7 @@ class TestHandleCoordinatorUpdateOverrides:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
         attrs = sensor.extra_state_attributes
@@ -1047,7 +1049,7 @@ class TestHandleCoordinatorUpdateOverrides:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1061,7 +1063,7 @@ class TestHandleCoordinatorUpdateOverrides:
         coordinator = _make_coordinator(data=[event], event_overrides=None)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.make_reservation_fingerprint",
@@ -1082,7 +1084,7 @@ class TestHandleCoordinatorUpdateOverrides:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1099,7 +1101,7 @@ class TestHandleCoordinatorUpdateOverrides:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1111,7 +1113,7 @@ class TestHandleCoordinatorUpdateOverrides:
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor._event_attributes["slot_number"] = 10
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1140,7 +1142,7 @@ class TestSensorReadOnly:
         coordinator = _make_coordinator(data=[event], event_overrides=overrides)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1157,7 +1159,7 @@ class TestSensorReadOnly:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.async_fire_set_code",
@@ -1179,7 +1181,7 @@ class TestSensorReadOnly:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.async_fire_clear_code",
@@ -1200,7 +1202,7 @@ class TestSensorReadOnly:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.async_fire_update_times",
@@ -1224,7 +1226,7 @@ class TestSensorReadOnly:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1237,7 +1239,7 @@ class TestSensorReadOnly:
         coordinator = _make_coordinator(data=[event], event_overrides=None)
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1283,7 +1285,7 @@ class TestEventNAttributeRegression:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1298,7 +1300,7 @@ class TestEventNAttributeRegression:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1315,7 +1317,7 @@ class TestEventNAttributeRegression:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1333,7 +1335,7 @@ class TestEventNAttributeRegression:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1349,7 +1351,7 @@ class TestEventNAttributeRegression:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1362,7 +1364,7 @@ class TestEventNAttributeRegression:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1375,7 +1377,7 @@ class TestEventNAttributeRegression:
         coordinator = _make_coordinator(data=[event])
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.get_slot_name",
@@ -1396,7 +1398,7 @@ class TestEventNAttributeRegression:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1415,7 +1417,7 @@ class TestEventNAttributeRegression:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1427,7 +1429,7 @@ class TestEventNAttributeRegression:
         coordinator = _make_coordinator(data=[], event_prefix="")
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1449,7 +1451,7 @@ class TestEventNAttributeRegression:
         coordinator = _make_coordinator(data=[], event_prefix="MyPlace")
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1464,7 +1466,7 @@ class TestEventNAttributeRegression:
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor._event_attributes["slot_number"] = 7
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         sensor._handle_coordinator_update()
 
@@ -1482,7 +1484,7 @@ class TestEventNAttributeRegression:
         )
         sensor = RentalControlCalSensor(hass, coordinator, f"{NAME} Test", 0)
         sensor.hass = MagicMock()
-        sensor.async_write_ha_state = MagicMock()
+        stub_method(sensor, "async_write_ha_state", MagicMock())
 
         with patch(
             "custom_components.rental_control.sensors.calsensor.make_reservation_fingerprint",

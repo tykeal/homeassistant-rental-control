@@ -18,6 +18,7 @@ Tests cover:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -49,10 +50,16 @@ from custom_components.rental_control.const import EVENT_RENTAL_CONTROL_CHECKIN
 from custom_components.rental_control.const import EVENT_RENTAL_CONTROL_CHECKOUT
 from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
 from custom_components.rental_control.const import UNSUB_LISTENERS
+from custom_components.rental_control.sensors.checkin.event_selection import (
+    event_datetime,
+)
 from custom_components.rental_control.sensors.checkinsensor import (
     CheckinExtraStoredData,
 )
 from custom_components.rental_control.sensors.checkinsensor import CheckinTrackingSensor
+
+from tests.fixtures.stubs import as_mock
+from tests.fixtures.stubs import stub_method
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -106,7 +113,7 @@ def _create_sensor(
     # Set hass so async_write_ha_state doesn't blow up
     sensor.hass = hass
     # Patch async_write_ha_state to avoid entity registry issues
-    sensor.async_write_ha_state = MagicMock()
+    stub_method(sensor, "async_write_ha_state", MagicMock())
     return sensor
 
 
@@ -256,8 +263,8 @@ class TestStateMachineTransitions:
         mock_checkin_coordinator.data = [event]
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._tracked_event_summary = event.summary
-        sensor._tracked_event_start = event.start
-        sensor._tracked_event_end = event.end
+        sensor._tracked_event_start = event_datetime(event.start)
+        sensor._tracked_event_end = event_datetime(event.end)
         sensor._tracked_event_slot_name = "John Smith"
         sensor._checkin_source = "automatic"
 
@@ -2473,8 +2480,8 @@ class TestToggleMidEvent:
         mock_checkin_coordinator.data = [event]
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._tracked_event_summary = event.summary
-        sensor._tracked_event_start = event.start
-        sensor._tracked_event_end = event.end
+        sensor._tracked_event_start = event_datetime(event.start)
+        sensor._tracked_event_end = event_datetime(event.end)
         sensor._checkin_source = "automatic"
 
         # Unlock event while already checked in — should be ignored
@@ -3181,7 +3188,7 @@ class TestChildLockEventHandling:
         sensor._handle_coordinator_update()
         assert sensor._state == CHECKIN_STATE_AWAITING
 
-        events_fired: list[dict[str, Any]] = []
+        events_fired: list[Mapping[str, Any]] = []
 
         @callback
         def _capture_event(event: Event) -> None:
@@ -4648,7 +4655,7 @@ class TestEarlyCheckoutExpiry:
         # End time must remain unchanged
         assert sensor._tracked_event_end == original_end
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
-        sensor.async_write_ha_state.assert_not_called()
+        as_mock(sensor.async_write_ha_state).assert_not_called()
 
 
 # ===========================================================================
@@ -4684,7 +4691,7 @@ class TestEventTrackingStability:
         event = _make_event(start=now + timedelta(hours=2))
         mock_checkin_coordinator.data = [event]
         sensor._tracked_event_summary = event.summary
-        sensor._tracked_event_start = event.start
+        sensor._tracked_event_start = event_datetime(event.start)
 
         result = sensor._find_tracked_event()
 
@@ -4711,7 +4718,7 @@ class TestEventTrackingStability:
         )
         mock_checkin_coordinator.data = [other, tracked]
         sensor._tracked_event_summary = tracked.summary
-        sensor._tracked_event_start = tracked.start
+        sensor._tracked_event_start = event_datetime(tracked.start)
 
         result = sensor._find_tracked_event()
 
@@ -4793,8 +4800,8 @@ class TestEventTrackingStability:
 
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._tracked_event_summary = tracked.summary
-        sensor._tracked_event_start = tracked.start
-        sensor._tracked_event_end = tracked.end
+        sensor._tracked_event_start = event_datetime(tracked.start)
+        sensor._tracked_event_end = event_datetime(tracked.end)
         sensor._checkin_source = "keymaster"
 
         # Position 0 is tracked event → should stay checked_in
@@ -4906,8 +4913,8 @@ class TestEventTrackingStability:
 
         sensor._state = CHECKIN_STATE_AWAITING
         sensor._tracked_event_summary = tracked.summary
-        sensor._tracked_event_start = tracked.start
-        sensor._tracked_event_end = tracked.end
+        sensor._tracked_event_start = event_datetime(tracked.start)
+        sensor._tracked_event_end = event_datetime(tracked.end)
         sensor._unsub_timer = MagicMock()
 
         # Tracked at position 0
@@ -4955,11 +4962,11 @@ class TestEventTrackingStability:
 
         sensor._state = CHECKIN_STATE_CHECKED_OUT
         sensor._tracked_event_summary = guest_a.summary
-        sensor._tracked_event_start = guest_a.start
-        sensor._tracked_event_end = guest_a.end
+        sensor._tracked_event_start = event_datetime(guest_a.start)
+        sensor._tracked_event_end = event_datetime(guest_a.end)
         sensor._checkout_time = now
         sensor._checked_out_event_key = sensor._event_key(
-            guest_a.summary, guest_a.start
+            guest_a.summary, event_datetime(guest_a.start)
         )
 
         # First refresh: both events visible → computes linger
@@ -5013,11 +5020,11 @@ class TestEventTrackingStability:
 
         sensor._state = CHECKIN_STATE_CHECKED_OUT
         sensor._tracked_event_summary = guest_a.summary
-        sensor._tracked_event_start = guest_a.start
-        sensor._tracked_event_end = guest_a.end
+        sensor._tracked_event_start = event_datetime(guest_a.start)
+        sensor._tracked_event_end = event_datetime(guest_a.end)
         sensor._checkout_time = now
         sensor._checked_out_event_key = sensor._event_key(
-            guest_a.summary, guest_a.start
+            guest_a.summary, event_datetime(guest_a.start)
         )
 
         # First: follow-on is Guest B
@@ -5059,8 +5066,8 @@ class TestEventTrackingStability:
         # Set up checked_in state for Guest A
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._tracked_event_summary = guest_a.summary
-        sensor._tracked_event_start = guest_a.start
-        sensor._tracked_event_end = guest_a.end
+        sensor._tracked_event_start = event_datetime(guest_a.start)
+        sensor._tracked_event_end = event_datetime(guest_a.end)
         sensor._checkin_source = "automatic"
         mock_checkin_coordinator.data = [guest_a, guest_b]
 
@@ -5103,7 +5110,7 @@ class TestEventTrackingStability:
         sensor._state = CHECKIN_STATE_CHECKED_OUT
         sensor._checkout_time = now - timedelta(minutes=30)
         sensor._checked_out_event_key = sensor._event_key(
-            guest_a.summary, guest_a.start
+            guest_a.summary, event_datetime(guest_a.start)
         )
         # Checked-out event still at position 0
         mock_checkin_coordinator.data = [guest_a, guest_b]
@@ -5162,7 +5169,7 @@ class TestEventTrackingStability:
 
         sensor._compute_linger_timing()
 
-        expected_key = sensor._event_key(guest_b.summary, guest_b.start)
+        expected_key = sensor._event_key(guest_b.summary, event_datetime(guest_b.start))
         assert sensor._linger_followon_key == expected_key
 
     async def test_linger_followon_key_none_when_no_followon(
@@ -5233,11 +5240,11 @@ class TestEventTrackingStability:
 
         sensor._state = CHECKIN_STATE_CHECKED_OUT
         sensor._tracked_event_summary = guest_a.summary
-        sensor._tracked_event_start = guest_a.start
-        sensor._tracked_event_end = guest_a.end
+        sensor._tracked_event_start = event_datetime(guest_a.start)
+        sensor._tracked_event_end = event_datetime(guest_a.end)
         sensor._checkout_time = now
         sensor._checked_out_event_key = sensor._event_key(
-            guest_a.summary, guest_a.start
+            guest_a.summary, event_datetime(guest_a.start)
         )
 
         # First: follow-on exists → linger computed with follow-on key
@@ -5459,10 +5466,10 @@ class TestAwaitingReEvaluation:
         # Set up: track new_event, mark old_event as checked-out
         sensor._state = CHECKIN_STATE_AWAITING
         sensor._tracked_event_summary = new_event.summary
-        sensor._tracked_event_start = new_event.start
-        sensor._tracked_event_end = new_event.end
+        sensor._tracked_event_start = event_datetime(new_event.start)
+        sensor._tracked_event_end = event_datetime(new_event.end)
         sensor._tracked_event_slot_name = None
-        old_key = sensor._event_key(old_event.summary, old_event.start)
+        old_key = sensor._event_key(old_event.summary, event_datetime(old_event.start))
         sensor._checked_out_event_key = old_key
 
         # old_event is earlier and still active (end > now) but should be skipped
@@ -5745,8 +5752,8 @@ class TestCheckedInSelfHealing:
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._checkin_source = "automatic"
         sensor._tracked_event_summary = future_event.summary
-        sensor._tracked_event_start = future_event.start
-        sensor._tracked_event_end = future_event.end
+        sensor._tracked_event_start = event_datetime(future_event.start)
+        sensor._tracked_event_end = event_datetime(future_event.end)
         sensor._tracked_event_slot_name = "FutureGuest"
 
         mock_checkin_coordinator.data = [future_event]
@@ -5782,8 +5789,8 @@ class TestCheckedInSelfHealing:
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._checkin_source = "automatic"
         sensor._tracked_event_summary = future_event.summary
-        sensor._tracked_event_start = future_event.start
-        sensor._tracked_event_end = future_event.end
+        sensor._tracked_event_start = event_datetime(future_event.start)
+        sensor._tracked_event_end = event_datetime(future_event.end)
         sensor._tracked_event_slot_name = "FutureGuest"
 
         mock_checkin_coordinator.data = [active_event, future_event]
@@ -5815,8 +5822,8 @@ class TestCheckedInSelfHealing:
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._checkin_source = "keymaster"
         sensor._tracked_event_summary = future_event.summary
-        sensor._tracked_event_start = future_event.start
-        sensor._tracked_event_end = future_event.end
+        sensor._tracked_event_start = event_datetime(future_event.start)
+        sensor._tracked_event_end = event_datetime(future_event.end)
         sensor._tracked_event_slot_name = "WrongGuest"
 
         mock_checkin_coordinator.data = [future_event]
@@ -5847,8 +5854,8 @@ class TestCheckedInSelfHealing:
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._checkin_source = "keymaster"
         sensor._tracked_event_summary = future_event.summary
-        sensor._tracked_event_start = future_event.start
-        sensor._tracked_event_end = future_event.end
+        sensor._tracked_event_start = event_datetime(future_event.start)
+        sensor._tracked_event_end = event_datetime(future_event.end)
         sensor._tracked_event_slot_name = "EarlyGuest"
 
         mock_checkin_coordinator.data = [future_event]
@@ -5880,8 +5887,8 @@ class TestCheckedInSelfHealing:
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._checkin_source = "automatic"
         sensor._tracked_event_summary = active_event.summary
-        sensor._tracked_event_start = active_event.start
-        sensor._tracked_event_end = active_event.end
+        sensor._tracked_event_start = event_datetime(active_event.start)
+        sensor._tracked_event_end = event_datetime(active_event.end)
         sensor._tracked_event_slot_name = "ActiveGuest"
 
         mock_checkin_coordinator.data = [active_event]
@@ -5920,8 +5927,8 @@ class TestCheckinTrackingReconciliationRegression:
 
         sensor._state = CHECKIN_STATE_CHECKED_IN
         sensor._tracked_event_summary = tracked_event.summary
-        sensor._tracked_event_start = tracked_event.start
-        sensor._tracked_event_end = tracked_event.end
+        sensor._tracked_event_start = event_datetime(tracked_event.start)
+        sensor._tracked_event_end = event_datetime(tracked_event.end)
         sensor._tracked_event_slot_name = "John Smith"
         mock_checkin_coordinator.get_slot_assignment.return_value = 12
         mock_checkin_coordinator.data = [tracked_event]

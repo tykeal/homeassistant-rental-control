@@ -24,6 +24,8 @@ from custom_components.rental_control.allocator.store import decode_code
 from custom_components.rental_control.allocator.store import encode_code
 from custom_components.rental_control.const import CODE_REGISTRY_SCHEMA_VERSION
 
+from tests.fixtures.fake_hass import as_hass
+
 _NOW = "2026-09-16T12:00:00+00:00"
 
 
@@ -117,7 +119,7 @@ def test_encode_decode_round_trip_with_leading_zeroes() -> None:
 
 def test_serialized_code_fields_do_not_store_plaintext() -> None:
     """Persisted registry fields never store the plain door code."""
-    wrapper = RegistryStore(SimpleNamespace())
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
     payload = wrapper._payload_from_registry(_registry())
     record = payload["records"][0]
 
@@ -155,7 +157,7 @@ async def test_missing_and_corrupt_payloads_yield_empty_registry(
     """Missing and corrupt payloads fail closed to an empty registry."""
     caplog.set_level(logging.INFO)
     FakeStore.payload = payload
-    wrapper = RegistryStore(SimpleNamespace())
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
 
     result = await wrapper.async_load()
 
@@ -179,7 +181,7 @@ async def test_absent_store_logs_without_warning(
     """An absent registry store logs at info level and never warns."""
     caplog.set_level(logging.INFO)
     FakeStore.payload = None
-    wrapper = RegistryStore(SimpleNamespace())
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
 
     await wrapper.async_load()
 
@@ -197,7 +199,7 @@ async def test_corrupt_payload_notification_states_consequence(
 ) -> None:
     """The corrupt payload notification explains impact and next steps."""
     FakeStore.payload = {"schema_version": 99, "records": []}
-    wrapper = RegistryStore(SimpleNamespace())
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
 
     await wrapper.async_load()
 
@@ -212,7 +214,7 @@ async def test_successful_load_dismisses_stale_notification(
     patch_store: NotificationCalls,
 ) -> None:
     """A valid payload clears any stale code registry notification."""
-    wrapper = RegistryStore(SimpleNamespace())
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
     FakeStore.payload = wrapper._payload_from_registry(_registry())
 
     result = await wrapper.async_load()
@@ -232,7 +234,7 @@ async def test_duplicate_decoded_codes_are_rejected() -> None:
             _record_payload("0042", "entry-beta", "identity-beta"),
         ],
     }
-    wrapper = RegistryStore(SimpleNamespace())
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
 
     result = await wrapper.async_load()
 
@@ -250,7 +252,7 @@ async def test_duplicate_identity_keys_are_rejected() -> None:
             _record_payload("0043", "entry-beta", "identity-alpha"),
         ],
     }
-    wrapper = RegistryStore(SimpleNamespace())
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
 
     result = await wrapper.async_load()
 
@@ -260,7 +262,7 @@ async def test_duplicate_identity_keys_are_rejected() -> None:
 
 async def test_valid_payload_loads_registry_round_trip() -> None:
     """A saved populated registry payload restores records and owners."""
-    wrapper = RegistryStore(SimpleNamespace())
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
     FakeStore.payload = wrapper._payload_from_registry(_registry())
 
     result = await wrapper.async_load()
@@ -303,7 +305,7 @@ async def test_malformed_typed_fields_are_rejected(field: str, value: Any) -> No
         "code_ref_salt": "ref-salt",
         "records": [record],
     }
-    wrapper = RegistryStore(SimpleNamespace())
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
 
     result = await wrapper.async_load()
 
@@ -314,7 +316,7 @@ async def test_malformed_typed_fields_are_rejected(field: str, value: Any) -> No
 async def test_storage_io_failure_reports_entry_not_ready() -> None:
     """Home Assistant storage I/O failures do not discard the registry."""
     FakeStore.load_error = OSError("unreadable")
-    wrapper = RegistryStore(SimpleNamespace())
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
 
     with pytest.raises(ConfigEntryNotReady):
         await wrapper.async_load()
@@ -322,7 +324,7 @@ async def test_storage_io_failure_reports_entry_not_ready() -> None:
 
 def test_save_uses_delayed_store_write() -> None:
     """Registry saves are coalesced through async_delay_save."""
-    wrapper = RegistryStore(SimpleNamespace())
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
 
     wrapper.async_save(_registry())
 

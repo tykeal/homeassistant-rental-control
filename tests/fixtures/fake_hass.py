@@ -7,6 +7,12 @@ from __future__ import annotations
 
 import os
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
+from typing import cast
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
 
 
 def fake_config(config_dir: str = ".") -> SimpleNamespace:
@@ -22,3 +28,13 @@ def fake_config(config_dir: str = ".") -> SimpleNamespace:
         return os.path.join(config_dir, *parts)
 
     return SimpleNamespace(config_dir=config_dir, path=path)
+
+
+def as_hass(fake: object) -> HomeAssistant:
+    """Return a duck-typed fake typed as ``HomeAssistant`` for code under test."""
+    return cast("HomeAssistant", fake)
+
+
+def as_config_entry(fake: object) -> ConfigEntry:
+    """Return a duck-typed fake typed as ``ConfigEntry`` for code under test."""
+    return cast("ConfigEntry", fake)

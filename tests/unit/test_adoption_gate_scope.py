@@ -115,6 +115,7 @@ async def test_options_change_makes_the_read_lock_unread(
     allocator = _allocator("entry-lock")
     await _read_unmatched_lock(allocator)
     entry = allocator.hass.config_entries.async_get_entry("entry-lock")
+    assert entry is not None
     entry.data = MappingProxyType(_lock_data(lock, max_events=max_events))
 
     reservations = [_reservation(published=False)]
@@ -128,6 +129,7 @@ async def test_removed_exclusion_makes_the_read_lock_unread() -> None:
     """Clearing an exclusion makes its unreadable slot count again."""
     allocator = _allocator("entry-lock")
     entry = allocator.hass.config_entries.async_get_entry("entry-lock")
+    assert entry is not None
     data = _lock_data("front", max_events=2)
     entry.data = MappingProxyType(
         {**data, CONF_EXCLUDED_SLOTS: [{"slot": 2, "reason": None}]}
