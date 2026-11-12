@@ -81,7 +81,7 @@ jobs:
     # from the PR — it only reads the PR title/body via GitHub API.
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: write  # Applies labels to the triggering PR
     runs-on: 'ubuntu-latest'
     timeout-minutes: 3
     steps:

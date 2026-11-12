@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: read  # Metadata action reads PR files and commits
     timeout-minutes: 5
     steps:
       # yamllint disable-line rule:line-length
@@ -63,7 +63,7 @@ jobs:
       && github.event.inputs.clear_cache == 'true'
     runs-on: ubuntu-latest
     permissions:
-      actions: write
+      actions: write  # Clear Python Caches deletes Actions caches
     timeout-minutes: 5
     env:
       GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
@@ -292,8 +292,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      # Read maintainer-approved bypass issues.
-      issues: read
+      issues: read  # Reads maintainer-approved Grype bypass issues
     steps:
       # yamllint disable-line rule:line-length
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3

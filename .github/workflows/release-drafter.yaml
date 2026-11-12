@@ -20,8 +20,8 @@ jobs:
   update_release_draft:
     name: 'Update Release Draft'
     permissions:
-      contents: write
-      pull-requests: read
+      contents: write  # Creates and rewrites the draft GitHub release
+      pull-requests: read  # Draft notes are built from merged PRs
     runs-on: 'ubuntu-latest'
     timeout-minutes: 10
     steps:
