@@ -69,6 +69,8 @@ packages = ["custom_components"]
 [dependency-groups]
 dev = [
     "homeassistant>=2026.11.0",
+    "mypy>=2.4.1",
+    "types-PyYAML>=6.0.12",
     {include-group = "releasenotes"},
 ]
 # reno manages releasenotes/notes/; kept in its own group so CI can
@@ -99,12 +101,24 @@ show_missing = true
 fail_under = 95
 
 [tool.mypy]
+# Pin the target rather than inheriting the interpreter mypy runs under:
+# a hook environment built on an older Python otherwise rejects valid
+# 3.14 syntax such as PEP 758 unparenthesized except clauses.
+python_version = "3.14"
 warn_return_any = true
 warn_unused_configs = true
 
+# Home Assistant and probatio ship py.typed and are checked for real.
+# These have no inline types or stub packages.
 [[tool.mypy.overrides]]
-module = ["homeassistant.*", "probatio.*", "icalendar.*", "x_wr_timezone.*"]
+module = ["icalendar.*", "x_wr_timezone.*"]
 ignore_missing_imports = true
+
+# Installed without a py.typed marker; analyse it anyway so tests are
+# checked against the real fixture and helper signatures.
+[[tool.mypy.overrides]]
+module = ["pytest_homeassistant.*"]
+follow_untyped_imports = true
 
 [tool.ruff]
 line-length = 88
