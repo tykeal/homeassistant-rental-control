@@ -264,12 +264,15 @@ jobs:
           retention-days: 45
 
       - name: "SBOM summary"
+        env:
+          SBOM_COUNT: "${{ steps.sbom.outputs.component_count }}"
+          SBOM_TOOL: "${{ steps.sbom.outputs.dependency_manager }}"
         run: |
             # SBOM summary
             {
               echo "## SBOM Summary"
-              echo "SBOM count: ${{ steps.sbom.outputs.component_count }}"
-              echo "Tool used: ${{ steps.sbom.outputs.dependency_manager }}"
+              echo "SBOM count: ${SBOM_COUNT}"
+              echo "Tool used: ${SBOM_TOOL}"
             } >> "$GITHUB_STEP_SUMMARY"
 
   grype:

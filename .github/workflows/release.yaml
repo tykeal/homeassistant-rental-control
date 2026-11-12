@@ -84,9 +84,13 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          # Passed through the environment rather than interpolated
+          # into the script. A tag name is operator-supplied input,
+          # and '${{ }}' expansion happens before bash ever sees the
+          # text, so a crafted tag could inject shell syntax.
+          TAG: "${{ steps.tag-validate.outputs.tag_name }}"
         run: |
           # Ensure draft release exists
-          TAG="${{ steps.tag-validate.outputs.tag_name }}"
           # Check if release exists and get its draft status
           if RELEASE_INFO=$(gh release view "$TAG" \
             --json isDraft 2>/dev/null); then
@@ -233,12 +237,15 @@ jobs:
           retention-days: 45
 
       - name: "SBOM summary"
+        env:
+          SBOM_COUNT: "${{ steps.sbom.outputs.component_count }}"
+          SBOM_TOOL: "${{ steps.sbom.outputs.dependency_manager }}"
         run: |
             # SBOM summary
             {
               echo "## SBOM Summary"
-              echo "SBOM count: ${{ steps.sbom.outputs.component_count }}"
-              echo "Tool used: ${{ steps.sbom.outputs.dependency_manager }}"
+              echo "SBOM count: ${SBOM_COUNT}"
+              echo "Tool used: ${SBOM_TOOL}"
             } >> "$GITHUB_STEP_SUMMARY"
 
   grype:
@@ -326,13 +333,17 @@ jobs:
 
       - name: 'Update manifest version'
         shell: bash
+        env:
+          # See 'Ensure draft release exists' above: the tag name
+          # reaches the script through the environment instead of
+          # '${{ }}' expansion.
+          TAG: "${{ needs.tag-validate.outputs.tag }}"
         run: |
           # Update manifest.json version from tag
-          TAG="${{ needs.tag-validate.outputs.tag }}"
           # Strip leading 'v' if present
           VERSION="${TAG#v}"
           echo "Setting version to: $VERSION"
-          cd "${{ github.workspace }}/custom_components/rental_control"
+          cd "${GITHUB_WORKSPACE}/custom_components/rental_control"
           jq --arg v "$VERSION" '.version = $v' manifest.json \
             > manifest.tmp && mv manifest.tmp manifest.json
           echo "Updated manifest.json:"
@@ -340,13 +351,15 @@ jobs:
 
       - name: 'Update const.py version'
         shell: bash
+        env:
+          # See 'Ensure draft release exists' above.
+          TAG: "${{ needs.tag-validate.outputs.tag }}"
         run: |
           # Update VERSION in const.py from tag
-          TAG="${{ needs.tag-validate.outputs.tag }}"
           # Strip leading 'v' if present
           VERSION="${TAG#v}"
           echo "Setting const.py VERSION to: $VERSION"
-          COMPONENT="${{ github.workspace }}/custom_components/rental_control"
+          COMPONENT="${GITHUB_WORKSPACE}/custom_components/rental_control"
           sed -i "/^VERSION = /c\\VERSION = \"${VERSION}\"" \
             "${COMPONENT}/const.py"
           # sed exits 0 when nothing matches, so verify the result
@@ -367,9 +380,9 @@ jobs:
         shell: bash
         run: |
           # Create ZIP of the integration directory
-          cd "${{ github.workspace }}/custom_components/rental_control"
+          cd "${GITHUB_WORKSPACE}/custom_components/rental_control"
           zip -r \
-            "${{ github.workspace }}/rental_control.zip" \
+            "${GITHUB_WORKSPACE}/rental_control.zip" \
             ./ \
             -x '*__pycache__/*' '*.pyc'
 
@@ -450,8 +463,9 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          # See 'Ensure draft release exists' above.
+          TAG: "${{ needs.tag-validate.outputs.tag }}"
         run: |
-          TAG="${{ needs.tag-validate.outputs.tag }}"
           if gh release view "$TAG" --json isDraft --jq '.isDraft' \
               2>/dev/null | grep -q "false"; then
             echo "Release $TAG is already promoted"
@@ -477,8 +491,9 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          # See 'Ensure draft release exists' above.
+          TAG: "${{ needs.tag-validate.outputs.tag }}"
         run: |
-          TAG="${{ needs.tag-validate.outputs.tag }}"
           RELEASE_URL=$(gh release view "$TAG" \
             --json url --jq '.url')
           echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
