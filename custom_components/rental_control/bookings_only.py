@@ -40,7 +40,7 @@ falls back to the date-derived name.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import date
 import hashlib
 from typing import Any
 from urllib.parse import urlparse
@@ -125,7 +125,7 @@ def feed_is_bookings_only(config: Any) -> bool:
     return host_defaults_bookings_only(config.get(CONF_URL))
 
 
-def synthesized_slot_name(start: datetime, end: datetime) -> str:
+def synthesized_slot_name(start: date, end: date) -> str:
     """Return a date-derived slot name for an anonymous reservation.
 
     This is the fallback for a feed that publishes no usable ``UID``.
@@ -175,7 +175,7 @@ def uid_slot_name(uid: Any) -> str | None:
     return f"Booking {token}" if token else None
 
 
-def anonymous_slot_name(uid: Any, start: datetime, end: datetime) -> str:
+def anonymous_slot_name(uid: Any, start: date, end: date) -> str:
     """Return the slot name for an anonymous reservation.
 
     Every consumer must name an anonymous stay through this one
@@ -190,8 +190,8 @@ def resolve_slot_name(
     summary: Any,
     description: Any,
     event_prefix: str,
-    start: datetime,
-    end: datetime,
+    start: date,
+    end: date,
     bookings_only_feed: bool,
     uid: Any = None,
 ) -> str | None:

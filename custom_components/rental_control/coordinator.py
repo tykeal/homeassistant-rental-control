@@ -97,6 +97,9 @@ class RentalControlCoordinator(
 ):
     """Coordinator for managing rental control calendar data."""
 
+    # Always constructed with an entry, so narrow DataUpdateCoordinator's
+    # optional attribute as Home Assistant's own coordinators do.
+    config_entry: ConfigEntry
     _parent_entry_id: str | None
     _child_locknames: set[str]
     bookings_only_feed: bool
@@ -105,7 +108,7 @@ class RentalControlCoordinator(
     code_generator: str
     code_length: int
     days: int
-    event: Any
+    event: CalendarEvent | None
     event_overrides: Any
     honor_event_times: bool
     ignore_non_reserved: bool

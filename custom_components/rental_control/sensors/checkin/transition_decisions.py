@@ -11,6 +11,7 @@ from ...const import CHECKIN_STATE_AWAITING
 from ...const import CHECKIN_STATE_CHECKED_IN
 from ...const import CHECKIN_STATE_CHECKED_OUT
 from ...const import CHECKIN_STATE_NO_RESERVATION
+from .event_selection import event_datetime
 from .event_selection import event_key
 from .event_selection import find_followon_event
 from .event_selection import find_tracked_event
@@ -129,7 +130,7 @@ def decide_checked_in_update(ctx: CoordinatorUpdateContext) -> TransitionDecisio
             DecisionEffect(
                 "transition_checked_out",
                 source="automatic",
-                linger_baseline=tracked.end,
+                linger_baseline=event_datetime(tracked.end),
             ),
             logs=(log,),
         )
@@ -143,7 +144,9 @@ def decide_checked_in_update(ctx: CoordinatorUpdateContext) -> TransitionDecisio
             DecisionEffect("set_event_missing", value=False),
             DecisionEffect("update_tracked_event", event=tracked),
             DecisionEffect("cancel_timer"),
-            DecisionEffect("schedule_auto_checkout", end_time=tracked.end),
+            DecisionEffect(
+                "schedule_auto_checkout", end_time=event_datetime(tracked.end)
+            ),
             write=True,
             logs=(log,),
         )
