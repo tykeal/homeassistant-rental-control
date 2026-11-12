@@ -113,7 +113,10 @@ class CheckinTrackingSensor(
         """Return the unique ID for this sensor."""
         return self._unique_id
 
-    @property
+    # SensorEntity.state is @final; moving to native_value would route the
+    # state through HA's enum validation, a behaviour change to make on
+    # its own rather than as a typing fix.
+    @property  # type: ignore[misc]
     def state(self) -> str:
         """Return the current check-in tracking state."""
         return self._state
