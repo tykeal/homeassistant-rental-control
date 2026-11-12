@@ -23,6 +23,9 @@ from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import UNSUB_LISTENERS
 
+from tests.fixtures.fake_hass import as_config_entry
+from tests.fixtures.fake_hass import as_hass
+
 
 class FakeHass(SimpleNamespace):
     """Small Home Assistant stand-in for singleton tests."""
@@ -92,8 +95,8 @@ async def test_second_entry_reuses_first_allocator() -> None:
     """A second caller receives the already-loaded allocator."""
     hass = FakeHass()
 
-    first = await singleton.async_get_or_create_allocator(hass)
-    second = await singleton.async_get_or_create_allocator(hass)
+    first = await singleton.async_get_or_create_allocator(as_hass(hass))
+    second = await singleton.async_get_or_create_allocator(as_hass(hass))
 
     assert second is first
     assert FakeAllocator.load_count == 1
@@ -105,7 +108,7 @@ async def test_creation_failure_pops_allocator_key() -> None:
     FakeAllocator.fail_load = True
 
     with pytest.raises(ConfigEntryNotReady):
-        await singleton.async_get_or_create_allocator(hass)
+        await singleton.async_get_or_create_allocator(as_hass(hass))
 
     assert ALLOCATOR not in hass.data[DOMAIN]
 
@@ -127,8 +130,8 @@ async def test_unloading_one_entry_leaves_shared_allocator(
     monkeypatch.setattr(integration, "delete_rc_and_base_folder", lambda *args: None)
 
     result = await async_unload_entry(
-        hass,
-        SimpleNamespace(entry_id="entry-a", data={"name": "Entry A"}),
+        as_hass(hass),
+        as_config_entry(SimpleNamespace(entry_id="entry-a", data={"name": "Entry A"})),
     )
 
     assert result is True
@@ -152,10 +155,12 @@ async def test_setup_failure_unregisters_pending_entry(
 
     with pytest.raises(ConfigEntryNotReady):
         await async_setup_entry(
-            hass,
-            SimpleNamespace(
-                entry_id="entry-fail",
-                data={"name": "Entry Fail"},
+            as_hass(hass),
+            as_config_entry(
+                SimpleNamespace(
+                    entry_id="entry-fail",
+                    data={"name": "Entry Fail"},
+                )
             ),
         )
 
@@ -189,11 +194,13 @@ async def test_setup_failure_cleans_partial_entry(
 
     with pytest.raises(ConfigEntryNotReady):
         await async_setup_entry(
-            hass,
-            SimpleNamespace(
-                entry_id="entry-late",
-                data={"name": "Entry Late"},
-                add_update_listener=lambda *_args: None,
+            as_hass(hass),
+            as_config_entry(
+                SimpleNamespace(
+                    entry_id="entry-late",
+                    data={"name": "Entry Late"},
+                    add_update_listener=lambda *_args: None,
+                )
             ),
         )
 
@@ -227,11 +234,13 @@ async def test_setup_cancellation_cleans_partial_entry(
 
     with pytest.raises(asyncio.CancelledError):
         await async_setup_entry(
-            hass,
-            SimpleNamespace(
-                entry_id="entry-cancel",
-                data={"name": "Entry Cancel"},
-                add_update_listener=lambda *_args: None,
+            as_hass(hass),
+            as_config_entry(
+                SimpleNamespace(
+                    entry_id="entry-cancel",
+                    data={"name": "Entry Cancel"},
+                    add_update_listener=lambda *_args: None,
+                )
             ),
         )
 
@@ -253,8 +262,10 @@ async def test_remove_entry_skips_missing_allocator(
     )
 
     await async_remove_entry(
-        hass,
-        SimpleNamespace(entry_id="entry-missing", data={"name": "Entry Missing"}),
+        as_hass(hass),
+        as_config_entry(
+            SimpleNamespace(entry_id="entry-missing", data={"name": "Entry Missing"})
+        ),
     )
 
     assert hass.data == {}
@@ -287,11 +298,13 @@ async def test_setup_failure_keeps_data_when_unload_fails(
 
     with pytest.raises(ConfigEntryNotReady):
         await async_setup_entry(
-            hass,
-            SimpleNamespace(
-                entry_id="entry-stuck",
-                data={"name": "Entry Stuck"},
-                add_update_listener=lambda *_args: None,
+            as_hass(hass),
+            as_config_entry(
+                SimpleNamespace(
+                    entry_id="entry-stuck",
+                    data={"name": "Entry Stuck"},
+                    add_update_listener=lambda *_args: None,
+                )
             ),
         )
 
@@ -325,11 +338,15 @@ async def test_setup_failure_removes_update_listener(
 
     with pytest.raises(ConfigEntryNotReady):
         await async_setup_entry(
-            hass,
-            SimpleNamespace(
-                entry_id="entry-update",
-                data={"name": "Entry Update", CONF_GENERATE: True},
-                add_update_listener=lambda *_args: _record_listener(listener_events),
+            as_hass(hass),
+            as_config_entry(
+                SimpleNamespace(
+                    entry_id="entry-update",
+                    data={"name": "Entry Update", CONF_GENERATE: True},
+                    add_update_listener=lambda *_args: _record_listener(
+                        listener_events
+                    ),
+                )
             ),
         )
 

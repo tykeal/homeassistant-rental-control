@@ -42,6 +42,7 @@ from custom_components.rental_control.reconciliation import SlotStatus
 from custom_components.rental_control.reconciliation import compute_desired_plan
 from custom_components.rental_control.reconciliation import make_reservation_fingerprint
 
+from tests.fixtures.fake_hass import as_hass
 from tests.fixtures.fake_hass import fake_config
 
 _START = datetime(2026, 9, 17, 16, tzinfo=dt_util.UTC)
@@ -422,10 +423,12 @@ def _record(code: str, owner: AllocationOwner) -> AllocationRecord:
 def _allocator() -> DoorCodeAllocator:
     """Build an allocator with persistence disabled."""
     allocator = DoorCodeAllocator(
-        SimpleNamespace(
-            data={},
-            config=fake_config(),
-            config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
+        as_hass(
+            SimpleNamespace(
+                data={},
+                config=fake_config(),
+                config_entries=SimpleNamespace(async_entries=lambda _domain=None: []),
+            )
         )
     )
     allocator._store = cast(Any, SimpleNamespace(async_save=lambda _registry: None))
