@@ -36,6 +36,7 @@ from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.coordinator import RentalControlCoordinator
 
 from tests.fixtures import calendar_data
+from tests.fixtures.stubs import stub_method
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -1280,7 +1281,7 @@ async def test_coordinator_update_interval_change(
     mock_config_entry.add_to_hass(hass)
 
     coordinator = RentalControlCoordinator(hass, mock_config_entry)
-    coordinator.async_request_refresh = AsyncMock()
+    refresh = stub_method(coordinator, "async_request_refresh", AsyncMock())
 
     initial_frequency = coordinator.refresh_frequency
     assert initial_frequency == DEFAULT_REFRESH_FREQUENCY
@@ -1293,7 +1294,7 @@ async def test_coordinator_update_interval_change(
     assert coordinator.refresh_frequency == 30
     assert coordinator.refresh_frequency != initial_frequency
     assert coordinator.update_interval == timedelta(minutes=30)
-    assert coordinator.async_request_refresh.called
+    assert refresh.called
 
 
 async def test_buffer_config_updates_times_before_refresh(
@@ -1553,7 +1554,7 @@ async def test_coordinator_update_event_overrides_with_overrides(
     mock_overrides.ready = True
     mock_overrides.async_update = AsyncMock()
     coordinator.event_overrides = mock_overrides
-    coordinator.async_request_refresh = AsyncMock()
+    refresh = stub_method(coordinator, "async_request_refresh", AsyncMock())
 
     now = dt.now()
     await coordinator.update_event_overrides(
@@ -1565,7 +1566,7 @@ async def test_coordinator_update_event_overrides_with_overrides(
     )
 
     mock_overrides.async_update.assert_awaited_once()
-    assert coordinator.async_request_refresh.called
+    assert refresh.called
 
 
 async def test_coordinator_update_event_overrides_without_overrides(
@@ -1580,7 +1581,7 @@ async def test_coordinator_update_event_overrides_without_overrides(
     coordinator = RentalControlCoordinator(hass, mock_config_entry)
 
     assert coordinator.event_overrides is None
-    coordinator.async_request_refresh = AsyncMock()
+    refresh = stub_method(coordinator, "async_request_refresh", AsyncMock())
 
     now = dt.now()
     await coordinator.update_event_overrides(
@@ -1591,7 +1592,7 @@ async def test_coordinator_update_event_overrides_without_overrides(
         end_time=now + timedelta(days=2),
     )
 
-    assert coordinator.async_request_refresh.called
+    assert refresh.called
 
 
 # ---------------------------------------------------------------------------
@@ -4391,7 +4392,7 @@ END:VCALENDAR
         entry.add_to_hass(hass)
 
         coordinator = RentalControlCoordinator(hass, entry)
-        coordinator.async_request_refresh = AsyncMock()
+        refresh = stub_method(coordinator, "async_request_refresh", AsyncMock())
 
         # Initially disabled
         assert coordinator.honor_event_times is False
@@ -4404,7 +4405,7 @@ END:VCALENDAR
 
         # Now enabled
         assert coordinator.honor_event_times is True
-        assert coordinator.async_request_refresh.called
+        assert refresh.called
 
 
 # ---------------------------------------------------------------------------

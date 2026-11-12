@@ -54,6 +54,9 @@ from custom_components.rental_control.sensors.checkinsensor import (
 )
 from custom_components.rental_control.sensors.checkinsensor import CheckinTrackingSensor
 
+from tests.fixtures.stubs import as_mock
+from tests.fixtures.stubs import stub_method
+
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from pytest_homeassistant.common import MockConfigEntry
@@ -106,7 +109,7 @@ def _create_sensor(
     # Set hass so async_write_ha_state doesn't blow up
     sensor.hass = hass
     # Patch async_write_ha_state to avoid entity registry issues
-    sensor.async_write_ha_state = MagicMock()
+    stub_method(sensor, "async_write_ha_state", MagicMock())
     return sensor
 
 
@@ -4648,7 +4651,7 @@ class TestEarlyCheckoutExpiry:
         # End time must remain unchanged
         assert sensor._tracked_event_end == original_end
         assert sensor._state == CHECKIN_STATE_CHECKED_IN
-        sensor.async_write_ha_state.assert_not_called()
+        as_mock(sensor.async_write_ha_state).assert_not_called()
 
 
 # ===========================================================================

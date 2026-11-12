@@ -30,6 +30,9 @@ from custom_components.rental_control.switch import KeymasterMonitoringSwitch
 from custom_components.rental_control.switch import async_setup_entry
 from custom_components.rental_control.util import gen_uuid
 
+from tests.fixtures.stubs import as_mock
+from tests.fixtures.stubs import stub_method
+
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from pytest_homeassistant.common import MockConfigEntry
@@ -93,7 +96,7 @@ def _create_switch(
     switch = KeymasterMonitoringSwitch(coordinator, config_entry)
     switch.hass = hass
     switch.entity_id = "switch.test_rental_keymaster_monitoring"
-    switch.async_write_ha_state = MagicMock()
+    stub_method(switch, "async_write_ha_state", MagicMock())
     return switch
 
 
@@ -122,7 +125,7 @@ def _create_early_expiry_switch(
     switch = EarlyCheckoutExpirySwitch(coordinator, config_entry)
     switch.hass = hass
     switch.entity_id = "switch.test_rental_early_checkout_expiry"
-    switch.async_write_ha_state = MagicMock()
+    stub_method(switch, "async_write_ha_state", MagicMock())
     return switch
 
 
@@ -196,7 +199,7 @@ class TestKeymasterMonitoringSwitchToggle:
         await switch.async_turn_on()
 
         assert switch.is_on is True
-        switch.async_write_ha_state.assert_called()
+        as_mock(switch.async_write_ha_state).assert_called()
 
     async def test_turn_off_sets_is_on_false(
         self,
@@ -214,7 +217,7 @@ class TestKeymasterMonitoringSwitchToggle:
         # Then turn off
         await switch.async_turn_off()
         assert switch.is_on is False
-        switch.async_write_ha_state.assert_called()
+        as_mock(switch.async_write_ha_state).assert_called()
 
     async def test_turn_on_then_off_cycle(
         self,
@@ -529,7 +532,7 @@ class TestEarlyCheckoutExpirySwitchToggle:
         await switch.async_turn_on()
 
         assert switch.is_on is True
-        switch.async_write_ha_state.assert_called()
+        as_mock(switch.async_write_ha_state).assert_called()
 
     async def test_turn_off_sets_is_on_false(
         self,
@@ -547,7 +550,7 @@ class TestEarlyCheckoutExpirySwitchToggle:
 
         await switch.async_turn_off()
         assert switch.is_on is False
-        switch.async_write_ha_state.assert_called()
+        as_mock(switch.async_write_ha_state).assert_called()
 
     async def test_turn_on_then_off_cycle(
         self,

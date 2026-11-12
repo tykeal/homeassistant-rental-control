@@ -20,6 +20,7 @@ from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import SlotStatus
 from custom_components.rental_control.sensors.calsensor import RentalControlCalSensor
 
+from tests.fixtures.stubs import stub_method
 from tests.integration.test_allocator_cross_entry import _event
 from tests.integration.test_allocator_cross_entry import _fake_hass
 from tests.integration.test_allocator_cross_entry import _free_slot
@@ -75,7 +76,7 @@ async def test_sensor_publishes_collision_resolved_physical_code(
     coordinator = _sensor_coordinator(real_coordinator, second_event, 2)
     hass.data.setdefault(DOMAIN, {})["entry-b"] = {COORDINATOR: coordinator}
     sensor = RentalControlCalSensor(hass, coordinator, "Rental Control Test", 0)
-    sensor.async_write_ha_state = MagicMock()
+    stub_method(sensor, "async_write_ha_state", MagicMock())
 
     sensor._handle_coordinator_update()
 
