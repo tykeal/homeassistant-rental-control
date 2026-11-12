@@ -135,7 +135,7 @@ def build_config_schema(
     user_input: dict[str, Any] | None,
     default_dict: dict[str, Any] | None,
     entry_id: str | None = None,
-) -> Any:
+) -> probatio.Schema:
     """Build a config-flow schema using defaults as a backup."""
     context = SchemaBuildContext(
         hass=hass,
