@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import date
 from datetime import datetime
 
 from homeassistant.components.calendar import CalendarEvent
@@ -13,7 +14,7 @@ from homeassistant.components.calendar import CalendarEvent
 from ...bookings_only import resolve_slot_name
 
 
-def event_key(summary: str, start: datetime) -> str:
+def event_key(summary: str, start: date) -> str:
     """Return the behavior-compatible identity key for an event."""
     return f"{summary}|{start.isoformat()}"
 
