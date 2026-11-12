@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import logging
 from typing import Any
@@ -37,7 +38,7 @@ class _KeymasterEventContext:
     coordinator: Any
     raw_lockname: Any
     event_lockname: str
-    event_data: dict[str, Any]
+    event_data: Mapping[str, Any]
     code_slot_num: Any
     diagnostics_enabled: bool
 
@@ -137,7 +138,9 @@ def _handle_keymaster_event(
     _forward_keymaster_unlock(context)
 
 
-def _normalized_event_lockname(event_data: dict[str, Any]) -> tuple[Any, str]:
+def _normalized_event_lockname(
+    event_data: Mapping[str, Any],
+) -> tuple[Any, str]:
     """Return the raw and slugified Keymaster lock name."""
     raw_lockname = event_data.get("lockname", "")
     event_lockname = (
