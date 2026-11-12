@@ -418,7 +418,7 @@ jobs:
 
       - name: 'Attach artefacts to release'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/release-assets-action@d7b650fbf8fbca7a436f75ddada3d4cdbd36a802  # v0.1.4
+        uses: lfreleng-actions/release-assets-action@0ecf15d765d7898fdd31465516294a1fd2b50358  # v0.1.6
         with:
           # yamllint disable-line rule:line-length
           asset_paths: '["${{ needs.python-build.outputs.artefact_path }}/**", "release-assets/**"]'
