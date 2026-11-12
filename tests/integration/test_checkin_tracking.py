@@ -11,9 +11,11 @@ Tests cover:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
+from typing import Any
 from unittest.mock import MagicMock
 
 from freezegun import freeze_time
@@ -355,8 +357,8 @@ class TestSameDayTurnoverFR006a:
 
         coordinator.data = [event0, event1]
 
-        checkin_events: list[dict] = []
-        checkout_events: list[dict] = []
+        checkin_events: list[Mapping[str, Any]] = []
+        checkout_events: list[Mapping[str, Any]] = []
         hass.bus.async_listen(
             EVENT_RENTAL_CONTROL_CHECKIN,
             lambda e: checkin_events.append(e.data),
@@ -811,7 +813,7 @@ class TestNoFollowOnFR006b:
         config_entry = _make_config_entry()
         sensor = _create_sensor(hass, coordinator, config_entry)
 
-        checkout_events: list[dict] = []
+        checkout_events: list[Mapping[str, Any]] = []
         hass.bus.async_listen(
             EVENT_RENTAL_CONTROL_CHECKOUT,
             lambda e: checkout_events.append(e.data),
@@ -980,8 +982,8 @@ class TestFullLifecycleT043:
         event_end = datetime(2025, 7, 5, 11, 0, 0, tzinfo=dt_util.UTC)
         event = _make_event("Reserved - Guest1", event_start, event_end)
 
-        checkin_events: list[dict] = []
-        checkout_events: list[dict] = []
+        checkin_events: list[Mapping[str, Any]] = []
+        checkout_events: list[Mapping[str, Any]] = []
         hass.bus.async_listen(
             EVENT_RENTAL_CONTROL_CHECKIN,
             lambda e: checkin_events.append(e.data),
@@ -1118,8 +1120,8 @@ class TestFullLifecycleT043:
         event_end = datetime(2025, 7, 5, 11, 0, 0, tzinfo=dt_util.UTC)
         event = _make_event("Reserved - Guest2", event_start, event_end)
 
-        checkin_events: list[dict] = []
-        checkout_events: list[dict] = []
+        checkin_events: list[Mapping[str, Any]] = []
+        checkout_events: list[Mapping[str, Any]] = []
         hass.bus.async_listen(
             EVENT_RENTAL_CONTROL_CHECKIN,
             lambda e: checkin_events.append(e.data),
@@ -1185,7 +1187,7 @@ class TestFullLifecycleT043:
         event_end = datetime(2025, 7, 5, 11, 0, 0, tzinfo=dt_util.UTC)
         event = _make_event("Reserved - EarlyGuest", event_start, event_end)
 
-        checkin_events: list[dict] = []
+        checkin_events: list[Mapping[str, Any]] = []
         hass.bus.async_listen(
             EVENT_RENTAL_CONTROL_CHECKIN,
             lambda e: checkin_events.append(e.data),
@@ -1344,8 +1346,8 @@ class TestFullLifecycleT043:
         event0 = _make_event("Reserved - First", event0_start, event0_end)
         event1 = _make_event("Reserved - Second", event1_start, event1_end)
 
-        checkin_events: list[dict] = []
-        checkout_events: list[dict] = []
+        checkin_events: list[Mapping[str, Any]] = []
+        checkout_events: list[Mapping[str, Any]] = []
         hass.bus.async_listen(
             EVENT_RENTAL_CONTROL_CHECKIN,
             lambda e: checkin_events.append(e.data),

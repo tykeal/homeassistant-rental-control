@@ -15,6 +15,9 @@ from custom_components.rental_control.const import CHECKIN_STATE_AWAITING
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_OUT
 from custom_components.rental_control.const import CHECKIN_STATE_NO_RESERVATION
+from custom_components.rental_control.sensors.checkin.event_selection import (
+    event_datetime,
+)
 from custom_components.rental_control.sensors.checkin.event_selection import event_key
 from custom_components.rental_control.sensors.checkin.event_selection import (
     extract_slot_name,
@@ -68,7 +71,10 @@ def test_event_selection_preserves_identity_order_and_slot_extraction() -> None:
     assert event_key(current.summary, current.start).startswith("Reserved - Ada|")
     assert get_relevant_event([old, current, later], NOW) == current
     assert (
-        find_tracked_event([later, current], current.summary, current.start) == current
+        find_tracked_event(
+            [later, current], current.summary, event_datetime(current.start)
+        )
+        == current
     )
     assert (
         find_followon_event(
@@ -91,7 +97,9 @@ def test_no_reservation_with_event_transitions_to_awaiting() -> None:
 def test_awaiting_past_start_checks_in_when_monitoring_off() -> None:
     """Awaiting updates silently model automatic check-in eligibility."""
     event = _event("Reserved - Ada", NOW - timedelta(hours=1), NOW + timedelta(days=1))
-    snapshot = CheckinStateSnapshot(CHECKIN_STATE_AWAITING, event.summary, event.start)
+    snapshot = CheckinStateSnapshot(
+        CHECKIN_STATE_AWAITING, event.summary, event_datetime(event.start)
+    )
     decision = decide_coordinator_update(_ctx(snapshot, [event], monitoring=False))
 
     assert [effect.kind for effect in decision.effects] == [
@@ -104,7 +112,10 @@ def test_checked_in_changed_end_reschedules_checkout() -> None:
     """Changed tracked end produces cancel-before-reschedule effects."""
     event = _event("Reserved - Ada", NOW - timedelta(hours=1), NOW + timedelta(days=2))
     snapshot = CheckinStateSnapshot(
-        CHECKIN_STATE_CHECKED_IN, event.summary, event.start, NOW + timedelta(days=1)
+        CHECKIN_STATE_CHECKED_IN,
+        event.summary,
+        event_datetime(event.start),
+        NOW + timedelta(days=1),
     )
     decision = decide_coordinator_update(_ctx(snapshot, [event]))
 
