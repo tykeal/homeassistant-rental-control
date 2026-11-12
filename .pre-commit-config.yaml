@@ -105,6 +105,23 @@ repos:
     hooks:
       - id: actionlint
 
+  # Static security analysis of workflow definitions. Mirrors the
+  # 'Zizmor' CI job so findings surface before the push rather than
+  # after it. Runs offline, which is zizmor's default without a token,
+  # so it also works on pre-commit.ci: the audits that resolve 'uses:'
+  # refs over the API (stale-action-refs, ref-version-mismatch) only
+  # run in CI. Keep 'rev' on the same zizmor release as the 'version:'
+  # input in .github/workflows/zizmor.yaml.
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: c92afdf2c6ca336aaa8f39e2bd8d48f62dbd8e1f  # frozen: v1.31.1
+    hooks:
+      - id: zizmor
+        # Must match the 'persona:' input on the 'Zizmor' workflow job.
+        # zizmor takes the persona only from the command line, never
+        # from .github/zizmor.yml, so without this the hook would audit
+        # a weaker rule set than the gate.
+        args: ['--persona=auditor']
+
   - repo: https://github.com/btford/write-good
     rev: ab66ce10136dfad5146e69e70f82a3efac8842c1  # frozen: v1.0.8
     hooks:

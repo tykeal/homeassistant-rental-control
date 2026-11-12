@@ -1,0 +1,41 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+
+# Configuration for the zizmor GitHub Actions security audit.
+#
+# Only policy lives here. Suppressions for individual accepted findings
+# stay as inline '# zizmor: ignore[rule]' comments next to the code they
+# excuse, so the rationale travels with the exception and a suppression
+# cannot quietly outlive the line it was written for. There are three:
+#
+#   * release.yaml, 'Validate Tag Push' checkout -> artipacked. That job
+#     deliberately persists git credentials; tag-validate-action fetches
+#     the annotated tag object through the credential helper and its
+#     'require_signed' check depends on that object.
+#   * autolabeler.yaml, pull_request_target -> dangerous-triggers. No job
+#     in that workflow checks out pull request code; the autolabeler only
+#     reads the PR title and body over the API.
+#   * validate.yaml, the hassfest step -> stale-action-refs. That action
+#     lives on its repository's default branch; the one tag there dates
+#     from 2020, so no current commit is reachable from a tag.
+
+# The persona is not settable here -- zizmor only accepts it on the
+# command line -- so it lives in two places that must agree: the
+# 'persona:' input on the 'Zizmor' workflow job and the
+# '--persona=auditor' argument on the 'zizmor' pre-commit hook. Over
+# 'regular', 'auditor' adds 'undocumented-permissions' -- every
+# permission raised above read-only repository contents must carry a
+# trailing comment saying what the job does with it, and zizmor accepts
+# the explanation only on the same line as the permission key -- and
+# 'stale-action-refs', which is an online audit and so does not appear
+# in an offline local run.
+
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # Require a full commit SHA for every action, including those
+        # owned by this repository's org. zizmor's default only asks for
+        # a symbolic ref, which a mutable tag satisfies.
+        '*': hash-pin
