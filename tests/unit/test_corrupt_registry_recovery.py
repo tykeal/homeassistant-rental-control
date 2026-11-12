@@ -89,6 +89,7 @@ async def test_excluded_slot_counts_as_read() -> None:
     """An excluded unreadable slot does not wedge recovery."""
     allocator = _corrupt(_allocator("entry-lock"))
     entry = allocator.hass.config_entries.async_get_entry("entry-lock")
+    assert entry is not None
     entry.data = MappingProxyType(_lock_data("front", max_events=2))
 
     await allocator.async_resolve_cycle(
@@ -277,17 +278,25 @@ async def test_config_change_after_rebuild_needs_readoption(
         assert reservations[0].slot_code is None
 
 
-async def test_options_listener_regates_a_widened_entry() -> None:
+async def test_options_listener_regates_a_widened_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The options listener re-registers an entry whose range widened."""
     allocator = _allocator("entry-lock")
     await _cycle(
         allocator, [], entry_id="entry-lock", lockname="front", managed_slots=[_FREE]
     )
     entry = allocator.hass.config_entries.async_get_entry("entry-lock")
-    entry.options = {**_lock_data("front", max_events=2), "name": "Rental"}
+    assert entry is not None
+    entry.options = MappingProxyType(
+        {**_lock_data("front", max_events=2), "name": "Rental"}
+    )
     entry.unique_id = "entry-lock"
-    allocator.hass.config_entries.async_update_entry = lambda entry, **changes: setattr(
-        entry, "data", changes["data"]
+    monkeypatch.setattr(
+        allocator.hass.config_entries,
+        "async_update_entry",
+        lambda entry, **changes: setattr(entry, "data", changes["data"]),
+        raising=False,
     )
     coordinator = SimpleNamespace(created="now", lockname=None)
 

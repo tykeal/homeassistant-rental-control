@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 from aioresponses import aioresponses
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
@@ -50,6 +52,27 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 
+def _data_schema(result: ConfigFlowResult) -> probatio.Schema:
+    """Return the form schema of a flow result, failing if it is absent."""
+    data_schema = result.get("data_schema")
+    assert data_schema is not None
+    return data_schema
+
+
+def _errors(result: ConfigFlowResult) -> dict[str, str]:
+    """Return the form errors of a flow result, failing if they are absent."""
+    errors: dict[str, str] | None = result.get("errors")
+    assert errors is not None
+    return errors
+
+
+def _get_entry(hass: HomeAssistant, entry_id: str) -> ConfigEntry:
+    """Return a config entry by ID, failing if it does not exist."""
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    return entry
+
+
 async def test_config_flow_user_init(hass: HomeAssistant) -> None:
     """Test initial config flow presents form with required fields.
 
@@ -68,7 +91,7 @@ async def test_config_flow_user_init(hass: HomeAssistant) -> None:
     assert result["errors"] == {}
 
     # Verify schema has required fields
-    schema = result["data_schema"].schema
+    schema = _data_schema(result).schema
     schema_keys = {str(key.schema): key for key in schema.keys()}
 
     assert CONF_NAME in schema_keys
@@ -203,7 +226,7 @@ async def test_config_flow_validation_missing_name(hass: HomeAssistant) -> None:
     assert result["step_id"] == "user"
 
     # Verify schema has name as required field
-    schema = result["data_schema"].schema
+    schema = _data_schema(result).schema
     schema_keys = {str(key.schema): key for key in schema.keys()}
 
     # CONF_NAME should be in schema
@@ -234,7 +257,7 @@ async def test_config_flow_validation_missing_url(hass: HomeAssistant) -> None:
     assert result["step_id"] == "user"
 
     # Verify schema has url as required field
-    schema = result["data_schema"].schema
+    schema = _data_schema(result).schema
     schema_keys = {str(key.schema): key for key in schema.keys()}
 
     # CONF_URL should be in schema
@@ -555,7 +578,7 @@ async def test_options_flow_init(hass: HomeAssistant) -> None:
     assert result["step_id"] == "init"
 
     # Verify schema includes expected fields
-    schema = result["data_schema"].schema
+    schema = _data_schema(result).schema
     schema_keys = {str(key.schema): key for key in schema.keys()}
 
     assert CONF_NAME in schema_keys
@@ -647,7 +670,7 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     # Verify the entry was updated
-    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
+    updated_entry = _get_entry(hass, entry.entry_id)
     assert updated_entry.title == "Updated Rental"
     assert updated_entry.data[CONF_REFRESH_FREQUENCY] == 30
     assert updated_entry.data[CONF_TIMEZONE] == "America/Chicago"
@@ -1061,7 +1084,7 @@ async def test_honor_event_times_in_options_schema(hass: HomeAssistant) -> None:
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "init"
 
-    schema = result["data_schema"].schema
+    schema = _data_schema(result).schema
     schema_keys = {str(key.schema): key for key in schema.keys()}
 
     assert CONF_HONOR_EVENT_TIMES in schema_keys
@@ -1150,7 +1173,7 @@ async def test_honor_event_times_toggle_persists(hass: HomeAssistant) -> None:
         )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
+    updated_entry = _get_entry(hass, entry.entry_id)
     assert updated_entry.data[CONF_HONOR_EVENT_TIMES] is True
 
 
@@ -1180,7 +1203,7 @@ async def test_keymaster_event_diagnostics_options_only(hass: HomeAssistant) -> 
             context={"source": config_entries.SOURCE_USER},
         )
         init_schema_keys = {
-            str(key.schema) for key in init_result["data_schema"].schema.keys()
+            str(key.schema) for key in _data_schema(init_result).schema.keys()
         }
         assert CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS not in init_schema_keys
 
@@ -1224,7 +1247,7 @@ async def test_keymaster_event_diagnostics_options_only(hass: HomeAssistant) -> 
 
         opts_result = await hass.config_entries.options.async_init(entry.entry_id)
         opts_schema_keys = {
-            str(key.schema): key for key in opts_result["data_schema"].schema.keys()
+            str(key.schema): key for key in _data_schema(opts_result).schema.keys()
         }
         assert CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS in opts_schema_keys
         # Default in options flow is False
@@ -1256,7 +1279,7 @@ async def test_keymaster_event_diagnostics_options_only(hass: HomeAssistant) -> 
         )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
+    updated_entry = _get_entry(hass, entry.entry_id)
     assert updated_entry.data[CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS] is True
 
 
@@ -1364,7 +1387,7 @@ async def test_config_flow_lock_entry_none_normalized(
         )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
+    updated_entry = _get_entry(hass, entry.entry_id)
     assert updated_entry.data[CONF_LOCK_ENTRY] is None
 
 
@@ -1404,7 +1427,7 @@ async def test_config_flow_trim_fields_in_schema(hass: HomeAssistant) -> None:
     )
 
     assert result["type"] == FlowResultType.FORM
-    schema = result["data_schema"].schema
+    schema = _data_schema(result).schema
     schema_keys = {str(key.schema): key for key in schema.keys()}
 
     assert CONF_TRIM_NAMES in schema_keys
@@ -1463,7 +1486,7 @@ async def test_config_flow_prefix_too_long_for_trim(
         )
 
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"]["base"] == "prefix_too_long_for_trim"
+    assert _errors(result)["base"] == "prefix_too_long_for_trim"
 
 
 async def test_config_flow_prefix_short_enough_for_trim(
@@ -1512,7 +1535,7 @@ async def test_config_flow_prefix_short_enough_for_trim(
         )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert "prefix_too_long_for_trim" not in result.get("errors", {})
+    assert "prefix_too_long_for_trim" not in (result.get("errors") or {})
 
 
 async def test_config_flow_prefix_boundary_exactly_min_remaining(
@@ -1563,7 +1586,7 @@ async def test_config_flow_prefix_boundary_exactly_min_remaining(
         )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert "prefix_too_long_for_trim" not in result.get("errors", {})
+    assert "prefix_too_long_for_trim" not in (result.get("errors") or {})
 
 
 async def test_config_flow_prefix_boundary_one_over(
@@ -1614,7 +1637,7 @@ async def test_config_flow_prefix_boundary_one_over(
         )
 
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"]["base"] == "prefix_too_long_for_trim"
+    assert _errors(result)["base"] == "prefix_too_long_for_trim"
 
 
 async def test_config_flow_max_name_length_min_validation(
@@ -1633,7 +1656,7 @@ async def test_config_flow_max_name_length_min_validation(
         context={"source": config_entries.SOURCE_USER},
     )
     assert result["type"] == FlowResultType.FORM
-    schema = result["data_schema"]
+    schema = _data_schema(result)
 
     base_data = {
         CONF_NAME: "Test",
