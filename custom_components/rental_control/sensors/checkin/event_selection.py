@@ -19,6 +19,18 @@ def event_key(summary: str, start: date) -> str:
     return f"{summary}|{start.isoformat()}"
 
 
+def event_datetime(value: date) -> datetime:
+    """Return an event bound typed as the datetime it always is.
+
+    ``CalendarEvent`` allows all-day ``date`` bounds, but the calendar
+    parser only emits timezone-aware datetimes, and every consumer here
+    compares bounds against ``now``, which a bare date cannot do.
+    """
+    if not isinstance(value, datetime):
+        raise TypeError(f"expected a timed event bound, got {value!r}")
+    return value
+
+
 def get_relevant_event(
     events: Sequence[CalendarEvent] | None,
     now: datetime,

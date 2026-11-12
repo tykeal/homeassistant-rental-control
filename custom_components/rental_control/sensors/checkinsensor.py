@@ -31,6 +31,7 @@ from .checkin import runtime
 from .checkin import timer_runtime
 from .checkin.applicator import apply_restore_decision
 from .checkin.applicator import apply_transition_decision
+from .checkin.event_selection import event_datetime
 from .checkin.event_selection import event_key
 from .checkin.event_selection import extract_slot_name
 from .checkin.event_selection import find_followon_event
@@ -268,7 +269,7 @@ class CheckinTrackingSensor(
 
     def _update_tracked_event(self, event: CalendarEvent) -> None:
         """Update mutable tracked fields from an event."""
-        self._tracked_event_end = event.end
+        self._tracked_event_end = event_datetime(event.end)
         self._tracked_event_slot_name = self._extract_slot_name(event)
 
     def _update_tracked_slot_name(self, event: CalendarEvent) -> None:
