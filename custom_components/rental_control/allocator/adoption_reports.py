@@ -19,35 +19,37 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.persistent_notification import async_create
 
-from ..const import DOMAIN
 from ..const import NAME
 from . import code_origin
+from . import conflict_notices
 from . import entry_info
+from .conflict_notices import CONFLICT_NOTIFICATION_PREFIX
+from .conflict_notices import conflict_notification_id
 from .models import AdoptionRequest
 from .models import AllocationOwner
 from .models import AllocationRecord
+from .registry import SlotKey
 from .registry import issuance_owners
+from .registry import physical_slots
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
 
 _LOGGER = logging.getLogger(__name__)
-_CONFLICT_NOTIFICATION_ID = f"{DOMAIN}_code_registry_conflict"
+_CONFLICT_NOTIFICATION_ID = CONFLICT_NOTIFICATION_PREFIX
 _LAST_FOUR_CODE_LENGTH = 4
 
-#: The owners a shared code was last judged for, and whether that
-#: judgement found the sharing explained.
-ConflictVerdict = tuple[frozenset[tuple[str, str]], bool]
+__all__ = [
+    "ConflictVerdict",
+    "conflict_notification_id",
+    "rejudge_conflicts",
+    "report_adoption_conflict",
+    "report_identity_mismatch",
+]
 
-
-def conflict_notification_id(code_ref: str) -> str:
-    """Return the persistent notification id for one code's conflict.
-
-    Each conflicting code gets its own notification. A single shared id
-    let one code's report overwrite another's, so only the newest was
-    ever visible and dismissing it hid every other open conflict.
-    """
-    return f"{_CONFLICT_NOTIFICATION_ID}_{code_ref}"
+#: The physical slots a shared code was last judged for, and whether
+#: that judgement found the sharing explained.
+ConflictVerdict = tuple[frozenset[SlotKey], bool]
 
 
 def _conflict_is_expected(
@@ -108,10 +110,7 @@ def _conflict_is_expected(
 
 def _verdict(owners: Sequence[AllocationOwner], explained: bool) -> ConflictVerdict:
     """Return the comparable verdict for one judgement of a shared code."""
-    return (
-        frozenset((owner.entry_id, owner.identity_key) for owner in owners),
-        explained,
-    )
+    return (physical_slots(owners), explained)
 
 
 def _evidence_settled(
@@ -144,16 +143,18 @@ def rejudge_conflicts(allocator: DoorCodeAllocator, entry_id: str) -> None:
 
     Each shared code is therefore judged again on every cycle of an
     entry holding it, after that cycle's evidence is published. The
-    last verdict is remembered per ``code_ref`` and a report is raised
-    only when the verdict changes, so a stable record is reported once
-    rather than on every refresh. Observed aliases and forced-release
-    holds are not issuance owners and take no part. Verdicts live in memory, so a conflict
-    that is still unexplained is reported once again after a restart.
+    last verdict is remembered per ``code_ref`` and only a changed
+    verdict is announced, while the announcement itself is persisted,
+    so a conflict is reported once rather than on every refresh or
+    restart. A code no longer in conflict has its notification
+    withdrawn. Observed aliases and forced-release holds are not
+    issuance owners and take no part.
     """
     verdicts: dict[str, ConflictVerdict] = allocator._conflict_verdicts
     conflicts = {record.code_ref: record for record in allocator._registry.conflicts()}
     for code_ref in set(verdicts) - set(conflicts):
         del verdicts[code_ref]
+    conflict_notices.withdraw_resolved(allocator, conflicts)
     for code_ref, record in conflicts.items():
         owners = issuance_owners(record)
         if not any(owner.entry_id == entry_id for owner in owners):
@@ -165,7 +166,7 @@ def rejudge_conflicts(allocator: DoorCodeAllocator, entry_id: str) -> None:
         if verdicts.get(code_ref) == verdict:
             continue
         verdicts[code_ref] = verdict
-        _announce_conflict(allocator, record, explained)
+        _announce_conflict(allocator, record, explained, owners)
 
 
 def report_adoption_conflict(
@@ -174,57 +175,83 @@ def report_adoption_conflict(
 ) -> None:
     """Log and notify that an observed code has multiple owners.
 
+    Owners on one physical slot are one code in one place, so a record
+    whose owners collapse to a single slot is no conflict at all (#942).
     Between bookings, only issuance owners are judged and the verdict is
     remembered for re-judgement, so an alias or hold without phone
     evidence cannot make otherwise explained sharing look unexplained.
-    A code shared by one booking and an alias or hold is still the same
-    code presented by two slots of a lock, so it is announced as it
-    forms, judged over every owner, but is never re-judged.
+    A code shared by one booking's slot and an alias or hold on another
+    slot is still the same code presented by two slots of a lock, so it
+    is announced as it forms, judged over every owner, but is never
+    re-judged.
     """
     owners = issuance_owners(record)
-    if len(owners) < 2:
-        _announce_conflict(allocator, record, _conflict_is_expected(allocator, record))
+    if len(physical_slots(owners)) < 2:
+        if len(physical_slots(record.owners)) < 2:
+            return
+        explained = _conflict_is_expected(allocator, record)
+        _announce_conflict(allocator, record, explained, record.owners, track=False)
         return
     explained = _conflict_is_expected(allocator, record, owners)
     allocator._conflict_verdicts[record.code_ref] = _verdict(owners, explained)
-    _announce_conflict(allocator, record, explained)
+    _announce_conflict(allocator, record, explained, owners)
 
 
 def _announce_conflict(
     allocator: DoorCodeAllocator,
     record: AllocationRecord,
     explained: bool,
+    owners: Sequence[AllocationOwner],
+    *,
+    track: bool = True,
 ) -> None:
-    """Log a shared code, and notify unless its sharing is explained."""
-    owners = ", ".join(
+    """Log a shared code, and notify unless its sharing is explained.
+
+    A tracked conflict is announced once per set of physical slots and
+    withdrawn once it is explained or resolved; an untracked one, an
+    alias or hold beside a booking, is announced as it forms.
+    """
+    logged = ", ".join(
         f"{owner.entry_id}:{owner.identity_key}@{owner.lockname}:{owner.slot}"
         for owner in record.owners
     )
-    message = (
-        f"Shared code registry adoption conflict for code_ref "
-        f"{record.code_ref}: {owners}. No code was rotated."
-    )
     if explained:
+        if track:
+            conflict_notices.withdraw(allocator, record.code_ref)
         _LOGGER.info(
             "Shared code_ref %s has multiple owners (%s), which is expected "
             "under the last_four generator because the code is the guest's "
             "phone digits. No code was rotated and no notification was "
             "raised.",
             record.code_ref,
-            owners,
+            logged,
         )
         return
-    _LOGGER.warning(message)
-    places = ", ".join(
-        entry_info.describe_owner(allocator.hass, owner) for owner in record.owners
+    if track and not conflict_notices.claim(
+        allocator, record.code_ref, physical_slots(owners)
+    ):
+        _LOGGER.debug(
+            "Shared code_ref %s conflict (%s) was already reported",
+            record.code_ref,
+            logged,
+        )
+        return
+    _LOGGER.warning(
+        "Shared code registry adoption conflict for code_ref %s: %s. "
+        "No code was rotated.",
+        record.code_ref,
+        logged,
+    )
+    places = "\n".join(
+        f"- {line}" for line in conflict_notices.describe_slots(allocator, owners)
     )
     _notify(
         allocator,
         (
             f"Rental Control found one door code in use by more than one "
-            f"booking: {places}. The code was left in place and nothing was "
-            f"rotated. Search the Home Assistant log for code_ref "
-            f"{record.code_ref} for the full details."
+            f"booking:\n\n{places}\n\nThe code was left in place and "
+            f"nothing was rotated. Search the Home Assistant log for "
+            f"code_ref {record.code_ref} for the full details."
         ),
         title=f"{NAME} code registry conflict",
         notification_id=conflict_notification_id(record.code_ref),

@@ -98,3 +98,7 @@ def _patch_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
         "custom_components.rental_control.allocator.services.async_dismiss",
         lambda *args, **kwargs: None,
     )
+    monkeypatch.setattr(
+        "custom_components.rental_control.allocator.conflict_notices.async_dismiss",
+        lambda *args, **kwargs: None,
+    )

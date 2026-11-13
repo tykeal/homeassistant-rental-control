@@ -55,13 +55,7 @@ def allocator_diagnostics(allocator: DoorCodeAllocator) -> dict[str, Any]:
             }
             for record in allocator._registry.records.values()
         ],
-        "reported_conflicts": sorted(
-            code_ref
-            for code_ref, (_owners, explained) in getattr(
-                allocator, "_conflict_verdicts", {}
-            ).items()
-            if not explained
-        ),
+        "reported_conflicts": sorted(allocator._registry.announced_conflicts),
         "pending_adoption": sorted(allocator._pending_adoption),
         "pending_adoption_read": sorted(
             entry_id

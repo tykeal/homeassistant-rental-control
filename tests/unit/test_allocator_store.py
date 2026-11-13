@@ -284,6 +284,52 @@ async def test_valid_payload_loads_registry_round_trip() -> None:
 
 
 @pytest.mark.parametrize(
+    ("stored", "loaded"),
+    [
+        (None, {}),
+        ("not a mapping", {}),
+        (
+            {"ref-a": [["entry-a", "front", "3"], ["entry-b", "front", "5"]]},
+            {
+                "ref-a": frozenset(
+                    {("entry-a", "front", "3"), ("entry-b", "front", "5")}
+                )
+            },
+        ),
+        ({"ref-a": [["entry-a", "front"]], "ref-b": "slots"}, {}),
+    ],
+)
+async def test_announced_conflicts_load_without_failing_closed(
+    stored: Any, loaded: dict[str, frozenset[tuple[str, str, str]]]
+) -> None:
+    """Announced conflicts restore, and older or damaged data reads empty."""
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
+    payload = wrapper._payload_from_registry(_registry())
+    if stored is None:
+        payload.pop("announced_conflicts")
+    else:
+        payload["announced_conflicts"] = stored
+    FakeStore.payload = payload
+
+    result = await wrapper.async_load()
+
+    assert result.registry_lost is False
+    assert result.registry.announced_conflicts == loaded
+
+
+def test_announced_conflicts_round_trip() -> None:
+    """A saved announcement survives the trip through storage."""
+    registry = _registry()
+    slots = frozenset({("entry-a", "front", "3"), ("entry-b", "front", "5")})
+    registry.announced_conflicts["ref-a"] = slots
+    wrapper = RegistryStore(as_hass(SimpleNamespace()))
+
+    restored = wrapper._registry_from_payload(wrapper._payload_from_registry(registry))
+
+    assert restored.announced_conflicts == {"ref-a": slots}
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     [
         ("code_length", True),

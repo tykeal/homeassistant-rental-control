@@ -44,6 +44,10 @@ async def test_sc002_cross_entry_duplicate_heals_one_side(
         "custom_components.rental_control.allocator.services.async_dismiss",
         lambda *args, **kwargs: None,
     )
+    monkeypatch.setattr(
+        "custom_components.rental_control.allocator.conflict_notices.async_dismiss",
+        lambda *args, **kwargs: None,
+    )
     allocator = _allocator()
     await _adopt_duplicate(allocator)
 
