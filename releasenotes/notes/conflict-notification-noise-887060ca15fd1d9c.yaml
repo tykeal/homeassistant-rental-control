@@ -1,0 +1,12 @@
+---
+fixes:
+  - |
+    Door codes adopted more than once onto the same lock slot of the same
+    unit no longer count as a code conflict. The stale extra owners are
+    now released by the normal cleanup, so existing setups recover on
+    their own, and the repeated code-conflict warnings and notifications
+    stop. A real conflict, where one code sits in two different slots,
+    raises a single notification per code. It lists each unit, lock,
+    slot, booking and dates once. After a restart it is not raised again
+    unless the set of slots changes, and it is dismissed automatically
+    once the conflict resolves.
