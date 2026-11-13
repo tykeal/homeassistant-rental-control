@@ -34,6 +34,7 @@ __all__ = [
     "forget_entry",
     "has_cycle_evidence",
     "owner_code_is_phone_derived",
+    "owner_reservation",
     "record_cycle_evidence",
     "reset_cycle_evidence",
 ]
@@ -123,6 +124,11 @@ def _owner_identities(identity_key: str) -> tuple[str, ...]:
     if base_identity is None:
         return (identity_key,)
     return (identity_key, base_identity)
+
+
+def owner_reservation(hass: Any, owner: AllocationOwner) -> Any | None:
+    """Return the live reservation behind one owner, if it is loaded."""
+    return _reservation_for(hass, owner.entry_id, owner.identity_key)
 
 
 def _reservation_for(hass: Any, entry_id: str, identity_key: str) -> Any | None:

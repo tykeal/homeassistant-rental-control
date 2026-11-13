@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+from collections.abc import Iterable
 from dataclasses import dataclass
 from dataclasses import field
 
@@ -44,6 +46,64 @@ def issuance_owners(record: AllocationRecord) -> list[AllocationOwner]:
     ]
 
 
+#: One physical presence of a code: ``(entry_id, lockname, slot)``.
+#: A lockless owner programs nothing, so its identity stands in for
+#: the lock and slot and keeps two lockless bookings distinct.
+SlotKey = tuple[str, str, str]
+
+
+def physical_slot(owner: AllocationOwner) -> SlotKey:
+    """Return the physical presence an owner's code stands for.
+
+    A lock slot holds one code at a time, so every owner naming the
+    same entry, lock and slot stands for the same code in the same
+    place, however many booking identities have adopted it there.
+    """
+    if owner.lockname is not None and owner.slot is not None:
+        return (owner.entry_id, owner.lockname, str(owner.slot))
+    return (owner.entry_id, "", owner.identity_key)
+
+
+def physical_slots(owners: Iterable[AllocationOwner]) -> frozenset[SlotKey]:
+    """Return the distinct physical presences of the given owners."""
+    return frozenset(physical_slot(owner) for owner in owners)
+
+
+def conflict_slots(record: AllocationRecord) -> frozenset[SlotKey]:
+    """Return the distinct physical slots a record's code was issued to."""
+    return physical_slots(issuance_owners(record))
+
+
+def slot_shadowed(
+    record: AllocationRecord,
+    owner: AllocationOwner,
+    releasing: Collection[str],
+) -> bool:
+    """Return whether another booking already stands for this owner's slot.
+
+    When a booking's fingerprint changes, or a repeat guest is handed
+    the same code on the same slot, the new identity adopts the code
+    already programmed there and the old identity is left behind on the
+    same record. The remaining identity keeps the code reserved and
+    accounts for it being programmed, so the stale one can go even
+    though the lock still presents the code. Owners named in
+    ``releasing`` are treated as already gone, and only bookings on a
+    real lock slot qualify: observed aliases, forced-release holds and
+    lockless owners never shadow nor are shadowed.
+    """
+    if _is_physical_only(owner.identity_key) or owner.lockname is None:
+        return False
+    if owner.slot is None:
+        return False
+    slot = physical_slot(owner)
+    return any(
+        other.identity_key != owner.identity_key
+        and other.identity_key not in releasing
+        and physical_slot(other) == slot
+        for other in issuance_owners(record)
+    )
+
+
 def _validate_code(code: str, code_length: int) -> None:
     """Raise when a code is not decimal digits of the requested length."""
     if not isinstance(code_length, int) or isinstance(code_length, bool):
@@ -60,6 +120,7 @@ class AllocationRegistry:
 
     records: dict[str, AllocationRecord] = field(default_factory=dict)
     code_ref_salt: str = ""
+    announced_conflicts: dict[str, frozenset[SlotKey]] = field(default_factory=dict)
     by_identity: dict[str, str] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
@@ -189,9 +250,13 @@ class AllocationRegistry:
         return True
 
     def conflicts(self) -> list[AllocationRecord]:
-        """Return records issued to more than one owner."""
+        """Return records issued to more than one physical slot.
+
+        Several identities adopted on one slot are one code in one
+        place, not a code shared between bookings.
+        """
         return [
             record
             for record in self.records.values()
-            if len(issuance_owners(record)) > 1
+            if len(conflict_slots(record)) > 1
         ]

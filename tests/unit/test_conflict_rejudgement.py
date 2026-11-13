@@ -19,6 +19,7 @@ import pytest
 
 from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator import code_origin
+from custom_components.rental_control.allocator import conflict_notices
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AdoptionRequest
 from custom_components.rental_control.allocator.models import AllocationOrigin
@@ -76,6 +77,7 @@ def _notifications(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         "async_create",
         lambda _hass, message, **_k: raised.append(message),
     )
+    monkeypatch.setattr(conflict_notices, "async_dismiss", lambda *_a, **_k: None)
     return raised
 
 

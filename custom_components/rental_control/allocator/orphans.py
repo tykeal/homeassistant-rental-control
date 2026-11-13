@@ -29,6 +29,9 @@ def clear_orphans(
     """Clear orphaned owners and explicitly reclaimed forced holds."""
     cleared = []
     retained = []
+    # A dry run releases nothing, so owners it would clear are tracked
+    # to keep one slot's last stale owner from looking shadowed.
+    would_release: set[str] = set()
     for record in list(allocator._registry.records.values()):
         owners = _cleanup_candidates(
             record.owners, known_entry_ids, loaded_entry_ids, force_reissued_holds
@@ -51,10 +54,12 @@ def clear_orphans(
                 [owner],
                 observations,
                 refresh_observed=not dry_run,
+                releasing=would_release,
             )
             item = build_outcome(record, owner, reason)
             if reason is None:
                 cleared.append(item)
+                would_release.add(owner.identity_key)
                 if not dry_run:
                     allocator._registry.release(owner.identity_key)
             else:

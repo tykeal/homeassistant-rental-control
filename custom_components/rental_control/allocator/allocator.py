@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Collection
 from datetime import UTC
 from datetime import datetime
 import logging
@@ -23,6 +24,7 @@ from . import issuance
 from . import orphans
 from . import recovery
 from . import reissue
+from . import release_guard
 from . import services
 from .models import AdoptionRequest
 from .models import AllocationOwner
@@ -371,61 +373,17 @@ class DoorCodeAllocator:
         *,
         refresh_observed: bool = True,
         forced_release: reissue.ForcedReleaseExemption | None = None,
+        releasing: Collection[str] = (),
     ) -> str | None:
         """Return why owners must be retained, or None when safe to release."""
-        if len(record.owners) > 1 and not reissue._conflict_exempt(
-            record, owners, forced_release
-        ):
-            return "adoption_conflict"
-        for owner in owners:
-            covered_observations = [
-                observation
-                for observation in observations
-                if observation.lockname == owner.lockname
-                and owner.slot in observation.managed_slots
-            ]
-            if owner.lockname is not None and not covered_observations:
-                return "unverifiable_lock"
-            if self._owner_still_programmed(
-                record,
-                owner,
-                covered_observations,
-                refresh_observed=refresh_observed,
-            ):
-                return "code_still_programmed"
-        return None
-
-    def _owner_still_programmed(
-        self,
-        record: AllocationRecord,
-        owner: AllocationOwner,
-        observations: list[CycleObservation],
-        *,
-        refresh_observed: bool = True,
-    ) -> bool:
-        """Refresh and return whether an owner may still be programmed."""
-        if owner.lockname is None:
-            if refresh_observed:
-                owner.lock_observed = False
-            return False
-        covered = False
-        for observation in observations:
-            if observation.lockname != owner.lockname:
-                continue
-            covered = True
-            programmed = (
-                record.code in observation.observed_codes
-                or owner.slot in observation.unreadable_slots
-            )
-            if programmed:
-                if refresh_observed:
-                    owner.lock_observed = True
-                return True
-        if covered:
-            if refresh_observed:
-                owner.lock_observed = False
-            return False
-        return owner.lock_observed
+        return release_guard.release_guard_reason(
+            record,
+            owners,
+            observations,
+            refresh_observed=refresh_observed,
+            forced_release=forced_release,
+            releasing=releasing,
+        )
 
     def _refresh_owner_observed(
         self,
@@ -434,4 +392,4 @@ class DoorCodeAllocator:
         observations: list[CycleObservation],
     ) -> None:
         """Refresh observed state without making a release decision."""
-        self._owner_still_programmed(record, owner, observations)
+        release_guard.owner_still_programmed(record, owner, observations)

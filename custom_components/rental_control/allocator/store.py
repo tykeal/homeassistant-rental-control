@@ -32,6 +32,7 @@ from .models import AllocationOrigin
 from .models import AllocationOwner
 from .models import AllocationRecord
 from .registry import AllocationRegistry
+from .registry import SlotKey
 
 _LOGGER = logging.getLogger(__name__)
 _NOTIFICATION_ID = f"{DOMAIN}_code_registry_warning"
@@ -163,7 +164,38 @@ class RegistryStore:
                     raise ValueError("identity_key owned by two records")
                 identities.add(owner.identity_key)
             records[record.code] = record
-        return AllocationRegistry(records=records, code_ref_salt=code_ref_salt)
+        return AllocationRegistry(
+            records=records,
+            code_ref_salt=code_ref_salt,
+            announced_conflicts=self._announced_from_payload(
+                payload.get("announced_conflicts")
+            ),
+        )
+
+    @staticmethod
+    def _announced_from_payload(item: Any) -> dict[str, frozenset[SlotKey]]:
+        """Return the conflicts already announced, keyed by code_ref.
+
+        This only spares the user a repeated notification, so a missing
+        key, as written by every earlier release, or a malformed entry
+        is dropped rather than failing the registry closed.
+        """
+        if not isinstance(item, dict):
+            return {}
+        announced: dict[str, frozenset[SlotKey]] = {}
+        for code_ref, slots in item.items():
+            if not isinstance(code_ref, str) or not isinstance(slots, list):
+                continue
+            keys = [
+                (slot[0], slot[1], slot[2])
+                for slot in slots
+                if isinstance(slot, list)
+                and len(slot) == 3
+                and all(isinstance(part, str) for part in slot)
+            ]
+            if keys and len(keys) == len(slots):
+                announced[code_ref] = frozenset(keys)
+        return announced
 
     def _record_from_payload(self, item: Any, code_ref_salt: str) -> AllocationRecord:
         """Convert one storage record into an allocation record."""
@@ -257,6 +289,10 @@ class RegistryStore:
                     registry.records.values(), key=lambda item: item.code
                 )
             ],
+            "announced_conflicts": {
+                code_ref: [list(slot) for slot in sorted(slots)]
+                for code_ref, slots in sorted(registry.announced_conflicts.items())
+            },
         }
 
     def _record_to_payload(self, record: AllocationRecord) -> dict[str, Any]:
