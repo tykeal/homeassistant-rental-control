@@ -50,6 +50,9 @@ _UNKNOWN = object()
 #: and then staying raised, because conflicts are reported only as an
 #: owner is added.
 _cycle_evidence: dict[str, dict[str, str | None]] = {}
+#: The in-flight reservations themselves, so a conflict raised on a
+#: booking's first cycle can still name the booking and its dates.
+_cycle_reservations: dict[str, dict[str, Any]] = {}
 
 
 def record_cycle_evidence(entry_id: str, reservations: list[Any]) -> None:
@@ -58,11 +61,15 @@ def record_cycle_evidence(entry_id: str, reservations: list[Any]) -> None:
         reservation.identity_key: getattr(reservation, "phone_last_four", None)
         for reservation in reservations
     }
+    _cycle_reservations[entry_id] = {
+        reservation.identity_key: reservation for reservation in reservations
+    }
 
 
 def forget_entry(entry_id: str) -> None:
     """Drop one entry's in-flight evidence as it goes away."""
     _cycle_evidence.pop(entry_id, None)
+    _cycle_reservations.pop(entry_id, None)
 
 
 def has_cycle_evidence(entry_id: str) -> bool:
@@ -73,6 +80,7 @@ def has_cycle_evidence(entry_id: str) -> bool:
 def reset_cycle_evidence() -> None:
     """Drop every entry's in-flight evidence."""
     _cycle_evidence.clear()
+    _cycle_reservations.clear()
 
 
 def owner_code_is_phone_derived(
@@ -127,7 +135,15 @@ def _owner_identities(identity_key: str) -> tuple[str, ...]:
 
 
 def owner_reservation(hass: Any, owner: AllocationOwner) -> Any | None:
-    """Return the live reservation behind one owner, if it is loaded."""
+    """Return the live reservation behind one owner, if it is loaded.
+
+    The cycle in flight is consulted first, because the coordinator's
+    cache does not yet hold a booking seen for the first time.
+    """
+    in_flight = _cycle_reservations.get(owner.entry_id, {})
+    for key in _owner_identities(owner.identity_key):
+        if key in in_flight:
+            return in_flight[key]
     return _reservation_for(hass, owner.entry_id, owner.identity_key)
 
 

@@ -161,11 +161,23 @@ async def _cycle(
     entry_id: str,
     active: set[str],
     programmed_slots: set[int],
+    in_flight: dict[str, SimpleNamespace] | None = None,
 ) -> None:
-    """Run one cycle where ``_CODE`` is programmed in ``programmed_slots``."""
+    """Run one cycle where ``_CODE`` is programmed in ``programmed_slots``.
+
+    ``in_flight`` holds reservations the cycle works from that the
+    coordinator's cache does not hold yet.
+    """
+    cached = allocator.hass.data[DOMAIN][entry_id][COORDINATOR]._latest_res_by_key
+    in_flight = {**cached, **(in_flight or {})}
     code_origin.record_cycle_evidence(
         entry_id,
-        [SimpleNamespace(identity_key=key, phone_last_four=None) for key in active],
+        [
+            SimpleNamespace(**vars(in_flight[key]), identity_key=key)
+            if key in in_flight
+            else SimpleNamespace(identity_key=key, phone_last_four=None)
+            for key in active
+        ],
     )
     managed = _MANAGED[entry_id]
     visible = programmed_slots & managed
@@ -312,6 +324,27 @@ async def test_cross_entry_conflict_lists_each_slot_once(
         "- U13 on frontdoor slot 13 (Carol, 2026-11-04 to 2026-11-07)",
         "- U16 on frontdoor slot 16 (Dave, 2026-11-06 to 2026-11-09)",
     ]
+
+
+async def test_first_cycle_conflict_names_bookings_not_yet_cached(
+    notices: _Notices,
+) -> None:
+    """A conflict raised on a booking's first cycle still carries its details."""
+    allocator = _allocator(
+        _hass({"u13": {}, "u16": {}}), ("u13", "guest-13", 13), ("u16", "guest-16", 16)
+    )
+
+    await _cycle(
+        allocator, "u13", {"guest-13"}, {13, 16}, {"guest-13": _reservation("Carol", 4)}
+    )
+    await _cycle(
+        allocator, "u16", {"guest-16"}, {13, 16}, {"guest-16": _reservation("Dave", 6)}
+    )
+
+    assert len(notices.created) == 1
+    message = notices.created[0]["message"]
+    assert "- U13 on frontdoor slot 13 (Carol, 2026-11-04 to 2026-11-07)" in message
+    assert "- U16 on frontdoor slot 16 (Dave, 2026-11-06 to 2026-11-09)" in message
 
 
 async def test_resolved_conflict_is_dismissed(notices: _Notices) -> None:
