@@ -502,7 +502,7 @@ jobs:
         id: 'promote-release'
         if: steps.check-promoted.outputs.already_promoted == 'false'
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/draft-release-promote-action@358264a2efca5ac359a90718373cbce18016bd27  # v0.1.7
+        uses: lfreleng-actions/draft-release-promote-action@b9e1fbf7c3ca0049dabc1a6d26f0be68a6bd99d8  # v0.1.8
         with:
           token: "${{ secrets.GITHUB_TOKEN }}"
           tag: "${{ needs.tag-validate.outputs.tag }}"
