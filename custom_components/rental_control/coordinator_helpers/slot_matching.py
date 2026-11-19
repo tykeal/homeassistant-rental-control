@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 from typing import Any
 
 from ..reconciliation import normalize_slot_name_for_fingerprint
+from ..reconciliation.identity import _datetime_as_utc
+from ..reconciliation.identity import _datetime_windows_match
 from ..util import dt as _dt
 
 if TYPE_CHECKING:
@@ -39,8 +41,12 @@ def find_observed_slot(query: ObservedSlotQuery) -> ManagedSlot | None:
     for slot in sorted(
         query.managed_slots,
         key=lambda observed: (
-            observed.actual_start or datetime.max.replace(tzinfo=timezone.utc),
-            observed.actual_end or datetime.max.replace(tzinfo=timezone.utc),
+            _datetime_as_utc(observed.actual_start)
+            if observed.actual_start is not None
+            else datetime.max.replace(tzinfo=timezone.utc),
+            _datetime_as_utc(observed.actual_end)
+            if observed.actual_end is not None
+            else datetime.max.replace(tzinfo=timezone.utc),
             observed.slot,
         ),
     ):
@@ -78,9 +84,8 @@ def _match_with_date_constraint(
     if matching_candidate_count < query.expected_name_count:
         if desired_start is not None and desired_end is not None:
             for slot in candidates:
-                if (
-                    slot.actual_start == desired_start
-                    and slot.actual_end == desired_end
+                if _datetime_windows_match(
+                    slot.actual_start, slot.actual_end, desired_start, desired_end
                 ):
                     consumed.add(slot.slot)
                     return slot
@@ -89,7 +94,7 @@ def _match_with_date_constraint(
                 all_candidates, ordered_date_windows
             )
             desired_window = (
-                (desired_start, desired_end)
+                (_datetime_as_utc(desired_start), _datetime_as_utc(desired_end))
                 if desired_start is not None and desired_end is not None
                 else None
             )
@@ -107,7 +112,9 @@ def _match_with_date_constraint(
             and slot.actual_end is not None
             and (
                 not reserved_date_windows
-                or (slot.actual_start, slot.actual_end) not in reserved_date_windows
+                or not _window_is_reserved(
+                    slot.actual_start, slot.actual_end, reserved_date_windows
+                )
             )
         ]
         if len(shifted_candidates) == 1:
@@ -121,13 +128,18 @@ def _match_with_date_constraint(
     if ordered_date_windows and matching_candidate_count > query.expected_name_count:
         canonical = select_ordered_physical_subset(all_candidates, ordered_date_windows)
         desired_window = (
-            (desired_start, desired_end)
+            (_datetime_as_utc(desired_start), _datetime_as_utc(desired_end))
             if desired_start is not None and desired_end is not None
             else None
         )
         for slot, window in zip(canonical, ordered_date_windows, strict=False):
             if slot.slot not in consumed and (
-                desired_window is None or window == desired_window
+                desired_window is None
+                or (
+                    _datetime_as_utc(window[0]),
+                    _datetime_as_utc(window[1]),
+                )
+                == desired_window
             ):
                 consumed.add(slot.slot)
                 return slot
@@ -148,7 +160,9 @@ def _match_without_date_constraint(
     desired_end = query.desired_end
     if desired_start is not None and desired_end is not None:
         for slot in candidates:
-            if slot.actual_start == desired_start and slot.actual_end == desired_end:
+            if _datetime_windows_match(
+                slot.actual_start, slot.actual_end, desired_start, desired_end
+            ):
                 consumed.add(slot.slot)
                 return slot
     fallback_candidates = candidates
@@ -159,7 +173,9 @@ def _match_without_date_constraint(
             for slot in candidates
             if slot.actual_start is not None
             and slot.actual_end is not None
-            and (slot.actual_start, slot.actual_end) not in reserved_date_windows
+            and not _window_is_reserved(
+                slot.actual_start, slot.actual_end, reserved_date_windows
+            )
         ]
     if fallback_candidates:
         consumed.add(fallback_candidates[0].slot)
@@ -176,9 +192,7 @@ def select_ordered_physical_subset(
         """Return absolute date distance for one physical/desired pair."""
         assert slot.actual_start is not None
         assert slot.actual_end is not None
-        return abs((slot.actual_start - window[0]).total_seconds()) + abs(
-            (slot.actual_end - window[1]).total_seconds()
-        )
+        return _window_distance(slot.actual_start, slot.actual_end, window)
 
     @lru_cache(maxsize=None)
     def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
@@ -217,9 +231,7 @@ def select_partial_ordered_pairings(
         """Return absolute date distance for one physical/desired pair."""
         assert slot.actual_start is not None
         assert slot.actual_end is not None
-        return abs((slot.actual_start - window[0]).total_seconds()) + abs(
-            (slot.actual_end - window[1]).total_seconds()
-        )
+        return _window_distance(slot.actual_start, slot.actual_end, window)
 
     @lru_cache(maxsize=None)
     def _best(slot_index: int, desired_index: int) -> tuple[float, tuple[int, ...]]:
@@ -240,9 +252,41 @@ def select_partial_ordered_pairings(
 
     _, indices = _best(0, 0)
     return {
-        desired_windows[desired_index]: dated_slots[slot_index]
+        (
+            _datetime_as_utc(desired_windows[desired_index][0]),
+            _datetime_as_utc(desired_windows[desired_index][1]),
+        ): dated_slots[slot_index]
         for slot_index, desired_index in enumerate(indices)
     }
+
+
+def _window_distance(
+    actual_start: datetime,
+    actual_end: datetime,
+    desired_window: tuple[datetime, datetime],
+) -> float:
+    """Return absolute elapsed-time distance between physical and desired windows."""
+    return abs(
+        (
+            _datetime_as_utc(actual_start) - _datetime_as_utc(desired_window[0])
+        ).total_seconds()
+    ) + abs(
+        (
+            _datetime_as_utc(actual_end) - _datetime_as_utc(desired_window[1])
+        ).total_seconds()
+    )
+
+
+def _window_is_reserved(
+    start: datetime,
+    end: datetime,
+    reserved_windows: set[tuple[datetime, datetime]] | None,
+) -> bool:
+    """Return whether a physical window is reserved by a desired stay."""
+    return reserved_windows is not None and any(
+        _datetime_windows_match(start, end, reserved_start, reserved_end)
+        for reserved_start, reserved_end in reserved_windows
+    )
 
 
 def physical_slot_name_matches_name(
@@ -320,7 +364,9 @@ def physical_mapping_matches_reservation(
     actual_end = observed_value_as_datetime(actual.get("end_state"))
     if actual_start is None or actual_end is None:
         return True
-    return (
-        actual_start == reservation.buffered_start
-        and actual_end == reservation.buffered_end
+    return _datetime_windows_match(
+        actual_start,
+        actual_end,
+        reservation.buffered_start,
+        reservation.buffered_end,
     )

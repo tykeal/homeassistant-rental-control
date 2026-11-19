@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 from .enums import ActionKind
+from .identity import _datetime_windows_match
+from .identity import _datetimes_match
 from .plan_models import ManagedSlot
 from .plan_models import Reservation
 
@@ -16,9 +18,13 @@ def _compute_drift_fields(ms: ManagedSlot, res: Reservation) -> list[str]:
         fields.append("name")
     if ms.actual_code_present is False:
         fields.append("code")
-    if ms.actual_start is not None and ms.actual_start != res.buffered_start:
+    if ms.actual_start is not None and not _datetimes_match(
+        ms.actual_start, res.buffered_start
+    ):
         fields.append("start")
-    if ms.actual_end is not None and ms.actual_end != res.buffered_end:
+    if ms.actual_end is not None and not _datetimes_match(
+        ms.actual_end, res.buffered_end
+    ):
         fields.append("end")
     if ms.date_range_enabled is False:
         fields.append("date_range_enabled")
@@ -50,8 +56,12 @@ def classify_matched_desired_slot(
             "drifted fields: " + ", ".join(sorted(fields)),
         )
     if (ms.actual_start is not None or ms.actual_end is not None) and (
-        ms.actual_start != desired_res.buffered_start
-        or ms.actual_end != desired_res.buffered_end
+        not _datetime_windows_match(
+            ms.actual_start,
+            ms.actual_end,
+            desired_res.buffered_start,
+            desired_res.buffered_end,
+        )
     ):
         return ActionKind.UPDATE_TIMES, None
     return ActionKind.NOOP, None

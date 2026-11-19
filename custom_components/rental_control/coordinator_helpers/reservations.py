@@ -105,11 +105,19 @@ def _collect_name_windows(
             _coerce_event_datetime(event.end, ctx),
             ctx,
         )
-        windows.date_windows.setdefault(key, set()).add(buffered)
+        windows.date_windows.setdefault(key, set()).add(
+            (_datetime_as_utc(buffered[0]), _datetime_as_utc(buffered[1]))
+        )
         windows.ordered_windows.setdefault(key, []).append(buffered)
         active_windows = ctx.active_windows_for_name(slot_name)
         if active_windows:
-            windows.date_windows.setdefault(key, set()).update(active_windows)
+            windows.date_windows.setdefault(key, set()).update(
+                (
+                    _datetime_as_utc(window[0]),
+                    _datetime_as_utc(window[1]),
+                )
+                for window in active_windows
+            )
     return windows
 
 

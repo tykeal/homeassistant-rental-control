@@ -92,6 +92,27 @@ def _datetime_as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _datetimes_match(left: datetime | None, right: datetime | None) -> bool:
+    """Return whether two optional datetimes represent the same instant."""
+    return (
+        left is not None
+        and right is not None
+        and _datetime_as_utc(left) == _datetime_as_utc(right)
+    )
+
+
+def _datetime_windows_match(
+    left_start: datetime | None,
+    left_end: datetime | None,
+    right_start: datetime | None,
+    right_end: datetime | None,
+) -> bool:
+    """Return whether two complete datetime windows represent the same instants."""
+    return _datetimes_match(left_start, right_start) and _datetimes_match(
+        left_end, right_end
+    )
+
+
 def _dt_to_utc_iso(dt: datetime) -> str:
     """Convert *dt* to a canonical UTC ISO-8601 fingerprint value."""
     return _datetime_as_utc(dt).strftime("%Y-%m-%dT%H:%M:%S+00:00")

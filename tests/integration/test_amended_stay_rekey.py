@@ -337,7 +337,7 @@ async def test_fall_back_fold_stay_remains_plannable(hass: HomeAssistant) -> Non
         hass,
         6,
         target.display_slot_name,
-        "1357",
+        target.slot_code or "1357",
         target.start.astimezone(dt_util.UTC),
         target.end.astimezone(dt_util.UTC),
     )
@@ -355,6 +355,7 @@ async def test_fall_back_fold_stay_remains_plannable(hass: HomeAssistant) -> Non
     )
 
     assert plan.selected[target.identity_key] == 6
+    assert not [action for action in plan.actions if action.slot == 6]
 
 
 async def test_fall_back_capacity_selects_earliest_instant(

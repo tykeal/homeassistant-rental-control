@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 from .enums import SlotStatus
+from .identity import _datetime_as_utc
+from .identity import _datetime_windows_match
 from .identity import _reservation_name_key
 from .pairing import managed_physical_group
 from .pairing import pair_managed_group
@@ -85,7 +87,12 @@ def _codeless_identity_or_date_holds(
     """Return unambiguous codeless holds before selected slots are reserved."""
     holds: dict[int, str] = {}
     for res in sorted(
-        codeless, key=lambda item: (item.start, item.end, item.identity_key)
+        codeless,
+        key=lambda item: (
+            _datetime_as_utc(item.start),
+            _datetime_as_utc(item.end),
+            item.identity_key,
+        ),
     ):
         available = [ms for ms in occupied if ms.slot not in holds]
         identity_matches = [
@@ -95,8 +102,12 @@ def _codeless_identity_or_date_holds(
         date_matches = [
             ms
             for ms in physical
-            if ms.actual_start == res.buffered_start
-            and ms.actual_end == res.buffered_end
+            if _datetime_windows_match(
+                ms.actual_start,
+                ms.actual_end,
+                res.buffered_start,
+                res.buffered_end,
+            )
         ]
         matches = identity_matches or date_matches
         if matches:

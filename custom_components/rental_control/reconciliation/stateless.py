@@ -12,6 +12,8 @@ from .action_models import SlotAction
 from .diagnostics import build_stateless_diagnostics as _build_stateless_diagnostics
 from .enums import ActionKind
 from .enums import ObservedSlotStatus
+from .identity import _datetime_as_utc
+from .identity import _datetime_windows_match
 from .identity import _desired_name_key
 from .identity import _names_match
 from .pairing import _pair_partial_observed
@@ -138,8 +140,12 @@ def _observed_physical_group(
     ]
     physical.sort(
         key=lambda slot: (
-            slot.actual_start or datetime.max.replace(tzinfo=timezone.utc),
-            slot.actual_end or datetime.max.replace(tzinfo=timezone.utc),
+            _datetime_as_utc(slot.actual_start)
+            if slot.actual_start is not None
+            else datetime.max.replace(tzinfo=timezone.utc),
+            _datetime_as_utc(slot.actual_end)
+            if slot.actual_end is not None
+            else datetime.max.replace(tzinfo=timezone.utc),
             slot.slot,
         )
     )
@@ -320,9 +326,11 @@ def _action_for_slot(
             preflight_read=True,
             reason="replace_code_or_name",
         )
-    if (
-        slot.actual_start != desired.buffered_start
-        or slot.actual_end != desired.buffered_end
+    if not _datetime_windows_match(
+        slot.actual_start,
+        slot.actual_end,
+        desired.buffered_start,
+        desired.buffered_end,
     ):
         return SlotAction(
             kind=ActionKind.UPDATE_TIMES,
