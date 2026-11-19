@@ -17,6 +17,8 @@ from datetime import datetime
 from ..reconciliation import ManagedSlot
 from ..reconciliation import Reservation
 from ..reconciliation import SlotStatus
+from ..reconciliation.identity import _datetime_as_utc
+from ..reconciliation.identity import _datetime_windows_match
 from .models import CheckinProtectionSnapshot
 
 
@@ -37,15 +39,17 @@ def select_checkin_match(
     """
     name_matches = [res for res in reservations if res.slot_name == guest_name]
     fallback_matches = [
-        res for res in name_matches if started_by is None or res.start <= started_by
+        res
+        for res in name_matches
+        if started_by is None
+        or _datetime_as_utc(res.start) <= _datetime_as_utc(started_by)
     ]
     exact_matches = [
         res
         for res in name_matches
         if tracked_start is not None
         and tracked_end is not None
-        and res.start == tracked_start
-        and res.end == tracked_end
+        and _datetime_windows_match(res.start, res.end, tracked_start, tracked_end)
     ]
     matches = exact_matches
     if tracked_start is None or tracked_end is None:
@@ -89,8 +93,12 @@ def build_protected_reservation(
         matched_physical.actual_start is not None
         and matched_physical.actual_end is not None
         and (
-            matched_physical.actual_start != buffered_start
-            or matched_physical.actual_end != buffered_end
+            not _datetime_windows_match(
+                matched_physical.actual_start,
+                matched_physical.actual_end,
+                buffered_start,
+                buffered_end,
+            )
         )
         and same_name_count != 1
     ):
@@ -129,8 +137,12 @@ def _slot_blocks_restore(
         slot.actual_start is None
         or slot.actual_end is None
         or not any(
-            slot.actual_start == res.buffered_start
-            and slot.actual_end == res.buffered_end
+            _datetime_windows_match(
+                slot.actual_start,
+                slot.actual_end,
+                res.buffered_start,
+                res.buffered_end,
+            )
             for res in reservations
             if matches(slot.actual_name, res)
         )

@@ -8,6 +8,8 @@ from datetime import datetime
 from datetime import timezone
 from functools import lru_cache
 
+from .identity import _datetime_as_utc
+from .identity import _datetime_windows_match
 from .identity import _names_match
 from .plan_models import ManagedSlot
 from .plan_models import Reservation
@@ -22,14 +24,14 @@ def _slot_times_match(
     desired_end: datetime,
 ) -> bool:
     """Return whether observed Keymaster dates exactly match desired dates."""
-    return actual_start == desired_start and actual_end == desired_end
+    return _datetime_windows_match(actual_start, actual_end, desired_start, desired_end)
 
 
 def _datetime_distance(left: datetime | None, right: datetime) -> float:
     """Return absolute seconds between two datetimes, or infinity if absent."""
     if left is None:
         return float("inf")
-    return abs((left - right).total_seconds())
+    return abs((_datetime_as_utc(left) - _datetime_as_utc(right)).total_seconds())
 
 
 def _managed_slot_distance(slot: ManagedSlot, reservation: Reservation) -> float:

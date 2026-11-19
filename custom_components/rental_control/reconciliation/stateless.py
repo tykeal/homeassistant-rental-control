@@ -12,6 +12,8 @@ from .action_models import SlotAction
 from .diagnostics import build_stateless_diagnostics as _build_stateless_diagnostics
 from .enums import ActionKind
 from .enums import ObservedSlotStatus
+from .identity import _datetime_as_utc
+from .identity import _datetime_windows_match
 from .identity import _desired_name_key
 from .identity import _names_match
 from .pairing import _pair_partial_observed
@@ -89,11 +91,11 @@ def select_stateless_reservations(
     ]
     protected = sorted(
         [desired for desired in eligible if desired.protected_active],
-        key=lambda desired: (desired.start, desired.desired_id),
+        key=lambda desired: (_datetime_as_utc(desired.start), desired.desired_id),
     )
     non_protected = sorted(
         [desired for desired in eligible if not desired.protected_active],
-        key=lambda desired: (desired.start, desired.desired_id),
+        key=lambda desired: (_datetime_as_utc(desired.start), desired.desired_id),
     )
     selected = [
         *protected,
@@ -115,7 +117,13 @@ def group_stateless_reservations_by_name(
     for desired in selected:
         selected_by_name.setdefault(_desired_name_key(desired), []).append(desired)
     for group in selected_by_name.values():
-        group.sort(key=lambda desired: (desired.start, desired.end, desired.desired_id))
+        group.sort(
+            key=lambda desired: (
+                _datetime_as_utc(desired.start),
+                _datetime_as_utc(desired.end),
+                desired.desired_id,
+            )
+        )
     return selected_by_name
 
 
@@ -138,8 +146,12 @@ def _observed_physical_group(
     ]
     physical.sort(
         key=lambda slot: (
-            slot.actual_start or datetime.max.replace(tzinfo=timezone.utc),
-            slot.actual_end or datetime.max.replace(tzinfo=timezone.utc),
+            _datetime_as_utc(slot.actual_start)
+            if slot.actual_start is not None
+            else datetime.max.replace(tzinfo=timezone.utc),
+            _datetime_as_utc(slot.actual_end)
+            if slot.actual_end is not None
+            else datetime.max.replace(tzinfo=timezone.utc),
             slot.slot,
         )
     )
@@ -320,9 +332,11 @@ def _action_for_slot(
             preflight_read=True,
             reason="replace_code_or_name",
         )
-    if (
-        slot.actual_start != desired.buffered_start
-        or slot.actual_end != desired.buffered_end
+    if not _datetime_windows_match(
+        slot.actual_start,
+        slot.actual_end,
+        desired.buffered_start,
+        desired.buffered_end,
     ):
         return SlotAction(
             kind=ActionKind.UPDATE_TIMES,

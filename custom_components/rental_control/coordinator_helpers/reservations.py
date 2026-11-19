@@ -16,10 +16,12 @@ from typing import Any
 from homeassistant.util import dt
 
 from ..bookings_only import resolve_slot_name
+from ..helpers import shift_datetime_by_elapsed
 from ..reconciliation import Reservation as _Reservation
 from ..reconciliation import extract_booking_aliases
 from ..reconciliation import make_reservation_fingerprint
 from ..reconciliation import normalize_slot_name_for_fingerprint
+from ..reconciliation.identity import _datetime_as_utc
 from ..util import apply_buffer
 from ..util import normalize_uid
 from .codegen import extract_last_four
@@ -103,11 +105,19 @@ def _collect_name_windows(
             _coerce_event_datetime(event.end, ctx),
             ctx,
         )
-        windows.date_windows.setdefault(key, set()).add(buffered)
+        windows.date_windows.setdefault(key, set()).add(
+            (_datetime_as_utc(buffered[0]), _datetime_as_utc(buffered[1]))
+        )
         windows.ordered_windows.setdefault(key, []).append(buffered)
         active_windows = ctx.active_windows_for_name(slot_name)
         if active_windows:
-            windows.date_windows.setdefault(key, set()).update(active_windows)
+            windows.date_windows.setdefault(key, set()).update(
+                (
+                    _datetime_as_utc(window[0]),
+                    _datetime_as_utc(window[1]),
+                )
+                for window in active_windows
+            )
     return windows
 
 
@@ -124,8 +134,8 @@ def build_reservations(
     ordered_calendar = sorted(
         calendar,
         key=lambda event: (
-            _coerce_event_datetime(event.start, ctx),
-            _coerce_event_datetime(event.end, ctx),
+            _datetime_as_utc(_coerce_event_datetime(event.start, ctx)),
+            _datetime_as_utc(_coerce_event_datetime(event.end, ctx)),
             event.summary or "",
         ),
     )
@@ -379,9 +389,13 @@ def _resolve_observed_code(query: _ObservedCodeQuery) -> tuple[str, str, bool]:
     observed_start = matched_physical.actual_start
     observed_end = matched_physical.actual_end
     if observed_start is not None and ctx.code_buffer_before:
-        observed_start = observed_start + timedelta(minutes=ctx.code_buffer_before)
+        observed_start = shift_datetime_by_elapsed(
+            observed_start, timedelta(minutes=ctx.code_buffer_before)
+        )
     if observed_end is not None and ctx.code_buffer_after:
-        observed_end = observed_end - timedelta(minutes=ctx.code_buffer_after)
+        observed_end = shift_datetime_by_elapsed(
+            observed_end, -timedelta(minutes=ctx.code_buffer_after)
+        )
     old_generated = (
         generate_slot_code(
             ctx.code_generator,

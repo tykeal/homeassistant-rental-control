@@ -11,6 +11,7 @@ from typing import Any
 
 from .action_models import SlotAction
 from .enums import ObservedSlotStatus
+from .identity import _datetime_as_utc
 from .identity import _desired_name_forms
 from .identity import normalize_slot_name_for_fingerprint
 
@@ -110,7 +111,7 @@ class DesiredReservation:
 
     def __post_init__(self) -> None:
         """Validate desired reservation invariants and name forms."""
-        if self.start >= self.end:
+        if _datetime_as_utc(self.start) >= _datetime_as_utc(self.end):
             raise ValueError(
                 f"DesiredReservation start must be strictly before end: "
                 f"{self.start!r} >= {self.end!r}"

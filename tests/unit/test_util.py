@@ -3363,6 +3363,20 @@ class TestBufferRegressionSemantics:
         assert buffered_start == start
         assert buffered_end == end + timedelta(minutes=30)
 
+    def test_apply_buffer_uses_elapsed_time_across_fall_back(self) -> None:
+        """A buffer across a repeated hour shifts by real elapsed minutes."""
+        from zoneinfo import ZoneInfo
+
+        timezone = ZoneInfo("America/New_York")
+        start = datetime(2026, 11, 1, 1, 15, tzinfo=timezone, fold=1)
+
+        buffered_start, _ = apply_buffer(start, start, 15, 0, MagicMock())
+
+        assert isinstance(buffered_start, datetime)
+        assert buffered_start.astimezone(dt_util.UTC) == datetime(
+            2026, 11, 1, 6, 0, tzinfo=dt_util.UTC
+        )
+
     def test_apply_buffer_converts_date_to_datetime(self) -> None:
         """Date-only values are normalised before buffer arithmetic."""
         from zoneinfo import ZoneInfo

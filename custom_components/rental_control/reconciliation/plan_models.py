@@ -12,6 +12,7 @@ from typing import Any
 from .action_models import SlotAction
 from .enums import ActionKind
 from .enums import SlotStatus
+from .identity import _datetime_as_utc
 
 
 @dataclass(slots=True)
@@ -136,7 +137,7 @@ class Reservation:
             ValueError: If ``start`` is not strictly before ``end``,
                 or if ``missing_count`` is negative.
         """
-        if self.start >= self.end:
+        if _datetime_as_utc(self.start) >= _datetime_as_utc(self.end):
             raise ValueError(
                 f"Reservation start must be strictly before end: "
                 f"{self.start!r} >= {self.end!r}"
