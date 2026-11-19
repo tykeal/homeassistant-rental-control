@@ -2405,8 +2405,8 @@ class TestComputeDesiredPlanSoonestN:
         assert "r-gone" not in plan.selected
         assert "r-gone" not in plan.overflow
 
-    def test_missing_count_three_excluded_unless_protected(self) -> None:
-        """Reservations with missing_count >= 3 are excluded unless protected_active."""
+    def test_missing_count_three_excluded(self) -> None:
+        """Reservations with missing_count >= 3 are excluded."""
         r_missing = _res("r-miss", 1, missing_count=3)
         r_present = _res("r-here", 3)
         plan = compute_desired_plan(
@@ -3065,11 +3065,8 @@ class TestComputeDesiredPlanProtectionCapacity:
 
         assert "r-exp" not in plan.protected
 
-    def test_missing_count_three_protected_still_selected(self) -> None:
-        """A protected active reservation with missing_count=3 is still selected.
-
-        Protection overrides the feed-miss clearability threshold.
-        """
+    def test_missing_count_three_protected_not_selected(self) -> None:
+        """Sustained absence overrides active check-in protection."""
         r_prot_miss = _res("r-miss-prot", 1, protected_active=True, missing_count=3)
 
         plan = compute_desired_plan(
@@ -3080,8 +3077,8 @@ class TestComputeDesiredPlanProtectionCapacity:
             generated_at=_dt(2026, 7, 1),
         )
 
-        assert "r-miss-prot" in plan.selected
-        assert "r-miss-prot" in plan.protected
+        assert "r-miss-prot" not in plan.selected
+        assert "r-miss-prot" not in plan.protected
 
     def test_missing_count_three_non_protected_excluded(self) -> None:
         """A non-protected reservation with missing_count=3 is excluded entirely."""
@@ -4216,15 +4213,11 @@ class TestFeedMissLifecycle:
         assert len(clear_slot3) == 1
 
     # ------------------------------------------------------------------
-    # T089-5: missing_count=3 with protected_active bypasses exclusion
+    # T089-5: missing_count=3 overrides protected_active
     # ------------------------------------------------------------------
 
-    def test_missing_count_three_protected_active_not_cleared(self) -> None:
-        """T089-5: Protected active reservation with missing_count=3 stays assigned.
-
-        An active checked-in guest must never be evicted even if the feed
-        drops the reservation for three cycles.
-        """
+    def test_missing_count_three_protected_active_cleared(self) -> None:
+        """T089-5: A third miss makes a checked-in reservation clearable."""
         res = self._mk("r-protected", missing_count=3, protected_active=True)
         slot3 = self._occupied(3, "r-protected")
 
@@ -4236,12 +4229,11 @@ class TestFeedMissLifecycle:
             generated_at=_dt(2026, 8, 1),
         )
 
-        # Protected reservation is still selected despite missing_count=3
-        assert "r-protected" in plan.selected
+        assert "r-protected" not in plan.selected
         clear_slot3 = [
             a for a in plan.actions if a.kind is ActionKind.CLEAR and a.slot == 3
         ]
-        assert len(clear_slot3) == 0
+        assert len(clear_slot3) == 1
 
     # ------------------------------------------------------------------
     # T089-6: transition from count=2 to count=3 clears while a second

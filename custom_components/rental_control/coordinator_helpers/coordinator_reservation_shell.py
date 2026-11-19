@@ -14,8 +14,10 @@ from typing import Any
 
 from homeassistant.components.calendar import CalendarEvent
 
+from ..const import SLOT_STATUS_PENDING_CLEAR
 from ..reconciliation import ManagedSlot as _ManagedSlot
 from ..reconciliation import Reservation as _Reservation
+from ..reconciliation import SlotStatus as _SlotStatus
 from . import codegen
 from . import keymaster_observation
 from . import reservations as reservations_helper
@@ -107,12 +109,16 @@ class CoordinatorReservationMixin:
         persisted: dict[str, Any],
         prefix: str,
         observed_mapping_keys: set[str] | None = None,
+        *,
+        advance: bool = True,
     ) -> list[_Reservation]:
         """Build synthetic Reservations for assigned slots absent from the feed.
 
         When a previously-assigned reservation disappears from the calendar
         feed, this method reconstructs a ghost :class:`~.reconciliation.Reservation`
-        with an incremented ``missing_count``.  The planner includes it so
+        with its persisted ``missing_count``. A fresh successful fetch advances
+        that count; reconciliation-only repeats leave it unchanged. The planner
+        includes it so
         that the slot is retained for up to two consecutive misses (T089);
         on the third miss the ghost is filtered out by
         :func:`~.reconciliation._filter_eligible` and the slot becomes
@@ -132,6 +138,7 @@ class CoordinatorReservationMixin:
             prefix: Computed event-prefix string (e.g. ``"RC "``).
             observed_mapping_keys: Mapping keys whose observed actual
                 state came from the current physical Keymaster read.
+            advance: Whether a successful calendar fetch may advance misses.
 
         Returns:
             List of ghost :class:`~.reconciliation.Reservation` objects
@@ -139,7 +146,7 @@ class CoordinatorReservationMixin:
         """
         ctx = self._reservation_build_context()
         result = reservations_helper.build_ghost_reservations(
-            current_keys, persisted, prefix, observed_mapping_keys, ctx
+            current_keys, persisted, prefix, observed_mapping_keys, ctx, advance=advance
         )
         return result.reservations
 
@@ -161,12 +168,29 @@ class CoordinatorReservationMixin:
             return []
 
         slots: list[_ManagedSlot] = []
+        pending_clear_slots = set(self.event_overrides.pending_clear_slots)
+        pending_clear_slots.update(
+            mapping["slot"]
+            for mapping in self._slot_mappings.get("mappings", {}).values()
+            if isinstance(mapping, dict)
+            and mapping.get("status") == SLOT_STATUS_PENDING_CLEAR
+            and (
+                mapping.get("missing_stay_pending_clear") is True
+                or (
+                    isinstance(mapping.get("missing_count"), int)
+                    and mapping["missing_count"] >= 3
+                )
+            )
+            and isinstance(mapping.get("slot"), int)
+        )
 
         for i in range(self.start_slot, self.start_slot + self.max_events):
             snapshot = self._read_slot_snapshot(i)
             ms, actual_state = keymaster_observation.classify_slot(
                 snapshot, self.event_overrides.get_last_slot_error(i)
             )
+            if i in pending_clear_slots and ms.status is not _SlotStatus.UNKNOWN:
+                ms.status = _SlotStatus.PENDING_CLEAR
             slots.append(ms)
             self.event_overrides.update_actual_state(i, actual_state)
 

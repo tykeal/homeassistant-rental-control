@@ -244,7 +244,7 @@ with protected active guests pinned first and counted against capacity.
    mismatches (`checkinsensor.py:625-675`).
 3. Update feed-miss records: a previously assigned reservation absent from the
    feed remains selected through missing counts 1 and 2; on the third miss it is
-   eligible for clearing unless protected.
+   eligible for clearing even if the check-in sensor reports checked in.
 4. Select protected active reservations first. If protected count exceeds
    capacity, keep their current slots and report capacity exhaustion; do not
    evict them mid-stay.

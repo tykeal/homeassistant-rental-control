@@ -195,6 +195,16 @@ class CheckinTrackingSensor(
 
     def _decision_context(self) -> CoordinatorUpdateContext:
         """Build a pure decision context from entity state."""
+        missing_stay = getattr(self.coordinator, "_is_missing_checkin_stay", None)
+        sustained_absence = (
+            callable(missing_stay)
+            and missing_stay(
+                self._tracked_event_slot_name,
+                self._tracked_event_start,
+                self._tracked_event_end,
+            )
+            is True
+        )
         return CoordinatorUpdateContext(
             self._snapshot(),
             self.coordinator.data or [],
@@ -205,6 +215,7 @@ class CheckinTrackingSensor(
             self.coordinator.event_prefix or "",
             self._unsub_timer is not None,
             self.coordinator.name,
+            sustained_absence,
         )
 
     def _get_cleaning_window(self) -> float:

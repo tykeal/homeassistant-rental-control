@@ -222,8 +222,9 @@ refreshes while verifying the mapping remains stable.
    slot still remains assigned and the absence remains tracked.
 5. **Given** the same reservation remains missing after the two tolerated
    consecutive refreshes, **When** the next reconciliation runs, **Then**
-   the reservation becomes eligible for normal clearing if it is not
-   otherwise protected.
+   the reservation becomes eligible for normal clearing even if its
+   check-in sensor still reports checked in. Failed fetches or parses and
+   reconciliation-only repeats do not count as calendar refreshes.
 6. **Given** a temporarily missing reservation reappears before the
    tolerance is exceeded, **When** reconciliation runs, **Then** its
    absence count is reset and the existing slot mapping is retained.
@@ -356,9 +357,9 @@ self-healing.
   Keymaster state.
 - **FR-003**: When eligible reservations exceed managed slot capacity, the
   desired plan MUST include the soonest reservations by start time up to
-  managed-slot capacity, except that currently checked-in guests MUST
-  remain assigned and count against capacity until their protected stay
-  ends.
+  managed-slot capacity, except that checked-in guests whose stays remain
+  in the feed, or are within the two-refresh miss tolerance, MUST remain
+  assigned and count against capacity until their protected stay ends.
 - **FR-004**: A farther-future unprotected reservation MUST NOT occupy an
   RC-managed slot while a nearer eligible reservation is unassigned, except
   while physical operations needed to remove the farther reservation are
@@ -393,8 +394,9 @@ self-healing.
 - **FR-012**: When an assigned reservation is absent from the calendar feed
   for one or two consecutive refreshes, the system MUST retain its slot and
   track the consecutive absence. After the two-refresh tolerance is
-  exceeded, the reservation MAY be cleared through normal reconciliation if
-  it is not otherwise protected.
+  exceeded by successful calendar refreshes, the reservation MUST lose
+  active-guest protection and enter normal reconciliation for clearing.
+  A pending clear MUST continue to prevent reuse until clear confirmation.
 - **FR-013**: When a previously absent reservation reappears before the
   tolerance is exceeded, the system MUST reset its absence count and keep
   the existing slot mapping when the reservation remains eligible.
@@ -463,7 +465,7 @@ self-healing.
   user's responsibility.
 - A currently checked-in guest is identified by the existing check-in
   tracking behavior and remains protected only for the existing active
-  stay window.
+  stay window and until the feed-miss tolerance is exceeded.
 - The two-refresh feed-miss tolerance protects against noisy calendar
   feeds; it is not intended to preserve codes indefinitely for reservations
   permanently removed from the booking source.
@@ -518,7 +520,8 @@ self-healing.
   unprotected reservation remains assigned while a nearer eligible
   reservation is unassigned once required clears and sets are confirmed.
 - **SC-005**: In 100% of active-stay overflow scenarios, a currently
-  checked-in guest remains assigned until the protected stay window ends.
+  checked-in guest whose stay has not exceeded the feed-miss tolerance
+  remains assigned until the protected stay window ends.
 - **SC-006**: In 100% of failed-clear scenarios, the affected slot is not
   assigned to a different reservation until the clear is confirmed, and
   the failure is visible through logs or diagnostics.

@@ -23,6 +23,7 @@ from ..reconciliation import SlotStatus as _SlotStatus
 from ..util import OperationResult
 from . import store_sync
 from .models import _adopted_slot_placeholder
+from .models import _format_display_slot_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -169,7 +170,31 @@ class CoordinatorStoreMixin:
         """
         self._adopt_observed_coded_slots(managed_slots)
         persisted = self._slot_mappings.get("mappings", {})
+        keys_by_slot: dict[int, list[str]] = {}
+        for key, mapping in persisted.items():
+            if isinstance(mapping, dict) and isinstance(mapping.get("slot"), int):
+                keys_by_slot.setdefault(mapping["slot"], []).append(key)
         for ms in managed_slots:
+            keys = keys_by_slot.get(ms.slot, [])
+            if ms.persisted_identity_key is None and len(keys) == 1:
+                mapping = persisted[keys[0]]
+                identity = mapping.get("identity", {})
+                name = identity.get("slot_name") if isinstance(identity, dict) else None
+                if (
+                    isinstance(name, str)
+                    and name
+                    and self._physical_slot_name_matches_name(
+                        ms.actual_name,
+                        name,
+                        _format_display_slot_name(
+                            name,
+                            f"{self.event_prefix} " if self.event_prefix else "",
+                            self.trim_names,
+                            self.max_name_length,
+                        ),
+                    )
+                ):
+                    ms.persisted_identity_key = keys[0]
             if ms.persisted_identity_key is None:
                 continue
             mapping = persisted.get(ms.persisted_identity_key)

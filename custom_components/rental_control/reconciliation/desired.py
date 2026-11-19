@@ -130,7 +130,7 @@ def select_eligible_reservations(
             continue
         if res.checked_out and not include_checked_out:
             continue
-        if res.missing_count >= 3 and not res.protected_active:
+        if res.missing_count >= 3:
             continue
         result.append(res)
     return result
@@ -332,6 +332,7 @@ def assemble_desired_actions(state: DesiredPlanState) -> None:
                 in {
                     ActionKind.SET,
                     ActionKind.CLEAR,
+                    ActionKind.RETRY_CLEAR,
                     ActionKind.OVERWRITE_MANUAL_CHANGE,
                 },
             )

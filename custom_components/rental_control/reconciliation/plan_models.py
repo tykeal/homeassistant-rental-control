@@ -64,7 +64,7 @@ class Reservation:
             checked out.
         missing_count: Consecutive refreshes missing from feed while
             persisted and assigned.  0, 1, or 2 keeps the slot; 3
-            makes the reservation clearable unless protected.
+            makes the reservation clearable even when checked in.
         published_once: True when the per-entry cache has durably recorded
             that this reservation's code was exposed outside the allocator.
         desired_slot: Slot selected by the current desired plan.

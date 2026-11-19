@@ -109,6 +109,8 @@ def _awaiting_replacement(ctx: CoordinatorUpdateContext) -> TransitionDecision |
 
 def decide_checked_in_update(ctx: CoordinatorUpdateContext) -> TransitionDecision:
     """Decide updates while checked in."""
+    if ctx.sustained_absence:
+        return _decision(DecisionEffect("transition_no_reservation"))
     snap = ctx.snapshot
     tracked = find_tracked_event(
         ctx.events, snap.tracked_event_summary, snap.tracked_event_start
