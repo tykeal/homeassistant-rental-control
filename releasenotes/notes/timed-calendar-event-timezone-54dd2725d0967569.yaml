@@ -1,0 +1,6 @@
+---
+fixes:
+  - |
+    Explicitly timed calendar events now retain their source timezone
+    and are rendered at the correct instant in Calendar Timezone,
+    including when conversion crosses midnight.

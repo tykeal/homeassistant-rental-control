@@ -10,6 +10,7 @@ fetching and executor handling and passes already-parsed
 
 from __future__ import annotations
 
+from datetime import date
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
@@ -45,10 +46,18 @@ def _event_summary(event: Any) -> str:
     return str(event["SUMMARY"]) if "SUMMARY" in event else ""
 
 
-def _event_date(value: Any) -> Any:
+def _local_date(value: date | datetime, timezone: tzinfo) -> date:
+    """Return the date of a date or datetime in the configured timezone."""
+    if not isinstance(value, datetime):
+        return value
+    if value.tzinfo is not None and value.utcoffset() is not None:
+        return value.astimezone(timezone).date()
+    return value.date()
+
+
+def _event_date(value: Any, timezone: tzinfo) -> date:
     """Return a comparable date from a VEVENT DTSTART/DTEND value."""
-    event_value = value.dt
-    return event_value.date() if isinstance(event_value, datetime) else event_value
+    return _local_date(value.dt, timezone)
 
 
 def combine_event_time(value: Any, selected_time: time, timezone: tzinfo) -> datetime:
@@ -177,15 +186,20 @@ def _vevent_filtered(
     if "Check-in" in summary or "Check-out" in summary:
         _LOGGER.debug("Smoobu extra event, ignoring")
         return True
+    from_event_date = _local_date(from_date, ctx.timezone)
+    to_event_date = _local_date(to_date, ctx.timezone)
     try:
         if "DTEND" in event and _event_date(
-            event["DTEND"]
-        ) < from_date.date() - timedelta(days=EVENT_AGE_THRESHOLD_DAYS):
+            event["DTEND"], ctx.timezone
+        ) < from_event_date - timedelta(days=EVENT_AGE_THRESHOLD_DAYS):
             return True
     except (AttributeError, TypeError):  # fmt: skip
         pass
     try:
-        if "DTSTART" in event and _event_date(event["DTSTART"]) > to_date.date():
+        if (
+            "DTSTART" in event
+            and _event_date(event["DTSTART"], ctx.timezone) > to_event_date
+        ):
             return True
     except (AttributeError, TypeError):  # fmt: skip
         pass
@@ -233,14 +247,23 @@ def _parse_vevent(
     checkin, checkout = _select_event_times(event, override, ctx)
 
     _LOGGER.debug("Checkin: %s, Checkout: %s", checkin, checkout)
-    dtstart: datetime = datetime.combine(event["DTSTART"].dt, checkin, ctx.timezone)
-    dtstart = _dt.as_utc(dtstart)
+    feed_datetimes = _selected_feed_datetimes(event, override, ctx)
+    dtstart: datetime = _event_datetime(
+        event["DTSTART"].dt,
+        checkin,
+        ctx.timezone,
+        feed_datetimes[0] if feed_datetimes is not None else None,
+    )
     start: datetime = dtstart
     if "DTEND" not in event:
         dtend: datetime = dtstart
     else:
-        dtend = datetime.combine(event["DTEND"].dt, checkout, ctx.timezone)
-    dtend = _dt.as_utc(dtend)
+        dtend = _event_datetime(
+            event["DTEND"].dt,
+            checkout,
+            ctx.timezone,
+            feed_datetimes[1] if feed_datetimes is not None else None,
+        )
     end = dtend
 
     if ctx.event_prefix:
@@ -253,13 +276,9 @@ def _select_event_times(
     event: Any, override: Any, ctx: CalendarParseContext
 ) -> tuple[time, time]:
     """Return the (checkin, checkout) times for a single calendar event."""
-    has_explicit_times = isinstance(event["DTSTART"].dt, datetime) and (
-        "DTEND" in event and isinstance(event["DTEND"].dt, datetime)
-    )
-
-    if ctx.honor_event_times and has_explicit_times:
+    if _selected_feed_datetimes(event, override, ctx) is not None:
         return event["DTSTART"].dt.time(), event["DTEND"].dt.time()
-    if ctx.honor_event_times and not has_explicit_times:
+    if ctx.honor_event_times:
         return _select_honor_times_no_explicit(event, override, ctx)
     if override:
         checkin = physical_override_time(
@@ -281,6 +300,39 @@ def _select_event_times(
         return event["DTSTART"].dt.time(), event["DTEND"].dt.time()
     except (AttributeError, KeyError):  # fmt: skip
         return ctx.checkin, ctx.checkout
+
+
+def _selected_feed_datetimes(
+    event: Any, override: Any, ctx: CalendarParseContext
+) -> tuple[datetime, datetime] | None:
+    """Return DTSTART/DTEND only when explicit feed times win precedence."""
+    if (
+        not isinstance(event["DTSTART"].dt, datetime)
+        or "DTEND" not in event
+        or not isinstance(event["DTEND"].dt, datetime)
+    ):
+        return None
+    if not ctx.honor_event_times and override:
+        return None
+    return event["DTSTART"].dt, event["DTEND"].dt
+
+
+def _event_datetime(
+    value: Any,
+    selected_time: time,
+    timezone: tzinfo,
+    feed_datetime: datetime | None,
+) -> datetime:
+    """Resolve an event endpoint, preserving a selected aware feed instant."""
+    if feed_datetime is not None and (
+        feed_datetime.tzinfo is not None and feed_datetime.utcoffset() is not None
+    ):
+        return cast("datetime", _dt.as_utc(feed_datetime))
+    event_date = value.date() if isinstance(value, datetime) else value
+    return cast(
+        "datetime",
+        _dt.as_utc(datetime.combine(event_date, selected_time, timezone)),
+    )
 
 
 def _select_honor_times_no_explicit(

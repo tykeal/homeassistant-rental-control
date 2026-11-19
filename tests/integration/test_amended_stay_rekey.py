@@ -18,6 +18,7 @@ from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from homeassistant.util import dt as dt_util
 from icalendar import Calendar
@@ -60,7 +61,7 @@ _ANONYMOUS = {
 }
 
 
-def _entry(url: str) -> MockConfigEntry:
+def _entry(url: str, timezone: str = "UTC") -> MockConfigEntry:
     """Return a lock-backed entry managing slots 6 and 7."""
     return MockConfigEntry(
         domain="rental_control",
@@ -70,7 +71,7 @@ def _entry(url: str) -> MockConfigEntry:
         data={
             "name": "Amended Rental",
             "url": url,
-            "timezone": "UTC",
+            "timezone": timezone,
             "checkin": "16:00",
             "checkout": "11:00",
             "start_slot": 6,
@@ -87,21 +88,38 @@ def _entry(url: str) -> MockConfigEntry:
     )
 
 
-def _ics(feed: dict[str, str], start: datetime, end: datetime) -> Calendar:
+def _ics(
+    feed: dict[str, str],
+    start: datetime,
+    end: datetime,
+    target_tzid: str | None = None,
+) -> Calendar:
     """Return the feed with the target stay at *start*..*end* and a peer."""
     events = (
         (feed["summary"], feed["uid"], start, end),
         (feed["peer_summary"], feed["peer_uid"], _PEER_START, _PEER_END),
     )
-    body = "".join(
-        "BEGIN:VEVENT\r\n"
-        f"DTSTART:{s.strftime('%Y%m%dT%H%M%SZ')}\r\n"
-        f"DTEND:{e.strftime('%Y%m%dT%H%M%SZ')}\r\n"
-        f"UID:{uid}\r\n"
-        f"SUMMARY:{summary}\r\n"
-        "END:VEVENT\r\n"
-        for summary, uid, s, e in events
-    )
+    body = ""
+    for index, (summary, uid, event_start, event_end) in enumerate(events):
+        if index == 0 and target_tzid is not None:
+            dtstart = (
+                f"DTSTART;TZID={target_tzid}:"
+                f"{event_start.strftime('%Y%m%dT%H%M%S')}\r\n"
+            )
+            dtend = (
+                f"DTEND;TZID={target_tzid}:{event_end.strftime('%Y%m%dT%H%M%S')}\r\n"
+            )
+        else:
+            dtstart = f"DTSTART:{event_start.strftime('%Y%m%dT%H%M%SZ')}\r\n"
+            dtend = f"DTEND:{event_end.strftime('%Y%m%dT%H%M%SZ')}\r\n"
+        body += (
+            "BEGIN:VEVENT\r\n"
+            f"{dtstart}"
+            f"{dtend}"
+            f"UID:{uid}\r\n"
+            f"SUMMARY:{summary}\r\n"
+            "END:VEVENT\r\n"
+        )
     return Calendar.from_ical(
         f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n{body}"
         "END:VCALENDAR\r\n"
@@ -127,7 +145,16 @@ def _program_slot(
 
 
 async def _prepare(
-    hass: HomeAssistant, feed: dict[str, str], preloaded: bool
+    hass: HomeAssistant,
+    feed: dict[str, str],
+    preloaded: bool,
+    *,
+    calendar_timezone: str = "UTC",
+    target_tzid: str | None = None,
+    old_start: datetime = _OLD_START,
+    old_end: datetime = _OLD_END,
+    new_start: datetime = _NEW_START,
+    new_end: datetime = _NEW_END,
 ) -> tuple[RentalControlCoordinator, list[Any], list[Any], str, str]:
     """Program the lock from the original feed, then amend the target stay.
 
@@ -138,12 +165,12 @@ async def _prepare(
     Returns the coordinator, the prepared reservations, the observed slots
     and the target and peer reservations' display names.
     """
-    entry = _entry(feed["url"])
+    entry = _entry(feed["url"], calendar_timezone)
     entry.add_to_hass(hass)
     coordinator = RentalControlCoordinator(hass, entry)
 
     original = await coordinator._ical_parser(
-        _ics(feed, _OLD_START, _OLD_END), _PARSE_FROM, _PARSE_TO
+        _ics(feed, old_start, old_end, target_tzid), _PARSE_FROM, _PARSE_TO
     )
     by_uid = {event.uid: event for event in original}
     target_name = coordinator._build_reservations([by_uid[feed["uid"]]])[
@@ -152,7 +179,14 @@ async def _prepare(
     peer_name = coordinator._build_reservations([by_uid[feed["peer_uid"]]])[
         0
     ].display_slot_name
-    _program_slot(hass, 6, target_name, "1357", _OLD_START, _OLD_END)
+    _program_slot(
+        hass,
+        6,
+        target_name,
+        "1357",
+        old_start.astimezone(dt_util.UTC),
+        old_end.astimezone(dt_util.UTC),
+    )
     _program_slot(hass, 7, peer_name, "2468", _PEER_START, _PEER_END)
 
     if preloaded:
@@ -165,7 +199,7 @@ async def _prepare(
         ]
 
     amended = await coordinator._ical_parser(
-        _ics(feed, _NEW_START, _NEW_END), _PARSE_FROM, _PARSE_TO
+        _ics(feed, new_start, new_end, target_tzid), _PARSE_FROM, _PARSE_TO
     )
     observed = coordinator._observe_managed_slots()
     reservations = coordinator._prepare_reservations_for_adoption(amended, observed)
@@ -217,3 +251,51 @@ async def test_amended_adopted_stay_is_rekeyed_without_a_ghost(
     )
     assert reprogram[0].identity_key == target.identity_key
     assert [action for action in plan.actions if action.slot == 7] == []
+
+
+async def test_tzid_time_correction_updates_existing_slot_without_reissue(
+    hass: HomeAssistant,
+) -> None:
+    """A timezone-corrected amendment retains the slot and existing PIN."""
+    eastern = ZoneInfo("America/New_York")
+    old_start = datetime(2026, 8, 10, 12, tzinfo=eastern)
+    old_end = datetime(2026, 8, 14, 11, tzinfo=eastern)
+    new_start = datetime(2026, 8, 9, 11, tzinfo=eastern)
+    feed = {
+        "url": _AIRBNB_URL,
+        "summary": "Reservation Synthetic Guest",
+        "uid": "synthetic-stay@example.invalid",
+        "peer_summary": "Reservation Synthetic Peer",
+        "peer_uid": "synthetic-peer@example.invalid",
+    }
+
+    coordinator, reservations, observed, target_name, _peer_name = await _prepare(
+        hass,
+        feed,
+        preloaded=True,
+        calendar_timezone="Pacific/Honolulu",
+        target_tzid="America/New_York",
+        old_start=old_start,
+        old_end=old_end,
+        new_start=new_start,
+        new_end=old_end,
+    )
+    target = next(res for res in reservations if res.display_slot_name == target_name)
+    assert target.start == new_start.astimezone(dt_util.UTC)
+    assert target.end == old_end.astimezone(dt_util.UTC)
+
+    plan = compute_desired_plan(
+        reservations=reservations,
+        managed_slots=observed,
+        max_events=2,
+        plan_id="tzid-952",
+        generated_at=_PARSE_FROM,
+        entry_id="amended_entry",
+        lockname=_LOCK,
+        start_slot=6,
+    )
+
+    assert plan.selected[target.identity_key] == 6
+    target_actions = [action for action in plan.actions if action.slot == 6]
+    assert [action.kind for action in target_actions] == [ActionKind.UPDATE_TIMES]
+    assert target_actions[0].identity_key == target.identity_key
