@@ -91,11 +91,11 @@ def select_stateless_reservations(
     ]
     protected = sorted(
         [desired for desired in eligible if desired.protected_active],
-        key=lambda desired: (desired.start, desired.desired_id),
+        key=lambda desired: (_datetime_as_utc(desired.start), desired.desired_id),
     )
     non_protected = sorted(
         [desired for desired in eligible if not desired.protected_active],
-        key=lambda desired: (desired.start, desired.desired_id),
+        key=lambda desired: (_datetime_as_utc(desired.start), desired.desired_id),
     )
     selected = [
         *protected,
@@ -117,7 +117,13 @@ def group_stateless_reservations_by_name(
     for desired in selected:
         selected_by_name.setdefault(_desired_name_key(desired), []).append(desired)
     for group in selected_by_name.values():
-        group.sort(key=lambda desired: (desired.start, desired.end, desired.desired_id))
+        group.sort(
+            key=lambda desired: (
+                _datetime_as_utc(desired.start),
+                _datetime_as_utc(desired.end),
+                desired.desired_id,
+            )
+        )
     return selected_by_name
 
 
