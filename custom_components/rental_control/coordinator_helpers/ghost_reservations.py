@@ -47,12 +47,14 @@ def build_ghost_reservations(
     prefix: str,
     observed_mapping_keys: set[str] | None,
     ctx: ReservationBuildContext,
+    *,
+    advance: bool = True,
 ) -> GhostReservationResult:
     """Build synthetic Reservations for assigned slots absent from the feed."""
     result = GhostReservationResult()
     for key, mapping in persisted.items():
         ghost = _build_one_ghost(
-            key, mapping, current_keys, prefix, observed_mapping_keys, ctx
+            key, mapping, current_keys, prefix, observed_mapping_keys, ctx, advance
         )
         if ghost is not None:
             result.reservations.append(ghost)
@@ -66,19 +68,34 @@ def _build_one_ghost(
     prefix: str,
     observed_mapping_keys: set[str] | None,
     ctx: ReservationBuildContext,
+    advance: bool,
 ) -> _Reservation | None:
     """Return a single ghost reservation, applying missing-count mutations."""
     if key in current_keys:
         return None
     status = mapping.get("status")
-    if status not in (SLOT_STATUS_OCCUPIED, SLOT_STATUS_PENDING_SET):
+    pending_missing_clear = (
+        status == SLOT_STATUS_PENDING_CLEAR
+        and mapping.get("missing_stay_pending_clear") is True
+    )
+    if (
+        status
+        not in (
+            SLOT_STATUS_OCCUPIED,
+            SLOT_STATUS_PENDING_SET,
+            "cache",
+        )
+        and not pending_missing_clear
+    ):
         return None
 
     missing_count = mapping.get("missing_count", 0)
     if not isinstance(missing_count, int):
         missing_count = 0
-    new_mc = missing_count + 1
+    new_mc = missing_count + int(advance)
     mapping["missing_count"] = new_mc
+    if pending_missing_clear:
+        return None
 
     if status == SLOT_STATUS_PENDING_SET and new_mc >= 3:
         mapping["status"] = SLOT_STATUS_PENDING_CLEAR

@@ -14,7 +14,9 @@ from typing import Any
 from typing import cast
 
 from ..const import ISSUED_ORIGINS
+from ..const import OPERATION_KIND_CLEAR
 from ..const import SLOT_STATUS_OCCUPIED
+from ..const import SLOT_STATUS_PENDING_CLEAR
 from ..const import STORE_SCHEMA_VERSION
 from ..reconciliation import DesiredPlan
 from ..reconciliation import ManagedSlot
@@ -98,7 +100,7 @@ def build_cache_mapping(
             "uid_aliases": sorted(res.uid_aliases),
             "booking_aliases": sorted(res.booking_aliases),
         },
-        "missing_count": 0,
+        "missing_count": res.missing_count,
         "published_once": (
             actual.get("published_once") is True
             or res.published_once
@@ -358,6 +360,26 @@ def build_store_sync_plan(
         if mapping.get("slot") in confirmed_clear_slots
     ]
     upserts: dict[str, dict[str, Any]] = {}
+    pending_clear_slots = {
+        result.slot
+        for result in operation_results
+        if result.kind == "clear" and not result.confirmed
+    }
+    for key, mapping in mappings.items():
+        if (
+            mapping.get("slot") in pending_clear_slots
+            and isinstance(mapping.get("missing_count"), int)
+            and mapping["missing_count"] >= 3
+            and key not in remove_keys
+        ):
+            updated = dict(mapping)
+            updated["status"] = SLOT_STATUS_PENDING_CLEAR
+            updated["pending_clear_since"] = (
+                mapping.get("pending_clear_since") or now_str
+            )
+            updated["operation_kind"] = OPERATION_KIND_CLEAR
+            updated["missing_stay_pending_clear"] = True
+            upserts[key] = updated
     for identity_key, slot in plan.selected.items():
         if slot in confirmed_clear_slots or slot in failed_set_slots:
             continue

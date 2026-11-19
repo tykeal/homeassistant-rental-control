@@ -92,7 +92,7 @@ class CoordinatorCheckinMixin:
             started_by=dt.now() if checked_out else None,
         )
         if matched is not None:
-            if snapshot.state == CHECKIN_STATE_CHECKED_IN:
+            if snapshot.state == CHECKIN_STATE_CHECKED_IN and matched.missing_count < 3:
                 matched.protected_active = True
             elif checked_out:
                 matched.checked_out = True
@@ -111,6 +111,20 @@ class CoordinatorCheckinMixin:
         ):
             protected = self._synthesize_checkin_reservation(snapshot, managed_slots)
             if protected is not None:
+                for index, existing in enumerate(reservations):
+                    if (
+                        existing.identity_key == protected.identity_key
+                        and existing.missing_count > 0
+                    ):
+                        protected.uid_aliases.update(existing.uid_aliases)
+                        protected.booking_aliases.update(existing.booking_aliases)
+                        protected.fingerprint_history.update(
+                            existing.fingerprint_history
+                        )
+                        protected.published_once = existing.published_once
+                        protected.issued_origin = existing.issued_origin
+                        reservations[index] = protected
+                        return
                 reservations.append(protected)
 
     def _synthesize_checkin_reservation(
@@ -140,6 +154,9 @@ class CoordinatorCheckinMixin:
         buffered_end = (
             buffered_end_raw if isinstance(buffered_end_raw, datetime) else end
         )
+        identity_key = make_reservation_fingerprint(
+            self._entry_id, snapshot.guest_name, start, end
+        )
         matched_physical = self._find_observed_slot_by_name(
             managed_slots,
             snapshot.guest_name,
@@ -147,6 +164,25 @@ class CoordinatorCheckinMixin:
             desired_start=buffered_start,
             desired_end=buffered_end,
         )
+        matching_mappings = [
+            (key, mapping)
+            for key, mapping in self._slot_mappings.get("mappings", {}).items()
+            if matched_physical is not None
+            and isinstance(mapping, dict)
+            and mapping.get("slot") == matched_physical.slot
+            and isinstance(mapping.get("missing_count"), int)
+            and self._mapping_matches_checkin(
+                key, mapping, snapshot, identity_key, buffered_start, buffered_end
+            )
+        ]
+        missing_count = max(
+            (mapping["missing_count"] for _, mapping in matching_mappings), default=0
+        )
+        if missing_count >= 3 or any(
+            mapping.get("missing_stay_pending_clear") is True
+            for _, mapping in matching_mappings
+        ):
+            return None
         same_name_slots = [
             slot
             for slot in managed_slots
@@ -156,9 +192,8 @@ class CoordinatorCheckinMixin:
                 slot.actual_name, snapshot.guest_name, display_slot_name
             )
         ]
-        identity_key = make_reservation_fingerprint(
-            self._entry_id, snapshot.guest_name, start, end
-        )
+        if missing_count and len(matching_mappings) == 1:
+            identity_key = matching_mappings[0][0]
         generated_code = self._generate_slot_code(start, end, None, None)
         suppression = self._reservation_build_context().reissue_suppression
         suppress_observed = identity_key in suppression.identity_keys or (
@@ -174,7 +209,7 @@ class CoordinatorCheckinMixin:
         code_provenance = (
             "generated" if slot_code == generated_code else "manual_observed"
         )
-        return checkin_protection.build_protected_reservation(
+        protected = checkin_protection.build_protected_reservation(
             snapshot,
             matched_physical,
             len(same_name_slots),
@@ -183,6 +218,49 @@ class CoordinatorCheckinMixin:
             display_slot_name,
             code_provenance,
         )
+        if protected is not None:
+            protected.missing_count = missing_count
+        return protected
+
+    def _mapping_matches_checkin(
+        self,
+        key: str,
+        mapping: dict[str, Any],
+        snapshot: CheckinProtectionSnapshot,
+        fingerprint: str,
+        buffered_start: datetime,
+        buffered_end: datetime,
+    ) -> bool:
+        """Match a tracked stay without conflating same-name occupants."""
+        identity = mapping.get("identity")
+        if not isinstance(identity, dict):
+            return False
+        name = identity.get("slot_name")
+        if name != snapshot.guest_name:
+            return False
+        history = mapping.get("fingerprint_history", [])
+        if key == fingerprint or (
+            isinstance(history, (list, tuple, set)) and fingerprint in history
+        ):
+            return True
+        identity_start = self._coerce_checkin_datetime(identity.get("start"))
+        identity_end = self._coerce_checkin_datetime(identity.get("end"))
+        if identity_start is not None and identity_end is not None:
+            return (identity_start, identity_end) in {
+                (snapshot.start, snapshot.end),
+                (buffered_start, buffered_end),
+            }
+        actual = mapping.get("last_observed_actual")
+        if not isinstance(actual, dict):
+            return True
+        actual_window = (
+            self._coerce_checkin_datetime(actual.get("start_state")),
+            self._coerce_checkin_datetime(actual.get("end_state")),
+        )
+        return None in actual_window or actual_window in {
+            (snapshot.start, snapshot.end),
+            (buffered_start, buffered_end),
+        }
 
     @staticmethod
     def _coerce_checkin_datetime(value: Any) -> datetime | None:
@@ -193,6 +271,59 @@ class CoordinatorCheckinMixin:
             parsed = dt.parse_datetime(value)
             return parsed if isinstance(parsed, datetime) else None
         return None
+
+    def _is_missing_checkin_stay(
+        self, name: str | None, start: datetime | None, end: datetime | None
+    ) -> bool:
+        """Return whether this exact tracked stay exceeded feed-miss tolerance."""
+        if not name or start is None or end is None:
+            return False
+        if any(
+            res.slot_name == name
+            and res.start == start
+            and res.end == end
+            and res.missing_count == 0
+            for res in self._latest_res_by_key.values()
+        ):
+            return False
+        buffered_start_raw, buffered_end_raw = apply_buffer(
+            start, end, self.code_buffer_before, self.code_buffer_after, self
+        )
+        buffered_start = (
+            buffered_start_raw if isinstance(buffered_start_raw, datetime) else start
+        )
+        buffered_end = (
+            buffered_end_raw if isinstance(buffered_end_raw, datetime) else end
+        )
+        windows = {(start, end), (buffered_start, buffered_end)}
+        fingerprint = make_reservation_fingerprint(self._entry_id, name, start, end)
+        snapshot = CheckinProtectionSnapshot(
+            state=CHECKIN_STATE_CHECKED_IN,
+            guest_name=name,
+            start=start,
+            end=end,
+            summary=name,
+            attributes={},
+        )
+        counts = []
+        for key, mapping in self._slot_mappings.get("mappings", {}).items():
+            if isinstance(mapping, dict) and self._mapping_matches_checkin(
+                key, mapping, snapshot, fingerprint, buffered_start, buffered_end
+            ):
+                count = mapping.get("missing_count", 0)
+                counts.append(count if isinstance(count, int) else 0)
+        if counts:
+            return all(count >= 3 for count in counts)
+        return any(
+            res.slot_name == name
+            and (
+                (res.start, res.end) in windows
+                or res.identity_key == fingerprint
+                or fingerprint in res.fingerprint_history
+            )
+            and res.missing_count >= 3
+            for res in self._latest_res_by_key.values()
+        )
 
     def _datetimes_match(self, left: datetime, right: datetime) -> bool:
         """Return whether two datetimes represent the same instant."""

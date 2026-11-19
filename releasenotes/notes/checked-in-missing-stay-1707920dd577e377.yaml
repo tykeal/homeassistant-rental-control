@@ -1,0 +1,6 @@
+---
+fixes:
+  - |
+    Clear a missing reservation through normal Keymaster reconciliation
+    after three consecutive successful calendar refreshes, even if its
+    check-in sensor still reports checked in.

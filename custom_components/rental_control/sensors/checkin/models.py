@@ -69,6 +69,7 @@ class CoordinatorUpdateContext:
     event_prefix: str
     active_timer: bool
     coordinator_name: str
+    sustained_absence: bool = False
 
 
 @dataclass(frozen=True, slots=True)

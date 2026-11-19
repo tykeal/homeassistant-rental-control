@@ -65,6 +65,47 @@ def _amended_stay_remap(
     return _unique_targets(remap)
 
 
+def _aliased_stay_remap(
+    persisted: dict[str, Any],
+    unmatched: list[str],
+    current_reservations: list[Reservation],
+    actual_slot_names: dict[int, str],
+    claimed_targets: set[str],
+) -> dict[str, str]:
+    """Re-key a unique overlapping stay when its feed UID still matches."""
+    remap: dict[str, str] = {}
+    for key in unmatched:
+        mapping = persisted[key]
+        identity = mapping.get("identity", {})
+        if not isinstance(identity, dict):
+            continue
+        aliases = identity.get("uid_aliases", [])
+        if not isinstance(aliases, (list, tuple, set)):
+            continue
+        aliases = {alias for alias in aliases if isinstance(alias, str)}
+        start = observed_value_as_datetime(identity.get("start"))
+        end = observed_value_as_datetime(identity.get("end"))
+        if not aliases or start is None or end is None:
+            continue
+        matches = [
+            res.identity_key
+            for res in current_reservations
+            if aliases.intersection(res.uid_aliases)
+            and res.start < end
+            and start < res.end
+            and physical_mapping_name_matches_reservation(
+                mapping, res, actual_slot_names
+            )
+        ]
+        if (
+            len(matches) == 1
+            and matches[0] not in claimed_targets
+            and matches[0] not in persisted
+        ):
+            remap[key] = matches[0]
+    return _unique_targets(remap)
+
+
 def physical_mapping_window_is_unowned(
     mapping: dict[str, Any], current_reservations: list[Reservation]
 ) -> bool:
@@ -114,6 +155,12 @@ def remap_observed_mappings_to_physical_reservations(
 
     exact_targets = set(remap.values())
     remap = _unique_targets(remap)
+    aliases = _aliased_stay_remap(
+        persisted, unmatched, current_reservations, actual_slot_names, exact_targets
+    )
+    remap.update(aliases)
+    unmatched = [key for key in unmatched if key not in aliases]
+    exact_targets.update(aliases.values())
     remap.update(
         _amended_stay_remap(
             persisted,

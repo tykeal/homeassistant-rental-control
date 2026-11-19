@@ -143,6 +143,7 @@ class CoordinatorRefreshMixin:
             else:
                 raise
 
+        reconciliation_calendar = new_calendar
         if is_fresh_data:
             # Miss tracking: preserve stale data when within tolerance
             previous: list[CalendarEvent] | None = self.data
@@ -182,10 +183,14 @@ class CoordinatorRefreshMixin:
                     self.event = event
                     break
 
-        if self.event_overrides:
-            await self._run_reconciliation(new_calendar)
-        else:
-            await self._run_lockless_allocation(new_calendar)
+        self._advance_calendar_misses = is_fresh_data
+        try:
+            if self.event_overrides:
+                await self._run_reconciliation(reconciliation_calendar)
+            else:
+                await self._run_lockless_allocation(reconciliation_calendar)
+        finally:
+            self._advance_calendar_misses = False
 
         await self.async_save_slot_store()
 
@@ -399,7 +404,8 @@ class CoordinatorRefreshMixin:
                 observed_mapping_keys,
             )
         )
-        self._hydrate_reservations_from_mappings(reservations, persisted)
+        fresh = getattr(self, "_advance_calendar_misses", False)
+        self._hydrate_reservations_from_mappings(reservations, persisted, fresh=fresh)
         prefix = f"{self.event_prefix} " if self.event_prefix else ""
         reservations.extend(
             self._build_ghost_reservations(
@@ -407,13 +413,17 @@ class CoordinatorRefreshMixin:
                 persisted,
                 prefix,
                 observed_mapping_keys,
+                advance=fresh,
             )
         )
         return reservations
 
     @staticmethod
     def _hydrate_reservations_from_mappings(
-        reservations: list[_Reservation], persisted: dict[str, Any]
+        reservations: list[_Reservation],
+        persisted: dict[str, Any],
+        *,
+        fresh: bool = True,
     ) -> None:
         """Copy cache-only mapping continuity fields onto live reservations."""
         for reservation in reservations:
@@ -425,7 +435,14 @@ class CoordinatorRefreshMixin:
                 reservation.fingerprint_history.update(
                     item for item in history if isinstance(item, str)
                 )
-            reservation.missing_count = 0
+            missing_count = mapping.get("missing_count", 0)
+            reservation.missing_count = (
+                0 if fresh or not isinstance(missing_count, int) else missing_count
+            )
+            if fresh:
+                mapping["missing_count"] = 0
+            if mapping.get("missing_stay_pending_clear") is True:
+                reservation.eligible = False
             reservation.published_once = mapping.get("published_once") is True
             reservation.issued_origin = lockless_store.issued_origin(mapping)
 

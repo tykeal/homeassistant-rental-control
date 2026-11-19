@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from datetime import timedelta
 
@@ -61,6 +62,19 @@ def test_restore_checked_in_ended_event_silent_checkout() -> None:
         "compute_linger",
     ]
     assert decision.write_state is True
+
+
+def test_restore_missing_checked_in_stay_does_not_schedule_checkout() -> None:
+    """A restored expired ghost is cleared without a checkout transition."""
+    snapshot = CheckinStateSnapshot(
+        CHECKIN_STATE_CHECKED_IN,
+        "Guest",
+        NOW - timedelta(hours=1),
+        NOW + timedelta(days=1),
+    )
+    decision = decide_restore_state(replace(_ctx(snapshot), sustained_absence=True))
+
+    assert [effect.kind for effect in decision.effects] == ["transition_no_reservation"]
 
 
 def test_restore_awaiting_past_start_silent_checkin_checkout() -> None:

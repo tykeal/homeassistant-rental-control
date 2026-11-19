@@ -595,6 +595,302 @@ async def test_checkin_protection_synthesizes_missing_active_physical_stay(
     assert reservations[0].slot_code == "1111"
 
 
+@pytest.mark.parametrize("missing_count", [1, 2, 3])
+@pytest.mark.parametrize("dateless", [False, True])
+async def test_synthetic_checkin_carries_persisted_absence(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    missing_count: int,
+    dateless: bool,
+) -> None:
+    """A synthetic stay cannot erase the absence on its occupied slot."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end = start + timedelta(days=7)
+    hass.data[DOMAIN] = {
+        coordinator._entry_id: {
+            CHECKIN_SENSOR: MagicMock(
+                state=CHECKIN_STATE_CHECKED_IN,
+                extra_state_attributes={
+                    "guest_name": "Guest",
+                    "start": start,
+                    "end": end,
+                    "summary": "Guest",
+                },
+            )
+        }
+    }
+    coordinator._slot_mappings = {
+        "mappings": {
+            "old-identity": {
+                "slot": 1,
+                "status": "pending_clear" if missing_count == 3 else "cache",
+                "missing_count": missing_count,
+                "identity": {
+                    "slot_name": "Guest",
+                    "start": None if dateless else start.isoformat(),
+                    "end": None if dateless else end.isoformat(),
+                },
+            }
+        }
+    }
+    observed_slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=None if dateless else start,
+            actual_end=None if dateless else end,
+        )
+    ]
+    reservations: list[Reservation] = []
+    coordinator._apply_checkin_protection(reservations, observed_slots)
+
+    assert coordinator._is_missing_checkin_stay("Guest", start, end) is (
+        missing_count == 3
+    )
+    if missing_count < 3:
+        assert len(reservations) == 1
+        assert reservations[0].protected_active
+        assert reservations[0].missing_count == missing_count
+    else:
+        assert reservations == []
+
+
+async def test_synthetic_checkin_replaces_its_buffered_ghost(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A buffered ghost and synthesized check-in cannot occupy two slots."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    coordinator.code_buffer_before = 60
+    start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end = start + timedelta(days=7)
+    buffered_start = start - timedelta(hours=1)
+    hass.data[DOMAIN] = {
+        coordinator._entry_id: {
+            CHECKIN_SENSOR: MagicMock(
+                state=CHECKIN_STATE_CHECKED_IN,
+                extra_state_attributes={
+                    "guest_name": "Guest",
+                    "start": start,
+                    "end": end,
+                    "summary": "Guest",
+                },
+            )
+        }
+    }
+    coordinator._slot_mappings = {
+        "mappings": {
+            "old": {
+                "slot": 1,
+                "missing_count": 2,
+                "identity": {
+                    "slot_name": "Guest",
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                },
+            }
+        }
+    }
+    reservations = [
+        Reservation(
+            identity_key="old",
+            start=buffered_start,
+            end=end,
+            buffered_start=buffered_start,
+            buffered_end=end,
+            summary="Guest",
+            slot_name="Guest",
+            display_slot_name="Guest",
+            slot_code=None,
+            uid_aliases={"test-uid"},
+            missing_count=2,
+        )
+    ]
+    slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=buffered_start,
+            actual_end=end,
+        )
+    ]
+
+    coordinator._apply_checkin_protection(reservations, slots)
+
+    assert len(reservations) == 1
+    assert reservations[0].identity_key == "old"
+    assert reservations[0].missing_count == 2
+    assert reservations[0].uid_aliases == {"test-uid"}
+    assert reservations[0].protected_active
+
+
+@pytest.mark.parametrize("old_name", ["Former Guest", "Current Guest"])
+async def test_expired_mapping_does_not_expire_another_checked_in_guest(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, old_name: str
+) -> None:
+    """A stale mapping for a different occupant cannot expire this sensor."""
+    from custom_components.rental_control.reconciliation import ManagedSlot
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import SlotStatus
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end = start + timedelta(days=7)
+    hass.data[DOMAIN] = {
+        coordinator._entry_id: {
+            CHECKIN_SENSOR: MagicMock(
+                state=CHECKIN_STATE_CHECKED_IN,
+                extra_state_attributes={
+                    "guest_name": "Current Guest",
+                    "start": start,
+                    "end": end,
+                    "summary": "Current Guest",
+                },
+            )
+        }
+    }
+    coordinator._slot_mappings = {
+        "mappings": {
+            "old": {
+                "slot": 1,
+                "missing_count": 3,
+                "identity": {
+                    "slot_name": old_name,
+                    "start": (start - timedelta(days=30)).isoformat(),
+                    "end": (end - timedelta(days=30)).isoformat(),
+                },
+            }
+        }
+    }
+    slots = [
+        ManagedSlot(
+            slot=1,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Current Guest",
+            actual_code="1111",
+            actual_code_present=True,
+            actual_start=start,
+            actual_end=end,
+        )
+    ]
+    reservations: list[Reservation] = []
+    coordinator._apply_checkin_protection(reservations, slots)
+
+    assert len(reservations) == 1
+    assert reservations[0].protected_active
+    assert reservations[0].missing_count == 0
+    assert not coordinator._is_missing_checkin_stay("Current Guest", start, end)
+
+
+def test_missing_checkin_matches_fingerprint_after_buffer_change(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """The sensor still expires when stored ghost dates use an older buffer."""
+    from custom_components.rental_control.reconciliation import Reservation
+    from custom_components.rental_control.reconciliation import (
+        make_reservation_fingerprint,
+    )
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end = start + timedelta(days=7)
+    old_start = start - timedelta(hours=1)
+    old_end = end + timedelta(hours=1)
+    coordinator.code_buffer_before = 120
+    coordinator.code_buffer_after = 120
+    key = make_reservation_fingerprint(coordinator._entry_id, "Guest", start, end)
+    coordinator._slot_mappings = {
+        "mappings": {
+            key: {
+                "missing_count": 3,
+                "identity": {
+                    "slot_name": "Guest",
+                    "start": old_start.isoformat(),
+                    "end": old_end.isoformat(),
+                },
+            }
+        }
+    }
+
+    assert coordinator._is_missing_checkin_stay("Guest", start, end)
+    assert not coordinator._is_missing_checkin_stay(
+        "Guest", start + timedelta(days=1), end + timedelta(days=1)
+    )
+
+    coordinator._slot_mappings = {"mappings": {}}
+    coordinator._latest_res_by_key = {
+        key: Reservation(
+            identity_key=key,
+            start=old_start,
+            end=old_end,
+            buffered_start=old_start,
+            buffered_end=old_end,
+            summary="Guest",
+            slot_name="Guest",
+            display_slot_name="Guest",
+            slot_code=None,
+            missing_count=3,
+        )
+    }
+    assert coordinator._is_missing_checkin_stay("Guest", start, end)
+
+
+def test_dateless_missing_mapping_does_not_expire_present_same_name(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A current event wins over an ambiguous same-name dateless mapping."""
+    from custom_components.rental_control.reconciliation import Reservation
+
+    mock_config_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_config_entry)
+    start = dt_util.as_utc(datetime(2026, 8, 1, 14))
+    end = start + timedelta(days=7)
+    coordinator._slot_mappings = {
+        "mappings": {
+            "old": {
+                "missing_count": 3,
+                "identity": {"slot_name": "Guest", "start": None, "end": None},
+            }
+        }
+    }
+    coordinator._latest_res_by_key = {
+        "present": Reservation(
+            identity_key="present",
+            start=start,
+            end=end,
+            buffered_start=start,
+            buffered_end=end,
+            summary="Guest",
+            slot_name="Guest",
+            display_slot_name="Guest",
+            slot_code="1234",
+        )
+    }
+
+    assert not coordinator._is_missing_checkin_stay("Guest", start, end)
+
+
 async def test_checkin_missing_active_survives_buffer_config_change(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
@@ -7030,6 +7326,382 @@ class TestCoordinatorPersistenceUpdate:
             entry_id=entry_id,
         )
 
+    async def test_checked_in_missing_stay_expires_after_three_fetches(
+        self, hass: HomeAssistant
+    ) -> None:
+        """A checked-in ghost retains its count until the third successful miss."""
+        from custom_components.rental_control.coordinator_helpers import store_sync
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 7, 1, 14, tzinfo=dt_util.UTC)
+        end = datetime(2026, 7, 8, 11, tzinfo=dt_util.UTC)
+        key = "test-stay"
+        coordinator._slot_mappings = {
+            "mappings": {key: self._make_occupied_mapping(key, "Guest", 10)}
+        }
+        hass.data[DOMAIN] = {
+            entry.entry_id: {
+                CHECKIN_SENSOR: MagicMock(
+                    state=CHECKIN_STATE_CHECKED_IN,
+                    extra_state_attributes={
+                        "guest_name": "Guest",
+                        "summary": "Guest",
+                        "start": start,
+                        "end": end,
+                    },
+                )
+            }
+        }
+        slot = ManagedSlot(
+            slot=10,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest",
+            actual_code="1234",
+            actual_code_present=True,
+            actual_start=start,
+            actual_end=end,
+            persisted_identity_key=key,
+        )
+        assert coordinator.event_overrides is not None
+        with (
+            patch.object(
+                coordinator, "_async_fetch_calendar", AsyncMock(return_value=[])
+            ) as fetch,
+            patch.object(coordinator, "_observe_managed_slots", return_value=[slot]),
+            patch.object(
+                coordinator.event_overrides,
+                "async_apply_plan",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(coordinator, "async_save_slot_store", AsyncMock()),
+        ):
+            for count in (1, 2, 3):
+                await coordinator._async_update_data()
+                assert (
+                    coordinator._slot_mappings["mappings"][key]["missing_count"]
+                    == count
+                )
+                assert coordinator._latest_plan is not None
+                assert coordinator._is_missing_checkin_stay("Guest", start, end) is (
+                    count == 3
+                )
+                assert not coordinator._is_missing_checkin_stay("Other", start, end)
+                if count < 3:
+                    assert key in coordinator._latest_plan.protected
+                    assert key in coordinator._latest_plan.selected
+                    if count == 1:
+                        coordinator.data = []
+                        fetch.side_effect = UpdateFailed("fetch or parse failed")
+                        await coordinator._async_update_data()
+                        for _ in range(3):
+                            await coordinator._run_reconciliation([])
+                            assert (
+                                coordinator._slot_mappings["mappings"][key][
+                                    "missing_count"
+                                ]
+                                == 1
+                            )
+                        assert (
+                            coordinator._slot_mappings["mappings"][key]["missing_count"]
+                            == 1
+                        )
+                        fetch.side_effect = None
+                    if count == 2:
+                        persisted = store_sync.build_save_payload(
+                            coordinator._slot_mappings, coordinator._store_meta()
+                        )
+                        restarted = RentalControlCoordinator(hass, entry)
+                        restarted._slot_mappings = persisted
+                        restarted._advance_calendar_misses = True
+                        ghosts = restarted._prepare_reservations_for_adoption(
+                            [], [slot]
+                        )
+                        restarted._apply_checkin_protection(ghosts, [slot])
+                        assert len(ghosts) == 1
+                        assert ghosts[0].missing_count == 3
+                        assert not ghosts[0].protected_active
+                else:
+                    assert key not in coordinator._latest_plan.selected
+                    assert any(
+                        action.slot == 10 and action.kind is ActionKind.CLEAR
+                        for action in coordinator._latest_plan.actions
+                    )
+
+            coordinator._slot_mappings["mappings"][key]["status"] = "pending_clear"
+            await coordinator._async_update_data()
+            assert coordinator._latest_plan is not None
+            assert key not in coordinator._latest_plan.selected
+            assert not coordinator._latest_res_by_key
+            persisted = store_sync.build_save_payload(
+                coordinator._slot_mappings, coordinator._store_meta()
+            )
+            restarted = RentalControlCoordinator(hass, entry)
+            restarted._slot_mappings = persisted
+            reservations = restarted._prepare_reservations_for_adoption([], [slot])
+            restarted._apply_checkin_protection(reservations, [slot])
+            assert reservations == []
+            assert restarted._is_missing_checkin_stay("Guest", start, end)
+
+    async def test_raw_empty_fetch_and_reappearance_reset_absence(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Feed-empty grace must not hide misses, and reappearance resets them."""
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 7, 1, 14, tzinfo=dt_util.UTC)
+        end = datetime(2026, 7, 8, 11, tzinfo=dt_util.UTC)
+        event = CalendarEvent(summary="Guest", start=start, end=end, uid="one")
+        key = make_reservation_fingerprint(entry.entry_id, "Guest", start, end)
+        coordinator.data = [event]
+        coordinator._slot_mappings = {
+            "mappings": {key: self._make_occupied_mapping(key, "Guest", 10)}
+        }
+        slot = ManagedSlot(
+            slot=10,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest",
+            actual_code="1234",
+            actual_code_present=True,
+            actual_start=start,
+            actual_end=end,
+            persisted_identity_key=key,
+        )
+        assert coordinator.event_overrides is not None
+        with (
+            patch.object(
+                coordinator, "_async_fetch_calendar", AsyncMock(return_value=[])
+            ) as fetch,
+            patch.object(coordinator, "_observe_managed_slots", return_value=[slot]),
+            patch.object(
+                coordinator.event_overrides,
+                "async_apply_plan",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(coordinator, "async_save_slot_store", AsyncMock()),
+        ):
+            for count in (1, 2):
+                assert await coordinator._async_update_data() == [event]
+                assert (
+                    coordinator._slot_mappings["mappings"][key]["missing_count"]
+                    == count
+                )
+            fetch.return_value = [
+                CalendarEvent(summary="Guest", start=start, end=end, uid="changed")
+            ]
+            await coordinator._async_update_data()
+            assert coordinator._slot_mappings["mappings"][key]["missing_count"] == 0
+            assert coordinator._latest_plan is not None
+            assert key in coordinator._latest_plan.selected
+
+    def test_reappearing_stay_rematches_existing_physical_slot(
+        self, hass: HomeAssistant
+    ) -> None:
+        """A re-keyed live event resets the matched physical slot's count."""
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import (
+            make_reservation_fingerprint,
+        )
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 7, 1, 14, tzinfo=dt_util.UTC)
+        end = datetime(2026, 7, 8, 11, tzinfo=dt_util.UTC)
+        coordinator._slot_mappings = {
+            "mappings": {
+                "old-identity": self._make_occupied_mapping(
+                    "old-identity", "Guest", 10, missing_count=2
+                )
+            }
+        }
+        slot = ManagedSlot(
+            slot=10,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest",
+            actual_code="1234",
+            actual_code_present=True,
+            actual_start=start,
+            actual_end=end,
+        )
+        coordinator._advance_calendar_misses = True
+        reservations = coordinator._prepare_reservations_for_adoption(
+            [CalendarEvent(summary="Guest", start=start, end=end)], [slot]
+        )
+        key = make_reservation_fingerprint(entry.entry_id, "Guest", start, end)
+
+        assert len(reservations) == 1
+        assert coordinator._slot_mappings["mappings"][key]["missing_count"] == 0
+        assert "old-identity" not in coordinator._slot_mappings["mappings"]
+
+    async def test_unconfirmed_clear_cannot_be_reused(
+        self, hass: HomeAssistant
+    ) -> None:
+        """A missing checked-in stay cannot be replaced while clear is unconfirmed."""
+        from custom_components.rental_control.coordinator_helpers import store_sync
+        from custom_components.rental_control.reconciliation import ActionKind
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import Reservation
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.reconciliation import compute_desired_plan
+        from custom_components.rental_control.util import OperationResult
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 7, 1, 14, tzinfo=dt_util.UTC)
+        end = datetime(2026, 7, 8, 11, tzinfo=dt_util.UTC)
+        key = "test-stay"
+        coordinator._slot_mappings = {
+            "mappings": {
+                key: self._make_occupied_mapping(key, "Guest", 10, missing_count=2)
+            }
+        }
+        hass.data[DOMAIN] = {
+            entry.entry_id: {
+                CHECKIN_SENSOR: MagicMock(
+                    state=CHECKIN_STATE_CHECKED_IN,
+                    extra_state_attributes={
+                        "guest_name": "Guest",
+                        "summary": "Guest",
+                        "start": start,
+                        "end": end,
+                    },
+                )
+            }
+        }
+        slot = ManagedSlot(
+            slot=10,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest",
+            actual_code="1234",
+            actual_code_present=True,
+            actual_start=start,
+            actual_end=end,
+            persisted_identity_key=key,
+        )
+        assert coordinator.event_overrides is not None
+        with (
+            patch.object(
+                coordinator, "_async_fetch_calendar", AsyncMock(return_value=[])
+            ) as fetch,
+            patch.object(coordinator, "_observe_managed_slots", return_value=[slot]),
+            patch.object(coordinator, "async_save_slot_store", AsyncMock()),
+            patch.object(
+                coordinator.event_overrides,
+                "_preflight_clear_result",
+                return_value=None,
+            ),
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_clear_code",
+                AsyncMock(
+                    return_value=OperationResult(
+                        kind="clear", slot=10, unconfirmed=True
+                    )
+                ),
+            ) as clear,
+            patch(
+                "custom_components.rental_control.event_overrides.async_fire_set_code",
+                AsyncMock(),
+            ) as set_code,
+        ):
+            await coordinator._async_update_data()
+            clear.assert_awaited_once()
+            assert 10 in coordinator.event_overrides.pending_clear_slots
+            assert coordinator._slot_mappings["mappings"][key]["missing_count"] == 3
+            assert (
+                coordinator._slot_mappings["mappings"][key]["status"] == "pending_clear"
+            )
+            persisted = store_sync.build_save_payload(
+                coordinator._slot_mappings, coordinator._store_meta()
+            )
+            restarted = RentalControlCoordinator(hass, entry)
+            restarted._slot_mappings = persisted
+            hass.states.async_set("text.test_lock_code_slot_10_name", "Guest")
+            hass.states.async_set("text.test_lock_code_slot_10_pin", "1234")
+            assert (
+                restarted._observe_managed_slots()[0].status is SlotStatus.PENDING_CLEAR
+            )
+            pending_slot = ManagedSlot(
+                slot=10,
+                managed=True,
+                status=SlotStatus.PENDING_CLEAR,
+                actual_name="Guest",
+                actual_code="1234",
+                actual_code_present=True,
+                actual_start=start,
+                actual_end=end,
+                persisted_identity_key=key,
+            )
+            restarted._advance_calendar_misses = True
+            reappeared = restarted._prepare_reservations_for_adoption(
+                [CalendarEvent(summary="Guest", start=start, end=end)], [pending_slot]
+            )
+            assert len(reappeared) == 1
+            assert reappeared[0].missing_count == 0
+            assert not reappeared[0].eligible
+            for count in (1, 2, 3):
+                missing_again = restarted._prepare_reservations_for_adoption(
+                    [], [pending_slot]
+                )
+                restarted._apply_checkin_protection(missing_again, [pending_slot])
+                assert missing_again == []
+                mapping = next(iter(restarted._slot_mappings["mappings"].values()))
+                assert mapping["missing_count"] == count
+                assert restarted._is_missing_checkin_stay("Guest", start, end) is (
+                    count == 3
+                )
+            hass.states.async_set("text.test_lock_code_slot_10_name", "")
+            hass.states.async_set("text.test_lock_code_slot_10_pin", "")
+            replacement = Reservation(
+                identity_key="replacement",
+                start=end,
+                end=end + timedelta(days=2),
+                buffered_start=end,
+                buffered_end=end + timedelta(days=2),
+                summary="Next Guest",
+                slot_name="Next Guest",
+                display_slot_name="Next Guest",
+                slot_code="5678",
+            )
+            plan = compute_desired_plan(
+                [replacement],
+                restarted._observe_managed_slots(),
+                max_events=1,
+                plan_id="restart",
+                generated_at=start,
+            )
+            assert "replacement" not in plan.selected
+            assert plan.actions[0].kind is ActionKind.RETRY_CLEAR
+            assert plan.actions[0].preflight_read
+
+            fetch.return_value = [
+                CalendarEvent(
+                    summary="Next Guest",
+                    start=end,
+                    end=end + timedelta(days=2),
+                )
+            ]
+            await coordinator._async_update_data()
+            set_code.assert_not_awaited()
+            assert 10 in coordinator.event_overrides.pending_clear_slots
+
     def _make_occupied_mapping(
         self,
         identity_key: str,
@@ -8067,7 +8739,7 @@ class TestCoordinatorPersistenceUpdate:
             await coordinator._async_update_data()
 
         updated_mc = coordinator._slot_mappings["mappings"][fp]["missing_count"]
-        assert updated_mc == 1
+        assert updated_mc == 0
 
     def test_sync_store_records_confirmed_selected_mapping(
         self, hass: "HomeAssistant"

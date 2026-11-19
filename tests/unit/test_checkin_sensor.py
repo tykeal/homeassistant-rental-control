@@ -117,6 +117,39 @@ def _create_sensor(
     return sensor
 
 
+@pytest.mark.parametrize("source", ["automatic", "keymaster"])
+async def test_sustained_absence_cancels_checkout_without_checkout_event(
+    hass: HomeAssistant,
+    mock_checkin_coordinator: MagicMock,
+    mock_checkin_config_entry: MockConfigEntry,
+    source: str,
+) -> None:
+    """Clearing a missing tracked stay is not a guest checkout."""
+    sensor = _create_sensor(hass, mock_checkin_coordinator, mock_checkin_config_entry)
+    now = dt_util.now()
+    sensor._state = CHECKIN_STATE_CHECKED_IN
+    sensor._checkin_source = source
+    sensor._tracked_event_summary = "Guest"
+    sensor._tracked_event_slot_name = "Guest"
+    sensor._tracked_event_start = now - timedelta(hours=1)
+    sensor._tracked_event_end = now + timedelta(days=1)
+    cancel = MagicMock()
+    sensor._unsub_timer = cancel
+    mock_checkin_coordinator._is_missing_checkin_stay.return_value = True
+    mock_checkin_coordinator.last_update_success = True
+    mock_checkin_coordinator.data = []
+
+    events: list[Event] = []
+    hass.bus.async_listen(EVENT_RENTAL_CONTROL_CHECKOUT, events.append)
+    sensor._handle_coordinator_update()
+    await hass.async_block_till_done()
+
+    assert sensor.state == CHECKIN_STATE_NO_RESERVATION
+    cancel.assert_called_once()
+    assert sensor._unsub_timer is None
+    assert events == []
+
+
 # ===========================================================================
 # Sensor entity properties
 # ===========================================================================

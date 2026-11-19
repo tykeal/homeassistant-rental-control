@@ -56,6 +56,11 @@ def decide_restore_checked_in(
     ctx: CoordinatorUpdateContext,
 ) -> RestoreReconciliationDecision:
     """Reconcile a restored checked-in state."""
+    if ctx.sustained_absence:
+        return _decision(
+            DecisionEffect("transition_no_reservation"),
+            reason="missing_stay",
+        )
     snap = ctx.snapshot
     now = ctx.clock()
     if (

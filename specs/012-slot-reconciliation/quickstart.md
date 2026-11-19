@@ -184,7 +184,7 @@ that remain blocked by unconfirmed physical operations.
 - Omit it from the feed for refresh 1 and refresh 2.
 - Assert it remains assigned and missing count increments.
 - Omit it for refresh 3.
-- Assert it becomes clearable unless protected.
+- Assert it becomes clearable even if checked-in protection remains.
 - Repeat with reappearance before refresh 3 and assert missing count resets.
 
 ### Scenario G: diagnostics completeness
