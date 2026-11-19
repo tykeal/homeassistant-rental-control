@@ -7702,6 +7702,115 @@ class TestCoordinatorPersistenceUpdate:
             set_code.assert_not_awaited()
             assert 10 in coordinator.event_overrides.pending_clear_slots
 
+    async def test_confirmed_dateless_clear_resets_sensor_after_restart(
+        self, hass: HomeAssistant
+    ) -> None:
+        """A confirmed dateless clear retains identity until the sensor resets."""
+        from custom_components.rental_control.const import CHECKIN_STATE_NO_RESERVATION
+        from custom_components.rental_control.const import EVENT_RENTAL_CONTROL_CHECKOUT
+        from custom_components.rental_control.coordinator_helpers import store_sync
+        from custom_components.rental_control.reconciliation import ManagedSlot
+        from custom_components.rental_control.reconciliation import SlotStatus
+        from custom_components.rental_control.sensors.checkinsensor import (
+            CheckinTrackingSensor,
+        )
+        from custom_components.rental_control.util import OperationResult
+
+        entry = self._make_persist_entry(max_events=1)
+        entry.add_to_hass(hass)
+        coordinator = RentalControlCoordinator(hass, entry)
+        start = datetime(2026, 7, 1, 14, tzinfo=dt_util.UTC)
+        end = datetime(2026, 7, 8, 11, tzinfo=dt_util.UTC)
+        key = "test-stay"
+        coordinator._slot_mappings = {
+            "mappings": {
+                key: self._make_occupied_mapping(
+                    key, "Guest", 10, missing_count=2, start_state=None, end_state=None
+                )
+            }
+        }
+        coordinator.data = []
+        coordinator.last_update_success = True
+        sensor = CheckinTrackingSensor(hass, coordinator, entry)
+        sensor.hass = hass
+        sensor.entity_id = "sensor.test_checkin"
+        stub_method(sensor, "async_write_ha_state", MagicMock())
+        sensor._state = CHECKIN_STATE_CHECKED_IN
+        sensor._tracked_event_slot_name = "Guest"
+        sensor._tracked_event_summary = "Guest"
+        sensor._tracked_event_start = start
+        sensor._tracked_event_end = end
+        cancel = MagicMock()
+        sensor._unsub_timer = cancel
+        hass.data[DOMAIN] = {entry.entry_id: {CHECKIN_SENSOR: sensor}}
+        slot = ManagedSlot(
+            slot=10,
+            managed=True,
+            status=SlotStatus.OCCUPIED,
+            actual_name="Guest",
+            actual_code="1234",
+            actual_code_present=True,
+            persisted_identity_key=key,
+        )
+        assert coordinator.event_overrides is not None
+        with (
+            patch.object(
+                coordinator, "_async_fetch_calendar", AsyncMock(return_value=[])
+            ),
+            patch.object(coordinator, "_observe_managed_slots", return_value=[slot]),
+            patch.object(coordinator, "async_save_slot_store", AsyncMock()),
+            patch.object(
+                coordinator.event_overrides,
+                "async_apply_plan",
+                AsyncMock(
+                    return_value=[
+                        OperationResult(kind="clear", slot=10, confirmed=True)
+                    ]
+                ),
+            ),
+        ):
+            await coordinator._async_update_data()
+
+        assert coordinator._slot_mappings["mappings"] == {}
+        assert coordinator._latest_res_by_key == {}
+        assert coordinator._is_missing_checkin_stay("Guest", start, end)
+        persisted = store_sync.build_save_payload(
+            coordinator._slot_mappings, coordinator._store_meta()
+        )
+        restarted = RentalControlCoordinator(hass, entry)
+        restarted._slot_mappings = persisted
+        assert restarted._is_missing_checkin_stay("Guest", start, end)
+        restored_sensor = CheckinTrackingSensor(hass, restarted, entry)
+        restored_sensor.hass = hass
+        restored_sensor.entity_id = "sensor.test_checkin_restored"
+        stub_method(restored_sensor, "async_write_ha_state", MagicMock())
+        restored_sensor._state = CHECKIN_STATE_CHECKED_IN
+        restored_sensor._tracked_event_slot_name = "Guest"
+        restored_sensor._tracked_event_summary = "Guest"
+        restored_sensor._tracked_event_start = start
+        restored_sensor._tracked_event_end = end
+        restored_cancel = MagicMock()
+        restored_sensor._unsub_timer = restored_cancel
+        restored_sensor._validate_restored_state()
+        assert restored_sensor.state == CHECKIN_STATE_NO_RESERVATION
+        restored_cancel.assert_called_once()
+        restarted._advance_calendar_misses = True
+        restarted._prepare_reservations_for_adoption(
+            [CalendarEvent(summary="Guest", start=start, end=end)], []
+        )
+        assert "expired_checkin" not in restarted._slot_mappings
+        assert not restarted._is_missing_checkin_stay("Guest", start, end)
+
+        events: list[Any] = []
+        hass.bus.async_listen(EVENT_RENTAL_CONTROL_CHECKOUT, events.append)
+        sensor._handle_coordinator_update()
+        await hass.async_block_till_done()
+        assert sensor.state == CHECKIN_STATE_NO_RESERVATION
+        cancel.assert_called_once()
+        assert events == []
+        coordinator._apply_checkin_protection([], [])
+        assert "expired_checkin" not in coordinator._slot_mappings
+
     def _make_occupied_mapping(
         self,
         identity_key: str,

@@ -303,6 +303,7 @@ def build_save_payload(
         "blocked_slots": current_store.get("blocked_slots", {}),
         "last_plan": current_store.get("last_plan", {}),
         "migration_notes": current_store.get("migration_notes", []),
+        "expired_checkin": current_store.get("expired_checkin"),
     }
 
 

@@ -380,6 +380,19 @@ class CoordinatorRefreshMixin:
             "list[_Reservation]",
             self._build_reservations(new_calendar, observed_slots),
         )
+        expired = self._slot_mappings.get("expired_checkin")
+        if getattr(self, "_advance_calendar_misses", False) and isinstance(
+            expired, dict
+        ):
+            expired_start = self._coerce_checkin_datetime(expired.get("start"))
+            expired_end = self._coerce_checkin_datetime(expired.get("end"))
+            if any(
+                reservation.slot_name == expired.get("name")
+                and reservation.start == expired_start
+                and reservation.end == expired_end
+                for reservation in reservations
+            ):
+                self._slot_mappings.pop("expired_checkin", None)
         persisted: dict[str, Any] = self._slot_mappings.setdefault("mappings", {})
         reissue.remove_pending_ghost_targets(
             self,

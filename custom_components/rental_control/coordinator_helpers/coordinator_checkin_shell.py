@@ -69,6 +69,8 @@ class CoordinatorCheckinMixin:
         if checkin_sensor is None:
             return
         sensor_state: str = checkin_sensor.state
+        if sensor_state != CHECKIN_STATE_CHECKED_IN:
+            self._slot_mappings.pop("expired_checkin", None)
         if sensor_state not in (CHECKIN_STATE_CHECKED_IN, CHECKIN_STATE_CHECKED_OUT):
             return
         attrs: dict[str, Any] = checkin_sensor.extra_state_attributes
@@ -94,6 +96,8 @@ class CoordinatorCheckinMixin:
         if matched is not None:
             if snapshot.state == CHECKIN_STATE_CHECKED_IN and matched.missing_count < 3:
                 matched.protected_active = True
+            elif snapshot.state == CHECKIN_STATE_CHECKED_IN:
+                self._remember_expired_checkin(snapshot)
             elif checked_out:
                 matched.checked_out = True
                 _LOGGER.debug(
@@ -126,6 +130,19 @@ class CoordinatorCheckinMixin:
                         reservations[index] = protected
                         return
                 reservations.append(protected)
+            elif self._is_missing_checkin_stay(
+                snapshot.guest_name, snapshot.start, snapshot.end
+            ):
+                self._remember_expired_checkin(snapshot)
+
+    def _remember_expired_checkin(self, snapshot: CheckinProtectionSnapshot) -> None:
+        """Retain the expired sensor identity until its state has reset."""
+        if snapshot.start is not None and snapshot.end is not None:
+            self._slot_mappings["expired_checkin"] = {
+                "name": snapshot.guest_name,
+                "start": snapshot.start.isoformat(),
+                "end": snapshot.end.isoformat(),
+            }
 
     def _synthesize_checkin_reservation(
         self,
@@ -278,6 +295,14 @@ class CoordinatorCheckinMixin:
         """Return whether this exact tracked stay exceeded feed-miss tolerance."""
         if not name or start is None or end is None:
             return False
+        expired = self._slot_mappings.get("expired_checkin")
+        if (
+            isinstance(expired, dict)
+            and expired.get("name") == name
+            and self._coerce_checkin_datetime(expired.get("start")) == start
+            and self._coerce_checkin_datetime(expired.get("end")) == end
+        ):
+            return True
         if any(
             res.slot_name == name
             and res.start == start
