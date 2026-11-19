@@ -15,6 +15,7 @@ from .desired_capacity import retain_codeless_occupied_holds
 from .diagnostics import _build_plan_diagnostics_snapshot
 from .enums import ActionKind
 from .enums import SlotStatus
+from .identity import _datetime_as_utc
 from .identity import _reservation_name_key
 from .pairing import _select_managed_subset
 from .pairing import managed_physical_group
@@ -140,9 +141,12 @@ def select_desired_candidates(
     eligible: list[Reservation], max_events: int
 ) -> tuple[list[Reservation], list[Reservation], list[Reservation], int]:
     """Partition eligible reservations into selected and overflow groups."""
-    protected = [res for res in eligible if res.protected_active]
+    protected = sorted(
+        (res for res in eligible if res.protected_active),
+        key=lambda res: (_datetime_as_utc(res.start), res.identity_key),
+    )
     non_protected = [res for res in eligible if not res.protected_active]
-    non_protected.sort(key=lambda res: (res.start, res.identity_key))
+    non_protected.sort(key=lambda res: (_datetime_as_utc(res.start), res.identity_key))
     remaining_capacity = max(0, max_events - len(protected))
     return (
         protected,
@@ -160,7 +164,13 @@ def group_selected_by_stable_name(
     for res in selected:
         selected_by_name.setdefault(_reservation_name_key(res), []).append(res)
     for group in selected_by_name.values():
-        group.sort(key=lambda res: (res.start, res.end, res.identity_key))
+        group.sort(
+            key=lambda res: (
+                _datetime_as_utc(res.start),
+                _datetime_as_utc(res.end),
+                res.identity_key,
+            )
+        )
     return selected_by_name
 
 
@@ -368,7 +378,11 @@ def _compute_desired_plan_from_request(req: DesiredPlanRequest) -> DesiredPlan:
     )
     selected = sorted(
         [*protected, *selected_np],
-        key=lambda res: (0 if res.protected_active else 1, res.start, res.identity_key),
+        key=lambda res: (
+            0 if res.protected_active else 1,
+            _datetime_as_utc(res.start),
+            res.identity_key,
+        ),
     )
     plan.protected = {res.identity_key for res in protected}
     record_capacity_overflow(plan, overflow, capacity, overflow_ranks)

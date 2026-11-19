@@ -20,6 +20,7 @@ from ..reconciliation import Reservation as _Reservation
 from ..reconciliation import extract_booking_aliases
 from ..reconciliation import make_reservation_fingerprint
 from ..reconciliation import normalize_slot_name_for_fingerprint
+from ..reconciliation.identity import _datetime_as_utc
 from ..util import apply_buffer
 from ..util import normalize_uid
 from .codegen import extract_last_four
@@ -124,8 +125,8 @@ def build_reservations(
     ordered_calendar = sorted(
         calendar,
         key=lambda event: (
-            _coerce_event_datetime(event.start, ctx),
-            _coerce_event_datetime(event.end, ctx),
+            _datetime_as_utc(_coerce_event_datetime(event.start, ctx)),
+            _datetime_as_utc(_coerce_event_datetime(event.end, ctx)),
             event.summary or "",
         ),
     )

@@ -8,6 +8,7 @@ from collections import Counter
 from typing import TYPE_CHECKING
 from typing import Any
 
+from ..reconciliation.identity import _datetime_as_utc
 from .slot_matching import observed_value_as_datetime
 from .slot_matching import physical_mapping_matches_reservation
 from .slot_matching import physical_mapping_name_matches_reservation
@@ -92,10 +93,20 @@ def _aliased_stay_remap(
         end = observed_value_as_datetime(identity.get("end"))
         if not aliases or start is None or end is None:
             continue
+        window_unowned = physical_mapping_window_is_unowned(
+            mapping, current_reservations
+        )
         matches = [
             res.identity_key
             for res in current_reservations
             if aliases.intersection(res.uid_aliases)
+            and (
+                (
+                    _datetime_as_utc(res.start) < _datetime_as_utc(end)
+                    and _datetime_as_utc(start) < _datetime_as_utc(res.end)
+                )
+                or window_unowned
+            )
             and physical_mapping_name_matches_reservation(
                 mapping, res, actual_slot_names
             )
@@ -122,8 +133,17 @@ def physical_mapping_window_is_unowned(
     )
     if None in window:
         return False
+    start, end = window
+    if start is None or end is None:
+        return False
+    window_utc = (_datetime_as_utc(start), _datetime_as_utc(end))
     return all(
-        window != (res.buffered_start, res.buffered_end) for res in current_reservations
+        window_utc
+        != (
+            _datetime_as_utc(res.buffered_start),
+            _datetime_as_utc(res.buffered_end),
+        )
+        for res in current_reservations
     )
 
 

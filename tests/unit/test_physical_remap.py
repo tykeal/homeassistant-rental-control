@@ -167,6 +167,40 @@ def test_uid_and_slot_name_rekey_nonoverlapping_corrected_window() -> None:
     assert persisted["calendar-stay-new"]["fingerprint_history"] == [old_key]
 
 
+def test_uid_rekey_does_not_take_window_owned_by_renamed_stay() -> None:
+    """A later same-UID candidate cannot take a slot still owned by another stay."""
+    old_key = "calendar-stay-old"
+    persisted = {
+        old_key: {
+            "slot": 6,
+            "identity": {
+                "identity_key": old_key,
+                "slot_name": "Smith",
+                "start": _OLD_START.isoformat(),
+                "end": _OLD_END.isoformat(),
+                "uid_aliases": ["stable-uid"],
+            },
+            "last_observed_actual": {
+                "start_state": _OLD_START.isoformat(),
+                "end_state": _OLD_END.isoformat(),
+            },
+        }
+    }
+
+    keys = remap(
+        persisted,
+        [
+            _res("renamed-owner", "Smyth", 0),
+            _res("later-smith", "Smith", 30, uid_aliases={"stable-uid"}),
+        ],
+        {6: "Smith"},
+        {old_key},
+    )
+
+    assert keys == {old_key}
+    assert list(persisted) == [old_key]
+
+
 def test_contested_exact_matches_still_block_the_fallback() -> None:
     """Exact matches that cancel each other out still claim their stay."""
     persisted = _persisted()

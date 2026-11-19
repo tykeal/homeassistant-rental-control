@@ -166,7 +166,9 @@ def parse_calendar(
         cal_event = _parse_vevent(event, from_date, to_date, ctx)
         if cal_event is not None:
             events.append(cal_event)
-    events.sort(key=lambda k: k.start)
+    events.sort(
+        key=lambda event: cast("datetime", _dt.as_utc(cast("datetime", event.start)))
+    )
     return events
 
 

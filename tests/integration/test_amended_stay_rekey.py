@@ -27,6 +27,8 @@ from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.coordinator import RentalControlCoordinator
 from custom_components.rental_control.reconciliation import ActionKind
+from custom_components.rental_control.reconciliation import ManagedSlot
+from custom_components.rental_control.reconciliation import SlotStatus
 from custom_components.rental_control.reconciliation import compute_desired_plan
 
 if TYPE_CHECKING:
@@ -353,6 +355,57 @@ async def test_fall_back_fold_stay_remains_plannable(hass: HomeAssistant) -> Non
     )
 
     assert plan.selected[target.identity_key] == 6
+
+
+async def test_fall_back_capacity_selects_earliest_instant(
+    hass: HomeAssistant,
+) -> None:
+    """Capacity ranking uses UTC order when local wall times repeat."""
+    entry = _entry(_AIRBNB_URL, "America/New_York")
+    entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, entry)
+    calendar = Calendar.from_ical(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20261101T061500Z\r\nDTEND:20261101T070000Z\r\n"
+        "UID:synthetic-later@example.invalid\r\n"
+        "SUMMARY:Reservation Later Guest\r\n"
+        "END:VEVENT\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20261101T054500Z\r\nDTEND:20261101T055900Z\r\n"
+        "UID:synthetic-earlier@example.invalid\r\n"
+        "SUMMARY:Reservation Earlier Guest\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    )
+    events = await coordinator._ical_parser(
+        calendar,
+        datetime(2026, 10, 31, tzinfo=dt_util.UTC),
+        datetime(2026, 11, 2, tzinfo=dt_util.UTC),
+    )
+    reservations = coordinator._build_reservations(events)
+    earlier = next(res for res in reservations if "Earlier" in res.summary)
+    later = next(res for res in reservations if "Later" in res.summary)
+    slot = ManagedSlot(
+        slot=6,
+        managed=True,
+        status=SlotStatus.FREE,
+        actual_code_present=False,
+    )
+
+    plan = compute_desired_plan(
+        reservations=reservations,
+        managed_slots=[slot],
+        max_events=1,
+        plan_id="dst-fold-capacity-952",
+        generated_at=_PARSE_FROM,
+        entry_id=entry.entry_id,
+        lockname=_LOCK,
+        start_slot=6,
+    )
+
+    assert plan.selected == {earlier.identity_key: 6}
+    assert plan.overflow == {later.identity_key: "capacity"}
 
 
 async def test_timezone_fix_rekeys_existing_calendar_mapping(
