@@ -118,7 +118,7 @@ repos:
       - id: reuse
 
   - repo: https://github.com/kjanat/actionlint
-    rev: 08bb2c4f0d039744455b87aef1c647fb8b66d37b  # frozen: v1.17.0
+    rev: 220b76cfa568e00ed8b3c476898f849a722b88e2  # frozen: v1.17.1
     hooks:
       - id: actionlint
 
@@ -130,7 +130,7 @@ repos:
   # run in CI. Keep 'rev' on the same zizmor release as the 'version:'
   # input in .github/workflows/zizmor.yaml.
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: c92afdf2c6ca336aaa8f39e2bd8d48f62dbd8e1f  # frozen: v1.31.1
+    rev: 06a39750ec31860bb44f2acf67182c40016cd1e7  # frozen: v1.32.0
     hooks:
       - id: zizmor
         # Must match the 'persona:' input on the 'Zizmor' workflow job.
