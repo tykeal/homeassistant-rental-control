@@ -235,13 +235,15 @@ def apply_buffer(
     dt_start = _ensure_datetime(start, coordinator)
     dt_end = _ensure_datetime(end, coordinator)
     if before_minutes:
-        dt_start = _shift_instant(dt_start, -timedelta(minutes=before_minutes))
+        dt_start = shift_datetime_by_elapsed(
+            dt_start, -timedelta(minutes=before_minutes)
+        )
     if after_minutes:
-        dt_end = _shift_instant(dt_end, timedelta(minutes=after_minutes))
+        dt_end = shift_datetime_by_elapsed(dt_end, timedelta(minutes=after_minutes))
     return dt_start, dt_end
 
 
-def _shift_instant(value: datetime, delta: timedelta) -> datetime:
+def shift_datetime_by_elapsed(value: datetime, delta: timedelta) -> datetime:
     """Shift a datetime by elapsed time, preserving its original timezone."""
     if value.tzinfo is None or value.utcoffset() is None:
         return value + delta

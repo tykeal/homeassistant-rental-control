@@ -16,6 +16,7 @@ from typing import Any
 from homeassistant.util import dt
 
 from ..bookings_only import resolve_slot_name
+from ..helpers import shift_datetime_by_elapsed
 from ..reconciliation import Reservation as _Reservation
 from ..reconciliation import extract_booking_aliases
 from ..reconciliation import make_reservation_fingerprint
@@ -380,9 +381,13 @@ def _resolve_observed_code(query: _ObservedCodeQuery) -> tuple[str, str, bool]:
     observed_start = matched_physical.actual_start
     observed_end = matched_physical.actual_end
     if observed_start is not None and ctx.code_buffer_before:
-        observed_start = observed_start + timedelta(minutes=ctx.code_buffer_before)
+        observed_start = shift_datetime_by_elapsed(
+            observed_start, timedelta(minutes=ctx.code_buffer_before)
+        )
     if observed_end is not None and ctx.code_buffer_after:
-        observed_end = observed_end - timedelta(minutes=ctx.code_buffer_after)
+        observed_end = shift_datetime_by_elapsed(
+            observed_end, -timedelta(minutes=ctx.code_buffer_after)
+        )
     old_generated = (
         generate_slot_code(
             ctx.code_generator,

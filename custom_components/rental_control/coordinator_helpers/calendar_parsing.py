@@ -25,6 +25,7 @@ from ..bookings_only import uid_slot_name
 from ..const import EVENT_AGE_THRESHOLD_DAYS
 from ..description_parser import extract_checkin_time
 from ..description_parser import extract_checkout_time
+from ..helpers import shift_datetime_by_elapsed
 from ..util import apply_buffer
 from ..util import dt as _dt
 from ..util import get_slot_name
@@ -88,9 +89,13 @@ def physical_override_time(
         else value.astimezone(timezone)
     )
     if start and buffer_before:
-        local_value += timedelta(minutes=buffer_before)
+        local_value = shift_datetime_by_elapsed(
+            local_value, timedelta(minutes=buffer_before)
+        )
     if not start and buffer_after:
-        local_value -= timedelta(minutes=buffer_after)
+        local_value = shift_datetime_by_elapsed(
+            local_value, -timedelta(minutes=buffer_after)
+        )
     return local_value.time()
 
 

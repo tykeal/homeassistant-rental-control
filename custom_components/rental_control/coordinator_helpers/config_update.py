@@ -13,6 +13,8 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timedelta
 
+from ..helpers import shift_datetime_by_elapsed
+
 
 def overrides_are_stale(
     overrides_missing: bool,
@@ -53,7 +55,7 @@ def unbuffer_window(
     without double counting, the old buffer must first be reversed.
     """
     if old_before:
-        start = start + timedelta(minutes=old_before)
+        start = shift_datetime_by_elapsed(start, timedelta(minutes=old_before))
     if old_after:
-        end = end - timedelta(minutes=old_after)
+        end = shift_datetime_by_elapsed(end, -timedelta(minutes=old_after))
     return start, end

@@ -5,10 +5,16 @@
 from __future__ import annotations
 
 from datetime import datetime
+from datetime import time
 from datetime import timedelta
 from datetime import timezone
+from zoneinfo import ZoneInfo
 
 from custom_components.rental_control.coordinator_helpers import config_update
+from custom_components.rental_control.coordinator_helpers.calendar_parsing import (
+    physical_override_time,
+)
+from custom_components.rental_control.helpers import apply_buffer
 
 
 def test_overrides_are_stale_when_missing() -> None:
@@ -41,3 +47,30 @@ def test_unbuffer_window_reverses_buffer() -> None:
     unbuffered_start, unbuffered_end = config_update.unbuffer_window(start, end, 30, 60)
     assert unbuffered_start == start + timedelta(minutes=30)
     assert unbuffered_end == end - timedelta(minutes=60)
+
+
+def test_unbuffer_window_round_trips_repeated_hour_buffer() -> None:
+    """Reversing a buffer preserves the instant across the repeated hour."""
+    ny_timezone = ZoneInfo("America/New_York")
+    start = datetime(2026, 11, 1, 1, 15, tzinfo=ny_timezone, fold=1)
+    buffered_start, buffered_end = apply_buffer(start, start, 30, 0, object())
+    assert isinstance(buffered_start, datetime)
+    assert isinstance(buffered_end, datetime)
+
+    unbuffered_start, _ = config_update.unbuffer_window(
+        buffered_start, buffered_end, 30, 0
+    )
+
+    assert unbuffered_start.astimezone(timezone.utc) == start.astimezone(timezone.utc)
+
+
+def test_physical_override_time_reverses_repeated_hour_buffer() -> None:
+    """Recover the same local time when an elapsed buffer crosses fall-back."""
+    ny_timezone = ZoneInfo("America/New_York")
+    buffered_start = datetime(2026, 11, 1, 1, 45, tzinfo=ny_timezone, fold=0)
+
+    unbuffered_time = physical_override_time(
+        buffered_start, ny_timezone, 30, 0, start=True
+    )
+
+    assert unbuffered_time == time(1, 15, fold=1)
