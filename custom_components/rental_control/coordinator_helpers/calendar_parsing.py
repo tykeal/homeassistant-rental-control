@@ -55,11 +55,6 @@ def _local_date(value: date | datetime, timezone: tzinfo) -> date:
     return value.date()
 
 
-def _event_date(value: Any, timezone: tzinfo) -> date:
-    """Return a comparable date from a VEVENT DTSTART/DTEND value."""
-    return _local_date(value.dt, timezone)
-
-
 def combine_event_time(value: Any, selected_time: time, timezone: tzinfo) -> datetime:
     """Return an event-date datetime using the selected local time."""
     event_date = value.date() if isinstance(value, datetime) else value
@@ -175,9 +170,7 @@ def parse_calendar(
     return events
 
 
-def _vevent_filtered(
-    event: Any, from_date: datetime, to_date: datetime, ctx: Any
-) -> bool:
+def _vevent_filtered(event: Any, ctx: Any) -> bool:
     """Return whether an event should be skipped before time selection."""
     summary = _event_summary(event)
     if "RRULE" in event:
@@ -186,23 +179,6 @@ def _vevent_filtered(
     if "Check-in" in summary or "Check-out" in summary:
         _LOGGER.debug("Smoobu extra event, ignoring")
         return True
-    from_event_date = _local_date(from_date, ctx.timezone)
-    to_event_date = _local_date(to_date, ctx.timezone)
-    try:
-        if "DTEND" in event and _event_date(
-            event["DTEND"], ctx.timezone
-        ) < from_event_date - timedelta(days=EVENT_AGE_THRESHOLD_DAYS):
-            return True
-    except (AttributeError, TypeError):  # fmt: skip
-        pass
-    try:
-        if (
-            "DTSTART" in event
-            and _event_date(event["DTSTART"], ctx.timezone) > to_event_date
-        ):
-            return True
-    except (AttributeError, TypeError):  # fmt: skip
-        pass
     # A bookings-only feed overrides this filter. The operator has
     # asserted that the calendar never publishes blocked dates, so
     # Booking.com's "CLOSED - Not available" title names a real
@@ -216,11 +192,29 @@ def _vevent_filtered(
     return False
 
 
+def _event_window_filtered(
+    start: datetime,
+    end: datetime,
+    from_date: datetime,
+    to_date: datetime,
+    timezone: tzinfo,
+) -> bool:
+    """Return whether a resolved event window falls outside the parse range."""
+    start_date = _local_date(start, timezone)
+    end_date = _local_date(end, timezone)
+    from_event_date = _local_date(from_date, timezone)
+    to_event_date = _local_date(to_date, timezone)
+    return (
+        end_date < from_event_date - timedelta(days=EVENT_AGE_THRESHOLD_DAYS)
+        or start_date > to_event_date
+    )
+
+
 def _parse_vevent(
     event: Any, from_date: datetime, to_date: datetime, ctx: CalendarParseContext
 ) -> CalendarEvent | None:
     """Convert a single VEVENT into a CalendarEvent, or None when skipped."""
-    if _vevent_filtered(event, from_date, to_date, ctx):
+    if _vevent_filtered(event, ctx):
         return None
 
     summary = _event_summary(event)
@@ -265,6 +259,9 @@ def _parse_vevent(
             feed_datetimes[1] if feed_datetimes is not None else None,
         )
     end = dtend
+
+    if _event_window_filtered(start, end, from_date, to_date, ctx.timezone):
+        return None
 
     if ctx.event_prefix:
         event["SUMMARY"] = f"{ctx.event_prefix} {_event_summary(event)}".strip()

@@ -72,7 +72,12 @@ def _aliased_stay_remap(
     actual_slot_names: dict[int, str],
     claimed_targets: set[str],
 ) -> dict[str, str]:
-    """Re-key a unique overlapping stay when its feed UID still matches."""
+    """Re-key a unique stay when its UID and physical slot name still match.
+
+    An event's corrected timezone can move its whole window without
+    overlap, so a unique UID/name match is sufficient to preserve the
+    existing slot assignment.
+    """
     remap: dict[str, str] = {}
     for key in unmatched:
         mapping = persisted[key]
@@ -91,8 +96,6 @@ def _aliased_stay_remap(
             res.identity_key
             for res in current_reservations
             if aliases.intersection(res.uid_aliases)
-            and res.start < end
-            and start < res.end
             and physical_mapping_name_matches_reservation(
                 mapping, res, actual_slot_names
             )

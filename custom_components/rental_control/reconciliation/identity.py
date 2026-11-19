@@ -85,24 +85,16 @@ def _desired_name_key(reservation: DesiredReservation) -> str:
     return normalize_slot_name_for_fingerprint(reservation.stable_slot_name)
 
 
+def _datetime_as_utc(value: datetime) -> datetime:
+    """Return a datetime normalized to UTC, treating naive values as UTC."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _dt_to_utc_iso(dt: datetime) -> str:
-    """Convert *dt* to a UTC ISO-8601 string for fingerprint computation.
-
-    Naive datetimes are treated as UTC.  The output format is always
-    ``YYYY-MM-DDTHH:MM:SS+00:00`` to ensure a single canonical
-    representation regardless of the original timezone offset.
-
-    Args:
-        dt: Input datetime, timezone-aware or naive.
-
-    Returns:
-        Fixed-format UTC ISO-8601 string.
-    """
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt = dt.astimezone(timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    """Convert *dt* to a canonical UTC ISO-8601 fingerprint value."""
+    return _datetime_as_utc(dt).strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
 
 def make_reservation_fingerprint(

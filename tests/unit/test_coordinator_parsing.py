@@ -309,53 +309,85 @@ def test_parse_calendar_keeps_floating_time_and_override_precedence() -> None:
     assert overridden[0].end == datetime(2026, 11, 23, 8, tzinfo=hawaii)
 
 
+def test_parse_calendar_filters_using_override_resolved_dates() -> None:
+    """A winning override's output date, not source-zone date, is filtered."""
+    calendar = _calendar_from_ics(
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20260630T230000Z\r\n"
+        "DTEND:20260701T010000Z\r\n"
+        "UID:synthetic-override-boundary@example.invalid\r\n"
+        "SUMMARY:Reservation Guest\r\n"
+        "END:VEVENT"
+    )
+    tokyo = ZoneInfo("Asia/Tokyo")
+    override = {
+        "start_time": datetime(2026, 6, 30, 20, tzinfo=timezone.utc),
+        "end_time": datetime(2026, 7, 1, 0, tzinfo=timezone.utc),
+    }
+
+    events = calendar_parsing.parse_calendar(
+        calendar,
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 30, 23, 59, tzinfo=timezone.utc),
+        _parse_ctx(
+            timezone_=tokyo,
+            honor_event_times=False,
+            override_lookup=lambda _name: override,
+        ),
+    )
+
+    assert len(events) == 1
+    assert events[0].start == datetime(2026, 6, 30, 5, tzinfo=tokyo)
+
+
 def test_vevent_filter_handles_timed_stale_events() -> None:
     """Timed stale events are filtered using their calendar date."""
     from_date = datetime(2026, 6, 30, tzinfo=timezone.utc)
-    event = Event()
-    event.add("summary", "Alice")
-    event.add("dtstart", from_date - timedelta(days=EVENT_AGE_THRESHOLD_DAYS + 2))
-    event.add("dtend", from_date - timedelta(days=EVENT_AGE_THRESHOLD_DAYS + 1))
+    end = from_date - timedelta(days=EVENT_AGE_THRESHOLD_DAYS + 1)
+    start = end - timedelta(days=1)
 
-    assert calendar_parsing._vevent_filtered(
-        event, from_date, datetime(2026, 7, 30, tzinfo=timezone.utc), _parse_ctx()
+    assert calendar_parsing._event_window_filtered(
+        start,
+        end,
+        from_date,
+        datetime(2026, 7, 30, tzinfo=timezone.utc),
+        timezone.utc,
     )
 
 
 def test_vevent_filter_handles_timed_future_events() -> None:
     """Timed future events are filtered using their calendar date."""
     to_date = datetime(2026, 6, 30, tzinfo=timezone.utc)
-    event = Event()
-    event.add("summary", "Alice")
-    event.add("dtstart", to_date + timedelta(days=1))
-    event.add("dtend", to_date + timedelta(days=2))
+    start = to_date + timedelta(days=1)
+    end = to_date + timedelta(days=2)
 
-    assert calendar_parsing._vevent_filtered(
-        event, datetime(2026, 6, 1, tzinfo=timezone.utc), to_date, _parse_ctx()
+    assert calendar_parsing._event_window_filtered(
+        start,
+        end,
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        to_date,
+        timezone.utc,
     )
 
 
 def test_vevent_filter_keeps_all_day_boundaries() -> None:
     """All-day stale and future filtering still uses date values."""
-    stale = Event()
-    stale.add("summary", "Alice")
-    stale.add("dtstart", date(2026, 5, 29))
-    stale.add("dtend", date(2026, 5, 30))
+    stale_start = datetime.combine(date(2026, 5, 29), time(16), timezone.utc)
+    stale_end = datetime.combine(date(2026, 5, 30), time(10), timezone.utc)
+    future_start = datetime.combine(date(2026, 7, 1), time(16), timezone.utc)
+    future_end = datetime.combine(date(2026, 7, 2), time(10), timezone.utc)
 
-    future = Event()
-    future.add("summary", "Bob")
-    future.add("dtstart", date(2026, 7, 1))
-    future.add("dtend", date(2026, 7, 2))
-
-    assert calendar_parsing._vevent_filtered(
-        stale,
+    assert calendar_parsing._event_window_filtered(
+        stale_start,
+        stale_end,
         datetime(2026, 6, 30, tzinfo=timezone.utc),
         datetime(2026, 7, 30, tzinfo=timezone.utc),
-        _parse_ctx(),
+        timezone.utc,
     )
-    assert calendar_parsing._vevent_filtered(
-        future,
+    assert calendar_parsing._event_window_filtered(
+        future_start,
+        future_end,
         datetime(2026, 6, 1, tzinfo=timezone.utc),
         datetime(2026, 6, 30, tzinfo=timezone.utc),
-        _parse_ctx(),
+        timezone.utc,
     )
