@@ -126,21 +126,197 @@ pre-dispatch durability. Implement this single-authority protocol:
 2. Replace the old `RegistryStore` writer for this path; do not run a Store
    delayed writer or a separate v1 mirror against it. Under the allocator's
    integration-wide transaction lock, serialize an immutable complete
-   envelope and await `homeassistant.util.file.write_utf8_file_atomic` with
-   `private=True` via `hass.async_add_executor_job`. Call HA
-   `homeassistant.helpers.json.prepare_save_json(envelope)` **once** to get
-   `(mode, json_data)`; pass both `json_data` and `mode` to the helper.
-   HA's executor accepts positional arguments, so call it with
-   `(write_utf8_file_atomic, path, json_data, True, mode)` or an equivalent
-   bound callable.
-   Hash the exact bytes that will be written (`json_data` itself for `wb`;
-   UTF-8 encoding of `json_data` for `w`), not a separately serialized
-   object. Read and hash exact disk bytes during recovery. Propagate
-   serialization/`WriteError`/I/O failures to
-   the operation as sanitized failure. Do not mix independent Store cache or
-   automatic Store migration writes with direct writes to the same file.
-   The HA helper uses fsync: this is an engineering choice, not a user-selected
-   fsync policy or a guarantee against arbitrary hardware failure.
+   envelope and perform serialization, encoding, hashing and file I/O in the
+   executor. Keep the transaction lock until each submitted worker finishes,
+   including caller cancellation; never abandon an in-flight write or claim
+   acknowledgement before its result. Call HA
+   `homeassistant.helpers.json.prepare_save_json(envelope)` **once** for that
+   snapshot. Validate `(mode, json_data)`, keep bytes for `wb`, UTF-8 encode
+   text for `w`, and hash the resulting exact byte string; use those same bytes
+   for disk write and recovery comparison. Never reserialize to calculate a
+   digest.
+
+   Do **not** use HA `Store.async_load`, `load_json`, `write_utf8_file_atomic`,
+   `save_json`, or Store save/quarantine behavior for registry or marker I/O.
+   In particular, `Store.async_load` can move corrupt JSON aside, log paths
+   and exception text, publish those values in a repair issue, and return
+   `None`; that is neither private nor a reliable absence result. Use an
+   RC-owned raw-byte reader in the executor for both fixed paths. Reject
+   symlinked/non-regular paths, distinguish only verified `ENOENT` from
+   unreadable/invalid paths, read at most 32 MiB for the registry or 64 KiB
+   for the marker plus one byte, then decode and validate the captured bytes.
+   Accept files exactly at the limit; classify the limit plus one byte as
+   oversize/protective-unknown.
+   Where supported, open with `O_NOFOLLOW` and verify the opened descriptor
+   with `fstat` before reading. On Windows, reject reparse points in every
+   traversed component, including the final file, using verified handle-based
+   no-follow traversal; an ACL check or final-component check alone is not
+   sufficient. Test actual behavior on supported Windows. If the required
+   safe traversal cannot be implemented and verified, return sanitized
+   unavailable and do not open, read, write or clean these paths. The
+   trusted-config-directory boundary still excludes concurrent hostile
+   same-user replacement; never claim path checks defend against it.
+   A present wrapper must decode to a nonempty object with a valid integer
+   major version (not a boolean) and `data` of the validated expected shape;
+   malformed or empty wrappers and missing required or unsupported fields
+   are protective-unknown, not `ENOENT`.
+   For valid v1 wrappers, missing `minor_version` defaults to 1; valid
+   integer same-major minor mismatches retain HA's v1 payload compatibility
+   without its write-on-read migration (reject boolean/non-integer minors).
+   Validate the existing v1 payload;
+   HA does not require the wrapper `key` on load, so do not require it for
+   legacy acceptance. For v2 validate supported minor/version and required
+   protection sections explicitly; never rely on HA's permissive same-major
+   fallback to accept an unknown safety schema. Raw classification itself
+   performs no write; protective migration uses the marker protocol.
+   Invalid UTF-8/JSON, oversize data, permission/I/O errors, and malformed or
+   unsupported content return distinct typed sanitized outcomes; never move,
+   delete, or replace damaged evidence. Only registry **and** marker absence
+   with no activation, partial-write, or quarantine evidence is a true
+   first-run/legacy absence. Keep the v4.0.3 downgrade case separate: its old
+   HA Store still rejects a decoded integer top-level `version: 2` before
+   inspecting the payload, but quarantines malformed JSON and returns absent;
+   the new reader must never invoke that old path.
+
+   Use a small RC-owned adapter around `atomicwrites.AtomicWriter` from the
+   existing HA runtime distribution, directly in binary overwrite mode; add
+   no package dependency. The project minimum is HA 2026.11.0, whose current
+   locked test environment provides `atomicwrites-homeassistant` 1.4.1.
+   This is not a Home Assistant public API: test the import and required
+   behavior on the minimum supported HA runtime and supported CI HA lines,
+   without pinning a brittle exact Python signature. Fail closed if the
+   dependency or required behavior is unavailable; never fall back to HA's
+   logging wrapper. Verify private temporary-file permissions (POSIX mode
+   `0600`; on Windows verify the private HA configuration directory ACL),
+   file fsync, same-directory atomic replacement and the platform's
+   directory-fsync/write-through acknowledgement by behavior.
+   Before creating a temp file or replacing either authoritative path,
+   enforce the same 32 MiB/64 KiB caps on the exact serialized registry/marker
+   bytes. Oversize output is a sanitized failed transaction, not an
+   acknowledgement; retain prior state and fences and perform no dependent
+   dispatch. Preflight both target envelope and all pending/final marker
+   bytes before starting a transaction. A re-ack likewise checks its exact
+   bytes before replacement.
+
+   Use the fixed HA `.storage` key, reject a symlinked/non-directory `.storage`
+   parent and a symlinked/non-regular existing target, and keep the path under
+   the trusted HA configuration directory. The replacement operation replaces
+   rather than follows a target symlink; path-based parent validation is not a
+   defense against a same-user process that can concurrently replace the
+   trusted directory. Never claim stronger hostile-local-user protection.
+   Coordinate direct registry/marker readers, writers and cleanup with a
+   process-shared exclusive OS lock at
+   `.storage/rental_control.code_registry.io_lock`, a fixed private,
+   non-authoritative lock-file path, in addition to the allocator's async lock.
+   Acquire it in the executor using nonblocking supported standard-library
+   primitives (POSIX `flock` with `LOCK_NB`, Windows `LockFileEx` through
+   standard-library `ctypes` with `LOCKFILE_EXCLUSIVE_LOCK` and
+   `LOCKFILE_FAIL_IMMEDIATELY` over the same fixed one-byte range); create
+   with private permissions/ACL and reject a symlink/non-regular lock path.
+   On Windows the range may extend past end of file; the lock file needs no
+   content or initialization step. Create/open one stable private regular
+   file without truncation, and lock the same range on its validated handle.
+   An empty file after a crash is usable; the OS releases abandoned locks
+   after handle closure, potentially with delay. Never rename, unlink or replace the lock file while any
+   participant can run. If it is unsafe or unsupported, stop all HA/RC
+   processes before an operator repairs the path or environment, then
+   restart and verify the same lock protocol; do not mutate the ledger.
+   Every in-process participant, including reads and cleanup, first acquires
+   the same allocator async lock, then the process lock, then releases in
+   reverse order; never acquire the allocator lock under the process lock.
+   This is required even if OS lock semantics allow same-process reentry.
+   Start one monotonic five-second deadline before waiting for the allocator
+   async lock. Await that lock asynchronously with the remaining deadline;
+   never block the HA event loop. After acquiring it, retry only OS-lock
+   contention with bounded backoff and cancellation checks using the same
+   remaining deadline. Queue expiry returns busy without starting that
+   request's registry/marker read, write, cleanup or dependent hardware
+   action; the separate lock-file open/lock attempts and other already-active
+   work are not claimed to be absent.
+   Classify only verified platform-specific contention errors as busy: test
+   the real errno/Windows error produced by a second process on each
+   supported runtime, including expected `EAGAIN`/`EWOULDBLOCK` on POSIX and
+   `ERROR_LOCK_VIOLATION` on Windows. Load `kernel32` via
+   `ctypes.WinDLL(..., use_last_error=True)`, declare the correct Win32
+   prototypes and capture `ctypes.get_last_error()` immediately when
+   `LockFileEx` fails. Classify raw Windows error 33 as contention before
+   any Python errno conversion; raw `ERROR_ACCESS_DENIED` (5) is unavailable,
+   not busy. Test both outcomes on native Windows with an actual competing
+   process and a genuine permission failure. Do not guess other mappings;
+   unknown/unsupported/permission errors are sanitized unavailable, not
+   endlessly retried as contention. Handle interrupted calls within the
+   same deadline.
+   A deadline while waiting returns a static retryable busy result without
+   ledger mutation; cancellation stops and drains any waiter before
+   propagating. Unsupported primitives or unsafe lock
+   paths fail closed with sanitized unavailable status, without declaring
+   persistent protective-unknown unless independent ledger evidence requires
+   it. Unsafe or unowned existing lock files are never repaired by `chmod`
+   or ACL mutation; require offline operator repair. Never start an I/O
+   transaction without the lock. A cancelled waiter
+   stops retrying and is drained; no blocking lock call can hang the drain on
+   contention. Once actual I/O begins, drain until its result is known; this
+   is not a promise to bound arbitrary stalled filesystem I/O.
+   Every participating writer must hold it for
+   disk read/compare/write, and compare the planned predecessor digest and
+   generation with actual bytes under that lock before replacement; a stale
+   process must fail closed rather than overwrite newer state. If lock
+   acquisition or its safety checks fail, do not read/write/cleanup.
+   This protocol coordinates participating RC disk
+   readers/writers and cleanup only; it is not cross-process hardware or
+   allocator coordination. One HA process owns a config directory;
+   non-participating legacy or external writers remain outside the guarantee.
+   Convert `Exception` failures from serialization, encoding, hashing, raw
+   read/decode, writing, replace/fsync, executor submission/result handling
+   and cleanup into typed results with fixed allowlisted stage codes,
+   including non-`OSError` failures and sensitive exception causes/contexts.
+   Do not retain, log, chain or expose raw exception objects, filenames or
+   tracebacks; never raise a sanitized replacement from inside the handler
+   or pass raw errors to HA. Cancellation uses the shield/drain protocol
+   below, including repeated cancellation; sanitize again at the caller
+   boundary.
+   Hash the exact bytes produced once by serialization and compare that
+   digest only with exact raw disk bytes during recovery; never reserialize a
+   decoded object to establish agreement.
+
+   Give each writer's temporary file an exact RC-owned name prefix containing
+   a fixed integration stem, file kind and opaque random operation ID. Keep
+   the random suffix, private permissions and same-directory atomicity. After
+   startup has validated/recovered state, while holding the shared writer
+   lock and after all workers are quiescent, cleanup may scan a directory
+   containing at most 4,096 entries in total, including unrelated entries.
+   Inspect at most the 4,097th entry to detect overflow; exactly 4,096 is
+   complete only after end-of-directory is observed. Gather candidates before
+   unlinking; on overflow or incomplete enumeration unlink none. Evidence
+   scans that cannot finish enter protective-unknown with persistent
+   sanitized status explaining that a directory scan exceeded its limit or
+   could not complete, directing the operator to investigate the storage
+   directory with HA stopped and preserve registry/marker/quarantine evidence;
+   cleanup reports sanitized maintenance status.
+   Do not assume a typical directory is below the bound. Unlink only regular,
+   non-symlink files with the exact RC prefix/form and verified private
+   ownership/ACL (same owner and mode on POSIX; validated HA-directory ACL
+   on Windows). Never match registry, marker or HA `.corrupt.*` files. If the
+   scan is over bound or any ownership, path or lock check fails, leave
+   candidates untouched and return sanitized maintenance status. Hold the
+   same process-shared OS lock used by every participating RC writer; do not
+   attempt process discovery or rely on timing. Tests must use a second
+   process holding the lock to prove cleanup cannot run concurrently. Do not
+   clean while pending or protective-unknown; leftover temporary files are
+   never authoritative. Native Windows behavior and safe traversal are not
+   established by this design or Linux-only probes; do not claim verified
+   Windows protected-operation support until the required native tests pass.
+   Until then gate protected operations, not calendar-only availability.
+
+   A failed writer result after a possible rename, including a directory
+   fsync failure, is ambiguous even if the new bytes are visible: do not
+   acknowledge the transaction, dispatch dependent work, or infer success.
+   Enter protective-unknown. At restart, validate bounded raw bytes and
+   marker/digest relationships, then re-acknowledge the exact validated
+   bytes with a successful atomic write before finalizing or resuming; if
+   validation or re-acknowledgement fails, remain protective-unknown. Do
+   not mix independent Store cache or automatic Store migration writes with
+   direct writes to the same file.
 3. Before clear dispatch, commit original KM entry ID, exact slot, RC owner
    and relevant reservation/hold state in the same envelope. Recheck
    association and capabilities after the acknowledged write and before
@@ -202,15 +378,18 @@ The direct disk reader returns a typed result, not `None` for every failure:
 
 | Result | Handling |
 |---|---|
-| Valid v1, no activation evidence | Apply existing v1 validation and loss rules; migrate with marker before activating v2 |
-| Truly absent, no activation/partial/corrupt evidence | Treat as the existing first-run/legacy-absent case, subject to existing adoption gates; absence is not evidence that arbitrary past history never existed |
-| Finalized genesis marker and its exact recorded v1/absent predecessor | Resume the idempotent initial activation; no v2 target-dependent action has been authorized |
-| Valid v2 and matching finalized marker | Restore durable ledger, fences and transaction bookkeeping; validate identities/owners/generation before observation |
-| Pending marker and exact recorded target envelope | Validate target generation/schema and complete all target writes, finalize marker idempotently, then recover any existing fences before work |
-| Pending marker and exact recorded prior envelope | Roll back only that pending transaction and retry from prior state **only** if all sequencing/no-dispatch conditions below are proven; retain all prior active operations and holds |
-| Valid v1 or v2 with a marker not meeting either pending case, or v2 without a valid matching marker | Protective-unknown; never assume migration did not already complete |
-| Absent with marker other than a valid recorded genesis-absent predecessor, unexplained partial transaction or a matching `.corrupt.*`/HA corruption issue | Protective-unknown; never treat as fresh install |
-| Invalid JSON, unreadable file, invalid/unsupported marker or v2 envelope, unsupported version, missing/invalid required v2 protection section, or marker mismatch | Protective-unknown; preserve evidence and do not rebuild, overwrite, issue, release, reassign, or reset |
+| Valid v1, no marker, activation, partial-write, or quarantine evidence (complete bounded evidence scan) | Apply existing v1 validation and loss rules; migrate with marker before activating v2 |
+| Both registry and marker paths return verified `ENOENT`, no symlinks, partial-write, activation, or boundedly discovered quarantine evidence (the scan completed within its cap) | Treat as the existing first-run/legacy-absent case, subject to existing adoption gates; absence is not evidence that arbitrary past history never existed |
+| Valid v2 and matching finalized marker, without evidence of external restore/deletion, corruption or other suspected rollback | Re-acknowledge exact validated envelope and marker bytes before availability; restore ledger, fences and transaction bookkeeping; validate identities/owners/generation before observation |
+| Pending marker and exact recorded target envelope | Validate target generation/schema, re-acknowledge exact pending-marker and target bytes, finalize marker idempotently, then recover any existing fences before work |
+| Pending marker and exact recorded prior envelope | Re-acknowledge exact prior bytes; roll back only that pending transaction and retry from prior state **only** if all sequencing/no-dispatch conditions below are proven; retain all prior active operations and holds |
+| Pending genesis marker with explicit absent predecessor, registry path verified `ENOENT`, and no activation/partial/quarantine evidence | Remove only the exact pending marker after confirming its genesis transaction and no possible target dispatch; fsync the `.storage` directory, leave the registry path absent (do not create or delete an envelope), then return to first-run activation. If marker removal/fsync is uncertain, remain protective-unknown |
+| Valid v1 with a valid finalized v1-genesis marker matching its exact bytes after rollback, with trustworthy predecessor and no evidence of external restore/deletion, corruption or other suspected rollback | Re-acknowledge exact v1 and marker bytes; retry activation only after the existing quiescence and live-state agreement checks, without authorizing v2 dispatch |
+| Valid v1 with a present marker not matching a valid finalized v1-genesis or pending case, or v2 without a valid matching marker | Protective-unknown; never assume migration did not already complete |
+| Valid v1 with a matching `.corrupt.*` sibling or other prior-corruption evidence but no valid marker authenticating those exact v1 bytes, or with an incomplete bounded evidence scan and no such marker | Protective-unknown; do not treat the v1 file as complete, migrate/adopt from it, or use operator attestation to override the missing history; require a verified sufficiently current complete envelope and matching marker |
+| Any otherwise matching marker with known or suspected external restore, deletion, corruption or rollback not resolved by verified restoration | Protective-unknown; a digest match alone does not establish current complete history |
+| Absent with marker other than a valid recorded genesis-absent predecessor, unexplained partial transaction or boundedly discovered matching `.corrupt.*` evidence | Protective-unknown; never treat as fresh install |
+| Unreadable file, invalid UTF-8/JSON, size-limit overflow, invalid/unsupported marker or v2 envelope, unsupported version, missing/invalid required v2 protection section, or marker mismatch | Protective-unknown; preserve evidence and do not rebuild, overwrite, issue, release, reassign, or reset |
 
 This distinction is mandatory: existing allocator registry-loss adoption can
 reconstruct observed codes but cannot reconstruct old pending fences,
@@ -220,30 +399,76 @@ shares a code space, withhold issuance and reuse across affected shared
 accounting. In the new version, lockless RC entries must still set up and
 display their calendars without requiring Keymaster, while new lockless code
 issuance remains withheld until allocator safety state is restored. Preserve
-claims and fences already loaded and avoid hardware or ownership mutation
+lockless first setup/refresh, calendar display and calendar-only check-in
+while the allocator is busy **or** locking is unsupported, unsafe or
+unavailable. The bounded typed fallback must not raise through setup/refresh
+or require registry/marker I/O; withhold shared issuance, reuse, release and
+new dependent hardware/ownership dispatch until locking and safety gates are
+available. Preserve already-loaded claims and fences. Unavailable locking
+alone does not assert persistent ledger corruption or grant access.
+Calendar-source/network and already-running
+filesystem operations are outside the five-second lock deadline. This does
+not assert that every other nonmutating read avoids the allocator lock.
+Preserve claims and fences already loaded and avoid hardware or ownership mutation
 where information is unavailable; do not claim that codes missing from
 damaged state remain visible or present, or that they are absent or reusable.
 Expose persistent actionable status that directs the operator to restore
 verified safety state, without PINs, raw storage contents or raw exceptions.
-Keep calendar-only behavior where it does not mutate access.
-HA `Store.async_load` may rename invalid JSON to `.corrupt.*` and return
-`None` ([source](https://github.com/home-assistant/core/blob/2026.11.2/homeassistant/helpers/storage.py#L425-L475));
-do not use that `None` as an absence proof. The new direct reader must not
-silently move/delete corrupt bytes. Also detect evidence of a prior HA
-quarantine when the original path is already absent, without dumping it.
+Keep calendar-only behavior where it does not mutate access. Use the
+RC-owned bounded raw-byte reader for both registry and marker; never invoke
+HA `Store.async_load`, `load_json`, or another path that can quarantine,
+log storage paths/raw errors, or conflate corruption with `None`. HA
+2026.11.0 `Store.async_load` does quarantine invalid JSON, logs the storage
+key, original and quarantine paths plus error, and returns `None`
+([source](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/helpers/storage.py#L425-L475)).
+The direct reader must preserve damaged bytes. When the original path is
+absent, detect a prior HA quarantine by a bounded scan for the exact
+integration storage-key `.corrupt.*` filename pattern; do not open, move,
+delete, or log those files or their paths. If the bounded scan is
+inaccessible or exceeds its cap, quarantine absence is unproven and the
+result is protective-unknown, never first-run.
 
 **Repair**: surface a sanitized persistent actionable error, preserve the
 damaged file/marker, and have an operator restore a *verified sufficiently
 current* complete envelope and matching marker through a stopped,
 documented backup/restore procedure, then validate current original
 identities and live observations before resuming. An older backup is not
-sufficient merely because it parses; it may omit later work. HA may also
-present its generic storage-corruption repair issue after quarantining invalid
-JSON; submitting that confirmation is not proof that the allocator envelope
-and marker were restored. Any default/fresh v1 registry v4.0.3 creates or
-writes after HA returns `None` for the quarantined file is not restored safety
-state; with the surviving activation marker, the new reader classifies it as
-protective-unknown. If no complete state or independent proof exists, keep
+sufficient merely because it parses; it may omit later work.
+For v1 plus a quarantined sibling the approved choice is **verified backup**,
+not an operator-approved risky recovery. Stop RC/HA, preserve the current
+registry, marker and quarantine evidence, and restore the complete envelope
+and its matching marker as a pair from a verified backup. Before resuming,
+check both bounded files' schema, supported versions, marker transaction and
+generation, and digest against the exact restored envelope bytes, and
+re-acknowledge those exact bytes. Independently verify that the backup covers
+all relevant committed ledger transactions and any possible hardware effects
+through the incident/quiescence point, including outstanding holds and
+fences. Record the evidence without PINs or raw ledger contents. A checksum,
+timestamp, backup success, digest match, observed slots, or operator
+attestation alone proves neither completeness nor currency; identity
+attestation cannot supply missing ledger history. If those independent facts
+cannot be verified, keep issuance and release blocked. A markerless v1
+backup does not supply the matching marker or independently establish
+completeness: this design does not authorize creating a genesis marker from
+it in this recovery case. No existing mechanism has been established to
+prove a markerless v1 backup covers all later work; a different recovery path
+requires maintainer policy, not an inferred override. If no sufficiently
+current verified complete marker-bearing backup exists, persistent sanitized
+status must say so, explain that a markerless v1 backup alone cannot prove
+completeness, and direct the operator to recover such a backup. There is no
+automatic recovery or operator override; issuance and release remain blocked.
+This block may be indefinite if no qualifying backup can be established.
+This includes legacy installations that never activated v2: a markerless v1
+backup alone cannot prove complete history, and no risky recovery or new
+legacy exception is authorized without a separate maintainer policy decision.
+HA may present
+its generic storage-corruption repair issue when v4.0.3's old Store
+quarantines malformed JSON; submitting that confirmation is not proof that
+the allocator envelope and marker were restored. Any default/fresh v1
+registry v4.0.3 creates or writes after its old Store returns `None` is not
+restored safety state; with the surviving activation marker, the new raw
+reader classifies it as protective-unknown. The new reader itself never
+quarantines. If no complete state or independent proof exists, keep
 unknown holds and the gate; an individual operator attestation may establish
 only a specific legacy-unknown physical-lock provenance, not a known-A
 transfer. It cannot prove the entire lost ledger or authorize code reuse. Do
@@ -265,6 +490,16 @@ sentinel only when there is no activation, quarantine or partial-history
 evidence. Neither sentinel asserts that arbitrary deleted history cannot
 exist. This marker is a correlation signal, not a ledger.
 
+The registry and marker are loaded as bounded raw byte strings in the
+executor and decoded only after size, file type and path checks. For an
+envelope, compute SHA-256 over the exact bytes produced once by
+`prepare_save_json`; the marker stores this digest. Recovery computes SHA-256
+over the exact bytes read from disk and compares the values before schema
+validation. It must not reserialize decoded JSON to calculate or confirm a
+digest. Distinguish verified missing paths from unreadable, malformed,
+oversized and unsupported files; only the former can participate in the
+explicit genesis-absence case.
+
 Under one serialized writer, prepare target bytes, acknowledge pending
 marker, acknowledge target envelope, then acknowledge finalized marker.
 **No side effect or reuse dependent on the target transaction may dispatch
@@ -277,26 +512,40 @@ owners are part of the prior envelope and are not canceled or confirmed by
 rolling back a newer pending intent.
 
 Recovery after an ordinary **process crash**, with no evidence of external
-restore/deletion or storage failure:
+restore/deletion or storage failure, first validates the bounded raw bytes,
+then re-acknowledges exact validated bytes using the atomic writer in
+protocol order (pending marker before envelope; finalized envelope before
+final marker). This rewrite does not reserialize or alter bytes. Do not make
+the allocator available until the required file and directory fsync or
+platform write-through acknowledgement succeeds. If re-acknowledgement
+fails, or any raw read/write reports an error, remain protective-unknown.
 
-1. If marker is pending and actual validated disk bytes match the recorded
-   prior digest/version/generation (or the explicitly recorded genesis
-   absence), restore the prior finalized marker and discard only the target
+1. If marker is pending and actual validated disk bytes match a recorded
+   prior envelope digest/version/generation, re-acknowledge those exact prior
+   bytes, restore the prior finalized marker and discard only the target
    intent, then retry it if still eligible. This is safe only when the
-   embedded    prior finalized record or validated v1 genesis is trustworthy,
+   embedded prior finalized record or validated v1 genesis is trustworthy,
    the writer's quiescence/order is proven, and target-dependent dispatch
    was impossible before final-marker acknowledgement. Do not lose prior
-   pending clear A or other prior effects. If any condition is unprovable,
-   enter protective-unknown instead.
+   pending clear A or other prior effects. For an explicit genesis-absent
+   predecessor, require registry `ENOENT` and no activation/partial/quarantine
+   evidence, then remove only that exact pending marker and fsync its parent
+   directory; do not write, replace or delete an envelope path that was
+   absent. If the marker removal/fsync is uncertain, or any condition is
+   unprovable, enter protective-unknown instead.
 2. If disk bytes match the target digest/version/generation, validate the
-   complete target, finalize the marker idempotently and restore the
-   committed bookkeeping and fences. Restoration is **not** dispatch of a
-   hardware service: never infer a clear call from the envelope or marker.
-   Observe the original identity and slot using fresh verified evidence.
-   Finalization does not establish whether an earlier operation reached
-   hardware; only the existing retry policy may re-dispatch after identity,
-   capabilities and all applicable safety gates are revalidated. An already
-   empty slot can recover from fresh evidence without replaying the reset.
+   complete target and re-acknowledge those exact bytes before finalizing the
+   marker idempotently and restoring the committed bookkeeping and fences.
+   If a writer reported failure after possible replacement (including
+   directory-fsync failure), visible target bytes alone are not success; this
+   explicit successful re-acknowledgement is required. Restoration is **not**
+   dispatch of a hardware service: never infer a clear call from the
+   envelope or marker. Observe the original identity and slot using fresh
+   verified evidence. Finalization does not establish whether an earlier
+   operation reached hardware; only the existing retry policy may re-dispatch
+   after identity, capabilities and all applicable safety gates are
+   revalidated. An already empty slot can recover from fresh evidence without
+   replaying the reset.
 3. Missing unexpected bytes, corrupt marker/envelope, invalid versions,
    non-successor generations, inconsistent IDs, or any other digest match
    failure is protective-unknown. A finalized marker must match its
@@ -308,10 +557,10 @@ not race an earlier `async_delay_save`. If that cannot be established, do
 not migrate. For a genesis predecessor, the restored prior marker is a
 finalized marker explicitly tagged `v1` with its exact digest, or `absent`
 with its sentinel. It authorizes retrying activation, not any v2 dispatch.
-File helper atomic replacement/fsync and serialized writes are
-the engineering assumptions for these process-crash cases, not proof against
-faulty storage, external edits or restoring older files. If such rollback is
-known or suspected, keep protective-unknown even when an old digest matches.
+RC-owned atomic replacement/fsync and serialized writes are the engineering
+assumptions for these process-crash cases, not proof against faulty storage,
+external edits or restoring older files. If such rollback is known or
+suspected, keep protective-unknown even when an old digest matches.
 Hash is correlation, not authentication or PIN secrecy. Loss or rollback of
 both files cannot always be detected.
 
@@ -333,12 +582,23 @@ dispatch callbacks, update config entries, or acquire an EventOverrides or
 reissue lock inside that lock. Release an override/reissue lock before
 requesting the allocator transaction; carry a generation token and recheck
 after reacquiring local state. No reverse lock acquisition is allowed.
-Cancellation cannot abandon an in-flight executor write and release the lock:
-retain the lock until the worker completes or enter an explicit unknown
-state after completion, then propagate cancellation. Coalesce only updates
-that cannot weaken a fence. Benchmark and test slow I/O, cancellation,
-coalescing and lock inversions; no calendar/event loop blocking or unbounded
-flush queue is acceptable.
+When an executor worker is submitted, retain its underlying future and await
+it through `asyncio.shield` in a cancellation-drain loop. For every
+`CancelledError`, record cancellation and consume only that cancellation
+request with `Task.uncancel()` (or the supported equivalent), then continue
+shielded waiting; repeated cancellations must not cancel or abandon the
+worker. Keep the allocator lock until the worker's result or exception is
+known, map it to a typed outcome and apply success/protective-unknown state
+while still locked. If cancellation was observed, do not dispatch any
+target-dependent hardware action; preserve the acknowledged fence or unknown
+state, release locks, and only then propagate cancellation. Never expose a
+raw worker exception while draining. Coalesce only updates that cannot
+weaken a fence. Benchmark and test slow I/O, repeated cancellation, lock
+lifetime, success/failure outcomes, no dispatch after cancellation,
+coalescing and lock inversions; blocking the event loop or an unbounded
+flush queue is unacceptable. Lockless setup, refresh, display and
+calendar-only check-in must retain the bounded busy/unavailable behavior
+described above.
 
 ### Envelope/config correlation and shared attestations
 
