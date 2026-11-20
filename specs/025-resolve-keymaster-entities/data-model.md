@@ -23,7 +23,8 @@ Multiple RC entries may select the same KM entry with disjoint ranges. An
 automatic legacy normalized match must be unique including disabled entries
 and provably intended; distinguish same-named choices during repair. A verified
 removed entry is not replaced by a same-named entry. Selection of another
-entry invalidates observations and never transfers existing claims.
+entry invalidates observations; selection alone never transfers existing
+claims.
 
 **Positive evidence boundary**: a previously persisted, verified KM
 config-entry ID associated with this RC entry is positive stable identity
@@ -34,19 +35,25 @@ clears belong to that target. Current legacy code persists only the normalized
 lockname, not a KM ID; slot/booking mapping and matching PIN are not proof of
 historical KM identity. A current unique match, including disabled entries,
 is necessary but not sufficient for automatic migration. Where no
-independent proof exists, the maintainer approves a **separate, explicit
-operator attestation** that the selected, distinguishable Keymaster entry is
-the same original entry/association. Record the assertion and selected entry
-ID durably; it is operator-supplied historical evidence, not independent
-machine proof or fresh live slot evidence. Entry selection alone is not
-attestation. Preserve automatic migration when genuinely independently
+independent proof exists for **legacy-unknown** provenance, the maintainer
+approves a **separate, explicit operator attestation** that the selected,
+distinguishable current Keymaster entry is attached to the same original
+physical lock. This may be true even when the original Keymaster entry was
+deleted and recreated with a new entry ID. Record the assertion, its legacy
+scope and selected current entry ID durably for audit. The assertion is
+operator-supplied historical evidence, not machine proof of physical
+continuity or fresh live slot evidence. A name, slug, ID, matching address or
+entry selection alone is not attestation or proof of physical identity. The
+selected current entry and its capabilities still require independent current
+validation. Preserve automatic migration when genuinely independently
 verifiable; do not require universal reselection by assumption.
 
 An attestation does not transfer a hold already known to belong to entry A
-onto replacement entry B, even if the physical device is unchanged. Nor does
-it verify live states, confirm a clear, or authorize release. If a desired
-transfer would require treating a replacement entry as the original verified
-identity, stop for a separate spec correction rather than infer it.
+onto replacement entry B, even if both entries refer to the same physical
+lock. Attestation only binds legacy-unknown provenance; it neither verifies
+live states, confirms a clear, nor authorizes release. Current evidence from
+the attested original physical lock and exact slot remains required for
+release. Uncertainty or ambiguity retains the hold and fails closed.
 
 ## Slot capability and observation
 
@@ -186,6 +193,11 @@ preserve existing policy, stop for maintainer direction.
 
 ### Load classification and protective-unknown recovery
 
+**Protective-unknown** means the shared allocator cannot establish that its
+authoritative ledger and matching protection marker are complete and
+sufficiently current. It does not establish that prior claims or physical
+codes are present or absent.
+
 The direct disk reader returns a typed result, not `None` for every failure:
 
 | Result | Handling |
@@ -205,7 +217,15 @@ reconstruct observed codes but cannot reconstruct old pending fences,
 attestations, unreadable-slot holds or release tombstones. An exclusion or
 new live empty slot cannot clear protective-unknown. Since the allocator
 shares a code space, withhold issuance and reuse across affected shared
-accounting; keep calendar-only behavior where it does not mutate access.
+accounting. In the new version, lockless RC entries must still set up and
+display their calendars without requiring Keymaster, while new lockless code
+issuance remains withheld until allocator safety state is restored. Preserve
+claims and fences already loaded and avoid hardware or ownership mutation
+where information is unavailable; do not claim that codes missing from
+damaged state remain visible or present, or that they are absent or reusable.
+Expose persistent actionable status that directs the operator to restore
+verified safety state, without PINs, raw storage contents or raw exceptions.
+Keep calendar-only behavior where it does not mutate access.
 HA `Store.async_load` may rename invalid JSON to `.corrupt.*` and return
 `None` ([source](https://github.com/home-assistant/core/blob/2026.11.2/homeassistant/helpers/storage.py#L425-L475));
 do not use that `None` as an absence proof. The new direct reader must not
@@ -217,11 +237,17 @@ damaged file/marker, and have an operator restore a *verified sufficiently
 current* complete envelope and matching marker through a stopped,
 documented backup/restore procedure, then validate current original
 identities and live observations before resuming. An older backup is not
-sufficient merely because it parses; it may omit later work. If no complete
-state or independent proof exists, keep unknown holds and the gate; individual
-operator attestations may establish a specific legacy identity but cannot
-prove the entire lost ledger or authorize code reuse. Do not invent a
-force-release or claim that all such cases are recoverable.
+sufficient merely because it parses; it may omit later work. HA may also
+present its generic storage-corruption repair issue after quarantining invalid
+JSON; submitting that confirmation is not proof that the allocator envelope
+and marker were restored. Any default/fresh v1 registry v4.0.3 creates or
+writes after HA returns `None` for the quarantined file is not restored safety
+state; with the surviving activation marker, the new reader classifies it as
+protective-unknown. If no complete state or independent proof exists, keep
+unknown holds and the gate; an individual operator attestation may establish
+only a specific legacy-unknown physical-lock provenance, not a known-A
+transfer. It cannot prove the entire lost ledger or authorize code reuse. Do
+not invent a force-release or claim that all such cases are recoverable.
 
 ### Activation marker and write serialization
 
@@ -377,15 +403,17 @@ committed envelope cannot authorize hardware actions. Test failure/restart
 before and after marker intent, envelope commit, config update, delayed
 config flush and transaction completion.
 
-For shared legacy locks, group only entries proven to reference the same
-historical KM entry via independent evidence or explicit cross-entry
-attestation; a matching normalized slug merely creates an *unresolved
-candidate*, not a group. Attestations are scoped to named RC entries and
-specific legacy owner/hold references. Under the same transaction lock,
-reject contradictory same-group attestations A versus B; do not modify an
-already verified A or implicitly propagate one entry's statement to another.
-Two different locks with colliding slugs may be separately verified as A and
-B; keep their ledgers distinct. Where ownership cannot be partitioned
+For legacy-unknown shared locks, group only entries whose original physical
+lock is established by independent evidence or explicit cross-entry operator
+attestation; the attestation may bind a recreated Keymaster entry, but a
+matching normalized slug merely creates an *unresolved candidate*, not a
+group. Physical continuity is not inferred from current entry IDs, names or
+addresses. Attestations are scoped to named RC entries and specific legacy
+owner/hold references. Under the same transaction lock, reject contradictory
+same-group attestations A versus B; do not modify an already verified A or
+implicitly propagate one entry's statement to another. Two different locks
+with colliding slugs may be separately verified as A and B; keep their ledgers
+distinct. Where ownership cannot be partitioned
 without guessing, preserve the affected claims and holds until the operator
 resolves the ambiguity. Migrate proven shared owners and aliases atomically
 as a group, or not at all.
@@ -406,23 +434,33 @@ resources. A hard cap may refuse new work rather than silently drop protection.
 
 ## Schema and rollback
 
-The maintainer selected a tested **HA envelope major version 2** as the guard.
-HA's v1 Store rejects a **valid, parseable** higher-major-version envelope
-before handing the payload to v4.0.3; its `RegistryStore` converts the load exception to
-`ConfigEntryNotReady`. Test with the actual v4.0.3 loader and HA runtime, not
-merely a mocked schema parser. Because the shared allocator loads before RC
-entry setup, downgrading can block **all entries including lockless ones**.
-The documented recovery is to reinstall a compatible newer RC version and
-retain the v2 file. Never delete or overwrite it with an older backup to
+The maintainer selected an HA envelope major-version-2 header as the
+v4.0.3 downgrade guard. HA's v1 Store rejects a JSON-decoded object with an
+integer top-level `version: 2` before inspecting its inner payload; the
+`RegistryStore` wraps the version error as `ConfigEntryNotReady`. The guard is
+based on the top-level version, not successful validation of the v2 payload:
+even a v2 header with missing or malformed inner data can trigger it. Test
+with the actual v4.0.3 loader and HA runtime, not merely a mocked schema
+parser. Because the shared allocator loads before RC entry setup, downgrading
+can block **all entries including lockless ones**. For an intact v2 registry,
+reinstall a compatible newer RC version and retain that registry. Never
+delete or overwrite it with an older backup to
 force startup: that can lose later guest access and pending holds. The guard
 does not promise to cover other old versions, file deletion/replacement, or
 restoring an older snapshot. In particular malformed v2 JSON can be moved to
 `.corrupt.*` by HA's v1 Store, which returns `None`; v4.0.3 then treats the
-registry as absent and enters its existing adoption recovery, ignoring the
-new marker. It may eventually resume without reconstructing the new fences.
-Do not claim this is safe. Test the actual corrupt-downgrade path and,
-if encountered, stop RC/HA, preserve the quarantined bytes and marker,
-reinstall the compatible version, and use the verified restore/repair process.
+registry as absent and may enter its existing adoption recovery, ignoring the
+new marker. It may later resume without reconstructing the new fences; this is
+not a safe guard or recovery. HA's repair issue gives the operator the
+quarantined path and recommends fixing manually edited JSON and restoring it,
+or restoring the system from backup, then confirming the repair. Its generic
+confirmation flow does not restore or validate the file. Test the actual
+corrupt-downgrade path. If
+encountered, stop RC/HA and preserve the quarantined bytes and marker.
+Reinstalling a compatible newer version alone cannot reconstruct missing
+safety state: restore a verified, sufficiently current complete envelope and
+matching marker through the stopped repair process. Without that restore,
+remain protective-unknown and do not claim recovery is safe.
 No v1 mirror may overwrite v2 after activation.
 
 ## Event source and topology

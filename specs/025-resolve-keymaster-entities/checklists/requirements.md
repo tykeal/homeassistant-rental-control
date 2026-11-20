@@ -48,7 +48,10 @@ SPDX-License-Identifier: Apache-2.0
 - FR-001–FR-003: Stories 1–2 and the distractor, unreadable-state and partial-effect
   edge cases cover target identity, operation routing and safety fences.
 - FR-004–FR-006: Stories 2–3 cover startup, rebind, migration, topology, disjoint
-  slot ranges and lockless operation.
+  slot ranges, and lockless setup/calendar availability with issuance withheld
+  under protective-unknown allocator state. Story 3 also checks persistent
+  sanitized restoration guidance without claiming that codes lost from damaged
+  state remain visible/present or are absent/reusable.
 - FR-007–FR-008: Story 4 covers installed-version evidence, capability
   diagnostics and PIN redaction independently. Source checks verified the
   two packaged baselines (v0.6.0 and v0.6.5), including common unique-ID
@@ -68,7 +71,7 @@ SPDX-License-Identifier: Apache-2.0
   Local confirmation, the pending-clear slot fence, and the
   shared allocator's ownership, adoption-conflict and forced-reissue guards
   have separate acceptance checks.
-- This checklist assesses the draft, not implementation results. The
-  maintainer confirmed a clean independent rubber-duck review after revisions.
+- This checklist assesses the draft, not implementation results or independent
+  rubber-duck approval.
 - The feature uses `025`, the next unused prefix after `024-slot-exclusion`.
   The branch and spec directory share the same unique prefix.

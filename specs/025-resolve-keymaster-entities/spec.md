@@ -142,10 +142,11 @@ and restart after migration.
    do not trigger check-in. Missing attribution for an inherited slot does not
    grant permission to write a child's unavailable controls or redirect a
    child's own Rental Control operations to its parent.
-4. **Given** Rental Control intentionally has no lock configured, **When** it
-   starts, reloads or runs calendar-only check-in behavior, **Then** it keeps
-   existing lockless behavior without looking up Keymaster capabilities or raising
-   a Keymaster warning.
+4. **Given** Rental Control intentionally has no lock configured and the shared
+   allocator safety state is available, **When** it starts, reloads or runs
+   calendar-only check-in behavior, **Then** it keeps existing lockless
+   behavior without looking up Keymaster capabilities or raising a Keymaster
+   warning.
 5. **Given** a reservation is already associated with a verified managed slot,
    **When** automatic check-in, manual state changes, or normal/early checkout
    read or change the checkout limit, **Then** the applicable existing behavior
@@ -158,6 +159,18 @@ and restart after migration.
    and release guards remain intact. Lockname-plus-slot and supported Rental
    Control sensor selectors retain their unambiguous behavior; ambiguous
    targets are refused, and dry runs do not change slots or ownership.
+7. **Given** a lockless Rental Control entry and a protective-unknown shared
+   allocator in the new version, **When** the entry starts or reloads and its
+   calendar is displayed, **Then** setup and calendar display remain available
+   without a Keymaster lookup, but new code issuance is withheld until the
+   shared allocator safety state is restored. This does not describe a
+   downgrade to v4.0.3, which may block setup of all entries when HA can
+   decode a top-level storage `version` integer greater than 1 (the planned
+   envelope uses `version: 2`), before checking the inner payload. Persistent,
+   sanitized, actionable status directs the operator to restore a verified,
+   sufficiently current complete envelope and matching marker. It does not
+   claim that codes missing from damaged state remain visible or present, or
+   that they are absent or reusable.
 
 ### User Story 4 - Diagnose version and capability failures separately (Priority: P2)
 
@@ -277,6 +290,18 @@ and forced-release paths, and an operator slot exclusion.
    check that an empty-looking placeholder is rejected.
    A failed provider clear followed by empty Keymaster text is not
    represented as physical-lock verification.
+6. **Given** a legacy hold whose original Keymaster entry identity is unknown,
+   **When** an operator explicitly attests that a selected, distinguishable
+   current entry is the SAME original physical lock, even if its former
+   Keymaster entry was deleted and recreated, **Then** that operator assertion
+   may establish provenance for the legacy hold but is not machine proof of
+   physical continuity. Record the assertion and selected entry durably for
+   audit, validate the current entry separately, and do not confirm a clear,
+   release a PIN, or replace fresh trustworthy evidence for the original
+   physical lock and exact slot under the existing release guards. A name match
+   or selection without attestation does not establish provenance, uncertainty
+   or ambiguity fails closed, and a hold already known to belong to entry A is
+   never transferred to replacement entry B by attestation.
 
 ### Edge Cases
 
@@ -330,13 +355,24 @@ and forced-release paths, and an operator slot exclusion.
 - **FR-004**: A verified association MUST persist across restarts without relying
   on mutable names. Upgrade MUST preserve settings, ranges and reservation and
   reconciliation state, and can adopt a legacy association only where a unique,
-  intended entry is verifiable. Resolve legacy values against the Keymaster
-  config entries using the existing lock-name normalization, not titles, areas
-  or generated addresses; collisions, absent entries and unverifiable legacy
-  identity require repair, not a first match. An unverified entry MUST NOT become
-  lockless. Offer explicit reselection without entry deletion and distinguish
-  similarly named choices; selection alone does not prove that old ownership,
-  exclusions or pending work belong to the replacement lock.
+  intended entry is verifiable, or where an explicit operator attestation
+  establishes that a selected, distinguishable current entry is the SAME
+  original physical lock for legacy ownership whose original identity is
+  unknown. This may apply even if the original Keymaster entry was deleted and
+  recreated; software MUST NOT claim to prove physical continuity from the new
+  entry ID, current name or matching address. Record the explicit operator
+  assertion and selected entry durably for audit, and still verify the selected
+  current entry and its capabilities. Resolve legacy values against the
+  Keymaster config entries using the existing lock-name normalization, not
+  titles, areas or generated addresses; collisions, absent entries and
+  unverifiable legacy identity require repair, not a first match. An
+  unverified entry MUST NOT become lockless. Offer explicit reselection without
+  entry deletion and distinguish similarly named choices; selection or a
+  matching name alone does not prove that old ownership, exclusions or pending
+  work belong to the replacement lock. Attestation may establish provenance
+  only for legacy-unknown ownership; it MUST NOT transfer work already known to
+  belong to another entry, confirm a slot clear, or replace current evidence
+  from the original physical lock and exact slot required for release.
 - **FR-005**: For registry or Keymaster lifecycle changes, Rental Control MUST
   stop using stale addresses as targets or evidence and resume eligible work
   after revalidation and fresh observation. Cover config-entry setup, reload,
@@ -356,7 +392,16 @@ and forced-release paths, and an operator slot exclusion.
   conflicting fields, infer a slot from an entity name, or treat a matching
   slot number or name alone as proof. Preserve existing monitoring, unlock,
   managed-range and stay checks. A child event does not extend the configured
-  scope of writes. Lockless entries MUST remain independent of Keymaster.
+  scope of writes. Lockless entries MUST remain independent of Keymaster for
+  setup, calendar display and ordinary lockless operation. If the shared
+  allocator is protective-unknown in the new version, lockless setup and
+  calendar displays remain available but new code issuance MUST be withheld
+  until safety state is restored. Retain any previously loaded claims and
+  fences where available and avoid hardware or ownership mutation. If damaged
+  state makes prior codes or claims unknowable, do not claim that those codes
+  remain visible or present, or that they are absent or reusable.
+  Maintain a persistent, actionable, sanitized status explaining that safety
+  state must be restored; do not expose PINs, storage contents or raw exceptions.
 - **FR-007**: Rental Control MUST distinguish a reliable, installed-version
   result from a missing or ambiguous lock association and from missing,
   disabled, not-ready, unavailable, ambiguous, or unsupported capabilities.
@@ -392,28 +437,38 @@ and forced-release paths, and an operator slot exclusion.
   `set_slot_exclusion`) for unambiguous calls, including dry runs. A legacy
   selector is not authorization to touch an unverified Keymaster target.
 - **FR-010**: Uncertainty MUST NOT shorten, erase, rotate or reassign an active
-  guest's credential or release its reservation or code ownership. Preserve
-  current initial cross-entry adoption/recovery holds and post-adoption
-  entry-wide issuance holds where applicable. Keep the existing opt-in
-  exclusion remedy for a verified association and eligible unreadable managed
-  slot without bypassing identity, operation, ownership or clear-confirmation
-  fences. Do not widen exclusion eligibility or narrow blocking to only affected
-  slots by default.
+  guest's credential or release its reservation or code ownership where that
+  state is known. Preserve previously loaded claims and holds and avoid
+  hardware or ownership mutation where information is unavailable. If damaged
+  allocator state makes prior codes unknowable, do not claim they remain
+  visible or present, or that they are absent or reusable. Preserve current
+  initial cross-entry adoption/recovery holds and post-adoption entry-wide
+  issuance holds where applicable. Keep the existing opt-in exclusion remedy
+  for a verified association and eligible unreadable managed slot without
+  bypassing identity, operation, ownership or clear-confirmation fences. Do not
+  widen exclusion eligibility or narrow blocking to only affected slots by
+  default.
 - **FR-011**: Pending clears and code-release holds MUST stay bound to the
   verified Keymaster lock identity and exact slot for which they originated.
   The same requirement applies to inherited legacy holds whose original identity
-  must be established before release. Reselection, address reuse, a missing
-  observation or clear evidence from another lock or slot MUST NOT release a hold
-  or move cleanup onto the replacement. Preserve outstanding ownership until
-  existing release conditions are satisfied with trustworthy current evidence
-  from the original lock and slot; if that evidence cannot be established,
-  retain the hold and give the operator a safe repair path. An unconfirmed
-  clear keeps the pending-clear fence and prevents slot reassignment. Confirming
-  the clear resolves that slot fence, not the shared allocator's separate
-  PIN reservation. Preserve current release guards: relevant allocation owners
-  and forced-reissue holds still reserve the PIN; applicable adoption conflicts,
-  missing or unreadable observations for the owning lock and slot, or a PIN
-  still present in the relevant observation prevent guarded release. Preserve
+  must be established before release. For a legacy hold whose original identity
+  is unknown, an explicit operator attestation that the selected entry is the
+  SAME original physical lock may establish provenance; it cannot transfer a
+  hold already known to belong to entry A to replacement entry B. Reselection,
+  address reuse, a missing observation or clear evidence from another lock or
+  slot MUST NOT release a hold or move cleanup onto the replacement.
+  Attestation does not confirm a clear, release a PIN, or substitute for
+  trustworthy current evidence from the original physical lock and exact slot.
+  Preserve outstanding ownership until existing release conditions are
+  satisfied with that evidence; if it cannot be established, retain the hold
+  and give the operator a safe repair path. An unconfirmed clear keeps the
+  pending-clear fence and prevents slot reassignment.
+  Confirming the clear resolves that slot fence, not the shared allocator's
+  separate PIN reservation. Preserve current release guards: relevant
+  allocation owners and forced-reissue holds still reserve the PIN; applicable
+  adoption conflicts, missing or unreadable observations for the owning lock
+  and slot, or a PIN still present in the relevant observation prevent guarded
+  release. Preserve
   the existing limited reissue exemptions, and the rule that a redundant
   owner can be retired if another owner still represents the same verified
   slot and the PIN remains reserved. A PIN becomes eligible for reuse only
@@ -446,6 +501,10 @@ and forced-release paths, and an operator slot exclusion.
   version, separate from the ability to use a selected lock or slot capability.
 - **Pending clear or release hold**: Outstanding work or ownership that protects
   an original lock and slot until the required current evidence allows release.
+- **Protective-unknown allocator state**: The shared allocator cannot establish
+  that its authoritative code ledger and matching protection marker are
+  complete and sufficiently current. This is not evidence that prior claims or
+  physical codes are present or absent.
 
 ## Success Criteria *(mandatory)*
 
@@ -460,9 +519,12 @@ and forced-release paths, and an operator slot exclusion.
   are ready. Each accepted feedback change is handled once; stale and unrelated
   events cause zero reservation or slot changes.
 - **SC-003**: The legacy upgrade matrix retains all uniquely verified
-  assignments and reservation state, keeps lockless behavior unchanged, and
-  produces zero automatic reassignments for missing or ambiguous selections.
-  Shared-lock and parent/child cases pass without cross-range effects.
+  assignments and reservation state, produces zero automatic reassignments for
+  missing or ambiguous selections, and keeps lockless setup/calendar behavior
+  independent of Keymaster. With protective-unknown allocator state in the new
+  version, lockless setup and calendar displays remain available while new code
+  issuance is withheld. Shared-lock and parent/child cases pass without
+  cross-range effects.
 - **SC-004**: Every negative test case with insufficient evidence preserves the
   applicable issuance, adoption and reuse fences. No missing capability is
   mislabeled a version incompatibility, and a diagnostic capture of all acceptance
@@ -607,7 +669,26 @@ and forced-release paths, and an operator slot exclusion.
   association, preserve the ledger, subscribe and rebind, and surface targeted
   remediation without changing the required fail-closed behavior. If evidence
   cannot support an existing behavior without a policy change, obtain
-  maintainer direction rather than guessing.
+  maintainer direction rather than guessing. The approved plan includes a
+  versioned allocator-registry envelope migration for protective metadata and
+  a v4.0.3 downgrade safeguard when HA can decode a JSON object with a top-level
+  integer `version: 2`. HA checks that envelope version before inspecting the
+  inner payload, so this is not a claim that the payload or safety metadata has
+  been validated. The safeguard must be tested; these remain planned behaviors
+  to validate, not claims about current implementation.
+  No forced rewrite of legacy lock identity is prescribed. In the new version,
+  lockless setup and calendar displays remain independent of Keymaster; when
+  the shared allocator is protective-unknown, new lockless code issuance is
+  withheld until safety state is restored. A v4.0.3 downgrade encountering a
+  JSON object with a top-level integer `version: 2` may block setup of all
+  entries, including lockless ones, before HA validates its inner payload.
+  Malformed v2 JSON may instead be quarantined by HA
+  before v4.0.3 checks the version; that loader can treat the registry as
+  absent and enter adoption recovery without the new safety metadata. This is
+  not a safe guard or recovery. Reinstalling a compatible newer version alone
+  cannot reconstruct missing state: preserve the quarantined bytes and marker
+  and restore a verified, sufficiently current complete envelope and marker,
+  or remain protective-unknown.
 
-No forced storage migration, ban on corroborating event names, or switch to
-slot-scoped blocking is prescribed by this draft.
+No ban on corroborating event names or switch to slot-scoped blocking is
+prescribed by this draft.

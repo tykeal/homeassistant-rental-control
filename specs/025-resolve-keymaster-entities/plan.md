@@ -45,13 +45,15 @@ verified supported identities, or fail closed per capability.
 | III: SPDX/REUSE | PASS: artifact headers required | PASS: headers and REUSE validation |
 | IV: hooks | PASS: no bypass; full pre-commit before future push | PASS: commands in quickstart |
 | V: DCO/co-authorship | PASS: future commits require actual human sign-off and agent attribution | PASS: no commit made |
-| VI: consistent UX | PASS: existing service and config behavior preserved; actionable repairs | PASS: explicit attestation for unverifiable legacy continuity; distinguish lockless/unresolved |
+| VI: consistent UX | PASS: existing service and config behavior preserved; actionable repairs | PASS: explicit attestation for legacy-unknown physical-lock continuity; keep lockless calendar availability distinct from the protective-unknown issuance gate |
 | VII: performance | PASS: event-loop safe, no unbounded listeners | PASS: bounded cache, coalesced rebind, performance tests if affected paths change |
 
 No constitution exception is proposed. The maintainer chose explicit
-same-original-entry attestation for legacy uncertainty and a v4.0.3 envelope
-downgrade guard. These preserve the merged spec under the limits below;
-implementation must still pass the persistence, downgrade and safety tests.
+same-original-physical-lock attestation for legacy-unknown provenance, even
+when the Keymaster entry was recreated, and a v4.0.3 envelope downgrade guard.
+The new version must keep lockless setup and calendar displays available during
+protective-unknown while withholding new code issuance. Implementation must
+still pass the persistence, downgrade and safety tests.
 
 ## Project Structure
 
@@ -105,17 +107,27 @@ without its corresponding evidence and lifecycle fences.
    dormant helpers separately if desired; activate v2 and its consumers
    together, never a partial unsafe rollout. Follow the
    [transaction protocol](data-model.md#authoritative-registry-envelope-and-transactions);
-   do not treat HA Store's delayed or swallowed-error writes as durable.
+   do not treat HA Store's delayed or swallowed-error writes as durable. In the
+   new version, protective-unknown must not prevent lockless entry setup or
+   calendar displays, but the shared allocator must withhold new code issuance
+   until safety state is restored.
 3. **Association, ledger and capability boundary (FR-001, 004, 007, 009–011)**:
-   only after stage 2, persist KM entry ID and explicit same-original
-   attestation separately from the legacy selector, under a correlated
-   envelope/config transaction. A unique current slug alone is insufficient;
-   count disabled candidates and preserve independently verifiable migration.
+   only after stage 2, persist KM entry ID and a separate explicit attestation
+   that the selected entry is the same original physical lock, under a
+   correlated envelope/config transaction. A unique current slug alone cannot
+   prove historical intent; count disabled candidates and preserve
+   independently verifiable migration.
    Coordinate evidence for shared locks without merging unrelated locks that
    collide by slug. Until provenance is established, retain old data, claims
-   and holds; known A work never migrates to replacement B. Lockless is an
-   explicit separate state. Resolve exact platform, entry, unique ID,
-   enabled/loaded status and live state, and expose sanitized reasons.
+   and holds; known A work never migrates to replacement B. For legacy-unknown
+   provenance only, the operator may explicitly attest that the selected
+   distinguishable current entry is the same original physical lock, even if
+   the original Keymaster entry was deleted and recreated. This is an auditable
+   operator assertion, not machine proof of physical continuity; validate the
+   current entry and its capabilities independently, and fail closed on
+   uncertainty or ambiguity. Lockless is an explicit separate state. Resolve
+   exact platform, entry, unique ID, enabled/loaded status and live state, and
+   expose sanitized reasons.
    Existing owner, adoption-conflict, forced-reissue, observed-PIN and
    redundant-owner rules remain the authority for PIN release.
 4. **Lifecycle and feedback (FR-003, 005, 012)**: per RC entry, build a
@@ -174,19 +186,18 @@ confirmation; reusing lockname-shaped IDs is unsafe.
 
 ## Decisions, specification alignment and proof gates
 
-1. **Attestation and spec**: FR-004 requires repair where automatic
-   verification is impossible and says selection *alone* does not establish
-   old ownership. FR-011 requires original identity before hold release.
-   The maintainer's distinct, explicit statement of same-original
-   entry/association is operator-supplied historical evidence, not an
-   inference from current name, area, ID-shaped entity or PIN. The software
-   verifies the selected current entry and slot separately. Attestation
-   neither confirms a clear nor bypasses release guards. This is compatible
-   with those requirements; no spec edit is needed. It cannot authorize
-   rebinding a hold already known to belong to entry A onto replacement
-   entry B, even if both refer to the same physical lock. If the desired UX
-   is to transfer such known-A work to B, stop: that conflicts with
-   FR-011 and story 5 and requires a separate corrective spec PR.
+1. **Attestation and spec**: FR-004 and FR-011 distinguish legacy-unknown
+   provenance from work already known to belong to entry A. For legacy-unknown
+   provenance only, the operator may explicitly attest that the selected,
+   distinguishable current entry is the same original physical lock, even if
+   the original Keymaster entry was deleted and recreated. This statement is
+   an auditable operator assertion, not machine proof of physical continuity;
+   current entry/capability identity and live slot evidence are still checked
+   separately. Selection, slug, address or PIN matching alone is insufficient.
+   Attestation does not confirm a clear, release a PIN, replace current
+   original-slot evidence, or transfer known-A work to B, even if both entries
+   refer to the same physical lock. Ambiguity or uncertainty retains the hold
+   and fails closed.
 2. **Persistence**: implement the specified v2 envelope transaction protocol
    and prove it on actual restart, write failures, and concurrent entries.
    HA Store's normal return is not a reliable persistence acknowledgement,
@@ -195,10 +206,17 @@ confirmation; reusing lockname-shaped IDs is unsafe.
    not a user-selected durability policy or an absolute disk guarantee.
    Record prior and target exact-byte digests and prove process-crash
    rollback/finalization without dropping prior in-flight fences.
-3. **Downgrade**: test that v4.0.3 refuses a valid, parseable v2 envelope
-   before loading allocator state. This can prevent setup of **all** RC
-   entries, including lockless entries. A corrupt v2 file can instead be
-   quarantined by HA and treated as absent by v4.0.3; its adoption recovery
-   is not a safe guard for lost v2 metadata. Preserve the file and marker,
-   stop RC/HA and reinstall compatible newer RC for verified repair. This
-   guard is not a claim about all older versions or removed/replaced storage.
+3. **Downgrade**: test that v4.0.3 refuses a JSON-decoded object with an
+   integer top-level `version: 2` before inspecting its inner payload. The
+   guard does not validate the payload or require that safety metadata be
+   well-formed. This can prevent setup of **all** RC entries, including
+   lockless entries; this is distinct
+   from the new version, where protective-unknown preserves lockless setup and
+   calendar displays but withholds new lockless code issuance. A corrupt v2
+   file can instead be quarantined by HA and treated as absent by v4.0.3; its
+   adoption recovery is not safe and does not reconstruct the missing safety
+   metadata. Preserve the quarantined bytes and marker, stop RC/HA, reinstall
+   compatible newer RC, and restore a verified, sufficiently current complete
+   envelope and matching marker. Reinstallation alone cannot reconstruct lost
+   state; without a valid restore, remain protective-unknown. This guard is not
+   a claim about all older versions or removed/replaced storage.
