@@ -202,10 +202,81 @@ confirmation; reusing lockname-shaped IDs is unsafe.
    and prove it on actual restart, write failures, and concurrent entries.
    HA Store's normal return is not a reliable persistence acknowledgement,
    even with `atomic_writes=True`; configuration saves are delayed too.
-   The chosen HA atomic-file helper uses fsync as an engineering mechanism,
-   not a user-selected durability policy or an absolute disk guarantee.
-   Record prior and target exact-byte digests and prove process-crash
-   rollback/finalization without dropping prior in-flight fences.
+   RC must own bounded raw-byte reads and writes for both registry and marker:
+   do not use HA `Store.async_load`, `load_json`, Store save/quarantine,
+   `write_utf8_file_atomic` or `save_json` on these paths. HA load can
+   quarantine malformed JSON, log paths and error text, create a repair issue
+   and return `None`; distinguish verified absence from unreadable/corrupt
+   data and preserve evidence. Cap registry reads at 32 MiB, marker reads at
+   64 KiB, and each directory evidence/cleanup scan at 4,096 entries; accept
+   the exact file limit and fail closed at limit+1 or an incomplete absence
+   scan. Count all directory entries, examine at most the 4,097th to detect
+   overflow and require end-of-directory; never partially clean an overflowed
+   scan. Surface incomplete evidence scans in persistent sanitized status;
+   never assume a typical directory is below the bound. Use `O_NOFOLLOW`
+   and descriptor `fstat` where supported; on Windows verify handle-based
+   no-follow traversal of every component or fail closed without disk
+   access. Validate present v1/v2 wrappers without write-on-read, retaining
+   HA v1 same-major minor/default compatibility as detailed in the data
+   model. Retain the distinct v4.0.3 downgrade behavior: an integer top-level
+   `version: 2` is rejected before inner payload
+   inspection, while malformed JSON can be quarantined and treated absent by
+   that old version.
+   Use an RC-owned adapter around HA's runtime `atomicwrites.AtomicWriter`,
+   without a new package dependency. Verify required behavior on minimum HA
+   2026.11.0 and supported CI HA lines, rather than relying on an exact API
+   signature; fail closed if unavailable. Call `prepare_save_json` once per
+   immutable snapshot in the executor, normalize to exact bytes, hash those
+   bytes, and write the same bytes. Compare digests against exact raw bytes
+   only; never reserialize decoded data for agreement. Preflight exact target
+   envelope and pending/final marker bytes against their respective read caps
+   before transaction mutation; oversize output fails without dispatch.
+   Use a verifiable RC-owned temporary-file prefix, private permissions,
+   same-directory atomic replacement and file/directory fsync or platform
+   write-through acknowledgement. Cleanup only bounded exact-prefix owned
+   temp files after validated recovery, under the shared async and
+   process-shared OS locks with workers quiescent; cap scans at 4,096 entries,
+   preserve authoritative files and stop cleanup on uncertainty. Use the same
+   non-authoritative OS lock for all participating readers/writers; check the
+   planned predecessor digest under it to reject stale snapshots. Use
+   nonblocking POSIX `flock`/Windows `LockFileEx` with a five-second monotonic
+   deadline starting before asynchronous allocator-lock acquisition; keep the
+   event loop responsive and use remaining time for OS-lock retries.
+   cancellation-aware bounded retry and a static retryable busy result.
+   Verify real contention versus unavailable error codes on each supported
+   platform; do not guess mappings. Windows ctypes uses `WinDLL` with
+   `use_last_error=True` and immediately captures `get_last_error()`; raw
+   lock violation 33 is busy before errno conversion, access denied 5 is
+   unavailable. Require native tests before claiming verified Windows
+   protected-operation support; until then gate those operations, not
+   calendar-only functionality. Acquire the allocator async lock before
+   the OS lock even for reads/cleanup. Windows locks a fixed range beyond EOF
+   on a stable private file, without content initialization; never replace it
+   while participants can run.
+   Never chmod or change the ACL of an existing unsafe/unowned lock file.
+   Test lockless setup, first refresh, calendar display and calendar-only
+   check-in under contention and unsupported/unsafe/unavailable locking with
+   a bounded non-raising fallback and event-loop heartbeat. Withhold shared
+   issuance, reuse, release and new dependent hardware/ownership dispatch,
+   retaining loaded claims/fences. The deadline does not bound calendar
+   network fetches or already-started filesystem I/O; no blanket promise
+   that all nonmutating reads avoid locks.
+   Unsupported/unsafe locking fails closed without itself declaring persistent
+   protective-unknown; do not access the ledger or dispatch. A cancelled
+   waiter exits and drains; do not imply arbitrary started I/O cannot stall.
+   Catch and sanitize exceptions from every serialization/read/write/executor
+   boundary, including non-`OSError` exceptions and sensitive chains; no raw
+   exception, path or traceback may reach RC/HA logs or callers. A writer
+   error after possible replacement, including directory-fsync failure,
+   remains ambiguous and protective-unknown. On restart, revalidate and
+   re-acknowledge exact bytes before finalization or resuming; never dispatch
+   on visible bytes alone. Shield/drain executor workers through repeated
+   cancellation requests; keep locks until the result is known and state is
+   applied, suppress target-dependent dispatch after cancellation, then
+   propagate cancellation. Record prior and target exact-byte digests and
+   prove crash recovery without dropping prior in-flight fences. Fsync is an
+   engineering mechanism, not a user-selected durability policy or absolute
+   hardware guarantee.
 3. **Downgrade**: test that v4.0.3 refuses a JSON-decoded object with an
    integer top-level `version: 2` before inspecting its inner payload. The
    guard does not validate the payload or require that safety metadata be

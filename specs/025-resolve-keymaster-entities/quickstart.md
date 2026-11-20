@@ -69,18 +69,90 @@ per-step helper service calls on both baseline releases.
 The following are acceptance gates for the single v2 envelope protocol,
 not an assumption that HA Store already guarantees them:
 
-1. Instrument `Store.async_save`: a swallowed serialization/write error,
-   read-only mode, delayed state, same-instance load returning pending data,
-   and stopping state must never count as a durable acknowledgement. Inject
-   envelope serializer failure and `WriteError` before write, during atomic
-   replace, and an ambiguous error after replace/fsync; verify zero
-   target-dependent new dispatch, safe logs and retained protection for any
-   earlier operation already in flight. On release failure after replacement,
-   restart from the actual new bytes and prove tombstone-based recovery
-   rechecks the original slot without losing any later valid owner. Exercise
-   HA `prepare_save_json` both `wb`/bytes and `w`/text encoder paths; pass
-   mode through and assert the stored marker digest equals the actual bytes,
-   including non-ASCII text and serialization errors.
+1. Instrument `Store.async_save` as HA behavior characterization: a swallowed
+   serialization/write error, read-only mode, delayed state, same-instance
+   pending-data load and stopping state are never a durable acknowledgement.
+   The new registry/marker path must not use `Store.async_load`, `load_json`,
+   Store save/quarantine, `write_utf8_file_atomic` or `save_json`. Inject
+   synthetic PIN-bearing `OSError`, `ValueError`, serializer, decoder and
+   executor failures, including sensitive causes/contexts and path-bearing
+   errors, at the RC raw reader/writer boundaries. Capture HA and RC logs and
+   assert only fixed sanitized result codes escape: no synthetic token,
+   filename, raw exception/chain, traceback or raw status reaches any logger
+   or HA caller. Verify the raw reader distinguishes both-path verified
+   `ENOENT` with no other evidence from unreadable, malformed, oversized and
+   unsupported input, retains corrupt bytes, detects bounded `.corrupt.*`
+   evidence, and treats incomplete/over-limit evidence scans as
+   protective-unknown. Enforce 32 MiB registry / 64 KiB marker limits and a
+   4,096-entry directory scan cap: exact byte limits pass, limit+1 and scan
+   overflow fail closed. Count unrelated entries, require end-of-directory
+   at 4,096, detect overflow with the 4,097th, and delete no candidates if
+   enumeration fails or overflows. Verify persistent sanitized scan-limit or
+   scan-failure status for incomplete evidence scans and maintenance status
+   for cleanup; do not assume typical directory sizes. Test the same output byte caps before
+   any transaction replacement, including pending and final markers, with
+   no mutation or dependent dispatch on oversize. Test descriptor-based
+   no-follow opening where supported; on Windows test parent/final reparse
+   points and verified handle-based no-follow traversal, or fail closed
+   without disk access. Test present empty/invalid v1/v2 wrappers are not
+   absent; compare valid v1 missing/different minor behavior with HA 2026.11.0
+   without requiring its optional key or any write-on-read.
+   It never invokes HA load/quarantine helpers. Any observation
+   that HA's wrapper currently leaks is version-scoped research evidence, not
+   a permanent assertion about future HA behavior.
+   Exercise HA `prepare_save_json` in both `wb`/bytes and `w`/text modes;
+   normalize once to exact bytes, assert byte-for-byte disk contents and that
+   the marker digest matches those same bytes, including non-ASCII text.
+   Verify private file permissions/ACL, same-directory atomic replacement,
+   bounded owned-temp cleanup, and fail-closed rejection of symlinked
+   `.storage`/targets. Verify the import and actual prefix/private-temp/
+   replace/fsync acknowledgement behavior of HA's runtime `AtomicWriter` on
+   minimum HA 2026.11.0 and supported CI HA lines without pinning a brittle
+   Python signature; fail closed if required behavior is absent. Verify the
+   process-shared OS lock with two processes; a second process holding it
+   must prevent writes and cleanup without relying on process detection.
+   On supported POSIX/Windows CI exercise nonblocking primitives, bounded
+   contention with one five-second deadline starting before async allocator
+   lock acquisition, retryable busy, release/retry,
+   unsafe/unsupported sanitized unavailable without persistent
+   protective-unknown absent separate ledger evidence, and repeated
+   cancellation of a waiting worker without hanging its drain. Identify
+   observed contention errno/Windows error using actual second-process
+   contention, distinguishing unsupported/permission/unknown errors. With
+   `WinDLL(..., use_last_error=True)`, capture `get_last_error()` immediately
+   after failure: verify raw 33 busy before errno translation and real access
+   denied 5 unavailable. Never chmod/change ACL of an existing unsafe or
+   unowned lock file. Windows
+   tests use `LockFileEx` on a stable empty file with the same range past EOF:
+   crash after creation, process exit, recovery and no replacement during
+   active participants. Test offline path repair only after all stop.
+   Verify each in-process operation takes the allocator async lock before the
+   OS lock, releasing in reverse and preventing same-process overlap. Verified
+   Windows protected-operation support cannot be claimed until native lock
+   and no-follow tests pass; otherwise gate protected operations while
+   preserving calendar-only functionality.
+   Hold each lock separately beyond the deadline and use deterministic
+   calendar inputs to verify lockless setup, first refresh, display and
+   calendar-only check-in reach the busy fallback within five seconds plus
+   scheduler tolerance; issuance is withheld and an event-loop heartbeat
+   progresses. Assert the busy request does no registry/marker I/O, cleanup
+   or dependent hardware action, not that lock attempts or already-active
+   work cease. Calendar network and already-started filesystem operations
+   are outside the deadline; other nonmutating reads may await the lock.
+   Repeat actual lockless setup, first refresh, display and calendar-only
+   check-in with unsupported primitives, unsafe/unowned lock files and
+   unavailable locking or Windows safe traversal. With deterministic calendar
+   data, assert bounded non-raising fallback and a progressing event-loop
+   heartbeat. That request does no registry/marker I/O or cleanup; shared
+   issuance, reuse, release and new dependent hardware/ownership dispatch stay
+   gated, and loaded claims/fences remain. Unavailability alone must not be
+   reported as persistent protective-unknown corruption.
+   On failure
+   before replace, during replace, or after
+   replace/fsync, verify zero target-dependent dispatch and retained prior
+   protection. On release failure after replacement, restart from actual disk
+   bytes and prove tombstone recovery rechecks the original slot without
+   losing any later valid owner.
 2. Crash/restart before/after pending marker, after pending but before
    envelope replacement, after replacement but before final marker, after
    final marker, and before/during/after hardware call,
@@ -90,22 +162,55 @@ not an assumption that HA Store already guarantees them:
    intent/fence bookkeeping without invoking hardware; observe original A
    with fresh verified evidence and allow re-dispatch only under the existing
    retry policy after all gates pass. No A hold is released by B. Exercise two RC
-   entries concurrently, competing saves, shutdown and cancellation; an old
-   callback or delayed write cannot overwrite newer envelope protection.
-   Run both v1 genesis migration and successive v2 transactions. For exact
-   prior digest restore the previous finalized/genesis marker and retry only
-   the uncommitted target; for exact target digest finalize idempotently; for
-   unexpected data, generation, transaction ID, absence or invalid
-   predecessor, enter protective-unknown. Cover genesis-absent, quiescent v1,
+   entries concurrently, competing saves, shutdown and repeated cancellation.
+   Cancel while the executor worker is blocked, repeat cancellation, and prove
+   `asyncio.shield` draining keeps the underlying worker and locks alive until
+   its result is known; only after state is applied may cancellation propagate.
+   Success keeps the acknowledged fence but dispatches no dependent hardware
+   action; failure enters protective-unknown. An old callback or delayed write
+   cannot overwrite newer envelope protection. Run both v1 genesis migration
+   and successive v2 transactions. For exact
+   prior digest re-acknowledge the exact validated prior bytes, restore the
+   previous finalized/genesis marker and retry only the uncommitted target.
+   Restart after v1 rollback with the exact finalized v1-genesis marker:
+   re-acknowledge exact bytes and require quiescence/live-state agreement
+   before activation retry; mismatch or suspected external rollback blocks.
+   For exact target digest, validate and re-acknowledge those exact bytes
+   before finalizing idempotently; do not reserialize to compare digests. A
+   writer error after possible replacement, including directory-fsync
+   failure, is immediately ambiguous/protective-unknown; visible bytes alone
+   are not success. For failed re-acknowledgement or unexpected data,
+   generation, transaction ID, absence or invalid predecessor, remain
+   protective-unknown. Cover genesis-absent, quiescent v1,
    old delayed v1 writer and suspected external restore. Include an older
    already-dispatched A clear with a durable pending fence while a newer
    transaction crashes: rolling back the newer intent must retain A, not
    assume no earlier dispatch or erase partial effects.
+   For genesis-absent rollback with the explicit absent sentinel, prove
+   registry `ENOENT` and no quarantine evidence; remove only the exact pending
+   marker with directory fsync and perform no envelope write or deletion.
+   With valid v1 plus a quarantined sibling, preserve evidence and test the
+   approved verified-backup path, never risky operator override. Restore a
+   complete envelope and matching marker from a verified backup while RC/HA
+   is stopped; validate schema, transaction/generation and exact digest, then
+   re-acknowledge. Independently establish that all relevant committed
+   transactions and possible hardware effects through incident/quiescence,
+   including holds and fences, are covered. A checksum, timestamp, slot
+   observation or attestation is not proof; a markerless v1 backup cannot
+   be promoted by creating a genesis marker in this case. If independent
+   evidence is unavailable, assert persistent sanitized status explains no
+   sufficiently current verified complete marker-bearing backup exists,
+   markerless v1 alone cannot prove completeness, there is no automatic
+   recovery or override, and issuance and release remain blocked potentially
+   indefinitely, including on legacy installations that never activated v2;
+   a different recovery path requires separate policy approval.
 3. Inject missing, corrupt and unsupported-version v1/v2 registry, read
-   failure, missing/invalid mandatory v2 safety sections, absent marker,
-   marker/envelope generation or digest mismatch, deleted/replaced storage
-   and discarded per-entry cache. Include HA `Store.async_load` moving bad
-   JSON to `.corrupt.*` and returning `None`. For protective-unknown, with a
+   failure, size overflow, missing/invalid mandatory v2 safety sections,
+   absent marker, marker/envelope generation or digest mismatch,
+   deleted/replaced storage and discarded per-entry cache. Exercise the
+   RC-owned raw reader directly; assert it does not call HA Store/load helpers,
+   move/quarantine corrupt data, log paths or collapse read/decode errors
+   into absence. For protective-unknown, with a
    prior pending-clear fence on A, an unreadable held slot, an attestation
    and a tombstone: assert no adoption-based rebuild, issuance/reuse, reset,
    release or overwrite even if B/another A slot appears empty or exclusion
@@ -119,8 +224,9 @@ not an assumption that HA Store already guarantees them:
    Verify the persistent status is sanitized and directs the operator to
    restore verified safety state; do not assert visibility, presence or
    absence of codes missing from damaged state. Confirm HA's generic
-   storage-corruption issue may be submitted without restoring or validating
-   the allocator state.
+   storage-corruption issue from the old v4.0.3 downgrade path may be
+   submitted without restoring or validating allocator state; the new raw
+   reader itself does not create that issue.
    Validate v1→v2 migration at every marker/envelope boundary; do not claim
    deletion of both files or an old restore is always detectable.
 4. Test untouched v1 input, new-reader replay/migration twice, retained owners,
@@ -133,9 +239,11 @@ not an assumption that HA Store already guarantees them:
    as locked RC entries
    can be blocked and that reinstalling compatible newer RC recovers existing
    v2 state. Separately run corrupt-v2 JSON through actual HA Store and the
-   v4.0.3 loader: assert HA quarantines it and returns `None`, the old loader
-   reports registry absent and may enter adoption recovery, and old code does
-   not enforce the marker. It is not safe to rely on that recovery: preserve
+   v4.0.3 loader as downgrade characterization only: assert HA quarantines it
+   and returns `None`, the old loader reports registry absent and may enter
+   adoption recovery, and old code does not enforce the marker. The new
+   reader must never take this path. It is not safe to rely on old recovery:
+   preserve
    `.corrupt.*` and marker, stop RC/HA, reinstall compatible RC, and restore
    a verified, sufficiently current complete envelope and matching marker.
    Verify that reinstallation alone cannot reconstruct missing safety state;

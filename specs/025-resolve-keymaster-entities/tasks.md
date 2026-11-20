@@ -49,14 +49,157 @@ specified.
 ### Storage tests and implementation
 
 - [ ] T006 [P] Add HA storage characterization tests in `tests/unit/test_allocator_store.py` for swallowed Store serialization/write failures, read-only and stopping modes, delayed saves and same-instance pending-data loads; none is a durability acknowledgement.
-- [ ] T007 [P] Add v2 schema and exact-byte tests in `tests/unit/test_registry_envelope.py` for required typed ledger, associations, attestations, fences, holds, tombstones and pending-config sections, unsupported versions, both `prepare_save_json` modes, non-ASCII bytes, private writes and sanitized failures.
-- [ ] T008 [P] Add marker transition and crash/restart tests in `tests/integration/test_registry_transactions.py` using actual disk bytes and fresh HA instances: genesis-absent, quiescent v1, successive v2, prior/target digests, every pending-marker/envelope/final-marker boundary, invalid predecessor/IDs/generations, and a prior dispatched A fence retained during rollback of a later intent.
-- [ ] T009 [P] Add protective-unknown tests in `tests/integration/test_registry_protective_unknown.py` for corrupt, missing, unreadable and unsupported files/sections, marker mismatches, partial history, `.corrupt.*` quarantine, suspected restore, cache loss and valid first-run/legacy absence; assert no rebuild, overwrite, reset, issuance, reuse or release despite exclusion or empty B, and preserve loaded claims, fences and repair evidence. Confirm HA's generic corruption-repair issue without restoring anything; assert confirmation, an HA auto-created default or fresh v1 registry written by v4.0.3 is not restored safety state, and with the surviving marker v1 remains protective-unknown. Require verified sufficiently current complete protective state and matching marker, not automatic recovery. Verify persistent sanitized actionable restore status without claiming codes lost from damaged state are visible, present, absent or reusable. Exercise actual new-version lockless setup/reload, calendar display and check-in with typed load failures and protective-unknown, including allocator initialization before setup; neither may raise and block non-access-mutating behavior or cause KM lookup or warning. Assert new lockless code issuance is withheld until verified restoration and existing gates pass; no replacement code is invented.
-- [ ] T010 [P] Add actual HA/v4.0.3 loader tests in `tests/integration/test_registry_downgrade.py`: a JSON-decoded object with integer top-level `version: 2` rejects before payload inspection or allocator use, including missing/malformed inner payload and lockless setup; compatible newer RC reads an intact v2 with matching marker. Separately test corrupt JSON quarantined and treated absent by old code without marker protection, and HA auto-created default or fresh v1 registry written by v4.0.3 after quarantine; with surviving marker neither is restored safety state. Reinstallation or HA's generic repair confirmation alone cannot restore or validate missing state. Contrast payload-only bump and dropped extra v1 fields; never assert automatic safety recovery.
-- [ ] T011 [P] Add concurrency, cancellation, allocation/reissue and release-tombstone tests in `tests/integration/test_registry_concurrency.py` for two RC entries, stale delayed writers, slow/failing executor writes, shutdown, no lock inversion, no abandoned write, bounded coalescing, post-replace failure and later valid owners. Inject failures and crashes before/after pending marker, envelope and final marker and before/during/after dependent set-code, name/PIN/date writes and reuse; no dependent side effect occurs without its own acknowledged protective owner/allocation or reissue transaction, and restart retains earlier owners/holds without inferring hardware dispatch.
-- [ ] T012 Implement validated complete v1 ledger preservation and explicit typed v2 envelope/load outcomes in `custom_components/rental_control/allocator/store.py` and `custom_components/rental_control/allocator/models.py`; distinguish true absence, valid v1/v2 and protective-unknown without moving or deleting corrupt bytes. Provide persistent sanitized status directing verified sufficiently current complete-envelope and matching-marker restoration, without claims about unknowable codes. In the new version, typed protective-unknown/load failure must not raise through shared allocator initialization and block lockless entry setup or non-access-mutating calendar/check-in behavior: either bypass Keymaster allocator initialization for lockless entries with an independently enforced issuance gate or preserve a non-raising safe protective-unknown state. Keep shared issuance, reuse and release blocked while protection is unknown.
-- [ ] T013 Implement private activation-marker and exact-byte transaction writer in `custom_components/rental_control/allocator/store.py`: serialize once with HA `prepare_save_json`, hash the bytes actually written, pass `(path, json_data, True, mode)` to `write_utf8_file_atomic` via the executor, and acknowledge pending marker, envelope and final marker in that order.
-- [ ] T014 Implement idempotent marker recovery and v1 genesis migration in `custom_components/rental_control/allocator/store.py`: prove old-writer quiescence and disk/live snapshot agreement, roll back only an exact proven predecessor, finalize only an exact validated target, otherwise enter protective-unknown; never infer or dispatch hardware work from restored bookkeeping.
+- [ ] T007 [P] Add v2 schema and exact-byte tests in
+  `tests/unit/test_registry_envelope.py` for required typed ledger,
+  associations, attestations, fences, holds, tombstones and pending-config
+  sections; unsupported versions; both `prepare_save_json` modes; exact
+  non-ASCII bytes/digests; private permissions/ACL; atomic replacement; and
+  symlink rejection. Test exact-at-limit and limit+1 for the 32 MiB registry
+  and 64 KiB marker caps on both input and exact serialized output, including
+  oversize target/pending/final bytes before any transaction mutation and
+  no dependent dispatch. Test directory scans with exactly 4,096 total
+  entries (including unrelated names), end-of-directory, and a 4,097th
+  entry; over-cap/incomplete cleanup must delete none, while incomplete
+  evidence scans produce persistent sanitized scan-limit/scan-failure
+  status. Test `O_NOFOLLOW` and descriptor `fstat` where available; on
+  Windows test parent and final reparse points, no-follow handle traversal
+  and safe fail-closed behavior when unavailable (ACL alone is insufficient).
+  Test true absence
+  versus unreadable/corrupt/oversized paths, retained corrupt bytes,
+  present-empty/invalid wrappers, valid v1 wrappers with missing or differing
+  integer minors and optional key, invalid v1 payloads, and unsupported v2
+  safety schemas. Compare valid v1 handling with real HA `Store` on the
+  minimum version while asserting that the new raw reader never writes on
+  read or treats a present empty wrapper as absence. Test bounded
+  `.corrupt.*` evidence detection including protective-unknown on an
+  incomplete/over-limit scan, and no calls to HA `Store.async_load`,
+  `load_json` or quarantine helpers. Inject synthetic PIN-bearing
+  `OSError`, `ValueError` and serialization/decoding failures, including
+  sensitive exception causes/contexts and path-bearing errors; capture HA
+  and RC logs and assert only fixed sanitized result codes escape any
+  boundary. Assert no raw exception or chain is returned, raised to HA,
+  logged, or included in status. Verify the RC path does not invoke HA
+  logging wrappers. Test owned-temp cleanup under quiescence, active/pending
+  protection, symlink/decoy files and scan-limit exhaustion; authoritative
+  registry, marker and `.corrupt.*` files must remain untouched. Keep any
+  HA-wrapper leak characterization as version-scoped research evidence, not
+  a permanent assertion about future HA behavior. Never use real credentials
+  or process-wide logging changes. Verify the process-shared OS lock with a
+  second process holding `.storage/rental_control.code_registry.io_lock`;
+  readers/writers and cleanup must fail retryably busy without mutation at the
+  five-second deadline; cancellation while contended exits and drains even
+  after repeated cancellation. Exercise actual nonblocking POSIX and Windows
+  primitives on their CI platforms and identify actual contention errno or
+  Windows error versus permission/unsupported/unknown failures; only proven
+  contention returns busy. Windows binding must use
+  `ctypes.WinDLL(..., use_last_error=True)` and immediately capture
+  `ctypes.get_last_error()` after `LockFileEx` failure: verify real competing
+  process error 33 is busy before errno translation while a real access-denied
+  error 5 is unavailable. Test unsafe/unowned existing lock files are never
+  chmodded or have ACLs changed. Test interrupted calls remain deadline-bounded,
+  lock release and retry success, unsafe path and unsupported primitive
+  failures (sanitized unavailable, not persistent protective-unknown absent
+  separate ledger evidence). Test Windows empty lock file and crash after
+  creation before locking, recovery after process exit, stable path identity
+  without rename/unlink while participants run, and offline repair after all
+  participants stop. Assert in-process reads, writes and cleanup take the
+  allocator async lock before the OS lock, release in reverse, and cannot
+  overlap even if the OS permits same-process reentry. Do not use process
+  detection. Do not claim verified Windows protected-operation support until
+  native locking and path traversal tests pass; otherwise gate protected
+  operations while preserving calendar-only functionality.
+- [ ] T008 [P] Add marker transition and crash/restart tests in `tests/integration/test_registry_transactions.py` using actual disk bytes and fresh HA instances: genesis-absent, quiescent v1, successive v2, prior/target digests, every pending-marker/envelope/final-marker boundary, injected writer errors before replacement and after replacement but before fsync acknowledgement, invalid predecessor/IDs/generations, exact-byte re-ack success/failure after restart (without reserialization), and a prior dispatched A fence retained during rollback of a later intent. After v1 rollback, restart with the exact finalized v1-genesis marker and validate/re-acknowledge it before retrying activation; mismatched marker or suspected external rollback fails closed. For pending genesis with explicit absent predecessor and no registry/quarantine evidence, verify rollback removes only the exact pending marker with directory fsync and performs no phantom envelope write, replacement or deletion.
+- [ ] T009 [P] Add protective-unknown tests in `tests/integration/test_registry_protective_unknown.py` for raw-reader corrupt, missing, unreadable, oversized and unsupported files/sections, marker mismatches, partial history, bounded `.corrupt.*` evidence (including an incomplete/over-limit scan), suspected restore, cache loss and valid first-run/legacy absence. In particular, a valid v1 registry with a matching `.corrupt.*` sibling, or an incomplete evidence scan, and no valid marker authenticating those exact v1 bytes is protective-unknown: do not migrate/adopt, authorize an operator override, or rebuild; require verified sufficiently current complete state and a matching marker. Assert no HA Store/load/quarantine calls for registry/marker paths, no rebuild, overwrite, reset, issuance, reuse or release despite exclusion or empty B, and preserve loaded claims, fences, corrupt bytes and repair evidence. Require verified sufficiently current complete protective state and matching marker, not automatic recovery. Verify persistent sanitized actionable restore status without claiming codes lost from damaged state are visible, present, absent or reusable. Exercise actual new-version lockless setup/reload, calendar display and check-in with typed load failures and protective-unknown, including allocator initialization before setup; neither may raise and block non-access-mutating behavior or cause KM lookup or warning. Assert new lockless code issuance is withheld until verified restoration and existing gates pass; no replacement code is invented.
+  Exercise verified backup recovery for v1 plus a quarantined sibling:
+  preserve evidence and keep issuance/release blocked until a complete
+  matching envelope/marker pair is restored and exact bytes, schema,
+  generation and transaction validate and re-acknowledge. Independently
+  verified evidence must cover all committed ledger transactions and possible
+  hardware effects through incident/quiescence, including outstanding holds;
+  a successful backup, checksum, timestamp, slot observations or identity
+  attestation alone cannot establish that. A markerless v1 backup cannot be
+  promoted by manufacturing a genesis marker in this case. If independent
+  completeness evidence is unavailable, assert persistent sanitized status
+  explicitly says no sufficiently current verified complete marker-bearing
+  backup exists, markerless v1 alone cannot prove completeness, and there is
+  no automatic recovery or override; issuance and release remain blocked.
+  The block may be indefinite if no qualifying backup can be established,
+  including legacy installations that never activated v2; a separate
+  policy decision is required for any other recovery.
+  No resume or adoption; do not invent proof.
+  Hold the allocator async lock and, separately, a process lock for longer
+  than the five-second total lock deadline. With deterministic calendar
+  inputs, verify actual lockless setup, first refresh, display and
+  calendar-only check-in complete through the busy fallback within that
+  deadline plus scheduler tolerance, while issuance is withheld. Assert a
+  concurrent event-loop heartbeat progresses and the busy request performs no
+  registry/marker read/write, cleanup or dependent hardware action; lock-file
+  attempts and other already-started work are not prohibited. Do not assert
+  that all unrelated nonmutating reads avoid locks, or bound calendar network
+  access and already-running filesystem I/O.
+  Repeat with unsupported primitive, unsafe/unowned lock file and unavailable
+  locking or safe Windows traversal. Actual lockless setup, first refresh,
+  display and calendar-only check-in must complete without raising, with
+  deterministic inputs and a progressing event-loop heartbeat. Assert bounded
+  unavailable fallback, sanitized status, no registry/marker I/O or cleanup
+  by that request, no shared issuance/reuse/release or new dependent
+  hardware/ownership dispatch, and retained loaded claims/fences. Unavailable
+  alone must not be reported as persistent protective-unknown corruption.
+- [ ] T010 [P] Add actual HA/v4.0.3 loader tests in `tests/integration/test_registry_downgrade.py` against the real HA v1 `Store`: empty decoded envelope returns absent; omitted `minor_version` defaults to 1; exact v1 returns its `data`; integer top-level `version: 2` rejects before payload inspection or allocator use, including missing/malformed inner payload and lockless setup; malformed JSON is quarantined and returns absent; malformed envelope field types fail at the actual HA version/index operations and old RC wraps load failure as `ConfigEntryNotReady`. Separately test that corrupt v4.0.3 JSON may be followed by fresh v1/default state and does not enforce the marker. With surviving marker, the new RC raw reader must classify that v1/default plus marker as protective-unknown; reinstallation or HA repair confirmation alone cannot restore/validate missing state. This is downgrade characterization only; the new reader must never call Store or quarantine. Contrast payload-only bump and dropped extra v1 fields; never assert automatic safety recovery.
+- [ ] T011 [P] Add concurrency, cancellation, allocation/reissue and release-tombstone tests in `tests/integration/test_registry_concurrency.py` for two RC entries, stale delayed writers, slow/failing executor writes, shutdown, no lock inversion, no abandoned write, bounded coalescing, post-replace failure and later valid owners. Inject repeated cancellation while an executor write is blocked; assert each cancellation is drained through `asyncio.shield`, the underlying worker is not cancelled, allocator/process locks remain held until its result is known, and only then cancellation propagates. On success retain the acknowledged fence but dispatch no target-dependent hardware action; on failure enter protective-unknown without raw exception leakage. Also test two-process file-lock coordination. Inject crashes before/after pending marker, envelope and final marker and before/during/after dependent set-code, name/PIN/date writes and reuse; no dependent side effect occurs without its own acknowledged protective owner/allocation or reissue transaction, and restart retains earlier owners/holds without inferring hardware dispatch.
+- [ ] T012 Implement validated complete v1 ledger preservation and explicit typed v2 envelope/load outcomes in `custom_components/rental_control/allocator/store.py` and `custom_components/rental_control/allocator/models.py`. Use an RC-owned bounded raw-byte reader in the executor for registry and marker; do not call HA `Store.async_load`, `load_json`, Store save/quarantine, or any wrapper that logs paths/errors or moves corrupt bytes. Distinguish both-path verified `ENOENT` with no other evidence from unreadable, invalid UTF-8/JSON, oversized, malformed and unsupported input; preserve corrupt bytes and detect old `.corrupt.*` evidence with a bounded exact-pattern scan, treating an incomplete/over-limit scan as protective-unknown. A valid v1 plus a matching corrupt sibling, or an incomplete evidence scan, without a valid marker authenticating those exact v1 bytes is protective-unknown, not a basis to migrate/adopt or authorize an override. Keep v4.0.3's separate top-level-version downgrade and corrupt-JSON quarantine semantics. Provide persistent sanitized status directing verified sufficiently current complete-envelope and matching-marker restoration, without claims about unknowable codes. In the new version, typed protective-unknown/load failure must not raise through shared allocator initialization and block lockless entry setup or non-access-mutating calendar/check-in behavior: either bypass Keymaster allocator initialization for lockless entries with an independently enforced issuance gate or preserve a non-raising safe protective-unknown state. Keep shared issuance, reuse and release blocked while protection is unknown.
+  Validate present v1/v2 wrappers and payloads; a present empty or invalid
+  wrapper is not absent. Honor HA v1 missing-minor default and valid
+  same-major minor compatibility without write-on-read, and do not require a
+  legacy wrapper key that HA does not require; unsupported v2 protection
+  schema fails closed. For busy, unsupported, unsafe or unavailable locking,
+  preserve non-raising lockless setup, first refresh/display and
+  calendar-only check-in while gating shared issuance/reuse/release and new
+  dependent hardware/ownership dispatch; do not infer persistent corruption
+  solely from lock unavailability.
+- [ ] T013 Implement a private RC-owned activation-marker and exact-byte
+  transaction writer in `custom_components/rental_control/allocator/store.py`
+  using the existing HA runtime `atomicwrites.AtomicWriter` dependency
+  directly, not HA's logging wrapper; add no package dependency. Verify
+  required behavior on minimum HA 2026.11.0 and supported CI HA lines without
+  relying on brittle exact signatures; fail closed if unavailable. Prepare each
+  immutable snapshot once with HA `prepare_save_json` in the executor, validate
+  its `wb`/bytes or `w`/text pair, normalize to exact bytes, hash those bytes
+  and write the same bytes in binary overwrite mode. Retain private tempfile
+  permissions (POSIX mode `0600`; verify the supported Windows ACL boundary),
+  same-directory atomic replacement and file/directory fsync or platform
+  write-through acknowledgement. Give temp files a verified RC-owned prefix
+  with an opaque per-operation ID. Coordinate readers/writers/cleanup through
+  the private process-shared OS lock with nonblocking POSIX `flock` or Windows
+  `LockFileEx` fixed range beyond EOF, without content initialization; acquire
+  the allocator async lock first for all in-process disk operations. Do not
+  replace or remove the lock path while participants can run. Compare
+  the planned predecessor digest under it before replacement. Use nonblocking
+  lock attempts with one five-second monotonic deadline starting before
+  asynchronous allocator-lock acquisition, bounded backoff and cancellation
+  checks; keep the event loop responsive and return retryable busy without
+  this request's ledger mutation for contention
+  and sanitized unavailable for unsupported/unsafe locking, not persistent
+  protective-unknown without independent corruption evidence. Preflight exact
+  envelope and pending/final marker bytes against their read caps before
+  starting the transaction. After validated
+  recovery, under both shared locks and with workers quiescent, perform
+  bounded cleanup of only
+  regular non-symlink files matching that exact owned pattern; preserve
+  authoritative files and stop cleanup on uncertainty. Validate the fixed
+  `.storage` path, reject symlinked storage directories/targets, and document
+  the trusted-config-directory boundary for path-based replacement. Convert
+  serialization, encoding, hashing, raw read/decode, writer, replace/fsync,
+  executor and cleanup `Exception` failures—including sensitive
+  non-`OSError` chains—to typed allowlisted stage results without retaining,
+  logging, chaining or exposing raw exceptions, filenames or tracebacks.
+  Cancellation remains control flow and workers must finish before releasing
+  the lock. A failure after possible replace, including directory-fsync
+  failure, is ambiguous and protective-unknown; on restart validate and
+  re-acknowledge exact bytes before finalization or resume. Never reserialize
+  decoded data to confirm digests. Acknowledge pending marker, envelope and
+  final marker in that order.
+- [ ] T014 Implement idempotent marker recovery and v1 genesis migration in `custom_components/rental_control/allocator/store.py`: prove old-writer quiescence and disk/live snapshot agreement, compare digests against exact raw bytes without reserialization, re-acknowledge validated bytes before finalization/availability, roll back only an exact proven predecessor, recognize and re-acknowledge its matching finalized v1-genesis marker on restart before retrying activation, finalize only an exact validated target after successful re-ack, and for pending genesis with an absent predecessor remove only its exact pending marker after verified registry absence/no corruption evidence and directory fsync—never write/delete a phantom envelope. Otherwise enter protective-unknown; never infer or dispatch hardware work from restored bookkeeping.
 - [ ] T015 Replace delayed authoritative ledger writes in `custom_components/rental_control/allocator/allocator.py`, `custom_components/rental_control/allocator/issuance.py`, `custom_components/rental_control/allocator/reissue.py` and `custom_components/rental_control/allocator/singleton.py` with allocator-wide serialized protective commits. In `custom_components/rental_control/__init__.py` and the singleton, wire T012's non-raising or safely gated lockless path so T009 can exercise real setup and calendar displays under protective-unknown. Acknowledge the complete owner/allocation/reissue state and final marker before any dependent set-code, PIN/name/date write, publication or reuse; carry transaction/generation tokens and revalidate after releasing local locks. Coalesce only non-protective latest-state snapshots, propagate failures, retain the lock until executor completion on cancellation, and avoid service/config calls or override/reissue lock acquisition under it.
 - [ ] T016 Add durable original-entry/slot/owner clear fences, atomic resolution and retained release tombstones in `custom_components/rental_control/allocator/store.py` and `custom_components/rental_control/event_overrides_helpers/shell_compat.py`; on ambiguous post-replace failure freeze exposure, reload disk and recheck original evidence and guards without deleting later owners.
 - [ ] T017 Implement bounded, guard-aware tombstone checkpoint pruning and PIN-free count/age pressure reporting in `custom_components/rental_control/allocator/allocator.py` and `custom_components/rental_control/allocator/diagnostics.py`; retain referenced, unvalidated or pending tombstones indefinitely and recover failed pruning through the marker protocol.
@@ -146,6 +289,12 @@ and diagnostics with synthetic PINs embedded in states, payloads and errors.
 - [ ] T057 [US4] Implement loaded-only metadata version diagnosis using HA's actual comparator in `custom_components/rental_control/keymaster_identity.py` and replace the guessed-reset version check in `custom_components/rental_control/coordinator_helpers/coordinator_setup_shell.py`: exact zero exception, three-component release shape, `<` then `>=`, otherwise unknown; version alone neither blocks nor authorizes.
 - [ ] T058 [US4] Sanitize state, event, service, exception and calendar paths in `custom_components/rental_control/state_handlers.py`, `custom_components/rental_control/keymaster_services.py`, `custom_components/rental_control/keymaster_service_helpers.py`, `custom_components/rental_control/startup_readability.py`, `custom_components/rental_control/coordinator_helpers/coordinator_refresh_shell.py`, `custom_components/rental_control/coordinator_helpers/calendar_parsing.py`, `custom_components/rental_control/calendar.py` and `custom_components/rental_control/event_overrides_helpers/shell_cleanup.py`; do not log exception tracebacks or text that may echo PINs.
 - [ ] T059 [US4] Provide allowlisted diagnostics and actionable wait/enable/reselect/repair statuses in `custom_components/rental_control/diagnostics.py`, `custom_components/rental_control/coordinator_helpers/diagnostics.py`, `custom_components/rental_control/strings.json` and `custom_components/rental_control/translations/en.json`; keep association, capability and version statuses distinct. For protective-unknown, persist sanitized guidance to restore a verified sufficiently current complete envelope and matching marker; do not expose PINs, storage contents or raw exceptions or claim unknowable codes are present, absent, visible or reusable.
+  When no sufficiently current verified complete marker-bearing backup exists,
+  persistently report that fact, why a markerless v1 backup alone cannot prove
+  completeness, and that no automatic recovery or override exists and
+  issuance and release remain blocked potentially indefinitely, including on
+  legacy installations that never activated v2. Also surface an
+  incomplete/over-limit evidence scan without paths or contents.
 - [ ] T060 [US4] Verify `tests/unit/test_keymaster_version.py`, `tests/integration/test_verified_identity_privacy.py` and `tests/unit/test_diagnostics.py` with both safe and unsafe capability cases; run the false-version-warning lifecycle assertion deferred by T035 in `tests/integration/test_verified_slot_lifecycle.py`, and confirm missing/disabled/unavailable/ambiguous reset never implies an incompatible version.
 
 ## Phase 8: Integrated activation and cross-cutting verification
@@ -154,6 +303,12 @@ and diagnostics with synthetic PINs embedded in states, payloads and errors.
 - [ ] T062 After T018, T028, T035, T040, T047, T054 and T060 pass their stated checkpoints and T061's activation tests are written, activate v2 and all protective consumers together in `custom_components/rental_control/allocator/singleton.py`, `custom_components/rental_control/allocator/allocator.py`, `custom_components/rental_control/allocator/issuance.py`, `custom_components/rental_control/event_overrides_helpers/shell_apply.py`, `custom_components/rental_control/event_overrides_helpers/apply_clear.py` and `custom_components/rental_control/__init__.py`; run T061 and the deferred T011 operation assertions to passing as part of this task. Quiesce old v1 writers, validate disk/live state, install/finalize v2 with the marker protocol, and publish no association, attestation, release or mutation until its own protective transaction is acknowledged. Ensure a typed protective-unknown/load failure cannot raise and block new-version lockless setup or non-access-mutating calendar/check-in behavior, using T012's bypass or non-raising protective-unknown state; maintain the issuance/reuse/release gate while unknown. Prove this with T009's actual setup/reload tests, separately from v4.0.3's version-header downgrade block. Ship this as one coherent reviewed change, never as an independently deployed intermediate phase.
 - [ ] T063 [P] Document operator repair, original-physical-lock attestation for legacy-unknown provenance including recreated entries, known-A non-transfer, retained holds, v4.0.3 top-level version-2 downgrade guard independent of payload validity, lockless display versus withheld new issuance during protective-unknown, corrupt downgrade caveat and verified sufficiently current restore procedure in `README.md`. Warn that HA's generic corruption-repair confirmation, an HA auto-created default or fresh v1 registry written by v4.0.3 after quarantine is not restored safety state: preserve the evidence, stop RC/HA, reinstall the compatible version and restore a verified sufficiently current complete envelope and matching marker via the documented repair procedure; reinstallation/confirmation alone is not recovery. Do not expose stored content or claim auto recovery, unknowable code presence or absence, undetectable dual-file rollback detection, or physical erasure.
 - [ ] T064 [P] Add an implementation-stage user-facing reno note in `releasenotes/notes/resolve-keymaster-entities.yaml` covering upgrade, remediation and downgrade limitations; warn without exposing stored content that HA's generic repair confirmation, an HA auto-created default or fresh v1 registry written by v4.0.3 after corruption quarantine is not restored safety state, and direct operators to the documented verified sufficiently current complete envelope and matching-marker repair rather than auto recovery. Validate with `uv run reno lint`.
+  State that without a sufficiently current verified complete marker-bearing
+  backup, persistent status reports the problem; a markerless v1 backup
+  alone cannot prove completeness, there is no automatic recovery or override,
+  and issuance and release remain blocked, potentially indefinitely even for
+  legacy installations that never activated v2; a different recovery path
+  needs separate policy approval.
 - [ ] T065 Audit and update hardcoded constructed-ID expectations and mocks across `tests/unit/test_state_handlers.py`, `tests/unit/test_keymaster_services.py`, `tests/unit/test_startup_readability.py`, `tests/unit/test_config_flow.py`, `tests/unit/test_config_flow_schemas.py`, `tests/unit/test_config_flow_validation.py`, `tests/integration/test_full_setup.py`, `tests/integration/test_entity_id_rename.py` and other affected `tests/` regression suites; replace routing assumptions with real registry-backed identities while retaining distractor and legacy selector coverage. Run the existing suites, not only new tests.
 - [ ] T066 Add benchmark/regression coverage in `tests/integration/test_verified_identity_performance.py` for indexed lookup, coalesced registry storms, slow fsync, bounded tombstone batches, concurrent entries, event-loop responsiveness and refresh/code-generation cycle; compare against existing behavior without inventing a new policy threshold.
 - [ ] T067 Run the complete release, topology, persistence and restart matrix in `specs/025-resolve-keymaster-entities/quickstart.md` using T002's verified real packaged KM v0.6.0/v0.6.5, actual RC v4.0.3 loader and simulated provider in the supported HA harness; validate real entity registration, publication and release event/operation contracts, audit each live inventory path and record any unreproduced issue as such. CI must exercise these tests rather than silently skip unavailable upstream artifacts.
