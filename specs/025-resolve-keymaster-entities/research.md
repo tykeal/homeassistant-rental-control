@@ -99,13 +99,28 @@ directly on empty text: each violates existing recovery or release safeguards.
 ## Migration and shared accounting
 
 **Decision**: Separate durable selected identity from legacy selectors;
-retain unknown legacy provenance. The maintainer accepts an explicit
-same-original-entry/association operator attestation when independent
-historical proof is absent. It is distinct from merely selecting a current
-entry and must be persisted before binding old holds. Do not equate present
-slug uniqueness with proof of historical selection. Never use attestation
-to transfer known-original A work to a replacement B. Coordinate shared
-owners and aliases before changing identity equivalence.
+retain unknown legacy provenance. For legacy-unknown ownership only, the
+maintainer accepts an explicit operator attestation that a selected,
+distinguishable current KM entry is attached to the same original physical
+lock, even if the original KM entry was deleted and recreated. Record the
+assertion and selected current entry durably for audit. This is operator
+historical evidence, not machine proof of physical continuity; current entry,
+capability and live slot evidence still require independent validation. A
+present slug, name, entry ID or matching address does not prove that the
+physical lock is the same. Never use attestation to transfer work already
+known to belong to entry A onto B, even if both entries refer to the same
+physical lock. Coordinate shared owners and aliases before changing identity
+equivalence.
+
+The v0.6.5 [entity mapping](https://github.com/FutureTense/keymaster/blob/v0.6.5/custom_components/keymaster/entity.py)
+confirms what can be checked now: entity unique IDs and device identifiers
+derive from the current KM config-entry ID, while [entry setup](https://github.com/FutureTense/keymaster/blob/v0.6.5/custom_components/keymaster/entry_setup.py)
+supplies the current `lock_entity_id`. [Lock events](https://github.com/FutureTense/keymaster/blob/v0.6.5/custom_components/keymaster/bus_events.py)
+carry that physical entity address but no KM entry ID. These values establish
+the current entry/entity/source relationship, not historical continuity from
+a deleted KM entry to a recreated one. The explicit operator assertion
+supplies that missing legacy history; the software must not claim to verify
+the physical identity independently.
 
 **Rationale**: RC `allocator/store.py` schema v1 records owners' RC entry,
 booking identity, lockname and slot, but not KM config-entry ID. It uses
@@ -146,6 +161,23 @@ On invalid JSON, `async_load` can move the corrupt file aside and return
 registry-loss adoption cannot reconstruct fences, attestations or
 tombstones. The new reader classifies corruption, incompatible/missing
 safety data and activation-marker mismatches as protective-unknown.
+The HA 2026.11.2 `Store` version check is made against the decoded top-level
+object before its `data` payload is returned to the caller. Thus v4.0.3's
+version-1 Store rejects a decoded object with integer top-level `version: 2`,
+even if the inner payload is missing or malformed. Unparseable JSON takes a
+different path: HA quarantines the file as `.corrupt.*`, creates a fixable
+storage-corruption issue and returns `None`.
+
+The [HA storage-corruption translation](https://github.com/home-assistant/core/blob/2026.11.2/homeassistant/components/homeassistant/strings.json)
+describes the quarantined path and recommends correcting manually edited JSON
+and restoring the file/restarting, or restoring the system from backup, then
+submitting the repair. HA's generic
+[repair confirmation flow](https://github.com/home-assistant/core/blob/2026.11.2/homeassistant/components/repairs/issue_handler.py)
+confirms and removes the issue; it does not restore or validate the file.
+Rental Control v4.0.3 has no custom repair flow. Therefore, issue confirmation
+alone is not evidence that a complete allocator envelope and matching marker
+were recovered. The operator must follow the verified stopped restore
+procedure; reinstalling newer code does not reconstruct missing state.
 `atomic_writes=True` selects a stronger file write but does not stop Store
 swallowing errors. Default writes use replace without the atomic helper's
 fsync. Config entries also use delayed saves.
@@ -192,16 +224,31 @@ The maintainer chose a v4.0.3 downgrade guard. Its
 [registry loader](https://github.com/tykeal/homeassistant-rental-control/blob/v4.0.3/custom_components/rental_control/allocator/store.py#L70-L101)
 constructs HA Store version 1 and wraps its load errors as
 `ConfigEntryNotReady`. HA rejects a higher envelope major version before
-passing data to that reader. A payload-only schema bump instead becomes
-registry-lost recovery, while extra fields in v1 are ignored and may be
-dropped on rewrite. Test the actual old loader with the new envelope:
+passing data to that reader. The guard checks the decoded top-level version
+before the inner payload: any object with integer `version: 2` is rejected,
+including one with missing or malformed payload data. A payload-only schema
+bump instead becomes registry-lost recovery, while extra fields in v1 are
+ignored and may be dropped on rewrite. Test the actual old loader with the new
+envelope:
 because [allocator initialization](https://github.com/tykeal/homeassistant-rental-control/blob/v4.0.3/custom_components/rental_control/__init__.py#L70-L86)
 precedes entry setup, even lockless RC entries can be blocked. Recovery is
-reinstalling compatible newer RC, not deleting/restoring the registry. This
-does not promise a guard for all older versions or removed/replaced files.
+reinstalling compatible newer RC while retaining the intact v2 registry, not
+deleting or restoring it. This does not promise a guard for all older versions
+or removed/replaced files.
 For malformed JSON, HA can quarantine the v2 file and return `None` before
 checking its version; v4.0.3 sees an absent registry and may run adoption,
-which does not reconstruct v2 safety metadata. That path is not a guard.
+which does not reconstruct v2 safety metadata. Any default/fresh v1 registry
+that v4.0.3 creates or writes after HA returns `None` for the quarantined file
+is not restored safety state: the new reader classifies it alongside the
+surviving activation marker as protective-unknown. That path is not a guard.
+Reinstalling a compatible newer RC version alone cannot reconstruct missing
+safety state: preserve the quarantined bytes and marker and restore a verified,
+sufficiently current complete envelope and matching marker, or remain
+protective-unknown. In the new version, protective-unknown must not prevent
+lockless entry setup or calendar displays, but the shared allocator withholds
+new lockless code issuance until safety state is restored. This differs from
+v4.0.3's top-level version-2-header downgrade block, which may prevent all RC
+entries, including lockless entries, from loading.
 
 ## Child availability and event source
 

@@ -11,9 +11,12 @@ This is a plan, not an instruction to start tasks or implementation. Read
 [integration contracts](contracts/integration.md).
 Use only simulated/disposable fixtures, never production locks. Before coding,
 inspect current callers and storage implementations again; source paths may
-change after this plan. The maintainer selected explicit same-original
-attestation and a v4.0.3 downgrade guard. Persistence and downgrade behavior
-must be implemented and verified before delivery.
+change after this plan. For legacy-unknown provenance, the maintainer selected
+an explicit, auditable attestation that the selected current entry is attached
+to the same original physical lock, even if its former Keymaster entry was
+deleted and recreated; this is not machine proof and never transfers known-A
+work. The maintainer also selected a v4.0.3 downgrade guard. Persistence and
+downgrade behavior must be implemented and verified before delivery.
 
 ## Required test matrix
 
@@ -50,6 +53,9 @@ conflicts, exclusions, forced holds and service behavior across restarts,
 options saves and both dry-run services. Simulate crashes between each
 config/ledger/fence persistence step and reload both entries; no code becomes
 unreserved due to a partially persisted migration.
+With a protective-unknown shared allocator in the new version, verify
+lockless entries still set up and display calendars without Keymaster, while
+new code issuance remains withheld until safety state is restored.
 
 Inventory each actual source path in [routing-inventory.md](routing-inventory.md)
 and add a test showing correct identity provenance, not simply an absence of
@@ -105,37 +111,54 @@ not an assumption that HA Store already guarantees them:
    release or overwrite even if B/another A slot appears empty or exclusion
    is requested. Preserve corrupt files, report actionable repair and
    validate restoration only from a demonstrably current complete snapshot.
-   If no complete evidence exists the hold remains. Separately test genuine
-   first-run and legacy-absent behavior with no activation/partial/quarantine
-   evidence under existing adoption gates. Validate v1→v2 migration at every
-   marker/envelope boundary; do not claim deletion of both files or an old
-   restore is always detectable.
+   If no complete evidence exists the hold remains. Also verify that lockless
+   entry setup and calendar displays remain available in the new version while
+   new code issuance is withheld until safety state is restored. Separately test
+   genuine first-run and legacy-absent behavior with no
+   activation/partial/quarantine evidence under existing adoption gates.
+   Verify the persistent status is sanitized and directs the operator to
+   restore verified safety state; do not assert visibility, presence or
+   absence of codes missing from damaged state. Confirm HA's generic
+   storage-corruption issue may be submitted without restoring or validating
+   the allocator state.
+   Validate v1→v2 migration at every marker/envelope boundary; do not claim
+   deletion of both files or an old restore is always detectable.
 4. Test untouched v1 input, new-reader replay/migration twice, retained owners,
    conflict and forced holds, and competing same-slot/shared-lock owners.
-   Exercise the actual v4.0.3 loader with HA and the complete v2 **envelope**:
-   it must reject the higher major version and surface `ConfigEntryNotReady`
-   before allocator use. Verify that lockless as well as locked RC entries
+   Exercise the actual v4.0.3 loader with HA and the intended v2 **envelope**:
+   it must reject a decoded object with top-level integer `version: 2` before
+   inspecting the inner payload and surface `ConfigEntryNotReady` before
+   allocator use. Include a v2 header whose inner payload is missing or
+   malformed to verify the guard is header-based. Verify that lockless as well
+   as locked RC entries
    can be blocked and that reinstalling compatible newer RC recovers existing
    v2 state. Separately run corrupt-v2 JSON through actual HA Store and the
    v4.0.3 loader: assert HA quarantines it and returns `None`, the old loader
    reports registry absent and may enter adoption recovery, and old code does
    not enforce the marker. It is not safe to rely on that recovery: preserve
-   `.corrupt.*` and marker, stop RC/HA, reinstall compatible RC and follow
-   verified restore/operator repair. Also show that a mere payload bump has
+   `.corrupt.*` and marker, stop RC/HA, reinstall compatible RC, and restore
+   a verified, sufficiently current complete envelope and matching marker.
+   Verify that reinstallation alone cannot reconstruct missing safety state;
+   without a verified restore, the new version remains protective-unknown.
+   Also show that a mere payload bump has
    different behavior and extra v1 fields may be dropped. Never delete or
    restore a stale ledger to force downgrade; do not claim protection for
    other old versions or removed/replaced files.
 5. Test legacy unique normalized candidates with a removed-and-recreated
    same-name entry, historical aliases and matching observed PINs: none prove
-   the original KM ID. Test genuinely independently attributable legacy
-   installs; explicit selection without attestation; a distinct
-   same-original-entry attestation, cancel and negative/replacement choice;
-   disabled candidates, same-name collisions and no candidate. Verify the
-   attestation survives restart, preserves all owners and fences of two
-   disjoint-range RC entries sharing a lock, and never resets, changes or
-   shortens an existing guest code. A known A hold cannot transfer to B,
-   even after attestation or if slot numbers or PINs match. Verify an
-   attestation alone never confirms a clear or releases a PIN.
+   the original physical lock. Test genuinely independently attributable
+   legacy installs; explicit selection without attestation; and explicit,
+   auditable same-original-physical-lock attestation for a distinguishable
+   recreated current entry, plus cancel and negative/replacement choices. Do
+   not assert software can prove physical continuity from entry IDs, names or
+   addresses. Test disabled candidates, same-name collisions, no candidate,
+   uncertainty and ambiguity. Verify the attestation survives restart,
+   preserves all owners and fences of two disjoint-range RC entries sharing a
+   physical lock, and never resets, changes or shortens an existing guest code.
+   A known A hold cannot transfer to B, even after attestation or if slot
+   numbers or PINs match. Verify an attestation alone never confirms a clear
+   or releases a PIN; fresh trustworthy evidence for the original physical
+   lock and exact slot remains required.
 6. Exercise envelope/config correlation using explicit `(raw legacy selection,
    verified KM entry ID, association generation, transaction ID)` tuples:
    crash before/after envelope preparation and commit, HA config update,
@@ -159,8 +182,8 @@ not an assumption that HA Store already guarantees them:
    override and reissue locks under adversarial scheduling without deadlock,
    event-loop blocking or abandoned writes. Benchmark fsync-heavy paths and
    verify coalescing only for genuinely non-protective metadata.
-8. Test contradictory attestations for entries proven to share the same
-   original lock, same-entry concurrent submissions, and two unrelated
+8. Test contradictory attestations for entries attested to share the same
+   original physical lock, same-entry concurrent submissions, and two unrelated
    physical locks with colliding slugs. A conflict cannot overwrite a
    verified association or merge claims; separately proven locks remain
    distinct and ambiguous legacy claims remain held. Test tombstone

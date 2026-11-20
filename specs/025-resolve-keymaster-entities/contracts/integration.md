@@ -46,11 +46,11 @@ confirmation readiness.
 
 | Action | Boundary | Required outcome |
 |---|---|---|
-| Select or repair lock | Existing HA config/options flow | Distinguishable KM entries; durable entry ID, retain unresolved legacy data and unrelated settings; same-original attestation is separate from selecting an entry |
+| Select or repair lock | Existing HA config/options flow | Distinguishable current KM entry; durable entry ID; retain unresolved legacy data and unrelated settings; auditable same-original-physical-lock attestation is separate from selecting an entry |
 | Observe/adopt | Registry + live HA states | Current verified entry/property/slot only; unreadable is not empty |
 | Issue/amend/change dates | Existing text/switch/datetime entity services | Preflight all needed targets and confirmations; revalidate across awaits; partial changes remain outstanding |
 | Reset/cleanup | Existing per-slot button and applicable text service | Same-slot reset; local current name/PIN evidence required; preserve original pending fence and separate PIN hold |
-| Check in/out | Existing RC calendar and event processing | Verified current date entities; event source and inherited topology checked; lockless behavior unchanged |
+| Check in/out | Existing RC calendar and event processing | Verified current date entities; event source and inherited topology checked; lockless calendar behavior remains independent of KM, subject to the protective-unknown issuance gate |
 | `force_reissue`, `set_slot_exclusion` | Existing RC service schemas | Keep supported unambiguous lockname+slot and RC sensor selectors and dry-run behavior; ambiguous or unverified hardware target is refused |
 | Recovery/reload | HA entry/registry/state lifecycle | Invalidate old evidence, rebind once, retry eligible work only after revalidation |
 
@@ -71,24 +71,26 @@ Dry-run uses the same resolution/guards without writes.
 
 ### Legacy repair and attestation
 
-When independent evidence cannot prove the original legacy association,
-display distinguishable current KM entries and an explicit, unselected
-confirmation that the selected entry is the **same original entry/association**,
-not merely a similarly named replacement or the same physical device under a
-new entry. Explain that this is the operator's historical assertion; it is
-not proof that a slot is empty or that hardware erased a PIN. Cancel, no
-attestation, missing/disabled or ambiguous selection, and unavailable state
-retain the original hold and existing safety gates. A disabled candidate can
-be identified but cannot supply live capability evidence. Selecting a
-replacement must be distinguishable and must not transfer old work.
+When independent evidence cannot prove **legacy-unknown** provenance, display
+distinguishable current KM entries and an explicit, unselected confirmation
+that the selected current entry is attached to the **same original physical
+lock**. This may apply even if the original KM entry was deleted and recreated.
+Explain that this is an auditable operator assertion, not machine proof of
+physical continuity; a current name, slug, entry ID or matching address does
+not prove it. The selected current entry and its capabilities still require
+independent current validation. Cancel, no attestation, missing/disabled or
+ambiguous selection, and unavailable state retain the original hold and
+existing safety gates. A disabled candidate can be identified but cannot
+supply live capability evidence. Uncertainty or ambiguity fails closed.
 
-Bind legacy-unknown ownership only after current entry validation and durable
-attestation/provenance transaction. Preserve all shared-lock RC owners,
-original slot fences, reservation claims and exclusion semantics. Neither
-attestation nor replacement selection releases a PIN, changes a guest code,
-or bypasses the existing release/adoption/readiness checks. For an already
-verified original entry A, selection or attestation of B cannot rebind A's
-pending work to B.
+Bind legacy-unknown ownership only after current entry validation and a
+durable, auditable attestation/provenance transaction. Preserve all shared-lock
+RC owners, original slot fences, reservation claims and exclusion semantics.
+Neither attestation nor replacement selection releases a PIN, changes a guest
+code, confirms a clear, or bypasses existing release/adoption/readiness checks;
+fresh trustworthy evidence from the original physical lock and exact slot
+remains required for release. Attestation never transfers work already known
+to belong to entry A onto B, even when both refer to the same physical lock.
 
 ### Registry persistence and downgrade
 
@@ -102,9 +104,19 @@ updates are separate, so startup reconciles from the committed envelope.
 An unrecoverable v2, missing required protection section, quarantined corrupt
 file, or absent envelope with activation/partial-state evidence is
 protective-unknown: no adoption-based rebuild, issuance, reuse, release or
-overwrite. Use the marker/config correlation and verified restore protocol in
-the data model; current slot states and exclusions cannot reconstruct lost
-pending holds.
+overwrite. In the new version, lockless RC entries still set up and display
+their calendars without Keymaster, but new lockless code issuance is withheld
+until the shared allocator safety state is restored. Use the marker/config
+correlation and verified restore protocol in the data model; current slot
+states and exclusions cannot reconstruct lost pending holds.
+Expose persistent, sanitized, actionable status directing the operator to
+restore a verified, sufficiently current complete envelope and matching
+marker. Preserve claims and fences already loaded, avoid hardware or ownership
+mutation where information is unavailable, and do not claim that codes missing
+from damaged state remain visible or present, or that they are absent or
+reusable. HA may separately present its generic storage-corruption repair
+issue after quarantining invalid JSON; confirming that issue is not restoration
+or validation of the allocator state.
 Each pending marker records a proven prior finalized/genesis version,
 generation and exact-byte digest plus a distinct target transaction,
 generation and digest. After process crash an exact prior match permits
@@ -123,14 +135,22 @@ checkpoint adapter depends on HA's private `core.config_entries` format and
 must validate a known envelope and entry structure plus writer quiescence;
 unknown/inaccessible data retains the chain and surfaces pressure.
 
-An actual v4.0.3 HA Store v1 loader must reject a **valid, parseable** v2
-envelope; this can prevent all RC entries, including lockless ones, from
-loading. Reinstall compatible newer RC without deleting or restoring the
-registry. With malformed v2 JSON, HA can quarantine it and return `None`;
-v4.0.3 then treats the registry as absent and may enter adoption recovery
-without enforcing the new marker. This path is not a safety guard: stop
-RC/HA, preserve the quarantined bytes and marker, reinstall compatible RC,
-and follow verified restore/operator repair. Test the actual path. No
+An actual v4.0.3 HA Store v1 loader must reject a JSON-decoded object with an
+integer top-level `version: 2` before inspecting its inner payload. This can
+prevent all RC entries, including lockless ones, from loading; it does not
+depend on successful validation of the payload or its safety metadata. Keep
+this old-version downgrade block distinct from new-version behavior. With
+malformed JSON, HA can quarantine the file and return `None`; v4.0.3 then
+treats the registry as absent and may enter adoption recovery without enforcing
+the new marker. HA's generic repair confirmation does not restore the file.
+Any default/fresh v1 registry v4.0.3 creates or writes after HA returns `None`
+for the quarantined file is not restored safety state; with the surviving
+activation marker, the new reader classifies it as protective-unknown.
+This path is not a safety guard or safe recovery. Stop RC/HA and preserve the
+quarantined bytes and marker. Reinstalling compatible newer RC alone cannot
+reconstruct missing safety state: restore a verified, sufficiently current
+complete envelope and matching marker through the stopped repair process.
+Without that restore, remain protective-unknown. Test the actual path. No
 guard is promised for other versions or deleted/replaced/restored storage.
 
 ## Registry and lifecycle messages
