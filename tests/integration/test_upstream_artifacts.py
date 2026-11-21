@@ -31,7 +31,7 @@ from tests.fixtures.keymaster_releases import remove_imported_package
 from tests.fixtures.keymaster_releases import synthetic_attestation_entries
 from tests.fixtures.keymaster_releases import verify_artifacts
 
-_RELEASES = ("v0.6.0", "v0.6.5")
+_RELEASES = ("v0.6.1", "v0.6.5")
 
 
 @pytest.fixture(scope="module")
@@ -88,14 +88,16 @@ async def test_packaged_keymaster_release_loads_and_uses_ha_slugify(
         remove_imported_package(module_name)
 
 
-async def test_v065_package_import_characterizes_fake_provider_boundary(
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_supported_package_import_characterizes_fake_provider_boundary(
     hass,  # noqa: ARG001
     tmp_path: Path,
+    release: str,
     verified_artifact_paths: dict[str, Path],  # noqa: ARG001
 ) -> None:
-    """Characterize package import with its provider module replaced by a fake."""
+    """Exercise each supported package with the disposable fake provider."""
     module_name = "custom_components.keymaster"
-    import_keymaster_release("v0.6.5", tmp_path / "v0.6.5", module_name)
+    import_keymaster_release(release, tmp_path / release, module_name)
     try:
         providers = cast(Any, import_module(f"{module_name}.providers"))
         provider = providers.create_provider()
@@ -115,6 +117,91 @@ def test_v060_packaged_integration_exposes_missing_required_constant(
         import_keymaster_release(
             "v0.6.0", tmp_path / "v0.6.0", "custom_components.keymaster"
         )
+
+
+def test_release_pins_distinguish_supported_floor_from_rejected_package() -> None:
+    """Keep the broken v0.6.0 fixture separate from supported test releases."""
+    manifest = keymaster_releases._read_manifest()
+    support_status = {
+        package["version"]: package["support_status"]
+        for package in manifest["keymaster"]
+    }
+
+    assert support_status == {
+        "v0.6.0": "rejected-import-characterization",
+        "v0.6.1": "supported",
+        "v0.6.5": "supported",
+    }
+    assert _RELEASES == ("v0.6.1", "v0.6.5")
+
+
+def test_real_import_requirements_match_ha_component_manifests() -> None:
+    """Pin only the exact runtime requirements declared by HA 2026.11.0."""
+    homeassistant = import_module("homeassistant")
+    component_root = Path(cast(str, homeassistant.__file__)).parent / "components"
+    components = (
+        "mqtt",
+        "zha",
+        "zwave_js",
+        "usb",
+        "homeassistant_hardware",
+        "hassio",
+    )
+    expected = {
+        requirement
+        for component in components
+        for requirement in json.loads(
+            (component_root / component / "manifest.json").read_text(encoding="utf-8")
+        ).get("requirements", [])
+    }
+    requirements_path = (
+        Path(__file__).parents[1] / "fixtures" / "keymaster_import_requirements.txt"
+    )
+    actual = {
+        line.partition("#")[0].strip()
+        for line in requirements_path.read_text(encoding="utf-8").splitlines()
+        if line.partition("#")[0].strip()
+    }
+
+    assert actual == expected
+
+
+def test_authentic_import_probe_lock_pins_manifest_requirements_with_hashes() -> None:
+    """Keep the disposable probe install on its generated resolved lock."""
+    fixtures = Path(__file__).parents[1] / "fixtures"
+    lock_lines = (
+        (fixtures / "keymaster_import_probe.lock")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    packages: dict[str, tuple[str, bool]] = {}
+    current: str | None = None
+    for line in lock_lines:
+        if line.startswith("#"):
+            continue
+        if line.startswith((" ", "\t")):
+            if current is not None and "--hash=sha256:" in line:
+                version, _ = packages[current]
+                packages[current] = (version, True)
+            continue
+        package, separator, constraint = line.partition("==")
+        if separator:
+            version, marker_separator, marker_value = constraint.partition(";")
+            normalized = package.lower().replace("_", "-")
+            packages[normalized] = (version.removesuffix("\\").strip(), False)
+            current = normalized
+            if marker_separator and not marker_value.removesuffix("\\").strip():
+                raise AssertionError("probe lock has an empty package marker")
+
+    requirements = keymaster_releases._read_import_requirements()
+    expected = {
+        name.lower().replace("_", "-"): version
+        for name, version in requirements.items()
+    }
+    expected["homeassistant"] = "2026.11.0"
+    for package, version in expected.items():
+        assert package in packages
+        assert packages[package] == (version, True)
 
 
 async def test_actual_v403_registry_loader_runs_against_ha_store(

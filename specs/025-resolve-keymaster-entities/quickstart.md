@@ -369,11 +369,12 @@ capability and remedy.
 
 ## Upstream fixture acquisition and re-pinning
 
-The upstream characterization tests require the pinned Keymaster release and
-tagged-source archives plus the Rental Control v4.0.3 archive. Pytest never
-downloads them: it requires `RC_UPSTREAM_ARTIFACTS_DIR` and verifies every
-artifact before use. CI acquires into the runner's temporary directory before
-pytest and exports that variable only to the test step.
+The upstream characterization tests require the pinned Keymaster v0.6.1 and
+v0.6.5 release/tagged-source archives, the v0.6.0 rejection-characterization
+archives, and the Rental Control v4.0.3 archive. Pytest never downloads them:
+it requires `RC_UPSTREAM_ARTIFACTS_DIR` and verifies every artifact before
+use. CI acquires into the runner's temporary directory before pytest and
+exports that variable only to the test step.
 
 For a local online run, acquire once and then use the same verified directory:
 
@@ -386,6 +387,42 @@ uv run --no-project --python 3.14 python tests/fixtures/keymaster_releases.py ve
   --directory "$RC_UPSTREAM_ARTIFACTS_DIR"
 uv run --extra test pytest --assert=plain tests/integration/test_upstream_artifacts.py
 ```
+
+The authentic provider-import gate uses a separate disposable HA environment
+and a resolved, hash-pinned requirements lock. It does not modify the project
+environment or `uv.lock`. `keymaster_import_requirements.txt` remains the
+direct dependency list copied from the exact HA 2026.11.0 integration
+manifests; `keymaster_import_probe.lock` pins the complete transitive install.
+The lock is compiled for CPython 3.14.2/Linux x86_64 with uv 0.13.5. Its
+resolution uses the project test/development export as constraints, preserving
+all compatible versions already selected in `uv.lock`; newly required
+transitives are recorded with exact versions and SHA-256 hashes. Refresh only
+when intentionally updating this probe, then review the lock diff and rerun
+both fresh-process imports:
+
+```bash
+export RC_UPSTREAM_ARTIFACTS_DIR="${TMPDIR:-/tmp}/rc-025-upstream-artifacts"
+uv --version  # Must report uv 0.13.5
+uv run --no-project --python 3.14.2 python scripts/update_keymaster_import_probe_lock.py
+export UV_PROJECT_ENVIRONMENT="${TMPDIR:-/tmp}/rc-025-keymaster-import-env"
+uv venv --python 3.14.2 "$UV_PROJECT_ENVIRONMENT"
+uv pip sync --require-hashes --python "$UV_PROJECT_ENVIRONMENT/bin/python" \
+  tests/fixtures/keymaster_import_probe.lock
+uv pip sync --check --require-hashes --python "$UV_PROJECT_ENVIRONMENT/bin/python" \
+  tests/fixtures/keymaster_import_probe.lock
+"$UV_PROJECT_ENVIRONMENT/bin/python" -I \
+  tests/fixtures/keymaster_releases.py probe-import --release v0.6.1
+"$UV_PROJECT_ENVIRONMENT/bin/python" -I \
+  tests/fixtures/keymaster_releases.py probe-import --release v0.6.0
+```
+
+The optional requirements are the exact direct dependencies declared by HA
+2026.11.0's ZHA, Z-Wave JS, USB, hardware, and supervisor manifests. The first
+fresh process must import the authentic v0.6.1 package and its real providers;
+the second must identify v0.6.0's missing
+`LARGE_LOCK_ACK_STORE_VERSION`. Missing dependencies or any other import
+failure are test failures, not evidence against the support floor. This
+disposable environment does not modify `uv.lock`.
 
 `GH_TOKEN` is optional for public acquisition. When set, the downloader uses
 it only for requests whose exact origin is `https://api.github.com`; it

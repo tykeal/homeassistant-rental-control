@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runtime provider requirements are copied from HA 2026.11.0 component
+# manifests in keymaster_import_requirements.txt. Refresh the compiled
+# transitive lock only with the command documented in quickstart.md.
+homeassistant==2026.11.0
+-r keymaster_import_requirements.txt

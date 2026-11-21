@@ -11,6 +11,7 @@ from datetime import datetime
 from datetime import timezone
 from email.utils import parsedate_to_datetime
 import hashlib
+import importlib.metadata
 import importlib.util
 import json
 import math
@@ -404,6 +405,109 @@ def import_keymaster_release(
     return module
 
 
+def _read_import_requirements() -> dict[str, str]:
+    """Read exact optional HA component requirements for the real-import probe."""
+    requirements_path = Path(__file__).with_name("keymaster_import_requirements.txt")
+    requirements: dict[str, str] = {}
+    for line in requirements_path.read_text(encoding="utf-8").splitlines():
+        requirement = line.partition("#")[0].strip()
+        if not requirement:
+            continue
+        name, separator, version = requirement.partition("==")
+        if not separator or not name or not version or name in requirements:
+            raise ValueError("invalid or duplicate Keymaster import requirement")
+        requirements[name] = version
+    return requirements
+
+
+def _verify_authentic_import_environment() -> None:
+    """Require the locked HA line and each manifest-pinned provider dependency."""
+    homeassistant_version = importlib.metadata.version("homeassistant")
+    if homeassistant_version != "2026.11.0":
+        raise RuntimeError(
+            "authentic Keymaster imports require HA 2026.11.0, "
+            f"found {homeassistant_version}"
+        )
+    requirements = _read_import_requirements()
+    for package, expected_version in requirements.items():
+        actual_version = importlib.metadata.version(package)
+        if actual_version != expected_version:
+            raise RuntimeError(
+                f"authentic import dependency mismatch: {package} "
+                f"{actual_version} != {expected_version}"
+            )
+
+
+def probe_authentic_keymaster_import(version: str) -> None:
+    """Import a pinned package with real providers, or verify v0.6.0 rejection.
+
+    Run this command in a fresh HA process with the exact optional integration
+    requirements installed. The only namespace initialized here is
+    ``custom_components``; no Keymaster/provider/constant module is replaced.
+    """
+    if version not in {"v0.6.0", "v0.6.1"}:
+        raise ValueError("authentic import probe only covers v0.6.0 and v0.6.1")
+    _verify_authentic_import_environment()
+    module_name = "custom_components.keymaster"
+    if any(
+        name == module_name or name.startswith(f"{module_name}.")
+        for name in sys.modules
+    ):
+        raise RuntimeError(
+            "Keymaster modules were loaded before the fresh-process probe"
+        )
+
+    package_root = extract_keymaster_release(
+        version, Path(tempfile.mkdtemp(prefix=f"keymaster-{version}-"))
+    )
+    namespace = ModuleType("custom_components")
+    namespace.__path__ = []
+    sys.modules["custom_components"] = namespace
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        package_root / "__init__.py",
+        submodule_search_locations=[str(package_root)],
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError("unable to create authentic upstream Keymaster loader")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except ImportError as error:
+        if (
+            version == "v0.6.0"
+            and "LARGE_LOCK_ACK_STORE_VERSION" in str(error)
+            and str(package_root / "const.py") in str(error)
+        ):
+            print(
+                "IMPORT=EXPECTED-REJECTION",
+                version,
+                "missing LARGE_LOCK_ACK_STORE_VERSION",
+                package_root / "const.py",
+            )
+            return
+        raise
+    if version == "v0.6.0":
+        raise RuntimeError("v0.6.0 unexpectedly imported successfully")
+
+    provider_modules = (
+        "custom_components.keymaster.providers",
+        "custom_components.keymaster.providers.zha",
+        "custom_components.keymaster.providers.zwave_js",
+    )
+    provider_origins: list[Path] = []
+    for name in provider_modules:
+        imported = sys.modules.get(name)
+        origin = Path(getattr(imported, "__file__", "")).resolve()
+        if not origin.is_relative_to(package_root.resolve()):
+            raise RuntimeError(f"provider did not load from pinned package: {name}")
+        provider_origins.append(origin)
+    print("IMPORT=PASS", version, module.__file__)
+    for origin in provider_origins:
+        print("PROVIDER", origin)
+
+
 def import_keymaster_entity_module(
     version: str, destination: Path, module_name: str
 ) -> ModuleType:
@@ -548,13 +652,17 @@ def _main() -> None:
     acquire.add_argument("--output-dir", type=Path, required=True)
     verify = actions.add_parser("verify")
     verify.add_argument("--directory", type=Path, required=True)
+    probe = actions.add_parser("probe-import")
+    probe.add_argument("--release", choices=("v0.6.0", "v0.6.1"), required=True)
     args = parser.parse_args()
     if args.action == "acquire":
         paths = acquire_artifacts(args.output_dir)
-    else:
+    elif args.action == "verify":
         paths = verify_artifacts(args.directory)
-    for path in paths.values():
-        print(path)
+        for path in paths.values():
+            print(path)
+    else:
+        probe_authentic_keymaster_import(args.release)
 
 
 if __name__ == "__main__":
