@@ -57,6 +57,21 @@ def _envelope(transaction_id: str, generation: int, fences: list[dict[str, Any]]
     }
 
 
+def _fence() -> dict[str, Any]:
+    """Build the original slot fence retained across a later crash."""
+    return {
+        "fence_id": "f" * 32,
+        "original_km_entry_id": "original-entry",
+        "slot": 7,
+        "rc_entry_id": "rc-entry",
+        "owner_ref": "owner-ref",
+        "allocation_ref": "allocation-ref",
+        "created_transaction_id": "1" * 32,
+        "created_generation": 1,
+        "fence_type": "pending_clear",
+    }
+
+
 @pytest.fixture
 def isolated_storage(hass: HomeAssistant, tmp_path: Path) -> Iterator[Path]:
     """Use the current real HA instance's isolated configuration storage."""
@@ -107,11 +122,7 @@ async def test_restart_rolls_back_later_intent_without_losing_prior_fence(
     storage = isolated_storage
     registry_path = storage / "rental_control.code_registry"
     marker_path = storage / "rental_control.code_registry_protection"
-    fence = {
-        "entry_id": "original-entry",
-        "slot": 7,
-        "reason": "dispatched-clear-unresolved",
-    }
+    fence = _fence()
     committed = await async_commit_protection_transaction(
         asyncio.Lock(),
         storage,

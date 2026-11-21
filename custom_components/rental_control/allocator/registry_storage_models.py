@@ -51,6 +51,7 @@ _STORAGE_FAILURE_CODES = frozenset(
         "scan_failed",
         "scan_limit",
         "scan_unavailable",
+        "snapshot_transition_invalid",
         "serialization_failed",
         "serialization_invalid",
         "serialized_oversize",
@@ -227,6 +228,28 @@ class ProtectionAuthorizationState(StrEnum):
     UNVERIFIED = "unverified"
     READY = "ready"
     PROTECTIVE_UNKNOWN = "protective_unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectionCommitToken:
+    """Bind follow-up work to one acknowledged transaction and generation."""
+
+    transaction_id: str
+    generation: int
+
+    def __post_init__(self) -> None:
+        """Reject malformed transaction IDs and boolean/nonpositive generations."""
+        if (
+            not isinstance(self.transaction_id, str)
+            or len(self.transaction_id) != 32
+            or any(
+                character not in "0123456789abcdef" for character in self.transaction_id
+            )
+            or not isinstance(self.generation, int)
+            or isinstance(self.generation, bool)
+            or self.generation < 1
+        ):
+            raise ValueError("invalid protection commit token")
 
 
 @dataclass(frozen=True, slots=True)

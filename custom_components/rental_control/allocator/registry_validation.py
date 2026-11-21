@@ -21,6 +21,10 @@ from .registry_payload import _is_typed_json_object
 from .registry_payload import _is_v1_ledger_shape
 from .registry_payload import _is_v2_ledger_shape
 from .registry_payload import _reject_json_constant
+from .registry_safety_models import references_match_snapshot
+from .registry_safety_models import valid_fence_section
+from .registry_safety_models import valid_tombstone_section
+from .registry_safety_models import validate_snapshot_structure
 
 
 def prepare_exact_json_bytes(
@@ -102,9 +106,7 @@ def validate_v2_envelope_shape(payload: object) -> bool:
     for section in (
         "associations",
         "attestations",
-        "pending_fences",
         "holds",
-        "tombstones",
         "pending_config",
     ):
         items = data[section]
@@ -112,6 +114,19 @@ def validate_v2_envelope_shape(payload: object) -> bool:
             _is_typed_json_object(item) for item in items
         ):
             return False
+    if not valid_fence_section(data["pending_fences"]):
+        return False
+    if not valid_tombstone_section(data["tombstones"]):
+        return False
+    if not validate_snapshot_structure(data):
+        return False
+    if not references_match_snapshot(
+        data["pending_fences"],
+        data["tombstones"],
+        transaction_id=data["transaction_id"],
+        generation=generation,
+    ):
+        return False
     return True
 
 

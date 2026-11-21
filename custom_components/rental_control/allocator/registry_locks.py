@@ -178,13 +178,38 @@ async def _acquire_io_lock_until(storage_dir: Path, deadline: float) -> IOLockAt
                     attempt.descriptor
                 )
                 if cancelled:
-                    raise asyncio.CancelledError
+                    raise asyncio.CancelledError from None
                 return IOLockAttempt(None, busy=True)
             return attempt
         remaining = deadline - monotonic()
         if remaining > 0:
             await asyncio.sleep(min(0.025, remaining))
     return IOLockAttempt(None, busy=True)
+
+
+def _apply_completion_result(
+    result: StorageRunResult,
+    on_completion: Callable[[StorageRunResult], None] | None,
+) -> StorageRunResult:
+    """Apply one sanitized operation outcome before returning or propagating cancel."""
+    if on_completion is None:
+        return result
+    try:
+        on_completion(result)
+    except Exception:
+        result = StorageRunResult(
+            StorageRunState.UNCERTAIN,
+            value=result.value,
+            failure_code="completion_failed",
+        )
+        try:
+            on_completion(result)
+        except Exception:
+            _LOGGER.error(
+                "Protected storage completion callback failed; "
+                "the operation remains uncertain"
+            )
+    return result
 
 
 async def _run_and_apply_result(
@@ -197,31 +222,18 @@ async def _run_and_apply_result(
     try:
         future = loop.run_in_executor(None, _run_with_io_lock, descriptor, operation)
     except Exception:
-        _released, cancelled = await _release_io_lock_and_drain(descriptor)
+        _, cancelled = await _release_io_lock_and_drain(descriptor)
+        result = StorageRunResult(StorageRunState.UNAVAILABLE, failure_code="io_failed")
+        result = _apply_completion_result(result, on_completion)
         if cancelled:
             raise asyncio.CancelledError from None
-        return StorageRunResult(StorageRunState.UNAVAILABLE, failure_code="io_failed")
+        return result
     result, cancelled = await _drain_executor_future(future)
     if not isinstance(result, StorageRunResult):
         result = StorageRunResult(StorageRunState.UNCERTAIN, failure_code="io_failed")
-    if on_completion is not None:
-        try:
-            on_completion(result)
-        except Exception:
-            result = StorageRunResult(
-                StorageRunState.UNCERTAIN,
-                value=result.value,
-                failure_code="completion_failed",
-            )
-            try:
-                on_completion(result)
-            except Exception:
-                _LOGGER.error(
-                    "Protected storage completion callback failed; "
-                    "the operation remains uncertain"
-                )
+    result = _apply_completion_result(result, on_completion)
     if cancelled:
-        raise asyncio.CancelledError
+        raise asyncio.CancelledError from None
     return result
 
 
@@ -231,6 +243,7 @@ async def async_run_protected_operation(
     operation: Callable[[], Any],
     *,
     deadline_seconds: float = 5.0,
+    on_start: Callable[[], None] | None = None,
     on_completion: Callable[[StorageRunResult], None] | None = None,
 ) -> StorageRunResult:
     """Run protected I/O under ordered async/process locks and one deadline.
@@ -270,6 +283,19 @@ async def async_run_protected_operation(
                 StorageRunState.UNAVAILABLE,
                 failure_code=attempt.failure_code or "lock_unavailable",
             )
+        if on_start is not None:
+            try:
+                on_start()
+            except Exception:
+                _released, cancelled = await _release_io_lock_and_drain(
+                    attempt.descriptor
+                )
+                if cancelled:
+                    raise asyncio.CancelledError from None
+                return StorageRunResult(
+                    StorageRunState.UNAVAILABLE,
+                    failure_code="operation_failed",
+                )
         return await _run_and_apply_result(attempt.descriptor, operation, on_completion)
     finally:
         async_lock.release()

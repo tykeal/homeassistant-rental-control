@@ -5,6 +5,9 @@
 from __future__ import annotations
 
 import builtins
+import copy
+from datetime import UTC
+from datetime import datetime
 import errno
 import hashlib
 from importlib import import_module
@@ -20,6 +23,28 @@ from custom_components.rental_control.allocator import (
     protected_registry as store_module,
 )
 from custom_components.rental_control.allocator import registry_validation
+from custom_components.rental_control.allocator.models import ProtectionCommitToken
+from custom_components.rental_control.allocator.registry_safety_models import (
+    PendingSlotFence,
+)
+from custom_components.rental_control.allocator.registry_safety_models import (
+    ResolutionTombstone,
+)
+from custom_components.rental_control.allocator.registry_safety_models import (
+    resolve_fence_to_tombstone,
+)
+from custom_components.rental_control.allocator.registry_safety_models import (
+    tombstone_pressure,
+)
+from custom_components.rental_control.allocator.registry_safety_models import (
+    validate_pending_fence,
+)
+from custom_components.rental_control.allocator.registry_safety_models import (
+    validate_resolution_tombstone,
+)
+from custom_components.rental_control.allocator.registry_safety_transitions import (
+    validate_snapshot_transition,
+)
 
 atomicwrites = import_module("atomicwrites")
 
@@ -323,6 +348,271 @@ def test_v2_envelope_rejects_boolean_generation_and_non_object_sections() -> Non
     envelope = _v2_envelope()
     envelope["data"]["attestations"] = [{"rc_entry_id": 7}]
     assert not store_module.validate_v2_envelope_shape(envelope)
+
+
+def test_v2_requires_typed_original_slot_fences_and_resolution_tombstones() -> None:
+    """Safety rows retain explicit original identity and transaction fences."""
+    fence = PendingSlotFence(
+        fence_id="f" * 32,
+        original_km_entry_id="km-entry-a",
+        slot=4,
+        rc_entry_id="rc-entry-a",
+        owner_ref="owner-ref-a",
+        allocation_ref="allocation-ref-a",
+        created_transaction_id="a" * 32,
+        created_generation=2,
+        fence_type="pending_clear",
+    ).to_record()
+    tombstone = ResolutionTombstone(
+        tombstone_id="c" * 32,
+        fence_id=fence["fence_id"],
+        original_km_entry_id=fence["original_km_entry_id"],
+        slot=fence["slot"],
+        rc_entry_id=fence["rc_entry_id"],
+        owner_ref=fence["owner_ref"],
+        allocation_ref=fence["allocation_ref"],
+        fence_type=fence["fence_type"],
+        created_transaction_id=fence["created_transaction_id"],
+        created_generation=fence["created_generation"],
+        resolved_transaction_id="b" * 32,
+        resolved_generation=3,
+        resolution_kind="clear_confirmed",
+        created_at="2026-11-21T00:00:00+00:00",
+    ).to_record()
+    envelope = _v2_envelope()
+    envelope["data"]["transaction_id"] = "b" * 32
+    envelope["data"]["generation"] = 3
+    envelope["data"]["pending_fences"] = []
+    envelope["data"]["tombstones"] = [tombstone]
+
+    assert validate_pending_fence(fence)
+    assert validate_resolution_tombstone(tombstone)
+    assert store_module.validate_v2_envelope_shape(envelope)
+
+    envelope["data"]["pending_fences"] = [fence]
+    assert not store_module.validate_v2_envelope_shape(envelope)
+
+    malformed_fence = dict(fence)
+    malformed_fence["slot"] = True
+    envelope["data"]["pending_fences"] = [malformed_fence]
+    assert not store_module.validate_v2_envelope_shape(envelope)
+
+    envelope["data"]["pending_fences"] = [{"entry_id": "km-entry-a", "slot": 4}]
+    assert not store_module.validate_v2_envelope_shape(envelope)
+
+    malformed_tombstone = dict(tombstone)
+    malformed_tombstone["resolved_generation"] = 0
+    envelope["data"]["pending_fences"] = []
+    envelope["data"]["tombstones"] = [malformed_tombstone]
+    assert not store_module.validate_v2_envelope_shape(envelope)
+
+    mismatched_creator = dict(fence)
+    mismatched_creator["created_transaction_id"] = "d" * 32
+    mismatched_creator["created_generation"] = 3
+    envelope["data"]["pending_fences"] = [mismatched_creator]
+    envelope["data"]["tombstones"] = []
+    assert not store_module.validate_v2_envelope_shape(envelope)
+
+
+def test_tombstone_pressure_reports_only_count_and_age() -> None:
+    """Retained tombstone pressure never exposes identity or credential data."""
+    record = ResolutionTombstone(
+        tombstone_id="c" * 32,
+        fence_id="f" * 32,
+        original_km_entry_id="private-km-entry",
+        slot=7,
+        rc_entry_id="private-rc-entry",
+        owner_ref="private-owner",
+        allocation_ref="private-allocation",
+        fence_type="allocation",
+        created_transaction_id="a" * 32,
+        created_generation=1,
+        resolved_transaction_id="b" * 32,
+        resolved_generation=2,
+        resolution_kind="owner_released",
+        created_at="2026-11-20T23:00:00+00:00",
+    ).to_record()
+
+    pressure = tombstone_pressure(
+        [record], now=datetime(2026, 11, 21, 0, 0, tzinfo=UTC)
+    )
+
+    assert pressure.count == 1
+    assert pressure.oldest_age_seconds == 3600
+    assert "private" not in repr(pressure)
+
+
+def test_fence_resolution_retains_original_references_and_requires_new_generation() -> (
+    None
+):
+    """Resolution adds a tombstone; it does not rewrite the original fence."""
+    fence = PendingSlotFence(
+        fence_id="f" * 32,
+        original_km_entry_id="km-entry-a",
+        slot=4,
+        rc_entry_id="rc-entry-a",
+        owner_ref="owner-ref-a",
+        allocation_ref="allocation-ref-a",
+        created_transaction_id="a" * 32,
+        created_generation=2,
+        fence_type="pending_clear",
+    ).to_record()
+    original = dict(fence)
+
+    tombstone = resolve_fence_to_tombstone(
+        fence,
+        tombstone_id="c" * 32,
+        resolved_transaction_id="b" * 32,
+        resolved_generation=3,
+        resolution_kind="clear_confirmed",
+        retained_at="2026-11-21T00:00:00+00:00",
+    )
+
+    assert fence == original
+    assert tombstone["fence_id"] == fence["fence_id"]
+    assert tombstone["original_km_entry_id"] == fence["original_km_entry_id"]
+    assert tombstone["slot"] == fence["slot"]
+    assert tombstone["owner_ref"] == fence["owner_ref"]
+    assert tombstone["allocation_ref"] == fence["allocation_ref"]
+    assert tombstone["created_transaction_id"] == fence["created_transaction_id"]
+    assert tombstone["created_generation"] == fence["created_generation"]
+    with pytest.raises(ValueError, match="invalid resolution tombstone"):
+        resolve_fence_to_tombstone(
+            fence,
+            tombstone_id="d" * 32,
+            resolved_transaction_id="b" * 32,
+            resolved_generation=2,
+            resolution_kind="clear_confirmed",
+            retained_at="2026-11-21T00:00:00+00:00",
+        )
+
+
+@pytest.mark.parametrize(
+    ("transaction_id", "generation"),
+    [("not-an-id", 1), ("a" * 32, True), ("a" * 32, 0)],
+)
+def test_commit_token_rejects_malformed_generation_or_transaction(
+    transaction_id: str,
+    generation: int,
+) -> None:
+    """Keep token matching from treating booleans or malformed IDs as authority."""
+    with pytest.raises(ValueError, match="invalid protection commit token"):
+        ProtectionCommitToken(transaction_id, generation)
+
+
+def test_snapshot_transition_requires_fence_and_tombstone_continuity() -> None:
+    """Prior fences persist or resolve exactly, and history is immutable."""
+    fence_a = PendingSlotFence(
+        fence_id="f" * 32,
+        original_km_entry_id="km-entry-a",
+        slot=4,
+        rc_entry_id="rc-entry-a",
+        owner_ref="owner-ref-a",
+        allocation_ref="allocation-ref-a",
+        created_transaction_id="a" * 32,
+        created_generation=1,
+        fence_type="pending_clear",
+    ).to_record()
+    fence_b = PendingSlotFence(
+        fence_id="e" * 32,
+        original_km_entry_id="km-entry-b",
+        slot=9,
+        rc_entry_id="rc-entry-b",
+        owner_ref="owner-ref-b",
+        allocation_ref="allocation-ref-b",
+        created_transaction_id="a" * 32,
+        created_generation=1,
+        fence_type="allocation",
+    ).to_record()
+    prior: dict[str, Any] = {
+        "transaction_id": "a" * 32,
+        "generation": 1,
+        "pending_fences": [fence_a, fence_b],
+        "tombstones": [],
+    }
+    resolved_a = resolve_fence_to_tombstone(
+        fence_a,
+        tombstone_id="c" * 32,
+        resolved_transaction_id="b" * 32,
+        resolved_generation=2,
+        resolution_kind="clear_confirmed",
+        retained_at="2026-11-21T00:00:00+00:00",
+    )
+    target: dict[str, Any] = {
+        "transaction_id": "b" * 32,
+        "generation": 2,
+        "pending_fences": [fence_b],
+        "tombstones": [resolved_a],
+    }
+
+    assert validate_snapshot_transition(prior, target)
+
+    stale_transaction_fence = PendingSlotFence(
+        fence_id="d" * 32,
+        original_km_entry_id="km-entry-c",
+        slot=3,
+        rc_entry_id="rc-entry-c",
+        owner_ref="owner-ref-c",
+        allocation_ref="allocation-ref-c",
+        created_transaction_id="a" * 32,
+        created_generation=2,
+        fence_type="allocation",
+    ).to_record()
+    stale_transaction_target = copy.deepcopy(target)
+    stale_transaction_target["pending_fences"].append(stale_transaction_fence)
+    assert not validate_snapshot_transition(prior, stale_transaction_target)
+
+    stale_generation_fence = dict(stale_transaction_fence)
+    stale_generation_fence["created_transaction_id"] = "b" * 32
+    stale_generation_fence["created_generation"] = 1
+    stale_generation_target = copy.deepcopy(target)
+    stale_generation_target["pending_fences"].append(stale_generation_fence)
+    assert not validate_snapshot_transition(prior, stale_generation_target)
+
+    dropped_fence = copy.deepcopy(target)
+    dropped_fence["pending_fences"] = []
+    assert not validate_snapshot_transition(prior, dropped_fence)
+
+    mutated_fence = copy.deepcopy(target)
+    mutated_fence["pending_fences"][0]["slot"] = 10
+    assert not validate_snapshot_transition(prior, mutated_fence)
+
+    wrong_resolver = copy.deepcopy(target)
+    wrong_resolver["tombstones"][0]["resolved_transaction_id"] = "d" * 32
+    assert not validate_snapshot_transition(prior, wrong_resolver)
+
+    duplicate_active = copy.deepcopy(target)
+    duplicate = dict(fence_b)
+    duplicate["fence_id"] = "d" * 32
+    duplicate["created_transaction_id"] = "b" * 32
+    duplicate["created_generation"] = 2
+    duplicate_active["pending_fences"].append(duplicate)
+    assert not validate_snapshot_transition(prior, duplicate_active)
+
+    active_and_resolved = copy.deepcopy(target)
+    tombstone_b = resolve_fence_to_tombstone(
+        fence_b,
+        tombstone_id="d" * 32,
+        resolved_transaction_id="b" * 32,
+        resolved_generation=2,
+        resolution_kind="owner_released",
+        retained_at="2026-11-21T00:00:00+00:00",
+    )
+    active_and_resolved["tombstones"].append(tombstone_b)
+    assert not validate_snapshot_transition(prior, active_and_resolved)
+
+    prior_with_history = copy.deepcopy(target)
+    next_snapshot = copy.deepcopy(target)
+    next_snapshot["transaction_id"] = "d" * 32
+    next_snapshot["generation"] = 3
+    next_snapshot["tombstones"] = []
+    assert not validate_snapshot_transition(prior_with_history, next_snapshot)
+
+    mutated_history = copy.deepcopy(target)
+    mutated_history["transaction_id"] = "d" * 32
+    mutated_history["generation"] = 3
+    mutated_history["tombstones"][0]["owner_ref"] = "other-owner"
+    assert not validate_snapshot_transition(prior_with_history, mutated_history)
 
 
 @pytest.mark.parametrize(

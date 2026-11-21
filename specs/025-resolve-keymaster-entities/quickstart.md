@@ -230,6 +230,15 @@ not an assumption that HA Store already guarantees them:
    not delete it or invoke cleanup to turn it into verified absence. A real
    subprocess-crash test is required before claiming that abrupt termination
    behavior was exercised.
+   A commit token check is point-in-time authorization, not a lease across
+   later work. A future consumer must serialize token validation with its
+   synchronous dispatch decision and must not await between the check and
+   enqueue/decision boundary. Revalidate at each later side-effect boundary;
+   if that check-to-dispatch interval cannot be serialized, the token does not
+   authorize the dispatch. Do not hold the allocator-wide storage lock across
+   Home Assistant service or hardware calls. Until those consumer boundaries
+   are implemented and tested, the storage token does not authorize identity
+   resolution or routing.
 3. Inject missing, corrupt and unsupported-version v1/v2 registry, read
    failure, size overflow, missing/invalid mandatory v2 safety sections,
    absent marker, marker/envelope generation or digest mismatch,

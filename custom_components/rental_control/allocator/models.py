@@ -17,6 +17,7 @@ from .registry_storage_models import PreparedJsonBytes as PreparedJsonBytes
 from .registry_storage_models import (
     ProtectionAuthorizationState as ProtectionAuthorizationState,
 )
+from .registry_storage_models import ProtectionCommitToken as ProtectionCommitToken
 from .registry_storage_models import ProtectionLoadResult as ProtectionLoadResult
 from .registry_storage_models import ProtectionLoadState as ProtectionLoadState
 from .registry_storage_models import ProtectionRecoveryPlan as ProtectionRecoveryPlan

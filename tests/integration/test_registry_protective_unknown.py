@@ -76,6 +76,32 @@ def _v2_envelope(
     }
 
 
+def _fence(
+    *,
+    fence_id: str,
+    km_entry: str,
+    slot: int,
+    rc_entry: str,
+    owner_ref: str,
+    allocation_ref: str,
+    transaction_id: str,
+    generation: int,
+    fence_type: str = "allocation",
+) -> dict[str, Any]:
+    """Build a strict original-slot fence for storage-only tests."""
+    return {
+        "fence_id": fence_id,
+        "original_km_entry_id": km_entry,
+        "slot": slot,
+        "rc_entry_id": rc_entry,
+        "owner_ref": owner_ref,
+        "allocation_ref": allocation_ref,
+        "created_transaction_id": transaction_id,
+        "created_generation": generation,
+        "fence_type": fence_type,
+    }
+
+
 @pytest.fixture
 def isolated_storage(hass: HomeAssistant, tmp_path: Path) -> Iterator[Path]:
     """Use HA's isolated real configuration storage directory."""
@@ -369,7 +395,17 @@ async def test_commit_completion_applies_success_before_repeated_cancellation(
     """A drained successful commit updates loaded fences and status before cancel."""
     store = ProtectedRegistryStore(hass, asyncio.Lock(), storage_dir=isolated_storage)
     assert (await store.async_load()).state is ProtectionLoadState.ABSENT
-    original_fence = {"entry_id": "km-a", "slot": 4, "owner_id": "rc-a"}
+    original_fence = _fence(
+        fence_id="f" * 32,
+        km_entry="km-a",
+        slot=4,
+        rc_entry="rc-a",
+        owner_ref="owner-a",
+        allocation_ref="allocation-a",
+        transaction_id="1" * 32,
+        generation=1,
+        fence_type="pending_clear",
+    )
     initial = await store.async_commit(_v2_envelope("1" * 32, 1, [original_fence]))
     assert initial.state is ProtectionLoadState.VALID_V2
     assert (await store.async_load()).state is ProtectionLoadState.VALID_V2
@@ -399,7 +435,16 @@ async def test_commit_completion_applies_success_before_repeated_cancellation(
         return original_write(path, data, maximum=maximum)
 
     monkeypatch.setattr(registry_marker_io, "atomic_write_bytes", blocked_first_write)
-    next_fence = {"entry_id": "km-b", "slot": 9, "owner_id": "rc-b"}
+    next_fence = _fence(
+        fence_id="e" * 32,
+        km_entry="km-b",
+        slot=9,
+        rc_entry="rc-b",
+        owner_ref="owner-b",
+        allocation_ref="allocation-b",
+        transaction_id="2" * 32,
+        generation=2,
+    )
     task = asyncio.create_task(
         store.async_commit(_v2_envelope("2" * 32, 2, [original_fence, next_fence]))
     )
@@ -441,7 +486,16 @@ async def test_failed_commit_completion_preserves_loaded_fences_before_cancel(
     """A drained failed commit freezes state but retains prior loaded fences."""
     store = ProtectedRegistryStore(hass, asyncio.Lock(), storage_dir=isolated_storage)
     assert (await store.async_load()).state is ProtectionLoadState.ABSENT
-    prior_fence = {"entry_id": "km-a", "slot": 4, "owner_id": "rc-a"}
+    prior_fence = _fence(
+        fence_id="f" * 32,
+        km_entry="km-a",
+        slot=4,
+        rc_entry="rc-a",
+        owner_ref="owner-a",
+        allocation_ref="allocation-a",
+        transaction_id="3" * 32,
+        generation=1,
+    )
     await store.async_commit(_v2_envelope("3" * 32, 1, [prior_fence]))
     await store.async_load()
     prior_bytes = (isolated_storage / "rental_control.code_registry").read_bytes()
@@ -467,7 +521,16 @@ async def test_failed_commit_completion_preserves_loaded_fences_before_cancel(
         return AtomicWriteResult(False, failure_code="write_failed")
 
     monkeypatch.setattr(registry_marker_io, "atomic_write_bytes", fail_first_write)
-    next_fence = {"entry_id": "km-b", "slot": 9, "owner_id": "rc-b"}
+    next_fence = _fence(
+        fence_id="e" * 32,
+        km_entry="km-b",
+        slot=9,
+        rc_entry="rc-b",
+        owner_ref="owner-b",
+        allocation_ref="allocation-b",
+        transaction_id="4" * 32,
+        generation=2,
+    )
     task = asyncio.create_task(
         store.async_commit(_v2_envelope("4" * 32, 2, [prior_fence, next_fence]))
     )
@@ -561,7 +624,16 @@ async def test_protective_unknown_gate_sticks_across_busy_and_unavailable(
     """Busy/unavailable attempts cannot authorize retained stale observations."""
     store = ProtectedRegistryStore(hass, asyncio.Lock(), storage_dir=isolated_storage)
     assert (await store.async_load()).state is ProtectionLoadState.ABSENT
-    fence = {"entry_id": "km-a", "slot": 4, "owner_id": "rc-a"}
+    fence = _fence(
+        fence_id="f" * 32,
+        km_entry="km-a",
+        slot=4,
+        rc_entry="rc-a",
+        owner_ref="owner-a",
+        allocation_ref="allocation-a",
+        transaction_id="6" * 32,
+        generation=1,
+    )
     assert (
         await store.async_commit(_v2_envelope("6" * 32, 1, [fence]))
     ).state is ProtectionLoadState.VALID_V2

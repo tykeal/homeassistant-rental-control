@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from ..const import DOMAIN
 from ..const import NAME
 from .models import ProtectionAuthorizationState
+from .models import ProtectionCommitToken
 from .models import ProtectionLoadResult
 from .models import ProtectionLoadState
 from .registry_commit import async_commit_protection_transaction
@@ -60,6 +61,8 @@ class ProtectedRegistryStore:
         self._authorization_state = ProtectionAuthorizationState.UNVERIFIED
         self._sticky_unknown: ProtectionLoadResult | None = None
         self._external_restore_suspected = False
+        self._commit_operation_serial = 0
+        self._commit_in_flight: int | None = None
         self._state_lock = threading.RLock()
 
     @property
@@ -79,6 +82,19 @@ class ProtectedRegistryStore:
         """Return the sticky typed authorization gate, not loaded snapshot state."""
         with self._state_lock:
             return self._authorization_state
+
+    def is_current_commit_token(self, token: ProtectionCommitToken) -> bool:
+        """Check that an acknowledged transaction is still the current snapshot."""
+        with self._state_lock:
+            loaded = self._loaded_result
+            return bool(
+                self._authorization_state is ProtectionAuthorizationState.READY
+                and self._commit_in_flight is None
+                and loaded is not None
+                and loaded.state is ProtectionLoadState.VALID_V2
+                and loaded.transaction_id == token.transaction_id
+                and loaded.generation == token.generation
+            )
 
     async def async_load(self) -> ProtectionLoadResult:
         """Read/recover protected state without the legacy HA Store loader."""
@@ -104,12 +120,25 @@ class ProtectedRegistryStore:
         if rejection is not None:
             self._apply_commit_completion(rejection)
             return rejection
+
+        operation_id: int | None = None
+
+        def begin_commit() -> None:
+            """Invalidate earlier generation tokens before protected I/O."""
+            nonlocal operation_id
+            operation_id = self._begin_commit_operation()
+
+        def apply_completion(result: ProtectionLoadResult) -> None:
+            """Apply only the outcome for the operation that reserved this slot."""
+            self._apply_commit_completion(result, operation_id=operation_id)
+
         return await async_commit_protection_transaction(
             self._async_lock,
             self._storage_dir,
             envelope,
             legacy_migration_verified=legacy_migration_verified,
-            on_completion=self._apply_commit_completion,
+            on_start=begin_commit,
+            on_completion=apply_completion,
             operation_preflight=self._commit_operation_preflight,
         )
 
@@ -189,43 +218,78 @@ class ProtectedRegistryStore:
         with self._state_lock:
             self._last_result = result
 
-    def _apply_commit_completion(self, result: ProtectionLoadResult) -> None:
+    def _begin_commit_operation(self) -> int:
+        """Invalidate prior commit tokens while this serialized write is active."""
+        with self._state_lock:
+            self._commit_operation_serial += 1
+            self._commit_in_flight = self._commit_operation_serial
+            return self._commit_operation_serial
+
+    def _apply_commit_completion(
+        self,
+        result: ProtectionLoadResult,
+        *,
+        operation_id: int | None = None,
+    ) -> None:
         """Apply a commit only if its acknowledged result proves the new state."""
         if result.state is ProtectionLoadState.PROTECTIVE_UNKNOWN:
-            self._enter_protective_unknown(result)
+            self._enter_protective_unknown(result, commit_operation_id=operation_id)
             return
         if result.state is not ProtectionLoadState.VALID_V2:
             with self._state_lock:
+                if operation_id is not None and self._commit_in_flight != operation_id:
+                    return
                 self._last_result = result
+                if operation_id is not None:
+                    self._commit_in_flight = None
             return
+        blocked_result: ProtectionLoadResult | None = None
         with self._state_lock:
+            if operation_id is not None and self._commit_in_flight != operation_id:
+                return
             if self._external_restore_suspected:
-                blocked = True
-            else:
-                blocked = False
-                self._last_result = result
-                self._loaded_result = result
-                self._sticky_unknown = None
-                self._authorization_state = ProtectionAuthorizationState.READY
-        if blocked:
-            self._enter_protective_unknown(
-                ProtectionLoadResult(
+                blocked_result = ProtectionLoadResult(
                     ProtectionLoadState.PROTECTIVE_UNKNOWN,
                     data=result.data,
                     transaction_id=result.transaction_id,
                     generation=result.generation,
                     failure_code="external_restore_suspected",
                 )
-            )
+                self._last_result = blocked_result
+                self._sticky_unknown = blocked_result
+                self._authorization_state = (
+                    ProtectionAuthorizationState.PROTECTIVE_UNKNOWN
+                )
+            else:
+                self._last_result = result
+                self._loaded_result = result
+                self._sticky_unknown = None
+                self._authorization_state = ProtectionAuthorizationState.READY
+            if operation_id is not None:
+                self._commit_in_flight = None
+        if blocked_result is not None:
+            self._report_unknown(blocked_result.failure_code)
             return
         self._dismiss_status()
 
-    def _enter_protective_unknown(self, result: ProtectionLoadResult) -> None:
+    def _enter_protective_unknown(
+        self,
+        result: ProtectionLoadResult,
+        *,
+        commit_operation_id: int | None = None,
+    ) -> None:
         """Latch the safety gate without discarding earlier observations."""
         with self._state_lock:
+            if (
+                commit_operation_id is not None
+                and self._commit_in_flight != commit_operation_id
+            ):
+                return
             self._last_result = result
             self._sticky_unknown = result
             self._authorization_state = ProtectionAuthorizationState.PROTECTIVE_UNKNOWN
+            if commit_operation_id is not None:
+                self._commit_in_flight = None
         self._report_unknown(result.failure_code)
 
     def _report_unknown(self, failure_code: str | None) -> None:

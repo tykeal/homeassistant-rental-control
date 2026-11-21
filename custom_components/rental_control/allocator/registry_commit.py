@@ -26,6 +26,7 @@ from .registry_files import _atomic_write_preflight
 from .registry_locks import async_run_protected_operation
 from .registry_marker_io import _atomic_write_acknowledged
 from .registry_marker_io import _finalized_marker_from_pending
+from .registry_safety_transitions import validate_snapshot_transition
 from .registry_transactions import _read_recovery_plan
 from .registry_transactions import _recover_protection_files_locked
 from .registry_validation import prepare_exact_json_bytes
@@ -254,7 +255,17 @@ def _commit_transaction_locked(
         )
         if isinstance(predecessor, ProtectionLoadResult):
             return predecessor
-        _plan, prior, activation_id, kind = predecessor
+        plan, prior, activation_id, kind = predecessor
+        prior_data = (
+            plan.registry_result.data
+            if plan.registry_result.state is ProtectionLoadState.VALID_V2
+            else None
+        )
+        if not validate_snapshot_transition(prior_data, envelope["data"]):
+            return ProtectionLoadResult(
+                ProtectionLoadState.PROTECTIVE_UNKNOWN,
+                failure_code="snapshot_transition_invalid",
+            )
         prepared = _prepare_transaction_bytes(
             storage_dir, envelope, prior, activation_id, kind
         )
@@ -274,6 +285,7 @@ async def async_commit_protection_transaction(
     envelope: dict[str, Any],
     *,
     legacy_migration_verified: bool = False,
+    on_start: Callable[[], None] | None = None,
     on_completion: Callable[[ProtectionLoadResult], None] | None = None,
     operation_preflight: Callable[[], ProtectionLoadResult | None] | None = None,
 ) -> ProtectionLoadResult:
@@ -314,6 +326,7 @@ async def async_commit_protection_transaction(
         async_lock,
         storage_dir,
         commit_if_authorized,
+        on_start=on_start,
         on_completion=publish_completion,
     )
     if not completion_called:
