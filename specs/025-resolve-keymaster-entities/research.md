@@ -23,7 +23,7 @@ owner/platform/property, disabled and conflicting candidates as distinct
 unusable conditions. Test actual HA slugification rather than hardcoding a
 guessed resulting string.
 
-**Rationale**: Both [v0.6.0 entity source](https://github.com/FutureTense/keymaster/blob/v0.6.0/custom_components/keymaster/entity.py)
+**Rationale**: Both [v0.6.1 entity source](https://github.com/FutureTense/keymaster/blob/v0.6.1/custom_components/keymaster/entity.py)
 and [v0.6.5 entity source](https://github.com/FutureTense/keymaster/blob/v0.6.5/custom_components/keymaster/entity.py)
 derive unique IDs from the entry and slugified property; current entity IDs and
 device areas are mutable. The registry indexes domain/platform/unique ID.
@@ -32,7 +32,7 @@ See the explicit property table in [contract](contracts/integration.md).
 **Alternatives considered**: Name-shaped entity IDs, device labels, and first
 match are rejected as unsafe. A device identifier alone does not establish
 slot/property identity. A whole-lock reset cannot replace per-slot reset.
-KM's [v0.6.0 services](https://github.com/FutureTense/keymaster/blob/v0.6.0/custom_components/keymaster/services.py)
+KM's [v0.6.1 services](https://github.com/FutureTense/keymaster/blob/v0.6.1/custom_components/keymaster/services.py)
 and [v0.6.5 services](https://github.com/FutureTense/keymaster/blob/v0.6.5/custom_components/keymaster/services.py)
 register Lovelace regeneration; PIN service declarations are commented out.
 Continue existing HA entity-service operations, not invented KM PIN services.
@@ -63,7 +63,7 @@ registry events and live state transitions must be coordinated without
 relying on a fictitious config-entry bus event. Verify chosen public APIs on
 the minimum supported HA runtime.
 
-KM [v0.6.0](https://github.com/FutureTense/keymaster/blob/v0.6.0/custom_components/keymaster/coordinator.py)
+KM [v0.6.1](https://github.com/FutureTense/keymaster/blob/v0.6.1/custom_components/keymaster/coordinator.py)
 and [v0.6.5](https://github.com/FutureTense/keymaster/blob/v0.6.5/custom_components/keymaster/bus_events.py)
 emit `keymaster_lock_state_changed` with physical `entity_id`, `lockname`,
 state and slot, but no KM entry ID; reset event is separate. Shared physical
@@ -491,7 +491,7 @@ entries, including lockless entries, from loading.
 single availability flag. Attribute check-in using `lock_entity_id`,
 `parent_entry_id`, actual current inheritance and nonconflicting event fields.
 
-**Rationale**: Both baseline [button](https://github.com/FutureTense/keymaster/blob/v0.6.0/custom_components/keymaster/button.py)
+**Rationale**: Both baseline [button](https://github.com/FutureTense/keymaster/blob/v0.6.1/custom_components/keymaster/button.py)
 and [v0.6.5 button](https://github.com/FutureTense/keymaster/blob/v0.6.5/custom_components/keymaster/button.py)
 availability depends on connection and slot existence, not
 `override_parent`: a child reset can be available while inherited text,
@@ -502,7 +502,7 @@ KM stores the physical `lock_entity_id` and `parent_entry_id` in config
 entry data; in both baselines the parent entry ID can be backfilled by a
 name-based match. Verify the resulting current topology instead of treating
 that backfill as unquestionable historical proof. See
-[v0.6.0 setup](https://github.com/FutureTense/keymaster/blob/v0.6.0/custom_components/keymaster/__init__.py)
+[v0.6.1 setup](https://github.com/FutureTense/keymaster/blob/v0.6.1/custom_components/keymaster/__init__.py)
 and [v0.6.5 setup](https://github.com/FutureTense/keymaster/blob/v0.6.5/custom_components/keymaster/entry_setup.py).
 KM may emit a later corrected slot event after an initial slot-zero event;
 do not equate event count with one physical action. Lockname and slot
@@ -514,7 +514,9 @@ controls would each misrepresent the upstream contract.
 
 ## Version and diagnostics
 
-**Decision**: Allow only unsuffixed `v?0.0.0` as development first; validate
+**Decision**: Set the stable support floor to v0.6.1, the lowest stable v0.6.x
+release whose full real package imported in the investigation. Allow only
+unsuffixed `v?0.0.0` as development first; validate
 three-number release shape and comparator-recognized SemVer/PEP 440 suffix
 before comparing using HA's AwesomeVersion. If `< floor` true report outside
 support, else if `>= floor` true report supported, otherwise unknown. A
@@ -522,12 +524,72 @@ comparison error is unknown. All statuses still require the same operation
 identity, state and safety checks.
 
 **Rationale**: HA's loaded integration metadata and comparator are the
-authoritative installed evidence. The spec's probes show `v0.6.0+local` is
+authoritative installed evidence. The probe below shows `v0.6.1+local` is
 incomparable with stable and must be unknown, not automatically supported.
 Release-shape validation rejects comparator-recognized calendar/bare versions.
+
+A synthetic comparison probe used Python 3.14.8, Home Assistant 2026.11.0's
+declared `awesomeversion==25.8.0` requirement and installed AwesomeVersion 25.8.0.
+Against `AwesomeVersion("v0.6.1")`, it returned:
+
+| Synthetic label | `<` | `>=` | `==` | FR-007 classification |
+|---|---|---|---|---|
+| `0.0.0` | `True` | `False` | `False` | development exception |
+| `v0.0.0` | `True` | `False` | `False` | development exception |
+| `v0.0.0-dev` | `True` | `False` | `False` | outside support |
+| `v0.6.1rc1` | `True` | `False` | `False` | outside support |
+| `v0.6.2rc1` | `False` | `True` | `False` | supported |
+| `v0.6.1+local` | `False` | `False` | `False` | unknown |
+
+The local label is actually incomparable in this probe, not simply assumed
+to be below or above the floor. Although the comparator orders both
+unsuffixed zero labels below the floor, policy first allows exactly those
+labels as development; the suffixed `v0.0.0-dev` does not qualify.
+These synthetic comparisons do not verify loaded metadata, package behavior
+or any capability. Reproduce from the repository root with the locked test
+environment:
+
+```shell
+uv run --extra test python - <<'PY'
+import sys
+from importlib.metadata import requires, version
+from awesomeversion import AwesomeVersion
+
+print("Python", sys.version.split()[0])
+print("Home Assistant", version("homeassistant"))
+print("HA requirement:", *[r for r in requires("homeassistant") or []
+                           if r.lower().startswith("awesomeversion")])
+print("AwesomeVersion", version("awesomeversion"))
+floor = AwesomeVersion("v0.6.1")
+for label in ("0.0.0", "v0.0.0", "v0.0.0-dev", "v0.6.1rc1",
+              "v0.6.2rc1", "v0.6.1+local"):
+    value = AwesomeVersion(label)
+    print(label, "<", value < floor, ">=", value >= floor, "==", value == floor)
+PY
+```
+
 Release notes: [v0.6.0](https://github.com/FutureTense/keymaster/releases/tag/v0.6.0),
+[v0.6.1](https://github.com/FutureTense/keymaster/releases/tag/v0.6.1),
 [v0.6.5](https://github.com/FutureTense/keymaster/releases/tag/v0.6.5);
 [release workflow](https://github.com/FutureTense/keymaster/blob/v0.6.5/.github/workflows/release.yaml).
+
+The official v0.6.0 release 351137249 asset 534084528 `keymaster.zip` has
+SHA-256 `a8029ea4694e19db36719d8a8985f36ac830d1ba411d37418ebc4a11f69c9155`.
+It is the only lower stable v0.6.x release: in a fresh HA 2026.11.0 process
+with authentic dependencies and no Keymaster/provider/constant stubs, its
+`helpers.py` import fails because packaged `const.py` lacks
+`LARGE_LOCK_ACK_STORE_VERSION`; tagged v0.6.0 source does contain it.
+The official v0.6.1 release 378644964 asset 534186424 `keymaster.zip` has
+SHA-256 `79d0da19c0b2246704f8cccbf5ea29c109af8297065a3a7cdbeb48a5e66343e3`;
+its tag commit is `7d034c4677e93cdb1e7d35c971ab9ea7f8310385`. Its full
+package imported in a fresh HA 2026.11.0 process without those stubs, after
+installing HA-manifest-pinned dependencies including `zha` 2.4.2,
+`zha-quirks` 2.4.1 and `zwave-js-server-python` 0.74.0, plus the exact
+imported dependency manifests. No hardware was used. Full import is not
+proof of entity registration, provider operation or runtime behavior: T002
+and T067 must exercise the actual supported archives. The upstream tag
+comparison shows no Keymaster source changes between v0.6.0 and v0.6.1;
+it does not erase the difference in the shipped archives.
 
 **Alternatives considered**: Python tuple comparison, presence of reset
 button, version-only blocking, or default-supported on failed comparison.
