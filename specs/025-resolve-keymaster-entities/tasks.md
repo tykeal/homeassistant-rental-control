@@ -9,13 +9,15 @@ SPDX-License-Identifier: Apache-2.0
 [data model](data-model.md), [contract](contracts/integration.md),
 [routing inventory](routing-inventory.md), and [quickstart](quickstart.md).
 
-**Corrected design baseline**: The reviewed documentation through #959 merged
-at `53f63b2d017be4a2a8e8cb48034d4dbf2b89f99e`. Legacy-unknown provenance may
-be attested to a recreated KM entry on the same original physical lock; this
-does not transfer known-A work to B or turn attestation into clear/release
-evidence. Protective-unknown permits lockless setup and calendar displays
-but withholds new code issuance. This draft awaits the manager's independent
-rubber-duck review; do not implement, commit or open a PR during this stage.
+**Reviewed implementation baseline**: The specification, design, plan and
+tasks were merged through #960 at
+`208578ba541f03b6187daf06e643768087b51381`. The manager's independent review
+is complete and formal analysis returned GO; implementation is authorized.
+Legacy-unknown provenance may be attested to a recreated KM entry on the same
+original physical lock; this does not transfer known-A work to B or turn
+attestation into clear/release evidence. Protective-unknown permits lockless
+setup and calendar displays but withholds new code issuance. The prior
+draft-stage implementation hold is closed.
 
 **Execution**: These are implementation-stage tasks, not authorization to
 implement during the TASKS stage. Tests are required by the specification.
@@ -125,9 +127,10 @@ specified.
   recency or completeness. This design defines no historical external-backup
   verifier: independently verifiable authoritative evidence of all committed
   transactions and possible hardware effects through quiescence would be
-  necessary, but no acceptance path is supported here. Assert recovery
-  unavailable with no supported restore or override in this
-  release, no resume/adoption/issuance/reuse/release or
+  necessary, but no acceptance path is supported here. For this
+  protective-unknown external-recovery case, assert recovery unavailable with
+  no supported restore or override in this release, no
+  resume/adoption/issuance/reuse/release or
   dependent hardware action, and preserved evidence. Test that backup success,
   checksum, timestamp, absent logs, current slots and identity attestations,
   individually or together, do not establish completeness. A markerless v1
@@ -141,8 +144,10 @@ specified.
   required for any riskier recovery. Intact v1 upgrades remain supported and
   must pass the existing validation, quiescence and no-corruption/partial-history
   tests. Verify fresh installs with verified absence remain supported under
-  existing adoption and evidence-scan gates.
-  No resume or adoption; do not invent proof.
+  existing adoption and evidence-scan gates. The no-resume/adoption restriction
+  above applies only to protective-unknown external recovery, not to intact-v1
+  upgrades or healthy fresh installs under their existing gates. Do not invent
+  external-recovery proof.
   In a separate pair of synthetic histories, crash after an acknowledged
   state versus externally restore the same pair after a later committed
   operation; assert the raw bytes and digests can be identical. With known
