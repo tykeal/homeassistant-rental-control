@@ -20,7 +20,7 @@ downgrade behavior must be implemented and verified before delivery.
 
 ## Required test matrix
 
-Build release-derived fixtures for both KM v0.6.0 and v0.6.5: actual property
+Build release-derived fixtures for both KM v0.6.1 and v0.6.5: actual property
 keys, HA slugification, registry ownership, event fields, available text and
 native-`None`/`unknown` behavior. Exercise read, adoption, issuance,
 date update, reset, confirmation and check-in for each. Include default,
@@ -338,7 +338,7 @@ ambiguous lockname refusal, out-of-range removal by persisted exclusion,
 idempotent withdrawal and dry-run, including withdrawal during unresolved
 KM identity. None of those selectors proves a KM entity identity.
 
-Send actual v0.6.0/v0.6.5 event shapes for verified parent and inherited child,
+Send actual v0.6.1/v0.6.5 event shapes for verified parent and inherited child,
 overridden child, unrelated or removed entries, shared physical addresses,
 conflicting fields, missing/invalid physical ID, invalid/zero/out-of-range
 slot, locked events and stale links. Only uniquely attributable unlocks
@@ -350,11 +350,13 @@ controls are unavailable, override/notification switch exemptions, and the
 slot-zero followed by corrected-slot event sequence.
 
 Version tests must use loaded metadata independently of capabilities:
-`v0.6.0`, `v0.6.5`, `0.0.0`, `v0.0.0`, `v0.0.0-dev`, `v0.6.0-rc.1`,
-`v0.6.1rc1`, `v0.6.0+local`, missing/unparseable metadata, `7`, `2026.11`,
-`20260101`, `0.6`, `0.0`, `v.0.0.71` and a verified older release.
+`v0.6.0`, `v0.6.1`, `v0.6.5`, `0.0.0`, `v0.0.0`, `v0.0.0-dev`,
+`v0.6.1rc1`, `v0.6.2rc1`, `v0.6.1+local`, missing/unparseable metadata, `7`,
+`2026.11`, `20260101`, `0.6`, `0.0`, `v.0.0.71` and a verified older release.
 Cover `IntegrationNotLoaded` explicitly and use HA 2026.11's actual supplied
 AwesomeVersion comparator rather than a replacement ordering implementation.
+Assert v0.6.0 and v0.6.1rc1 are below the v0.6.1 floor, v0.6.2rc1 is
+above it, and v0.6.1+local is incomparable and therefore unknown.
 For unknown cases, test both a safe operation that can proceed and one
 withheld by an independent failing check. For older releases test good and
 bad capabilities; version alone adds no block. Missing/disabled/unavailable/

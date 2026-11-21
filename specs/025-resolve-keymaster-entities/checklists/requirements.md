@@ -27,7 +27,7 @@ SPDX-License-Identifier: Apache-2.0
 - [x] Success criteria are measurable.
 - [x] Success criteria are technology-agnostic.
 - [x] All acceptance scenarios are defined, including prereleases on both
-  sides of the floor, incomparable `v0.6.0+local`, and non-release shapes
+  sides of the floor, incomparable `v0.6.1+local`, and non-release shapes
   `7`, `2026.11`, `20260101`, `0.6`, `0.0`, and `v.0.0.71` as unknown
   when loaded as version metadata. The historical tag fixture makes no
   assertion about the packaged manifest and does not change safety checks.
@@ -56,9 +56,9 @@ SPDX-License-Identifier: Apache-2.0
   claiming unknowable codes are present, absent, visible or reusable.
 - FR-007–FR-008: Story 4 covers installed-version evidence, capability
   diagnostics and PIN redaction independently. Source checks verified the
-  two packaged baselines (v0.6.0 and v0.6.5), including common unique-ID
-  derivation and lock-event fields; acceptance scenarios still require runtime
-  verification.
+  source contracts for v0.6.1 and v0.6.5, including common unique-ID
+  derivation and lock-event fields; acceptance scenarios still require
+  packaged runtime verification.
 - FR-009–FR-012: Stories 1, 3 and 5 cover shared-lock ownership and service
   selectors, exclusion repair without narrowing gate scope, and protection
   of active credentials and pending clears across reassociation. The shipped

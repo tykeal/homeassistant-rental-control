@@ -28,10 +28,10 @@ selected KM config-entry ownership.
 | Date end | `datetime.code_slots:n.accesslimit_date_range_end` |
 | Child override evidence | `switch.code_slots:n.override_parent` |
 
-Source: [text](https://github.com/FutureTense/keymaster/blob/v0.6.0/custom_components/keymaster/text.py),
-[button](https://github.com/FutureTense/keymaster/blob/v0.6.0/custom_components/keymaster/button.py),
-[switch](https://github.com/FutureTense/keymaster/blob/v0.6.0/custom_components/keymaster/switch.py),
-[datetime](https://github.com/FutureTense/keymaster/blob/v0.6.0/custom_components/keymaster/datetime.py);
+Source: [text](https://github.com/FutureTense/keymaster/blob/v0.6.1/custom_components/keymaster/text.py),
+[button](https://github.com/FutureTense/keymaster/blob/v0.6.1/custom_components/keymaster/button.py),
+[switch](https://github.com/FutureTense/keymaster/blob/v0.6.1/custom_components/keymaster/switch.py),
+[datetime](https://github.com/FutureTense/keymaster/blob/v0.6.1/custom_components/keymaster/datetime.py);
 the same keys were checked against v0.6.5. Enumerate any further properties
 actually used in existing paths before converting them. A `button.reset_lock`
 is not a per-slot reset. No current address or area is identity evidence.
@@ -359,13 +359,14 @@ order:
 2. Missing/unparseable metadata, not exactly three numeric dot-separated
    release components after an optional `v`, or suffix not recognized as
    SemVer/PEP 440: `unknown`.
-3. If `< v0.6.0` is true: `outside_support`; else if `>= v0.6.0` is true:
+3. If `< v0.6.1` is true: `outside_support`; else if `>= v0.6.1` is true:
    `supported`; else or comparison failure: `unknown`.
 
-`v0.0.0-dev` and `v0.6.0-rc.1` are below floor; `v0.6.1rc1` is supported;
-`v0.6.0+local` is unknown because neither comparison is true. `7`,
+`v0.0.0-dev`, `v0.6.0` and `v0.6.1rc1` are below floor;
+`v0.6.2rc1` is supported; `v0.6.1+local` is unknown because neither
+comparison is true. `7`,
 `2026.11`, `20260101`, `0.6`, `0.0`, and `v.0.0.71` are unknown due to
-shape. Versions v0.6.0/v0.6.5 are supported. Unknown and below-floor are
+shape. Versions v0.6.1/v0.6.5 are supported. Unknown and below-floor are
 diagnoses, not new version-only blocks. All operations remain subject to
 identical required identity, capability, state and safety checks.
 
