@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 import threading
 from typing import Any
+from typing import Callable
 
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.persistent_notification import async_dismiss
@@ -16,11 +17,14 @@ from homeassistant.core import HomeAssistant
 
 from ..const import DOMAIN
 from ..const import NAME
+from . import protected_associations as _protected_associations
+from .association_transactions import AssociationTransaction
+from .associations import AssociationTuple
 from .models import ProtectionAuthorizationState
 from .models import ProtectionCommitToken
 from .models import ProtectionLoadResult
 from .models import ProtectionLoadState
-from .registry_commit import async_commit_protection_transaction
+from .protected_store_commit import async_commit_protected_store
 from .registry_transactions import async_recover_protection_files
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,6 +87,10 @@ class ProtectedRegistryStore:
         with self._state_lock:
             return self._authorization_state
 
+    def uses_async_lock(self, lock: asyncio.Lock) -> bool:
+        """Return whether allocator and store operations share one lock."""
+        return self._async_lock is lock
+
     def is_current_commit_token(self, token: ProtectionCommitToken) -> bool:
         """Check that an acknowledged transaction is still the current snapshot."""
         with self._state_lock:
@@ -95,6 +103,28 @@ class ProtectedRegistryStore:
                 and loaded.transaction_id == token.transaction_id
                 and loaded.generation == token.generation
             )
+
+    def association_for_entry(self, rc_entry_id: str) -> AssociationTuple | None:
+        """Return one validated association only under the current READY gate."""
+        return _protected_associations.association_for_entry(self, rc_entry_id)
+
+    def associations_by_entry(self) -> dict[str, AssociationTuple] | None:
+        """Return the complete validated association map under the READY gate."""
+        return _protected_associations.associations_by_entry(self)
+
+    def association_references_for_entry(
+        self, rc_entry_id: str
+    ) -> tuple[str, ...] | None:
+        """Return salted references for provably attributable stored work."""
+        return _protected_associations.association_references_for_entry(
+            self, rc_entry_id
+        )
+
+    async def async_commit_association(
+        self, transaction: AssociationTransaction
+    ) -> ProtectionLoadResult:
+        """Build and commit a typed association transaction from READY state."""
+        return await _protected_associations.async_commit_association(self, transaction)
 
     async def async_load(self) -> ProtectionLoadResult:
         """Read/recover protected state without the legacy HA Store loader."""
@@ -114,32 +144,18 @@ class ProtectedRegistryStore:
         envelope: dict[str, Any],
         *,
         legacy_migration_verified: bool = False,
+        precondition: Callable[[], ProtectionLoadResult | None] | None = None,
+        authorize_owner_transition: Callable[[], bool] | None = None,
+        on_acknowledged: Callable[[ProtectionLoadResult], None] | None = None,
     ) -> ProtectionLoadResult:
-        """Commit exact bytes; report ambiguity without exposing raw errors."""
-        rejection = self._commit_operation_preflight()
-        if rejection is not None:
-            self._apply_commit_completion(rejection)
-            return rejection
-
-        operation_id: int | None = None
-
-        def begin_commit() -> None:
-            """Invalidate earlier generation tokens before protected I/O."""
-            nonlocal operation_id
-            operation_id = self._begin_commit_operation()
-
-        def apply_completion(result: ProtectionLoadResult) -> None:
-            """Apply only the outcome for the operation that reserved this slot."""
-            self._apply_commit_completion(result, operation_id=operation_id)
-
-        return await async_commit_protection_transaction(
-            self._async_lock,
-            self._storage_dir,
+        """Commit exact bytes; owner loss needs a serialized guard callback."""
+        return await async_commit_protected_store(
+            self,
             envelope,
             legacy_migration_verified=legacy_migration_verified,
-            on_start=begin_commit,
-            on_completion=apply_completion,
-            operation_preflight=self._commit_operation_preflight,
+            precondition=precondition,
+            authorize_owner_transition=authorize_owner_transition,
+            on_acknowledged=on_acknowledged,
         )
 
     def mark_external_restore_suspected(self) -> None:

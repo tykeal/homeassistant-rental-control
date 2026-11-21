@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC
 from datetime import datetime
 import logging
@@ -12,16 +13,63 @@ from typing import TYPE_CHECKING
 from . import adoption_reports
 from . import issuance
 from . import reissue
+from .associations import AssociationMode
+from .associations import AssociationTuple
 from .models import AdoptionRequest
 from .models import AllocationOrigin
 from .models import AllocationOwner
 from .models import AllocationRecord
 from .models import AllocationResult
+from .registry import is_observed_alias
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def associated_alias_candidates(
+    allocator: DoorCodeAllocator,
+    request: AdoptionRequest,
+    associations: Mapping[str, AssociationTuple],
+) -> tuple[str, ...]:
+    """Find observed aliases at this verified shared physical slot.
+
+    This is a read-only migration plan. Callers must still durably commit the
+    complete protected snapshot and revalidate the allocator generation before
+    removing any candidate alias.
+    """
+    target = associations.get(request.entry_id)
+    if (
+        target is None
+        or target.mode is not AssociationMode.VERIFIED
+        or target.verified_keymaster_entry_id is None
+        or request.slot is None
+        or not request.code.isdecimal()
+    ):
+        return ()
+    record = allocator._registry.records.get(request.code)
+    if record is None:
+        return ()
+
+    candidates: list[str] = []
+    for owner in record.owners:
+        if (
+            owner.entry_id == request.entry_id
+            or not is_observed_alias(owner.identity_key)
+            or not owner.lock_observed
+            or owner.slot != request.slot
+        ):
+            continue
+        association = associations.get(owner.entry_id)
+        if (
+            association is not None
+            and association.mode is AssociationMode.VERIFIED
+            and association.verified_keymaster_entry_id
+            == target.verified_keymaster_entry_id
+        ):
+            candidates.append(owner.identity_key)
+    return tuple(sorted(candidates))
 
 
 def adopt_unlocked(

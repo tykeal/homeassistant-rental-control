@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Collection
+from collections.abc import Mapping
 from datetime import UTC
 from datetime import datetime
 import logging
@@ -26,6 +27,7 @@ from . import recovery
 from . import reissue
 from . import release_guard
 from . import services
+from .associations import AssociationTuple
 from .models import AdoptionRequest
 from .models import AllocationOwner
 from .models import AllocationRecord
@@ -175,6 +177,15 @@ class DoorCodeAllocator:
     def _adopt_unlocked(self, request: AdoptionRequest) -> AllocationResult:
         """Adopt an observed code while the allocator lock is already held."""
         return adoption.adopt_unlocked(self, request)
+
+    async def async_associated_alias_candidates(
+        self,
+        request: AdoptionRequest,
+        associations: Mapping[str, AssociationTuple],
+    ) -> tuple[str, ...]:
+        """Return a serialized, read-only verified alias-migration plan."""
+        async with self._lock:
+            return adoption.associated_alias_candidates(self, request, associations)
 
     async def async_rekey(self, old_key: str, new_key: str) -> bool:
         """Move an existing allocation identity to a new stable key."""

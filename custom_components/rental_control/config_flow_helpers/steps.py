@@ -23,6 +23,18 @@ async def start_config_flow(request: FlowTransitionRequest) -> Any:
 
     result = await validate_submitted_data(request.flow, request.user_input)
     if result.can_create_entry:
+        if request.validated_input_handler is not None:
+            user_input, errors = await request.validated_input_handler(
+                request.flow, result.user_input
+            )
+            if errors:
+                return _show_form(
+                    request,
+                    user_input,
+                    errors,
+                    result.description_placeholders,
+                )
+            result.user_input = user_input
         apply_successful_conversions(request.flow, result.user_input)
         return request.flow.async_create_entry(
             title=request.title,

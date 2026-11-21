@@ -11,6 +11,7 @@ from datetime import datetime
 import importlib
 import logging
 from typing import Any
+from typing import cast
 
 from homeassistant.components.calendar import CalendarEvent
 
@@ -20,6 +21,9 @@ from ..reconciliation import Reservation as _Reservation
 from ..reconciliation import SlotStatus as _SlotStatus
 from . import codegen
 from . import keymaster_observation
+from . import lockless_store
+from . import physical_remap
+from . import reissue
 from . import reservations as reservations_helper
 from . import slot_matching
 
@@ -149,6 +153,96 @@ class CoordinatorReservationMixin:
             current_keys, persisted, prefix, observed_mapping_keys, ctx, advance=advance
         )
         return result.reservations
+
+    def _prepare_reservations_for_adoption(
+        self,
+        new_calendar: list[CalendarEvent],
+        observed_slots: list[Any],
+    ) -> list[_Reservation]:
+        """Hydrate current and persisted reservations before adoption."""
+        self._merge_observed_slots_into_mappings(observed_slots)
+        reservations = cast(
+            "list[_Reservation]",
+            self._build_reservations(new_calendar, observed_slots),
+        )
+        expired = self._slot_mappings.get("expired_checkin")
+        if getattr(self, "_advance_calendar_misses", False) and isinstance(
+            expired, dict
+        ):
+            expired_start = self._coerce_checkin_datetime(expired.get("start"))
+            expired_end = self._coerce_checkin_datetime(expired.get("end"))
+            if any(
+                reservation.slot_name == expired.get("name")
+                and reservation.start == expired_start
+                and reservation.end == expired_end
+                for reservation in reservations
+            ):
+                self._slot_mappings.pop("expired_checkin", None)
+        persisted: dict[str, Any] = self._slot_mappings.setdefault("mappings", {})
+        reissue.remove_pending_ghost_targets(
+            self,
+            persisted,
+            {reservation.identity_key for reservation in reservations},
+        )
+        observed_mapping_keys = {
+            slot.persisted_identity_key
+            for slot in observed_slots
+            if slot.persisted_identity_key is not None
+        }
+        actual_slot_names = {
+            slot.slot: slot.actual_name
+            for slot in observed_slots
+            if isinstance(slot.actual_name, str)
+        }
+        observed_mapping_keys = (
+            physical_remap.remap_observed_mappings_to_physical_reservations(
+                persisted,
+                reservations,
+                actual_slot_names,
+                observed_mapping_keys,
+            )
+        )
+        fresh = getattr(self, "_advance_calendar_misses", False)
+        self._hydrate_reservations_from_mappings(reservations, persisted, fresh=fresh)
+        prefix = f"{self.event_prefix} " if self.event_prefix else ""
+        reservations.extend(
+            self._build_ghost_reservations(
+                {reservation.identity_key for reservation in reservations},
+                persisted,
+                prefix,
+                observed_mapping_keys,
+                advance=fresh,
+            )
+        )
+        return reservations
+
+    @staticmethod
+    def _hydrate_reservations_from_mappings(
+        reservations: list[_Reservation],
+        persisted: dict[str, Any],
+        *,
+        fresh: bool = True,
+    ) -> None:
+        """Copy cache-only mapping continuity fields onto live reservations."""
+        for reservation in reservations:
+            mapping = persisted.get(reservation.identity_key)
+            if not isinstance(mapping, dict):
+                continue
+            history = mapping.get("fingerprint_history", [])
+            if isinstance(history, (list, set, tuple)):
+                reservation.fingerprint_history.update(
+                    item for item in history if isinstance(item, str)
+                )
+            missing_count = mapping.get("missing_count", 0)
+            reservation.missing_count = (
+                0 if fresh or not isinstance(missing_count, int) else missing_count
+            )
+            if fresh:
+                mapping["missing_count"] = 0
+            if mapping.get("missing_stay_pending_clear") is True:
+                reservation.eligible = False
+            reservation.published_once = mapping.get("published_once") is True
+            reservation.issued_origin = lockless_store.issued_origin(mapping)
 
     def _observe_managed_slots(self) -> list[_ManagedSlot]:
         """Read Keymaster entity states and build ManagedSlot observations.

@@ -22,7 +22,12 @@ from homeassistant.util import dt
 import probatio
 
 from ..bookings_only import host_defaults_bookings_only
+from ..const import ASSOCIATION_CHOICE_LOCKLESS
+from ..const import ASSOCIATION_CHOICE_NO_CHANGE
 from ..const import CODE_GENERATORS
+from ..const import CONF_ASSOCIATION_ATTEST_SAME_LOCK
+from ..const import CONF_ASSOCIATION_ENTRY_CHOICE
+from ..const import CONF_ASSOCIATION_MODE
 from ..const import CONF_BOOKINGS_ONLY_FEED
 from ..const import CONF_CHECKIN
 from ..const import CONF_CHECKOUT
@@ -45,6 +50,7 @@ from ..const import CONF_SHOULD_UPDATE_CODE
 from ..const import CONF_START_SLOT
 from ..const import CONF_TIMEZONE
 from ..const import CONF_TRIM_NAMES
+from ..const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
 from ..const import DEFAULT_CHECKIN
 from ..const import DEFAULT_CHECKOUT
 from ..const import DEFAULT_CLEANING_WINDOW
@@ -66,6 +72,7 @@ from ..const import DEFAULT_TRIM_NAMES
 from ..const import LOCK_ENTRY_NONE
 from ..const import LOCK_MANAGER
 from ..const import MIN_NAME_LENGTH
+from .availability import protected_association_backend_registered
 from .models import SchemaBuildContext
 
 # aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
@@ -337,7 +344,7 @@ def _trim_fields(context: SchemaBuildContext) -> dict[Any, Any]:
 
 def _options_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build options-only schema fields."""
-    return {
+    fields = {
         probatio.Optional(
             CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
             default=_get_default(
@@ -358,4 +365,49 @@ def _options_fields(context: SchemaBuildContext) -> dict[Any, Any]:
                 context, CONF_CODE_BUFFER_AFTER, DEFAULT_CODE_BUFFER_AFTER
             ),
         ): probatio.All(probatio.Coerce(int), probatio.Range(min=0)),
+    }
+    if protected_association_backend_registered(context.hass):
+        fields.update(_association_fields(context))
+    return fields
+
+
+def _association_fields(context: SchemaBuildContext) -> dict[Any, Any]:
+    """Offer explicit entry identity and an initially unselected assertion."""
+    data = context.defaults or {}
+    current_mode = data.get(CONF_ASSOCIATION_MODE)
+    if current_mode == "explicit_lockless":
+        default_choice = ASSOCIATION_CHOICE_LOCKLESS
+    else:
+        default_choice = data.get(
+            CONF_VERIFIED_KEYMASTER_ENTRY_ID, ASSOCIATION_CHOICE_NO_CHANGE
+        )
+
+    choices = [
+        ASSOCIATION_CHOICE_NO_CHANGE,
+        ASSOCIATION_CHOICE_LOCKLESS,
+    ]
+    for entry in sorted(
+        context.hass.config_entries.async_entries(LOCK_MANAGER),
+        key=lambda item: (item.title.casefold(), item.entry_id),
+    ):
+        choices.append(entry.entry_id)
+    if isinstance(default_choice, str) and default_choice not in choices:
+        choices.append(default_choice)
+
+    return {
+        probatio.Optional(
+            CONF_ASSOCIATION_ENTRY_CHOICE,
+            default=_get_default(
+                context, CONF_ASSOCIATION_ENTRY_CHOICE, default_choice
+            ),
+        ): SelectSelector(
+            SelectSelectorConfig(
+                options=choices,
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        ),
+        probatio.Optional(
+            CONF_ASSOCIATION_ATTEST_SAME_LOCK,
+            default=_get_default(context, CONF_ASSOCIATION_ATTEST_SAME_LOCK, False),
+        ): cv.boolean,
     }

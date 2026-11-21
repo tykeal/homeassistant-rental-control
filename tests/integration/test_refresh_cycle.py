@@ -2980,7 +2980,7 @@ class TestManualOverrideSurvival:
             ) as mock_clear_code,
             patch(
                 "custom_components.rental_control.coordinator_helpers."
-                "coordinator_refresh_shell.code_allocation.async_resolve_codes",
+                "coordinator_allocation_shell.code_allocation.async_resolve_codes",
                 new=AsyncMock(),
             ),
         ):
@@ -3200,7 +3200,7 @@ class TestManualOverrideSurvival:
             ) as mock_clear_code,
             patch(
                 "custom_components.rental_control.coordinator_helpers."
-                "coordinator_refresh_shell.code_allocation.async_resolve_codes",
+                "coordinator_allocation_shell.code_allocation.async_resolve_codes",
                 new=AsyncMock(),
             ),
         ):

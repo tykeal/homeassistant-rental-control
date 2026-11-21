@@ -259,25 +259,12 @@ class RegistryStore:
 
     def _payload_from_registry(self, registry: AllocationRegistry) -> dict[str, Any]:
         """Convert a registry into the persisted storage payload."""
-        code_ref_salt = registry.code_ref_salt or secrets.token_hex(8)
-        registry.code_ref_salt = code_ref_salt
-        return {
-            "schema_version": CODE_REGISTRY_SCHEMA_VERSION,
-            "updated_at": datetime.now(UTC).isoformat(),
-            "code_ref_salt": code_ref_salt,
-            "records": [
-                self._record_to_payload(record)
-                for record in sorted(
-                    registry.records.values(), key=lambda item: item.code
-                )
-            ],
-            "announced_conflicts": {
-                code_ref: [list(slot) for slot in sorted(slots)]
-                for code_ref, slots in sorted(registry.announced_conflicts.items())
-            },
-        }
+        if not registry.code_ref_salt:
+            registry.code_ref_salt = secrets.token_hex(8)
+        return serialize_registry_ledger(registry)
 
-    def _record_to_payload(self, record: AllocationRecord) -> dict[str, Any]:
+    @staticmethod
+    def _record_to_payload(record: AllocationRecord) -> dict[str, Any]:
         """Convert one allocation record into the stored schema shape."""
         return {
             "encoded_code": encode_code(record.code, record.encoding_salt_value),
@@ -286,7 +273,9 @@ class RegistryStore:
             "code_length": record.code_length,
             "created_at": record.created_at,
             "updated_at": record.updated_at,
-            "owners": [self._owner_to_payload(owner) for owner in record.owners],
+            "owners": [
+                RegistryStore._owner_to_payload(owner) for owner in record.owners
+            ],
         }
 
     @staticmethod
@@ -302,3 +291,22 @@ class RegistryStore:
             "first_seen": owner.first_seen,
             "last_seen": owner.last_seen,
         }
+
+
+def serialize_registry_ledger(registry: AllocationRegistry) -> dict[str, Any]:
+    """Serialize a complete immutable v1 ledger without mutating its source."""
+    if not isinstance(registry.code_ref_salt, str) or not registry.code_ref_salt:
+        raise ValueError("registry code reference salt is missing")
+    return {
+        "schema_version": CODE_REGISTRY_SCHEMA_VERSION,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "code_ref_salt": registry.code_ref_salt,
+        "records": [
+            RegistryStore._record_to_payload(record)
+            for record in sorted(registry.records.values(), key=lambda item: item.code)
+        ],
+        "announced_conflicts": {
+            code_ref: [list(slot) for slot in sorted(slots)]
+            for code_ref, slots in sorted(registry.announced_conflicts.items())
+        },
+    }

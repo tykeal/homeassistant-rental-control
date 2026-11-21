@@ -11,6 +11,7 @@ from typing import Any
 from homeassistant.helpers.json import prepare_save_json
 
 from ..const import STORE_CODE_REGISTRY_KEY
+from .association_transactions import valid_association_sections
 from .models import PreparedJsonBytes
 from .models import ProtectionLoadResult
 from .models import ProtectionLoadState
@@ -51,6 +52,15 @@ def prepare_exact_json_bytes(
 
 def validate_v2_envelope_shape(payload: object) -> bool:
     """Validate the explicit v2 wrapper and all typed protection sections."""
+    if not _valid_v2_wrapper(payload):
+        return False
+    assert isinstance(payload, dict) and isinstance(payload["data"], dict)
+    data = payload["data"]
+    return _valid_v2_data_header(data) and _valid_v2_safety_sections(data)
+
+
+def _valid_v2_wrapper(payload: object) -> bool:
+    """Validate the fixed outer version/key wrapper."""
     if not isinstance(payload, dict) or set(payload) != {
         "version",
         "minor_version",
@@ -70,8 +80,12 @@ def validate_v2_envelope_shape(payload: object) -> bool:
         or payload["key"] != STORE_CODE_REGISTRY_KEY
     ):
         return False
-    data = payload["data"]
-    required = {
+    return isinstance(payload["data"], dict)
+
+
+def _valid_v2_data_header(data: dict[str, Any]) -> bool:
+    """Validate the data schema version, snapshot token, and full ledger."""
+    required_v1 = {
         "schema_version",
         "transaction_id",
         "generation",
@@ -83,14 +97,23 @@ def validate_v2_envelope_shape(payload: object) -> bool:
         "tombstones",
         "pending_config",
     }
-    if not isinstance(data, dict) or set(data) != required:
+    if "schema_version" not in data:
         return False
     schema_version = data["schema_version"]
+    required = (
+        required_v1
+        if schema_version == 1
+        else required_v1 | {"exclusions"}
+        if schema_version == 2
+        else set()
+    )
+    if not required or set(data) != required:
+        return False
     generation = data["generation"]
     if (
         not isinstance(schema_version, int)
         or isinstance(schema_version, bool)
-        or schema_version != 1
+        or schema_version not in {1, 2}
         or not isinstance(data["transaction_id"], str)
         or len(data["transaction_id"]) != 32
         or any(
@@ -101,8 +124,13 @@ def validate_v2_envelope_shape(payload: object) -> bool:
         or generation < 1
     ):
         return False
-    if not _is_v2_ledger_shape(data["ledger"]):
-        return False
+    return _is_v2_ledger_shape(data["ledger"]) and (
+        schema_version != 2 or valid_exclusions_section(data["exclusions"])
+    )
+
+
+def _valid_v2_safety_sections(data: dict[str, Any]) -> bool:
+    """Validate association, fence, and transaction cross-record sections."""
     for section in (
         "associations",
         "attestations",
@@ -114,12 +142,20 @@ def validate_v2_envelope_shape(payload: object) -> bool:
             _is_typed_json_object(item) for item in items
         ):
             return False
+    if not valid_association_sections(
+        data["associations"],
+        data["attestations"],
+        data["pending_config"],
+        data["holds"],
+    ):
+        return False
     if not valid_fence_section(data["pending_fences"]):
         return False
     if not valid_tombstone_section(data["tombstones"]):
         return False
     if not validate_snapshot_structure(data):
         return False
+    generation = data["generation"]
     if not references_match_snapshot(
         data["pending_fences"],
         data["tombstones"],
@@ -127,6 +163,39 @@ def validate_v2_envelope_shape(payload: object) -> bool:
         generation=generation,
     ):
         return False
+    return True
+
+
+def valid_exclusions_section(payload: object) -> bool:
+    """Validate the typed per-RC slot-exclusion snapshot in schema version 2."""
+    if not isinstance(payload, list):
+        return False
+    seen_entries: set[str] = set()
+    for entry in payload:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"rc_entry_id", "slots"}
+            or not isinstance(entry["rc_entry_id"], str)
+            or not entry["rc_entry_id"]
+            or entry["rc_entry_id"] in seen_entries
+            or not isinstance(entry["slots"], list)
+            or not entry["slots"]
+        ):
+            return False
+        seen_entries.add(entry["rc_entry_id"])
+        seen_slots: set[int] = set()
+        for item in entry["slots"]:
+            if (
+                not isinstance(item, dict)
+                or set(item) != {"slot", "reason"}
+                or not isinstance(item["slot"], int)
+                or isinstance(item["slot"], bool)
+                or item["slot"] < 1
+                or item["slot"] in seen_slots
+                or (item["reason"] is not None and not isinstance(item["reason"], str))
+            ):
+                return False
+            seen_slots.add(item["slot"])
     return True
 
 

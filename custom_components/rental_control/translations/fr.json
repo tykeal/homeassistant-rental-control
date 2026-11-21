@@ -61,7 +61,14 @@
       "unknown": "Erreur inattendue, vérifiez les journaux pour plus de détails",
       "bad_max_name_length": "La longueur maximale du nom doit être de 4 ou plus",
       "prefix_too_long_for_trim": "Le préfixe d'événement est trop long pour la longueur maximale du nom",
-      "active_allocations": "La longueur du code ne peut pas être modifiée tant que cette entrée a des allocations de code actives ou que le registre de codes partagé récupère"
+      "active_allocations": "La longueur du code ne peut pas être modifiée tant que cette entrée a des allocations de code actives ou que le registre de codes partagé récupère",
+      "association_unavailable": "L'historique protégé des associations n'est pas prêt ; aucune sélection n'a été enregistrée",
+      "association_replay_required": "Une transaction d'association protégée attend sa projection de configuration. Rouvrez les options pour la rejouer en toute sécurité.",
+      "association_conflict": "Cette modification pourrait transférer ou masquer du travail existant ; elle n'a pas été enregistrée",
+      "attestation_required": "Confirmez explicitement qu'il s'agit du même verrou physique d'origine pour associer les allocations historiques",
+      "attestation_unused": "Cette attestation ne s'applique qu'à l'association d'allocations historiques non résolues",
+      "invalid_association": "La sélection d'association est invalide",
+      "invalid_candidate": "Sélectionnez une configuration Keymaster existante et activée"
     },
     "step": {
       "init": {
@@ -89,14 +96,26 @@
           "max_name_length": "Longueur maximale du nom de créneau",
           "enable_keymaster_event_diagnostics": "Activer les diagnostics d'événements Keymaster (enregistre les 10 derniers événements keymaster_lock_state_changed sur le capteur d'arrivée)",
           "code_buffer_before": "Tampon d'activation du code de verrouillage (minutes avant l'arrivée)",
-          "code_buffer_after": "Tampon de désactivation du code de verrouillage (minutes après le départ)"
+          "code_buffer_after": "Tampon de désactivation du code de verrouillage (minutes après le départ)",
+          "association_keymaster_entry_choice": "Configuration Keymaster vérifiée",
+          "association_attest_same_original_lock": "J'atteste qu'il s'agit du même verrou physique d'origine"
         },
         "data_description": {
           "bookings_only_feed": "À activer uniquement si ce calendrier ne publie jamais de dates bloquées ou indisponibles. Booking.com n'identifie plus les clients dans son flux, ce qui rend cette option nécessaire pour les calendriers Booking.com n'exportant que les dates réservées. L'activer sur un calendrier publiant des dates bloquées créera des codes de porte pour ces blocages.",
           "cleaning_window": "Heures de maintien du statut de départ avant le retour à aucune réservation (0,5–48)",
           "code_buffer_before": "Minutes avant l'heure d'arrivée pour activer le code de verrouillage (0 = pas de tampon)",
-          "code_buffer_after": "Minutes après l'heure de départ pour désactiver le code de verrouillage (0 = pas de tampon)"
+          "code_buffer_after": "Minutes après l'heure de départ pour désactiver le code de verrouillage (0 = pas de tampon)",
+          "association_keymaster_entry_choice": "Choisissez une entrée Keymaster par son identifiant de configuration. Les entrées désactivées restent listées par identifiant mais sont rejetées lors de l'enregistrement. Le mode sans verrou conserve le calendrier uniquement.",
+          "association_attest_same_original_lock": "Cette déclaration historique de l'opérateur ne sert qu'à associer des allocations historiques non résolues à une entrée Keymaster recréée. Elle ne confirme pas un effacement, ne libère pas un code et ne transfère pas le travail d'une entrée connue."
         }
+      }
+    }
+  },
+  "selector": {
+    "association_keymaster_entry_choice": {
+      "options": {
+        "": "Aucun changement / laisser non résolu",
+        "__explicit_lockless__": "Explicitement sans serrure (calendrier uniquement)"
       }
     }
   },

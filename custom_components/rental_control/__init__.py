@@ -46,9 +46,12 @@ from .coordinator import RentalControlCoordinator
 from .coordinator_helpers import allocation_failure
 from .coordinator_helpers import generator_divergence
 from .coordinator_helpers.adoption_gate import forget_entry as forget_gate_report
+from .coordinator_helpers.config_update import preserve_committed_association_tuple
 from .coordinator_helpers.slot_exclusions import dismiss_excluded_slots
 from .coordinator_helpers.unreadable_slots import dismiss_unreadable_slots
 from .helpers import configured_lock_entry
+from .keymaster_lifecycle import start_keymaster_lifecycle
+from .keymaster_lifecycle import stop_keymaster_lifecycle
 from .listeners import (
     async_register_keymaster_listener as async_register_keymaster_listener,
 )
@@ -154,6 +157,8 @@ async def _async_start_coordinator(
     }
     coordinator._checkin_restore_pending = True
 
+    start_keymaster_lifecycle(hass, config_entry, coordinator)
+
     # Perform first data refresh before platform setup to guarantee
     # coordinator.data is populated when entities are created
     await coordinator.async_config_entry_first_refresh()
@@ -204,6 +209,8 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
         await hass.async_add_executor_job(delete_rc_and_base_folder, hass, config_entry)
 
         await async_reload_package_platforms(hass)
+
+        stop_keymaster_lifecycle(hass, config_entry.entry_id)
 
         # Unsubscribe from any listeners
         for unsub_listener in list(
@@ -278,6 +285,7 @@ async def _async_cleanup_entry_setup_failure(
     for unsub_listener in list(entry_data.get(UNSUB_LISTENERS, [])):
         unsub_listener()
     entry_data.get(UNSUB_LISTENERS, []).clear()
+    stop_keymaster_lifecycle(hass, config_entry.entry_id)
 
     hass.data[DOMAIN].pop(config_entry.entry_id, None)
 
@@ -293,7 +301,9 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     if entry_data is None:
         return
 
-    new_data = config_entry.options.copy()
+    new_data = preserve_committed_association_tuple(
+        config_entry.data, config_entry.options
+    )
     new_data.pop(CONF_GENERATE, None)
 
     coordinator = entry_data[COORDINATOR]
@@ -320,6 +330,7 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     if entry_data is None:
         return
     coordinator = entry_data[COORDINATOR]
+    start_keymaster_lifecycle(hass, config_entry, coordinator)
 
     # Unsubscribe to any listeners so we can create new ones
     for unsub_listener in list(entry_data.get(UNSUB_LISTENERS, [])):

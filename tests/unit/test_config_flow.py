@@ -17,8 +17,13 @@ from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
 import probatio
 import pytest
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.config_flow import _normalize_lock_entry
+from custom_components.rental_control.const import CONF_ASSOCIATION_ENTRY_CHOICE
+from custom_components.rental_control.const import CONF_ASSOCIATION_GENERATION
+from custom_components.rental_control.const import CONF_ASSOCIATION_MODE
+from custom_components.rental_control.const import CONF_ASSOCIATION_TRANSACTION_ID
 from custom_components.rental_control.const import CONF_CHECKIN
 from custom_components.rental_control.const import CONF_CHECKOUT
 from custom_components.rental_control.const import CONF_CODE_GENERATION
@@ -36,6 +41,7 @@ from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
 from custom_components.rental_control.const import CONF_SHOULD_UPDATE_CODE
 from custom_components.rental_control.const import CONF_START_SLOT
 from custom_components.rental_control.const import CONF_TIMEZONE
+from custom_components.rental_control.const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
 from custom_components.rental_control.const import DEFAULT_CHECKIN
 from custom_components.rental_control.const import DEFAULT_CHECKOUT
 from custom_components.rental_control.const import DEFAULT_CODE_LENGTH
@@ -45,6 +51,7 @@ from custom_components.rental_control.const import DEFAULT_MAX_EVENTS
 from custom_components.rental_control.const import DEFAULT_REFRESH_FREQUENCY
 from custom_components.rental_control.const import DEFAULT_START_SLOT
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import LOCK_MANAGER
 
 from tests.fixtures import calendar_data
 
@@ -585,6 +592,7 @@ async def test_options_flow_init(hass: HomeAssistant) -> None:
     assert CONF_URL in schema_keys
     assert CONF_REFRESH_FREQUENCY in schema_keys
     assert CONF_MAX_EVENTS in schema_keys
+    assert CONF_ASSOCIATION_ENTRY_CHOICE not in schema_keys
 
 
 async def test_options_flow_update(hass: HomeAssistant) -> None:
@@ -636,6 +644,13 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
     entry = config_result["result"]
 
     # Now update via options flow
+    hass.data[LOCK_MANAGER] = {}
+    MockConfigEntry(
+        domain=LOCK_MANAGER,
+        title="Front Door",
+        data={"lockname": "lock.front_door"},
+        entry_id="lock-entry",
+    ).add_to_hass(hass)
     with aioresponses() as mock_aiohttp:
         mock_aiohttp.get(
             test_url,
@@ -653,7 +668,7 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
                 CONF_URL: test_url,
                 CONF_VERIFY_SSL: True,
                 CONF_IGNORE_NON_RESERVED: True,
-                CONF_LOCK_ENTRY: "(none)",
+                CONF_LOCK_ENTRY: "Front Door",
                 CONF_REFRESH_FREQUENCY: 30,  # Changed from 15
                 CONF_TIMEZONE: "America/Chicago",  # Changed from UTC
                 CONF_EVENT_PREFIX: "Vacation",  # Changed from empty
@@ -665,6 +680,37 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
                 CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
                 CONF_CODE_GENERATION: "Start/End Date",
                 CONF_SHOULD_UPDATE_CODE: True,
+                CONF_ASSOCIATION_ENTRY_CHOICE: "crafted-unprotected-target",
+            },
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert _errors(result) == {
+            CONF_ASSOCIATION_ENTRY_CHOICE: "association_unavailable"
+        }
+
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_NAME: "Updated Rental",
+                CONF_URL: test_url,
+                CONF_VERIFY_SSL: True,
+                CONF_IGNORE_NON_RESERVED: True,
+                CONF_LOCK_ENTRY: "Front Door",
+                CONF_REFRESH_FREQUENCY: 30,
+                CONF_TIMEZONE: "America/Chicago",
+                CONF_EVENT_PREFIX: "Vacation",
+                CONF_CHECKIN: DEFAULT_CHECKIN,
+                CONF_CHECKOUT: DEFAULT_CHECKOUT,
+                CONF_DAYS: DEFAULT_DAYS,
+                CONF_MAX_EVENTS: 10,
+                CONF_START_SLOT: DEFAULT_START_SLOT,
+                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
+                CONF_CODE_GENERATION: "Start/End Date",
+                CONF_SHOULD_UPDATE_CODE: True,
+                CONF_ASSOCIATION_MODE: "verified",
+                CONF_VERIFIED_KEYMASTER_ENTRY_ID: "crafted-km-entry",
+                CONF_ASSOCIATION_GENERATION: 999,
+                CONF_ASSOCIATION_TRANSACTION_ID: "e" * 32,
             },
         )
 
@@ -676,6 +722,11 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
     assert updated_entry.data[CONF_TIMEZONE] == "America/Chicago"
     assert updated_entry.data[CONF_EVENT_PREFIX] == "Vacation"
     assert updated_entry.data[CONF_MAX_EVENTS] == 10
+    assert updated_entry.data[CONF_LOCK_ENTRY] == "lock.front_door"
+    assert CONF_ASSOCIATION_MODE not in updated_entry.data
+    assert CONF_VERIFIED_KEYMASTER_ENTRY_ID not in updated_entry.data
+    assert CONF_ASSOCIATION_GENERATION not in updated_entry.data
+    assert CONF_ASSOCIATION_TRANSACTION_ID not in updated_entry.data
 
 
 async def test_config_flow_duplicate_detection(hass: HomeAssistant) -> None:
@@ -1024,15 +1075,15 @@ async def test_config_flow_url_bad_content_type(hass: HomeAssistant) -> None:
     assert result["errors"] == {CONF_URL: "bad_ics"}
 
 
-async def test_config_flow_version_is_10(hass: HomeAssistant) -> None:
-    """Test that RentalControlFlowHandler VERSION is 10.
+async def test_config_flow_version_is_11(hass: HomeAssistant) -> None:
+    """Test that RentalControlFlowHandler VERSION is 11.
 
     Verifies that the config flow handler version has been bumped
     to 10 to account for the new lock code buffer keys.
     """
     from custom_components.rental_control.config_flow import RentalControlFlowHandler
 
-    assert RentalControlFlowHandler.VERSION == 10
+    assert RentalControlFlowHandler.VERSION == 11
 
 
 async def test_honor_event_times_in_options_schema(hass: HomeAssistant) -> None:
@@ -1692,7 +1743,7 @@ async def test_config_flow_decomposition_import_surface(hass: HomeAssistant) -> 
     """Test decomposed config-flow compatibility surface remains importable."""
     from custom_components.rental_control import config_flow
 
-    assert config_flow.RentalControlFlowHandler.VERSION == 10
+    assert config_flow.RentalControlFlowHandler.VERSION == 11
     assert hasattr(config_flow.RentalControlFlowHandler, "async_step_user")
     assert hasattr(config_flow.RentalControlFlowHandler, "async_get_options_flow")
     assert hasattr(config_flow.RentalControlOptionsFlow, "async_step_init")

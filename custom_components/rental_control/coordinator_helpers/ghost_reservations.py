@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import tzinfo
 import logging
@@ -22,6 +23,17 @@ from .models import ReservationBuildContext
 from .models import _format_display_slot_name
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _GhostBuildContext:
+    """Bundle shared inputs for each missing-reservation projection."""
+
+    current_keys: set[str]
+    prefix: str
+    observed_mapping_keys: set[str] | None
+    reservation_context: ReservationBuildContext
+    advance: bool
 
 
 def _coerce_persisted_datetime(value: Any) -> datetime | None:
@@ -52,10 +64,15 @@ def build_ghost_reservations(
 ) -> GhostReservationResult:
     """Build synthetic Reservations for assigned slots absent from the feed."""
     result = GhostReservationResult()
+    build_context = _GhostBuildContext(
+        current_keys,
+        prefix,
+        observed_mapping_keys,
+        ctx,
+        advance,
+    )
     for key, mapping in persisted.items():
-        ghost = _build_one_ghost(
-            key, mapping, current_keys, prefix, observed_mapping_keys, ctx, advance
-        )
+        ghost = _build_one_ghost(key, mapping, build_context)
         if ghost is not None:
             result.reservations.append(ghost)
     return result
@@ -64,14 +81,10 @@ def build_ghost_reservations(
 def _build_one_ghost(
     key: str,
     mapping: dict[str, Any],
-    current_keys: set[str],
-    prefix: str,
-    observed_mapping_keys: set[str] | None,
-    ctx: ReservationBuildContext,
-    advance: bool,
+    ctx: _GhostBuildContext,
 ) -> _Reservation | None:
     """Return a single ghost reservation, applying missing-count mutations."""
-    if key in current_keys:
+    if key in ctx.current_keys:
         return None
     status = mapping.get("status")
     pending_missing_clear = (
@@ -92,7 +105,7 @@ def _build_one_ghost(
     missing_count = mapping.get("missing_count", 0)
     if not isinstance(missing_count, int):
         missing_count = 0
-    new_mc = missing_count + int(advance)
+    new_mc = missing_count + int(ctx.advance)
     mapping["missing_count"] = new_mc
     if pending_missing_clear:
         return None
@@ -110,7 +123,14 @@ def _build_one_ghost(
         )
         return None
 
-    return _ghost_from_mapping(key, mapping, prefix, observed_mapping_keys, new_mc, ctx)
+    return _ghost_from_mapping(
+        key,
+        mapping,
+        ctx.prefix,
+        ctx.observed_mapping_keys,
+        new_mc,
+        ctx.reservation_context,
+    )
 
 
 def _ghost_from_mapping(

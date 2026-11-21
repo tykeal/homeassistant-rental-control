@@ -8,6 +8,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntryDisabler
 from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
@@ -33,7 +34,11 @@ from custom_components.rental_control.config_flow_helpers.models import (
 from custom_components.rental_control.config_flow_helpers.models import (
     URLValidationResult,
 )
+from custom_components.rental_control.const import ASSOCIATION_CHOICE_LOCKLESS
+from custom_components.rental_control.const import ASSOCIATION_CHOICE_NO_CHANGE
 from custom_components.rental_control.const import CODE_GENERATORS
+from custom_components.rental_control.const import CONF_ASSOCIATION_ATTEST_SAME_LOCK
+from custom_components.rental_control.const import CONF_ASSOCIATION_ENTRY_CHOICE
 from custom_components.rental_control.const import CONF_CHECKIN
 from custom_components.rental_control.const import CONF_CHECKOUT
 from custom_components.rental_control.const import CONF_CODE_BUFFER_AFTER
@@ -58,7 +63,9 @@ from custom_components.rental_control.const import CONF_TRIM_NAMES
 from custom_components.rental_control.const import DEFAULT_CHECKIN
 from custom_components.rental_control.const import DEFAULT_CODE_LENGTH
 from custom_components.rental_control.const import DEFAULT_REFRESH_FREQUENCY
+from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import LOCK_MANAGER
+from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 
 if False:
     from homeassistant.core import HomeAssistant
@@ -191,6 +198,57 @@ def test_options_schema_preserves_extra_fields_and_precedence(
     assert CONF_CODE_BUFFER_AFTER in names
     assert _schema_key(schema, CONF_NAME).default() == "Entered Name"
     assert _schema_key(schema, CONF_CODE_BUFFER_BEFORE).default() == 5
+
+
+def test_association_options_list_entry_ids_and_disabled_candidates(
+    hass: "HomeAssistant",
+) -> None:
+    """Same-title entries stay distinct and disabled entries remain visible."""
+    hass.data[DOMAIN] = {PROTECTED_REGISTRY_STORE: object()}
+    for entry_id, disabled_by in (
+        ("km-one", None),
+        ("km-two", ConfigEntryDisabler.USER),
+    ):
+        MockConfigEntry(
+            domain=LOCK_MANAGER,
+            title="Same Name",
+            data={},
+            entry_id=entry_id,
+            disabled_by=disabled_by,
+        ).add_to_hass(hass)
+
+    schema = _get_schema(
+        hass,
+        {},
+        dict(RentalControlFlowHandler.DEFAULTS),
+        "rc-entry",
+    )
+    choice_key = _schema_key(schema, CONF_ASSOCIATION_ENTRY_CHOICE)
+    selector = schema.schema[choice_key]
+    options = selector.config["options"]
+
+    assert options[:2] == [
+        ASSOCIATION_CHOICE_NO_CHANGE,
+        ASSOCIATION_CHOICE_LOCKLESS,
+    ]
+    assert set(options[2:]) == {"km-one", "km-two"}
+    assert _schema_key(schema, CONF_ASSOCIATION_ATTEST_SAME_LOCK).default() is False
+
+
+def test_association_options_are_hidden_without_protected_backend(
+    hass: "HomeAssistant",
+) -> None:
+    """Keep the legacy selector usable until the protected seam is registered."""
+    schema = _get_schema(
+        hass,
+        {},
+        dict(RentalControlFlowHandler.DEFAULTS),
+        "rc-entry",
+    )
+    names = _schema_names(schema)
+
+    assert CONF_ASSOCIATION_ENTRY_CHOICE not in names
+    assert CONF_ASSOCIATION_ATTEST_SAME_LOCK not in names
 
 
 def test_lock_selector_and_default_conversion(hass: "HomeAssistant") -> None:

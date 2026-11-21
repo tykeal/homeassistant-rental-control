@@ -22,6 +22,9 @@ from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.rental_control import async_arm_startup_readability_refresh
 from custom_components.rental_control import update_listener
+from custom_components.rental_control.const import CONF_ASSOCIATION_GENERATION
+from custom_components.rental_control.const import CONF_ASSOCIATION_MODE
+from custom_components.rental_control.const import CONF_ASSOCIATION_TRANSACTION_ID
 from custom_components.rental_control.const import CONF_CODE_LENGTH
 from custom_components.rental_control.const import CONF_CREATION_DATETIME
 from custom_components.rental_control.const import CONF_GENERATE
@@ -32,6 +35,7 @@ from custom_components.rental_control.const import CONF_PATH
 from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
 from custom_components.rental_control.const import CONF_SHOULD_UPDATE_CODE
 from custom_components.rental_control.const import CONF_START_SLOT
+from custom_components.rental_control.const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DEFAULT_CODE_LENGTH
 from custom_components.rental_control.const import DEFAULT_GENERATE
@@ -380,6 +384,62 @@ async def test_update_listener_present_data_updates_config_and_listeners(
     register_listener.assert_called_once_with(hass, mock_config_entry)
 
 
+async def test_update_listener_preserves_committed_tuple_without_backend(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Untrusted options cannot replace a durable tuple when storage is absent."""
+    mock_config_entry.add_to_hass(hass)
+    committed = dict(mock_config_entry.data)
+    committed.update(
+        {
+            CONF_ASSOCIATION_MODE: "verified",
+            CONF_VERIFIED_KEYMASTER_ENTRY_ID: "km-a",
+            CONF_ASSOCIATION_GENERATION: 4,
+            CONF_ASSOCIATION_TRANSACTION_ID: "a" * 32,
+        }
+    )
+    forged_options = dict(committed)
+    forged_options[CONF_LOCK_ENTRY] = "lock.other"
+    forged_options[CONF_ASSOCIATION_MODE] = "explicit_lockless"
+    forged_options[CONF_VERIFIED_KEYMASTER_ENTRY_ID] = "km-b"
+    forged_options[CONF_ASSOCIATION_GENERATION] = 99
+    forged_options[CONF_ASSOCIATION_TRANSACTION_ID] = "b" * 32
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data=committed,
+        options=forged_options,
+    )
+
+    coordinator = MagicMock()
+    coordinator.created = "2026-06-18T15:00:00+00:00"
+    coordinator.lockname = "front_door"
+    coordinator.update_config = AsyncMock()
+    hass.data[DOMAIN] = {
+        mock_config_entry.entry_id: {
+            COORDINATOR: coordinator,
+            UNSUB_LISTENERS: [],
+        },
+    }
+
+    with (
+        patch(
+            "custom_components.rental_control.async_start_listener",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "custom_components.rental_control.async_register_keymaster_listener",
+        ),
+    ):
+        await update_listener(hass, mock_config_entry)
+
+    assert CONF_LOCK_ENTRY not in mock_config_entry.data
+    assert mock_config_entry.data[CONF_ASSOCIATION_MODE] == "verified"
+    assert mock_config_entry.data[CONF_VERIFIED_KEYMASTER_ENTRY_ID] == "km-a"
+    assert mock_config_entry.data[CONF_ASSOCIATION_GENERATION] == 4
+    assert mock_config_entry.data[CONF_ASSOCIATION_TRANSACTION_ID] == "a" * 32
+
+
 async def test_update_listener_missing_entry_before_update_returns(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
@@ -554,12 +614,12 @@ async def test_migrate_entry_rejects_version_below_3(
     assert result is False
 
 
-async def test_migrate_entry_v3_to_v10(
+async def test_migrate_entry_v3_to_v11(
     hass: HomeAssistant,
 ) -> None:
-    """Verify a version-3 entry migrates through all steps to version 10.
+    """Verify a version-3 entry migrates through all steps to version 11.
 
-    The migration chain 3→4→5→6→7→8→9→10 adds code_length,
+    The migration chain 3→4→5→6→7→8→9→10→11 adds code_length,
     generate_package, removes packages_path, adds
     should_update_code, honor_event_times, trim fields, and
     code buffer fields.
@@ -591,7 +651,7 @@ async def test_migrate_entry_v3_to_v10(
     result = await async_migrate_entry(hass, entry)
 
     assert result is True
-    assert entry.version == 10
+    assert entry.version == 11
     assert entry.data[CONF_CODE_LENGTH] == DEFAULT_CODE_LENGTH
     assert entry.data[CONF_GENERATE] == DEFAULT_GENERATE
     assert CONF_PATH not in entry.data
@@ -599,10 +659,10 @@ async def test_migrate_entry_v3_to_v10(
     assert entry.data[CONF_HONOR_EVENT_TIMES] is False
 
 
-async def test_migrate_entry_v6_to_v10(
+async def test_migrate_entry_v6_to_v11(
     hass: HomeAssistant,
 ) -> None:
-    """Verify a version-6 entry runs v6→7→8→9→10 steps."""
+    """Verify a version-6 entry runs v6→7→8→9→10→11 steps."""
     from custom_components.rental_control import async_migrate_entry
 
     entry = MockConfigEntry(
@@ -631,18 +691,18 @@ async def test_migrate_entry_v6_to_v10(
     result = await async_migrate_entry(hass, entry)
 
     assert result is True
-    assert entry.version == 10
+    assert entry.version == 11
     assert entry.data[CONF_SHOULD_UPDATE_CODE] is False
     assert entry.data[CONF_HONOR_EVENT_TIMES] is False
 
 
-async def test_migrate_entry_v7_to_v10_honor_event_times(
+async def test_migrate_entry_v7_to_v11_honor_event_times(
     hass: HomeAssistant,
 ) -> None:
-    """Verify v7→v8→v9→v10 migration sets honor_event_times to False.
+    """Verify v7→v8→v9→v10→v11 migration sets honor_event_times to False.
 
     Verifies that an existing v7 config entry that lacks the
-    honor_event_times key gets migrated through v8 to v10 with
+    honor_event_times key gets migrated through v8 to v11 with
     the key set to False, preserving existing behavior.
     """
     from custom_components.rental_control import async_migrate_entry
@@ -674,17 +734,17 @@ async def test_migrate_entry_v7_to_v10_honor_event_times(
     result = await async_migrate_entry(hass, entry)
 
     assert result is True
-    assert entry.version == 10
+    assert entry.version == 11
     assert entry.data[CONF_HONOR_EVENT_TIMES] is False
 
 
-async def test_migrate_entry_v8_to_v10_trim_names(
+async def test_migrate_entry_v8_to_v11_trim_names(
     hass: HomeAssistant,
 ) -> None:
-    """Verify v8→v9→v10 migration adds trim_names and max_name_length.
+    """Verify v8→v9→v10→v11 adds trim_names and max_name_length.
 
     Verifies that an existing v8 config entry without trim fields
-    gets migrated to v10 with trim_names=False, max_name_length=16,
+    gets migrated to v11 with trim_names=False, max_name_length=16,
     and both buffer fields defaulting to 0.
     """
     from custom_components.rental_control import async_migrate_entry
@@ -720,19 +780,19 @@ async def test_migrate_entry_v8_to_v10_trim_names(
     result = await async_migrate_entry(hass, entry)
 
     assert result is True
-    assert entry.version == 10
+    assert entry.version == 11
     assert entry.data[CONF_TRIM_NAMES] is False
     assert entry.data[CONF_MAX_NAME_LENGTH] == 16
     assert entry.data[CONF_CODE_BUFFER_BEFORE] == 0
     assert entry.data[CONF_CODE_BUFFER_AFTER] == 0
 
 
-async def test_migrate_entry_v9_to_v10_code_buffer(
+async def test_migrate_entry_v9_to_v11_code_buffer(
     hass: HomeAssistant,
 ) -> None:
-    """Verify v9→v10 migration adds buffer fields with default 0.
+    """Verify v9→v10→v11 migration adds buffer fields with default 0.
 
-    Verifies that an existing v9 config entry gets migrated to v10
+    Verifies that an existing v9 config entry gets migrated to v11
     with code_buffer_before=0 and code_buffer_after=0.
     """
     from custom_components.rental_control import async_migrate_entry
@@ -768,6 +828,32 @@ async def test_migrate_entry_v9_to_v10_code_buffer(
     result = await async_migrate_entry(hass, entry)
 
     assert result is True
-    assert entry.version == 10
+    assert entry.version == 11
     assert entry.data[CONF_CODE_BUFFER_BEFORE] == 0
     assert entry.data[CONF_CODE_BUFFER_AFTER] == 0
+
+
+async def test_migrate_v10_keeps_legacy_selection_unresolved(
+    hass: HomeAssistant,
+) -> None:
+    """Version 11 does not infer an identity from the legacy selector."""
+    from custom_components.rental_control import async_migrate_entry
+
+    original = {
+        "name": "Legacy",
+        "url": "https://example.com/calendar.ics",
+        "keymaster_entry_id": "lock.front_door",
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Legacy",
+        version=10,
+        unique_id="v10-association-migration",
+        data=original,
+        entry_id="v10_association_migration",
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry)
+    assert entry.version == 11
+    assert entry.data == original

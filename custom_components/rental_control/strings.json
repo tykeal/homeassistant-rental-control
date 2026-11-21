@@ -65,7 +65,14 @@
       "same_name": "Name already in use",
       "unknown": "Unexpected error, check logs for more details",
       "prefix_too_long_for_trim": "Event prefix too long for max name length",
-      "active_allocations": "Code length cannot be changed while this entry has active allocations or the shared code registry is recovering"
+      "active_allocations": "Code length cannot be changed while this entry has active allocations or the shared code registry is recovering",
+      "association_unavailable": "The protected association history is not ready; no selection was saved",
+      "association_replay_required": "A protected association transaction is awaiting configuration projection. Reopen options to replay it safely.",
+      "association_conflict": "This association change could transfer or obscure existing work and was not saved",
+      "attestation_required": "Confirm explicitly that this is the same original physical lock to associate legacy work",
+      "attestation_unused": "The same-lock assertion applies only when associating unresolved legacy work",
+      "invalid_association": "The association selection is invalid",
+      "invalid_candidate": "Select an existing, enabled Keymaster configuration"
     },
     "step": {
       "init": {
@@ -94,15 +101,27 @@
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates",
-          "enable_keymaster_event_diagnostics": "Enable keymaster event diagnostics (records last 10 keymaster_lock_state_changed events on the check-in sensor)"
+          "enable_keymaster_event_diagnostics": "Enable keymaster event diagnostics (records last 10 keymaster_lock_state_changed events on the check-in sensor)",
+          "association_keymaster_entry_choice": "Verified Keymaster configuration",
+          "association_attest_same_original_lock": "I attest this is the same original physical lock"
         },
         "data_description": {
           "bookings_only_feed": "Enable only if this calendar never publishes blocked or unavailable dates. Booking.com no longer identifies guests in its feed, so this is required for Booking.com calendars that export booked dates only. Enabling this on a calendar that does publish blocked dates will issue door codes for those blocks.",
           "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)",
           "code_buffer_before": "Minutes before check-in time to activate the lock code (0 = no buffer)",
           "code_buffer_after": "Minutes after checkout time to deactivate the lock code (0 = no buffer)",
-          "date_only": "Displays each reservation as a single all-day block. Guest arrival and departure times are hidden from the calendar."
+          "date_only": "Displays each reservation as a single all-day block. Guest arrival and departure times are hidden from the calendar.",
+          "association_keymaster_entry_choice": "Choose a Keymaster entry by configuration ID. Disabled entries remain listed by ID but are rejected when saving. Explicitly lockless keeps calendar-only behavior.",
+          "association_attest_same_original_lock": "This is a historical operator assertion used only for unresolved legacy allocations on a recreated Keymaster entry. It does not confirm a clear, release a code, or transfer work from a known entry."
         }
+      }
+    }
+  },
+  "selector": {
+    "association_keymaster_entry_choice": {
+      "options": {
+        "": "No change / leave unresolved",
+        "__explicit_lockless__": "Explicitly lockless (calendar only)"
       }
     }
   },

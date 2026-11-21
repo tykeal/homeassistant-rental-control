@@ -6,9 +6,12 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from collections.abc import Iterable
+from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field
 
+from .associations import AssociationMode
+from .associations import AssociationTuple
 from .models import AllocationOrigin
 from .models import AllocationOwner
 from .models import AllocationRecord
@@ -72,6 +75,38 @@ def physical_slots(owners: Iterable[AllocationOwner]) -> frozenset[SlotKey]:
 def conflict_slots(record: AllocationRecord) -> frozenset[SlotKey]:
     """Return the distinct physical slots a record's code was issued to."""
     return physical_slots(issuance_owners(record))
+
+
+def associated_physical_slot(
+    owner: AllocationOwner,
+    associations: Mapping[str, AssociationTuple],
+) -> SlotKey:
+    """Group only owners with the same explicit verified KM entry and slot."""
+    association = associations.get(owner.entry_id)
+    if (
+        association is not None
+        and association.mode is AssociationMode.VERIFIED
+        and association.verified_keymaster_entry_id is not None
+        and owner.slot is not None
+        and not _is_physical_only(owner.identity_key)
+    ):
+        return (
+            association.verified_keymaster_entry_id,
+            "",
+            str(owner.slot),
+        )
+    return physical_slot(owner)
+
+
+def associated_conflict_slots(
+    record: AllocationRecord,
+    associations: Mapping[str, AssociationTuple],
+) -> frozenset[SlotKey]:
+    """Return conflicts after applying only acknowledged verified associations."""
+    return frozenset(
+        associated_physical_slot(owner, associations)
+        for owner in issuance_owners(record)
+    )
 
 
 def slot_shadowed(
