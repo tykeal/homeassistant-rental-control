@@ -63,6 +63,7 @@
       "prefix_too_long_for_trim": "Le préfixe d'événement est trop long pour la longueur maximale du nom",
       "active_allocations": "La longueur du code ne peut pas être modifiée tant que cette entrée a des allocations de code actives ou que le registre de codes partagé récupère",
       "association_unavailable": "L'historique protégé des associations n'est pas prêt ; aucune sélection n'a été enregistrée",
+      "association_repair_required": "L'historique d'association enregistré ne peut pas être vérifié. Aucune sélection de serrure historique n'a été enregistrée ; rechargez après le rétablissement du registre protégé.",
       "association_replay_required": "Une transaction d'association protégée attend sa projection de configuration. Rouvrez les options pour la rejouer en toute sécurité.",
       "association_conflict": "Cette modification pourrait transférer ou masquer du travail existant ; elle n'a pas été enregistrée",
       "attestation_required": "Confirmez explicitement qu'il s'agit du même verrou physique d'origine pour associer les allocations historiques",

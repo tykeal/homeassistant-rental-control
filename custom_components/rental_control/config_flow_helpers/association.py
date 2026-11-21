@@ -10,12 +10,13 @@ from uuid import uuid4
 
 from homeassistant.config_entries import ConfigEntry
 
+from ..allocator.association_evidence import AssociationAttestation
+from ..allocator.association_evidence import AssociationRebindHold
 from ..allocator.association_references import has_known_original_safety_record
+from ..allocator.association_references import original_keymaster_entry_for_references
 from ..allocator.association_transactions import AssociationTransaction
-from ..allocator.associations import AssociationAttestation
 from ..allocator.associations import AssociationChange
 from ..allocator.associations import AssociationMode
-from ..allocator.associations import AssociationRebindHold
 from ..allocator.associations import AssociationTuple
 from ..allocator.models import ProtectionAuthorizationState
 from ..allocator.models import ProtectionLoadResult
@@ -81,21 +82,16 @@ async def apply_association_selection(
         return intent_or_result
     intent = intent_or_result
     if not intent.changes_tuple:
-        protected = _ready_protected_store(flow)
-        if protected is not None:
-            _protected_store, loaded = protected
-            if not isinstance(loaded.data, dict):
-                return _association_error(user_input, "association_unavailable")
-            replay_state = _replay_pending_projection(flow, loaded)
-            if replay_state not in {
-                None,
-                AssociationApplyState.CONFIG_ALREADY_CURRENT,
-            }:
-                return _association_error(user_input, "association_replay_required")
-        return AssociationFlowResult(intent.submitted, {})
+        return _unchanged_association_result(flow, intent)
 
     protected = _ready_protected_store(flow)
     if protected is None:
+        if intent.old.mode is not AssociationMode.LEGACY_UNRESOLVED:
+            return _association_error(
+                user_input,
+                "association_repair_required",
+                field=CONF_LOCK_ENTRY,
+            )
         return _association_error(user_input, "association_unavailable")
     protected_store, loaded = protected
     if not isinstance(loaded.data, dict):
@@ -115,14 +111,20 @@ async def apply_association_selection(
     affected_references = reference_reader(intent.rc_entry_id)
     if affected_references is None:
         return _association_error(user_input, "association_unavailable")
-    if intent.old.mode is not AssociationMode.VERIFIED:
-        known_original = has_known_original_safety_record(
-            loaded.data, intent.rc_entry_id
-        )
-        if known_original is not False:
-            return _association_error(user_input, "association_conflict")
+    original_entry, evidence_error = _independent_original_entry(
+        intent,
+        loaded.data,
+        tuple(affected_references),
+    )
+    if evidence_error is not None:
+        return evidence_error
 
-    transaction = _build_transaction(intent, loaded, tuple(affected_references))
+    transaction = _build_transaction(
+        intent,
+        loaded,
+        tuple(affected_references),
+        independently_proven_original=original_entry,
+    )
     if isinstance(transaction, AssociationFlowResult):
         return transaction
     base_envelope = {
@@ -145,6 +147,48 @@ async def apply_association_selection(
     if outcome is not AssociationApplyState.CONFIG_WRITE_SCHEDULED:
         return _association_error(user_input, "association_unavailable")
     return AssociationFlowResult(intent.submitted, {})
+
+
+def _unchanged_association_result(
+    flow: Any,
+    intent: _AssociationIntent,
+) -> AssociationFlowResult:
+    """Keep unrelated options usable while replaying any known config chain."""
+    protected = _ready_protected_store(flow)
+    if protected is None:
+        return AssociationFlowResult(intent.submitted, {})
+    _protected_store, loaded = protected
+    if not isinstance(loaded.data, dict):
+        return _association_error(intent.form_input, "association_unavailable")
+    replay_state = _replay_pending_projection(flow, loaded)
+    if replay_state not in {
+        None,
+        AssociationApplyState.CONFIG_ALREADY_CURRENT,
+    }:
+        return _association_error(intent.form_input, "association_replay_required")
+    return AssociationFlowResult(intent.submitted, {})
+
+
+def _independent_original_entry(
+    intent: _AssociationIntent,
+    data: dict[str, Any],
+    affected_references: tuple[str, ...],
+) -> tuple[str | None, AssociationFlowResult | None]:
+    """Require known history to match all exact references, never retarget it."""
+    if intent.old.mode is AssociationMode.VERIFIED:
+        return None, None
+    known_original = has_known_original_safety_record(data, intent.rc_entry_id)
+    original_entry = original_keymaster_entry_for_references(
+        data, intent.rc_entry_id, affected_references
+    )
+    if known_original is None or (
+        known_original and original_entry != intent.keymaster_entry_id
+    ):
+        return None, _association_error(
+            intent.form_input,
+            "association_conflict",
+        )
+    return original_entry, None
 
 
 def _replay_pending_projection(
@@ -275,19 +319,32 @@ def _build_transaction(
     intent: _AssociationIntent,
     loaded: ProtectionLoadResult,
     affected_references: tuple[str, ...],
+    *,
+    independently_proven_original: str | None,
 ) -> AssociationTransaction | AssociationFlowResult:
     """Create one typed transition, requiring scoped historical attestation."""
     if loaded.generation is None or loaded.transaction_id is None:
         return _association_error(intent.form_input, "association_unavailable")
-    validation_error = _validate_association_intent(intent, affected_references)
+    validation_error = _validate_association_intent(
+        intent,
+        affected_references,
+        independently_proven_original=independently_proven_original,
+    )
     if validation_error is not None:
         return validation_error
-    return _create_association_transaction(intent, loaded, affected_references)
+    return _create_association_transaction(
+        intent,
+        loaded,
+        affected_references,
+        independently_proven_original=independently_proven_original,
+    )
 
 
 def _validate_association_intent(
     intent: _AssociationIntent,
     affected_references: tuple[str, ...],
+    *,
+    independently_proven_original: str | None,
 ) -> AssociationFlowResult | None:
     """Validate how selected history may be attached to a Keymaster entry."""
     if (
@@ -311,6 +368,14 @@ def _validate_association_intent(
                 "association_conflict",
                 field=CONF_ASSOCIATION_ENTRY_CHOICE,
             )
+        if independently_proven_original == intent.keymaster_entry_id:
+            if intent.attest_same_lock:
+                return _association_error(
+                    intent.form_input,
+                    "attestation_unused",
+                    field=CONF_ASSOCIATION_ATTEST_SAME_LOCK,
+                )
+            return None
         if not intent.attest_same_lock:
             return _association_error(
                 intent.form_input,
@@ -330,6 +395,8 @@ def _create_association_transaction(
     intent: _AssociationIntent,
     loaded: ProtectionLoadResult,
     affected_references: tuple[str, ...],
+    *,
+    independently_proven_original: str | None,
 ) -> AssociationTransaction:
     """Build tuple, attestation, and retained-hold records for one commit."""
     assert loaded.generation is not None
@@ -349,6 +416,20 @@ def _create_association_transaction(
         intent.old,
         new_tuple,
         affected_references,
+        independently_proven_original
+        if (
+            independently_proven_original is not None
+            and intent.old.mode is AssociationMode.LEGACY_UNRESOLVED
+            and independently_proven_original == intent.keymaster_entry_id
+        )
+        else None,
+        affected_references
+        if (
+            independently_proven_original is not None
+            and intent.old.mode is AssociationMode.LEGACY_UNRESOLVED
+            and independently_proven_original == intent.keymaster_entry_id
+        )
+        else (),
     )
     retained_holds: tuple[AssociationRebindHold, ...] = ()
     if (

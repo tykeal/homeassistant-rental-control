@@ -56,6 +56,7 @@ _STORAGE_FAILURE_CODES = frozenset(
         "scan_unavailable",
         "snapshot_transition_invalid",
         "snapshot_precondition_failed",
+        "snapshot_exclusions_changed",
         "snapshot_projection_failed",
         "snapshot_invalid",
         "serialization_failed",

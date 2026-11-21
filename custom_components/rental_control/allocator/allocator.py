@@ -178,6 +178,18 @@ class DoorCodeAllocator:
         """Adopt an observed code while the allocator lock is already held."""
         return adoption.adopt_unlocked(self, request)
 
+    def _adopt_associated_alias_unlocked(
+        self,
+        request: AdoptionRequest,
+        associations: Mapping[str, AssociationTuple],
+    ) -> AllocationResult:
+        """Adopt into an isolated candidate after same-entry alias validation.
+
+        This staged-only boundary must not be used on the live registry; its
+        caller must acknowledge the complete protected snapshot first.
+        """
+        return adoption.adopt_associated_alias_unlocked(self, request, associations)
+
     async def async_associated_alias_candidates(
         self,
         request: AdoptionRequest,

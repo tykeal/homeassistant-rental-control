@@ -14,6 +14,9 @@ import pytest
 from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator import services as services_module
 from custom_components.rental_control.allocator.adoption import (
+    adopt_associated_alias_unlocked,
+)
+from custom_components.rental_control.allocator.adoption import (
     associated_alias_candidates,
 )
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
@@ -30,6 +33,7 @@ from custom_components.rental_control.allocator.registry import AllocationRegist
 from custom_components.rental_control.allocator.registry import (
     associated_conflict_slots,
 )
+from custom_components.rental_control.allocator.store import code_ref_for
 
 from tests.fixtures.fake_hass import fake_config
 
@@ -221,6 +225,96 @@ def test_alias_migration_plan_only_matches_same_verified_physical_slot() -> None
         )
         == ()
     )
+
+
+def test_alias_migration_uses_actual_adoption_path_only_for_same_entry() -> None:
+    """Same-entry alias becomes a real owner; cross-entry alias remains held."""
+    alias_key = "owner:observed:rc-a:old_front:10"
+    registry = AllocationRegistry(
+        records={
+            "1234": AllocationRecord(
+                code="1234",
+                code_ref="ref",
+                encoding_salt_value="rc-a",
+                owners=[
+                    AllocationOwner(
+                        entry_id="rc-a",
+                        identity_key=alias_key,
+                        origin=AllocationOrigin.ADOPTED,
+                        lockname="old_front",
+                        slot=10,
+                        lock_observed=True,
+                        first_seen=_NOW,
+                        last_seen=_NOW,
+                    )
+                ],
+            )
+        },
+        code_ref_salt="persisted-salt",
+    )
+    allocator = cast(
+        DoorCodeAllocator,
+        SimpleNamespace(
+            _registry=registry,
+            code_ref=lambda code: code_ref_for(code, registry.code_ref_salt),
+        ),
+    )
+    request = AdoptionRequest(
+        entry_id="rc-b",
+        identity_key="owner-b",
+        code="1234",
+        code_length=4,
+        lockname="renamed_front",
+        slot=10,
+    )
+    same_lock = {
+        "rc-a": _verified_association("km-shared"),
+        "rc-b": _verified_association("km-shared"),
+    }
+
+    adopted = adopt_associated_alias_unlocked(allocator, request, same_lock)
+
+    assert adopted.code == "1234"
+    assert alias_key not in registry.by_identity
+    owner = registry.record_for_identity("owner-b")
+    assert owner is not None
+    assert any(item.entry_id == "rc-b" and item.slot == 10 for item in owner.owners)
+
+
+def test_observed_alias_release_revalidates_the_complete_slot_group() -> None:
+    """Alias candidates are removed all-or-nothing after observation checks."""
+    aliases = (
+        "owner:observed:rc-a:front:10",
+        "owner:observed:rc-b:front:10",
+    )
+    registry = AllocationRegistry(
+        records={
+            "1234": AllocationRecord(
+                code="1234",
+                code_ref="ref",
+                encoding_salt_value="rc-a",
+                owners=[
+                    AllocationOwner(
+                        entry_id=identity.split(":")[2],
+                        identity_key=identity,
+                        origin=AllocationOrigin.ADOPTED,
+                        lockname="front",
+                        slot=10,
+                        lock_observed=True,
+                        first_seen=_NOW,
+                        last_seen=_NOW,
+                    )
+                    for identity in aliases
+                ],
+            )
+        }
+    )
+
+    assert not registry.release_observed_aliases((*aliases, "missing"), "1234", 10)
+    assert not registry.release_observed_aliases(aliases, "1234", 11)
+    assert all(registry.code_for_identity(alias) == "1234" for alias in aliases)
+    assert registry.release_observed_aliases(aliases, "1234", 10)
+    assert all(registry.code_for_identity(alias) is None for alias in aliases)
 
 
 def test_code_length_filtering_blocks_other_lengths() -> None:

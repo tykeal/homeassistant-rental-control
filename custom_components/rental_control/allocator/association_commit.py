@@ -6,13 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from .association_evidence import AssociationAttestation
+from .association_evidence import AssociationRebindHold
 from .association_transactions import AssociationTransaction
 from .association_transactions import association_storage_record
 from .association_transactions import valid_association_sections
 from .association_transactions import valid_association_storage_record
-from .associations import AssociationAttestation
 from .associations import AssociationMode
-from .associations import AssociationRebindHold
 from .associations import AssociationTuple
 
 

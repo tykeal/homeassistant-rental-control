@@ -72,6 +72,36 @@ def associated_alias_candidates(
     return tuple(sorted(candidates))
 
 
+def adopt_associated_alias_unlocked(
+    allocator: DoorCodeAllocator,
+    request: AdoptionRequest,
+    associations: Mapping[str, AssociationTuple],
+) -> AllocationResult:
+    """Replace same-lock observed aliases with one real staged owner.
+
+    This helper is for an isolated registry candidate: callers must durably
+    acknowledge the complete protected snapshot before publishing it. It
+    never moves a known owner between Keymaster entries.
+    """
+    _coalesce_fingerprint_owner(allocator, request)
+    existing = allocator._registry.record_for_identity(request.identity_key)
+    if (
+        existing is not None and existing.code != request.code
+    ) or reissue.forced_hold_matches_slot(
+        allocator, request.entry_id, request.lockname, request.slot
+    ):
+        return adopt_unlocked(allocator, request)
+
+    aliases = associated_alias_candidates(allocator, request, associations)
+    if aliases and not allocator._registry.release_observed_aliases(
+        aliases,
+        request.code,
+        request.slot or 0,
+    ):
+        return AllocationResult(reason="association_alias_changed")
+    return adopt_unlocked(allocator, request)
+
+
 def adopt_unlocked(
     allocator: DoorCodeAllocator,
     request: AdoptionRequest,

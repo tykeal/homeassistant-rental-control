@@ -7,12 +7,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from .association_references import association_references_for_snapshot
 from .association_references import ledger_owner_reference
-from .association_transactions import AssociationTransaction
-from .associations import AssociationMode
-from .associations import AssociationRebindHold
-from .associations import AssociationTuple
+from .registry import is_observed_alias
+from .registry_association_transitions import same_slot_alias_transfer_is_safe
+from .registry_association_transitions import validate_association_history
 from .registry_safety_models import validate_snapshot_structure
 
 
@@ -56,7 +54,7 @@ def validate_snapshot_transition(
         return _validate_fence_transition(prior_data, target_data)
     if not _validate_ledger_transition(prior_data, target_data):
         return False
-    if not _validate_association_history(prior_data, target_data):
+    if not validate_association_history(prior_data, target_data):
         return False
     return _validate_fence_transition(prior_data, target_data)
 
@@ -286,6 +284,15 @@ def _validate_ledger_transition(
             prior_owner,
         ):
             return False
+        if is_observed_alias(prior_owner["identity_key"]):
+            alias_transfer = same_slot_alias_transfer_is_safe(
+                prior_data,
+                target_data,
+                prior_record,
+                prior_owner,
+            )
+            if alias_transfer is False:
+                return False
         replacement_reference = target_by_identity.get(
             (prior_owner["entry_id"], prior_owner["identity_key"])
         )
@@ -309,92 +316,4 @@ def _validate_ledger_transition(
                 != prior_record["encoding_salt_source"]
             ):
                 return False
-    return True
-
-
-def _validate_association_history(
-    prior_data: dict[str, Any], target_data: dict[str, Any]
-) -> bool:
-    """Require tuple/attestation/hold chains to be append-only and linked."""
-    for section in ("attestations", "pending_config", "holds"):
-        prior_records = prior_data[section]
-        target_records = target_data[section]
-        if target_records[: len(prior_records)] != prior_records:
-            return False
-
-    prior_associations = {
-        item["rc_entry_id"]: AssociationTuple.from_record(item["tuple"])
-        for item in prior_data["associations"]
-    }
-    target_associations = {
-        item["rc_entry_id"]: AssociationTuple.from_record(item["tuple"])
-        for item in target_data["associations"]
-    }
-    new_transactions = [
-        AssociationTransaction.from_record(item)
-        for item in target_data["pending_config"][len(prior_data["pending_config"]) :]
-    ]
-    if any(transaction is None for transaction in new_transactions):
-        return False
-    changes = [
-        change
-        for transaction in new_transactions
-        if transaction is not None
-        for change in transaction.changes
-    ]
-    for rc_entry_id in set(prior_associations) | set(target_associations):
-        prior = prior_associations.get(rc_entry_id)
-        target = target_associations.get(rc_entry_id)
-        if prior == target:
-            continue
-        if prior is None:
-            if target is None or not any(
-                change.rc_entry_id == rc_entry_id
-                and change.old.mode is AssociationMode.LEGACY_UNRESOLVED
-                and change.new == target
-                for change in changes
-            ):
-                return False
-        elif target is None or not any(
-            change.rc_entry_id == rc_entry_id
-            and change.old == prior
-            and change.new == target
-            for change in changes
-        ):
-            return False
-
-    prior_holds = {
-        hold.hold_id: hold
-        for item in prior_data["holds"]
-        if item.get("kind") == "association_rebind"
-        if (hold := AssociationRebindHold.from_record(item)) is not None
-    }
-    target_holds = {
-        hold.hold_id: hold
-        for item in target_data["holds"]
-        if item.get("kind") == "association_rebind"
-        if (hold := AssociationRebindHold.from_record(item)) is not None
-    }
-    for hold_id, hold in target_holds.items():
-        if hold_id in prior_holds:
-            if prior_holds[hold_id] != hold:
-                return False
-            continue
-        prior_association = prior_associations.get(hold.rc_entry_id)
-        target_association = target_associations.get(hold.rc_entry_id)
-        expected_references = association_references_for_snapshot(
-            prior_data, hold.rc_entry_id
-        )
-        if (
-            prior_association is None
-            or prior_association.mode is not AssociationMode.VERIFIED
-            or prior_association.verified_keymaster_entry_id
-            != hold.original_km_entry_id
-            or target_association is None
-            or target_association.verified_keymaster_entry_id
-            != hold.selected_keymaster_entry_id
-            or expected_references is None
-            or set(expected_references) != set(hold.claim_references)
-        ):
-            return False
     return True

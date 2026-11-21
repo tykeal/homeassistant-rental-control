@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from typing import Protocol
@@ -13,8 +14,18 @@ from typing import Protocol
 from .models import ProtectionCommitToken
 from .models import ProtectionLoadResult
 from .models import ProtectionLoadState
+from .models import StorageRunResult
+from .models import StorageRunState
 from .registry_commit import async_commit_protection_transaction
 from .registry_safety_transitions import authorize_snapshot_owner_transition
+
+
+@dataclass(frozen=True, slots=True)
+class CommitPreconditions:
+    """Keep worker-safe and event-loop-only commit checks distinct."""
+
+    worker: Callable[[], ProtectionLoadResult | None] | None = None
+    event_loop: Callable[[], ProtectionLoadResult | None] | None = None
 
 
 class _CommitStore(Protocol):
@@ -162,7 +173,7 @@ async def async_commit_protected_store(
     envelope: dict[str, Any],
     *,
     legacy_migration_verified: bool,
-    precondition: Callable[[], ProtectionLoadResult | None] | None,
+    preconditions: CommitPreconditions,
     authorize_owner_transition: Callable[[], bool] | None,
     on_acknowledged: Callable[[ProtectionLoadResult], None] | None,
 ) -> ProtectionLoadResult:
@@ -175,16 +186,40 @@ async def async_commit_protected_store(
     callbacks = _CommitCallbacks(
         store,
         envelope,
-        precondition,
+        preconditions.worker,
         authorize_owner_transition,
         on_acknowledged,
     )
+
+    def begin_if_current() -> StorageRunResult | None:
+        """Check event-loop state under both locks before worker submission."""
+        if preconditions.event_loop is not None:
+            try:
+                rejection = preconditions.event_loop()
+            except Exception:
+                rejection = _unavailable("snapshot_precondition_failed")
+            if rejection is not None:
+                if rejection.state is ProtectionLoadState.BUSY:
+                    return StorageRunResult(StorageRunState.BUSY)
+                if rejection.state is ProtectionLoadState.PROTECTIVE_UNKNOWN:
+                    return StorageRunResult(
+                        StorageRunState.UNCERTAIN,
+                        value=rejection,
+                        failure_code=rejection.failure_code,
+                    )
+                return StorageRunResult(
+                    StorageRunState.UNAVAILABLE,
+                    failure_code=rejection.failure_code or "operation_failed",
+                )
+        callbacks.begin()
+        return None
+
     result = await async_commit_protection_transaction(
         store._async_lock,
         store._storage_dir,
         envelope,
         legacy_migration_verified=legacy_migration_verified,
-        on_start=callbacks.begin,
+        on_start=begin_if_current,
         on_completion=callbacks.complete,
         operation_preflight=callbacks.check_precondition,
     )

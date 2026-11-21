@@ -9,7 +9,7 @@ import hmac
 import json
 from typing import Any
 
-from .associations import AssociationRebindHold
+from .association_evidence import AssociationRebindHold
 from .code_codec import code_ref_for
 from .code_codec import decode_code
 
@@ -68,6 +68,108 @@ def has_known_original_safety_record(
             if "rc_entry_id" not in record and section == "holds":
                 return None
     return False
+
+
+def original_keymaster_entry_for_references(
+    data: dict[str, Any],
+    rc_entry_id: str,
+    references: tuple[str, ...],
+    *,
+    require_complete_snapshot: bool = True,
+) -> str | None:
+    """Return one independently proven original entry for every exact reference."""
+    expected = association_references_for_snapshot(data, rc_entry_id)
+    if (
+        not references
+        or expected is None
+        or len(set(references)) != len(references)
+        or (require_complete_snapshot and set(expected) != set(references))
+    ):
+        return None
+    salt = _code_reference_salt(data)
+    if salt is None:
+        return None
+    proven: dict[str, set[str]] = {}
+    for section in ("pending_fences", "holds", "tombstones"):
+        records = data.get(section)
+        if not isinstance(records, list):
+            return None
+        for record in records:
+            if not isinstance(record, dict):
+                return None
+            record_references = _original_proven_references(
+                section,
+                record,
+                rc_entry_id,
+                salt,
+            )
+            if record_references is None:
+                return None
+            for reference, original in record_references.items():
+                if reference in references:
+                    proven.setdefault(reference, set()).add(original)
+    if set(proven) != set(references) or any(
+        len(entries) != 1 for entries in proven.values()
+    ):
+        return None
+    original_entries = {next(iter(entries)) for entries in proven.values()}
+    return next(iter(original_entries)) if len(original_entries) == 1 else None
+
+
+def _original_proven_references(
+    section: str,
+    record: dict[str, Any],
+    rc_entry_id: str,
+    salt: str,
+) -> dict[str, str] | None:
+    """Map one validated safety record's stable opaque refs to its original."""
+    if section == "holds" and record.get("kind") == "association_rebind":
+        return None if AssociationRebindHold.from_record(record) is None else {}
+    if record.get("rc_entry_id") != rc_entry_id:
+        return {}
+    original = record.get("original_km_entry_id")
+    if not isinstance(original, str) or not original:
+        return {}
+    serialized = json.dumps(
+        record,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    references = {_opaque_reference(salt, f"safety:{section}", serialized): original}
+    if section == "tombstones":
+        original_fence_reference = _original_fence_reference(record, salt)
+        if original_fence_reference is not None:
+            references[original_fence_reference] = original
+    owner_reference = record.get("owner_ref")
+    if isinstance(owner_reference, str):
+        references[owner_reference] = original
+    return references
+
+
+def _original_fence_reference(record: dict[str, Any], salt: str) -> str | None:
+    """Recreate the immutable source-fence digest retained in its tombstone."""
+    original_fields = (
+        "fence_id",
+        "original_km_entry_id",
+        "slot",
+        "rc_entry_id",
+        "owner_ref",
+        "allocation_ref",
+        "created_transaction_id",
+        "created_generation",
+        "fence_type",
+    )
+    if not all(field in record for field in original_fields):
+        return None
+    original_fence = {key: record[key] for key in original_fields}
+    encoded = json.dumps(
+        original_fence,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return _opaque_reference(salt, "safety:pending_fences", encoded)
 
 
 def _code_reference_salt(data: dict[str, Any]) -> str | None:

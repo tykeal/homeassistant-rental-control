@@ -8,15 +8,28 @@ import asyncio
 import copy
 import json
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from custom_components.rental_control.allocator import adoption
 from custom_components.rental_control.allocator import registry_commit
+from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
+from custom_components.rental_control.allocator.association_commit import (
+    add_association_transaction_to_envelope,
+)
 from custom_components.rental_control.allocator.association_references import (
     ledger_owner_reference,
 )
+from custom_components.rental_control.allocator.association_transactions import (
+    AssociationTransaction,
+)
+from custom_components.rental_control.allocator.associations import AssociationChange
+from custom_components.rental_control.allocator.associations import AssociationMode
+from custom_components.rental_control.allocator.associations import AssociationTuple
+from custom_components.rental_control.allocator.models import AdoptionRequest
 from custom_components.rental_control.allocator.models import AllocationOrigin
 from custom_components.rental_control.allocator.models import AllocationOwner
 from custom_components.rental_control.allocator.models import AllocationRecord
@@ -100,6 +113,17 @@ def _owner(
     )
 
 
+def _snapshot_provider(exclusions: list[dict[str, Any]], generation: int = 1):
+    """Return a live-snapshot source for the protected commit seam."""
+    snapshot = copy.deepcopy(exclusions)
+
+    def current_snapshot() -> tuple[int, list[dict[str, Any]]]:
+        """Return a copy as an event-loop config snapshot would."""
+        return generation, copy.deepcopy(snapshot)
+
+    return current_snapshot
+
+
 async def _ready_store(
     hass, storage: Path
 ) -> tuple[ProtectedRegistryStore, asyncio.Lock]:
@@ -116,6 +140,240 @@ async def _ready_store(
     loaded = await store.async_load()
     assert loaded.state is ProtectionLoadState.VALID_V2
     return store, lock
+
+
+async def test_protected_alias_migration_uses_actual_adoption_path(
+    hass,
+    tmp_path: Path,
+) -> None:
+    """Same verified lock aliases migrate only with an acknowledged snapshot."""
+    storage = tmp_path / ".storage"
+    store, lock = await _ready_store(hass, storage)
+    allocator = DoorCodeAllocator(hass)
+    allocator._lock = lock
+    allocator._registry = AllocationRegistry(
+        code_ref_salt="persisted-code-reference-salt"
+    )
+    old_association = AssociationTuple(
+        True, "lock.front_door", None, 0, None, AssociationMode.LEGACY_UNRESOLVED
+    )
+    transaction_id = "2" * 32
+    source_association = AssociationTuple(
+        True,
+        "lock.front_door",
+        "km-shared",
+        1,
+        transaction_id,
+        AssociationMode.VERIFIED,
+    )
+    association_transaction = AssociationTransaction(
+        transaction_id,
+        2,
+        _BASE_TX,
+        (
+            AssociationChange("rc-a", old_association, source_association),
+            AssociationChange("rc-b", old_association, source_association),
+        ),
+    )
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    envelope = add_association_transaction_to_envelope(
+        {
+            "version": 2,
+            "minor_version": 1,
+            "key": "rental_control.code_registry",
+            "data": loaded.data,
+        },
+        association_transaction,
+    )
+    assert envelope is not None
+    association_result = await store.async_commit(envelope)
+    assert association_result.state is ProtectionLoadState.VALID_V2
+
+    source_request = AdoptionRequest(
+        entry_id="rc-a",
+        identity_key="source-booking",
+        code="4729",
+        code_length=4,
+        lockname="lock.front_door",
+        slot=10,
+    )
+    alias_key = adoption.issuance.observed_alias_key(source_request)
+
+    def stage_observed_alias(candidate: AllocationRegistry) -> None:
+        """Create the alias through the actual suppressed-slot routine."""
+        staged_allocator = copy.copy(allocator)
+        staged_allocator._registry = candidate
+        adoption.reserve_observed_code(staged_allocator, source_request)
+        candidate.records["6813"] = AllocationRecord(
+            code="6813",
+            code_ref="unrelated-code-ref",
+            encoding_salt_value="rc-c",
+            owners=[_owner("rc-c", "later-owner", slot=11)],
+            created_at="2026-11-21T00:00:00+00:00",
+            updated_at="2026-11-21T00:00:00+00:00",
+        )
+        candidate.rebuild_index()
+
+    def add_alias_fence(
+        _candidate: AllocationRegistry,
+        data: dict[str, Any],
+        transaction_id: str,
+        generation: int,
+    ) -> None:
+        """Bind the alias to the exact acknowledged source allocation."""
+        ledger = data["ledger"]
+        assert isinstance(ledger, dict)
+        record = ledger["records"][0]
+        owner = record["owners"][0]
+        owner_ref = ledger_owner_reference(data, record, owner)
+        assert owner_ref is not None
+        data["pending_fences"].append(
+            PendingSlotFence(
+                fence_id="3" * 32,
+                original_km_entry_id="km-shared",
+                slot=10,
+                rc_entry_id="rc-a",
+                owner_ref=owner_ref,
+                allocation_ref="source-allocation",
+                created_transaction_id=transaction_id,
+                created_generation=generation,
+                fence_type="allocation",
+            ).to_record()
+        )
+
+    first = await async_commit_registry_snapshot(
+        allocator,
+        store,
+        stage_observed_alias,
+        [],
+        current_exclusion_snapshot=_snapshot_provider([]),
+        safety_transition=add_alias_fence,
+    )
+    assert first.state is ProtectionLoadState.VALID_V2
+    prior = store.loaded_result
+    assert prior is not None and prior.data is not None
+    prior_fence = prior.data["pending_fences"][0]
+
+    target_request = AdoptionRequest(
+        entry_id="rc-b",
+        identity_key="target-booking",
+        code="4729",
+        code_length=4,
+        lockname="lock.front_door",
+        slot=10,
+    )
+    associations = {"rc-a": source_association, "rc-b": source_association}
+
+    def stage_alias_transfer(candidate: AllocationRegistry) -> None:
+        """Replace only the proven alias through actual adoption behavior."""
+        staged_allocator = copy.copy(allocator)
+        staged_allocator._registry = candidate
+        result = staged_allocator._adopt_associated_alias_unlocked(
+            target_request, associations
+        )
+        assert result.code == "4729"
+        assert alias_key not in candidate.by_identity
+        assert candidate.code_for_identity("target-booking") == "4729"
+
+    def record_alias_transfer(
+        _candidate: AllocationRegistry,
+        data: dict[str, Any],
+        transaction_id: str,
+        generation: int,
+    ) -> None:
+        """Resolve the old source fence and fence the new real owner."""
+        data["pending_fences"] = []
+        data["tombstones"].append(
+            resolve_fence_to_tombstone(
+                prior_fence,
+                tombstone_id="4" * 32,
+                resolved_transaction_id=transaction_id,
+                resolved_generation=generation,
+                resolution_kind="owner_released",
+                retained_at="2026-11-21T00:01:00+00:00",
+            )
+        )
+        ledger = data["ledger"]
+        assert isinstance(ledger, dict)
+        record = ledger["records"][0]
+        owner = next(
+            item
+            for item in record["owners"]
+            if item["identity_key"] == "target-booking"
+        )
+        owner_ref = ledger_owner_reference(data, record, owner)
+        assert owner_ref is not None
+        data["pending_fences"].append(
+            PendingSlotFence(
+                fence_id="5" * 32,
+                original_km_entry_id="km-shared",
+                slot=10,
+                rc_entry_id="rc-b",
+                owner_ref=owner_ref,
+                allocation_ref="target-allocation",
+                created_transaction_id=transaction_id,
+                created_generation=generation,
+                fence_type="allocation",
+            ).to_record()
+        )
+
+    def authorize_observed_adoption(
+        before: AllocationRegistry,
+        after: AllocationRegistry,
+    ) -> bool:
+        """Use actual adoption state and refuse to release a programmed slot."""
+        old_record = before.records.get("4729")
+        old_alias = (
+            next(
+                (
+                    owner
+                    for owner in old_record.owners
+                    if owner.identity_key == alias_key
+                ),
+                None,
+            )
+            if old_record is not None
+            else None
+        )
+        observation = CycleObservation(
+            entry_id="rc-a",
+            lockname="lock.front_door",
+            managed_slots=frozenset({10}),
+            observed_codes={"4729": 10},
+            unreadable_slots=frozenset(),
+        )
+        return bool(
+            old_record is not None
+            and old_alias is not None
+            and allocator._release_guard_reason(
+                old_record,
+                [old_alias],
+                [observation],
+                refresh_observed=False,
+            )
+            == "code_still_programmed"
+            and after.code_for_identity(alias_key) is None
+            and after.code_for_identity("target-booking") == "4729"
+        )
+
+    migrated = await async_commit_registry_snapshot(
+        allocator,
+        store,
+        stage_alias_transfer,
+        [],
+        current_exclusion_snapshot=_snapshot_provider([]),
+        authorize_owner_transition=authorize_observed_adoption,
+        safety_transition=record_alias_transfer,
+    )
+
+    assert migrated.state is ProtectionLoadState.VALID_V2
+    assert allocator._registry.code_for_identity(alias_key) is None
+    assert allocator._registry.code_for_identity("target-booking") == "4729"
+    assert allocator._registry.code_for_identity("later-owner") == "6813"
+    durable = store.loaded_result
+    assert durable is not None and durable.data is not None
+    assert durable.data["tombstones"][-1]["original_km_entry_id"] == "km-shared"
 
 
 async def test_staged_registry_and_exclusions_publish_only_after_ack(
@@ -170,6 +428,7 @@ async def test_staged_registry_and_exclusions_publish_only_after_ack(
         store,
         add_owner,
         exclusions,
+        current_exclusion_snapshot=_snapshot_provider(exclusions),
     )
 
     assert committed.state is ProtectionLoadState.VALID_V2
@@ -183,6 +442,204 @@ async def test_staged_registry_and_exclusions_publish_only_after_ack(
     )
     assert store.loaded_result is not None
     assert store.loaded_result.transaction_id == committed.transaction_id
+
+
+async def test_stale_exclusion_snapshot_rejects_before_storage_io(
+    hass,
+    tmp_path: Path,
+) -> None:
+    """A stale captured exclusion list never reaches protected storage."""
+    storage = tmp_path / ".storage"
+    store, lock = await _ready_store(hass, storage)
+    original_registry = AllocationRegistry(
+        code_ref_salt="persisted-code-reference-salt"
+    )
+    allocator = SimpleNamespace(_lock=lock, _registry=original_registry)
+    registry_bytes = (storage / "rental_control.code_registry").read_bytes()
+    changed = [
+        {
+            "rc_entry_id": "rc-a",
+            "slots": [{"slot": 7, "reason": "unreadable"}],
+        }
+    ]
+    called = False
+
+    def stage(_candidate: AllocationRegistry) -> None:
+        """Track whether stale exclusions allow candidate construction."""
+        nonlocal called
+        called = True
+
+    def current_snapshot() -> tuple[int, list[dict[str, Any]]]:
+        """Return the live config state, newer than the caller's capture."""
+        return 2, changed
+
+    result = await async_commit_registry_snapshot(
+        allocator,
+        store,
+        stage,
+        [],
+        current_exclusion_snapshot=current_snapshot,
+    )
+
+    assert result.state is ProtectionLoadState.UNAVAILABLE
+    assert result.failure_code == "snapshot_exclusions_changed"
+    assert not called
+    assert (storage / "rental_control.code_registry").read_bytes() == registry_bytes
+    assert allocator._registry is original_registry
+
+
+async def test_exclusion_change_before_locked_preflight_rejects_without_io(
+    hass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A queued config change is rejected under both locks before disk writes."""
+    storage = tmp_path / ".storage"
+    store, lock = await _ready_store(hass, storage)
+    original_registry = AllocationRegistry(
+        code_ref_salt="persisted-code-reference-salt"
+    )
+    allocator = SimpleNamespace(_lock=lock, _registry=original_registry)
+    registry_path = storage / "rental_control.code_registry"
+    marker_path = storage / "rental_control.code_registry_protection"
+    registry_bytes = registry_path.read_bytes()
+    marker_bytes = marker_path.read_bytes()
+    current: list[Any] = [1, []]
+    event_loop_thread = threading.get_ident()
+    provider_threads: list[int] = []
+    writes: list[object] = []
+
+    def current_snapshot() -> tuple[int, list[dict[str, Any]]]:
+        """Read HA-owned config only from the event-loop thread."""
+        provider_threads.append(threading.get_ident())
+        assert threading.get_ident() == event_loop_thread
+        return current[0], copy.deepcopy(current[1])
+
+    def stage(candidate: AllocationRegistry) -> None:
+        """Create a candidate so rejection proves it was never published."""
+        candidate.records["4729"] = AllocationRecord(
+            code="4729",
+            code_ref="staged-code-ref",
+            encoding_salt_value="rc-a",
+            owners=[_owner("rc-a", "stale-exclusion", slot=4)],
+            created_at="2026-11-21T00:00:00+00:00",
+            updated_at="2026-11-21T00:00:00+00:00",
+        )
+
+    original_async_commit = store.async_commit
+
+    async def change_exclusions_after_unlocked_check(envelope, **kwargs):
+        """Change HA config after the caller's last check, before lock acquire."""
+        current[:] = [
+            2,
+            [
+                {
+                    "rc_entry_id": "rc-a",
+                    "slots": [{"slot": 7, "reason": "changed"}],
+                }
+            ],
+        ]
+        return await original_async_commit(envelope, **kwargs)
+
+    original_write = registry_commit._write_prepared_transaction
+
+    def track_write(prepared):
+        """Record whether any marker/envelope transaction is submitted."""
+        writes.append(prepared)
+        return original_write(prepared)
+
+    monkeypatch.setattr(store, "async_commit", change_exclusions_after_unlocked_check)
+    monkeypatch.setattr(registry_commit, "_write_prepared_transaction", track_write)
+
+    result = await async_commit_registry_snapshot(
+        allocator,
+        store,
+        stage,
+        [],
+        current_exclusion_snapshot=current_snapshot,
+    )
+
+    assert result.state is ProtectionLoadState.UNAVAILABLE
+    assert result.failure_code == "snapshot_exclusions_changed"
+    assert writes == []
+    assert registry_path.read_bytes() == registry_bytes
+    assert marker_path.read_bytes() == marker_bytes
+    assert allocator._registry is original_registry
+    assert allocator._registry.records == {}
+    assert store.authorization_state.value == "ready"
+    assert store.loaded_result is not None
+    assert store.loaded_result.transaction_id == _BASE_TX
+    assert provider_threads
+    assert all(thread_id == event_loop_thread for thread_id in provider_threads)
+
+
+async def test_exclusion_change_before_publication_freezes_snapshot(
+    hass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config generation change during I/O cannot publish the stale snapshot."""
+    storage = tmp_path / ".storage"
+    store, lock = await _ready_store(hass, storage)
+    original_registry = AllocationRegistry(
+        code_ref_salt="persisted-code-reference-salt"
+    )
+    allocator = SimpleNamespace(_lock=lock, _registry=original_registry)
+    current: list[Any] = [3, []]
+    event_loop_thread = threading.get_ident()
+    provider_threads: list[int] = []
+    durable_write = registry_commit._write_prepared_transaction
+
+    def current_snapshot() -> tuple[int, list[dict[str, Any]]]:
+        """Read a pre-serialized event-loop snapshot without worker HA access."""
+        provider_threads.append(threading.get_ident())
+        assert threading.get_ident() == event_loop_thread
+        return current[0], copy.deepcopy(current[1])
+
+    def stage(candidate: AllocationRegistry) -> None:
+        """Add one staged owner to the candidate registry."""
+        candidate.records["4729"] = AllocationRecord(
+            code="4729",
+            code_ref="staged-code-ref",
+            encoding_salt_value="rc-a",
+            owners=[_owner("rc-a", "stale-snapshot", slot=4)],
+            created_at="2026-11-21T00:00:00+00:00",
+            updated_at="2026-11-21T00:00:00+00:00",
+        )
+
+    def change_config_then_write(prepared):
+        """Simulate an event-loop exclusion update while storage is pending."""
+        current[:] = [
+            4,
+            [
+                {
+                    "rc_entry_id": "rc-a",
+                    "slots": [{"slot": 7, "reason": "changed"}],
+                }
+            ],
+        ]
+        return durable_write(prepared)
+
+    monkeypatch.setattr(
+        registry_commit,
+        "_write_prepared_transaction",
+        change_config_then_write,
+    )
+    result = await async_commit_registry_snapshot(
+        allocator,
+        store,
+        stage,
+        [],
+        current_exclusion_snapshot=current_snapshot,
+    )
+
+    assert result.state is ProtectionLoadState.PROTECTIVE_UNKNOWN
+    assert result.failure_code == "snapshot_projection_failed"
+    assert allocator._registry is original_registry
+    assert allocator._registry.records == {}
+    assert store.authorization_state.value == "protective_unknown"
+    assert provider_threads
+    assert all(thread_id == event_loop_thread for thread_id in provider_threads)
 
 
 async def test_snapshot_rejects_live_base_change_before_storage_io(
@@ -227,6 +684,7 @@ async def test_snapshot_rejects_live_base_change_before_storage_io(
         store,
         stage_unrelated_owner,
         [],
+        current_exclusion_snapshot=_snapshot_provider([]),
     )
 
     assert result.state is ProtectionLoadState.UNAVAILABLE
@@ -261,6 +719,7 @@ async def test_snapshot_rejects_a_store_with_a_different_allocator_lock(
         store,
         stage,
         [],
+        current_exclusion_snapshot=_snapshot_provider([]),
     )
 
     assert result.state is ProtectionLoadState.UNAVAILABLE
@@ -309,6 +768,7 @@ async def test_uncertain_snapshot_write_does_not_publish_staged_registry(
         store,
         stage_owner,
         [],
+        current_exclusion_snapshot=_snapshot_provider([]),
     )
 
     assert result.state is ProtectionLoadState.PROTECTIVE_UNKNOWN
@@ -357,6 +817,7 @@ async def test_transition_allows_exclusions_but_rejects_unproven_owner_loss(
         store,
         add_owner,
         exclusions,
+        current_exclusion_snapshot=_snapshot_provider(exclusions),
     )
     assert first.state is ProtectionLoadState.VALID_V2
     prior = store.loaded_result
@@ -375,6 +836,7 @@ async def test_transition_allows_exclusions_but_rejects_unproven_owner_loss(
         store,
         lambda _candidate: None,
         [],
+        current_exclusion_snapshot=_snapshot_provider([]),
     )
     assert updated.state is ProtectionLoadState.VALID_V2
     assert store.loaded_result is not None
@@ -439,6 +901,7 @@ async def test_guarded_slot_move_and_release_require_current_tombstones(
         store,
         add_owner,
         [],
+        current_exclusion_snapshot=_snapshot_provider([]),
         safety_transition=create_fence,
     )
     assert first.state is ProtectionLoadState.VALID_V2
@@ -568,6 +1031,7 @@ async def test_guarded_slot_move_and_release_require_current_tombstones(
         store,
         move_owner,
         [],
+        current_exclusion_snapshot=_snapshot_provider([]),
         authorize_owner_transition=authorize_slot_move,
         safety_transition=record_slot_move,
     )
@@ -637,6 +1101,7 @@ async def test_guarded_slot_move_and_release_require_current_tombstones(
         store,
         release_owner,
         [],
+        current_exclusion_snapshot=_snapshot_provider([]),
         authorize_owner_transition=authorize_release,
         safety_transition=resolve_fence,
     )

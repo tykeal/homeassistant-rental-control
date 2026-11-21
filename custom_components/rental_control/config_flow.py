@@ -145,6 +145,7 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
             }.intersection(user_input)
         )
         backend_registered = protected_association_backend_registered(self.hass)
+        committed_association = CONF_ASSOCIATION_MODE in self.config_entry.data
         if user_input is not None:
             user_input = dict(user_input)
             for key in (
@@ -160,7 +161,7 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
             else (
                 _reject_unprotected_association_selection
                 if association_fields_submitted
-                else None
+                else (_handle_association_selection if committed_association else None)
             )
         )
         return await _start_config_flow(

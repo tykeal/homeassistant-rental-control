@@ -24,6 +24,7 @@ from .models import ProtectionAuthorizationState
 from .models import ProtectionCommitToken
 from .models import ProtectionLoadResult
 from .models import ProtectionLoadState
+from .protected_store_commit import CommitPreconditions
 from .protected_store_commit import async_commit_protected_store
 from .registry_transactions import async_recover_protection_files
 
@@ -145,6 +146,7 @@ class ProtectedRegistryStore:
         *,
         legacy_migration_verified: bool = False,
         precondition: Callable[[], ProtectionLoadResult | None] | None = None,
+        on_locked_preflight: Callable[[], ProtectionLoadResult | None] | None = None,
         authorize_owner_transition: Callable[[], bool] | None = None,
         on_acknowledged: Callable[[ProtectionLoadResult], None] | None = None,
     ) -> ProtectionLoadResult:
@@ -153,7 +155,7 @@ class ProtectedRegistryStore:
             self,
             envelope,
             legacy_migration_verified=legacy_migration_verified,
-            precondition=precondition,
+            preconditions=CommitPreconditions(precondition, on_locked_preflight),
             authorize_owner_transition=authorize_owner_transition,
             on_acknowledged=on_acknowledged,
         )

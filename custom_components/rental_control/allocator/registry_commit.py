@@ -285,7 +285,7 @@ async def async_commit_protection_transaction(
     envelope: dict[str, Any],
     *,
     legacy_migration_verified: bool = False,
-    on_start: Callable[[], None] | None = None,
+    on_start: Callable[[], StorageRunResult | None] | None = None,
     on_completion: Callable[[ProtectionLoadResult], None] | None = None,
     operation_preflight: Callable[[], ProtectionLoadResult | None] | None = None,
 ) -> ProtectionLoadResult:

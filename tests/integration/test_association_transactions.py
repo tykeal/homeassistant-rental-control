@@ -18,8 +18,17 @@ from pytest_homeassistant.common import MockConfigEntry
 from custom_components.rental_control.allocator.association_commit import (
     add_association_transaction_to_envelope,
 )
+from custom_components.rental_control.allocator.association_evidence import (
+    AssociationAttestation,
+)
+from custom_components.rental_control.allocator.association_evidence import (
+    AssociationRebindHold,
+)
 from custom_components.rental_control.allocator.association_references import (
     association_references_for_snapshot,
+)
+from custom_components.rental_control.allocator.association_references import (
+    ledger_owner_reference,
 )
 from custom_components.rental_control.allocator.association_transactions import (
     AssociationReplayState,
@@ -36,14 +45,8 @@ from custom_components.rental_control.allocator.association_transactions import 
 from custom_components.rental_control.allocator.association_transactions import (
     valid_association_sections,
 )
-from custom_components.rental_control.allocator.associations import (
-    AssociationAttestation,
-)
 from custom_components.rental_control.allocator.associations import AssociationChange
 from custom_components.rental_control.allocator.associations import AssociationMode
-from custom_components.rental_control.allocator.associations import (
-    AssociationRebindHold,
-)
 from custom_components.rental_control.allocator.associations import AssociationTuple
 from custom_components.rental_control.allocator.code_codec import encode_code
 from custom_components.rental_control.allocator.models import (
@@ -56,6 +59,12 @@ from custom_components.rental_control.allocator.protected_registry import (
 )
 from custom_components.rental_control.allocator.protected_store import (
     ProtectedRegistryStore,
+)
+from custom_components.rental_control.allocator.registry_safety_models import (
+    resolve_fence_to_tombstone,
+)
+from custom_components.rental_control.allocator.registry_safety_transitions import (
+    validate_snapshot_transition,
 )
 from custom_components.rental_control.allocator.registry_validation import (
     validate_v2_envelope_shape,
@@ -297,17 +306,32 @@ def test_transaction_preserves_predecessor_and_multiple_entries() -> None:
     assert [change.rc_entry_id for change in parsed.changes] == ["rc-1", "rc-2"]
 
 
-def test_legacy_references_require_scoped_same_original_lock_attestation() -> None:
-    """A recreated entry can bind unknown legacy work only by explicit assertion."""
+def test_legacy_transaction_defers_evidence_to_snapshot_validation() -> None:
+    """Unproved references need a typed proof or a scoped attestation."""
     change = AssociationChange(
         "rc-1", _legacy(), _verified(_TX1), ("owner-ref", "hold-ref")
     )
     try:
         AssociationTransaction(_TX1, 1, None, (change,))
     except ValueError as err:
-        assert str(err) == "legacy references lack explicit attestation"
+        assert str(err) == "legacy references lack complete provenance"
     else:
-        raise AssertionError("unattested legacy work was accepted")
+        raise AssertionError("unproven legacy references were accepted")
+
+    proof_change = replace(
+        change,
+        independent_original_keymaster_entry_id="km-A",
+        independently_proven_references=change.affected_references,
+    )
+    proof_transaction = AssociationTransaction(
+        _TX1,
+        1,
+        None,
+        (proof_change,),
+    )
+    assert AssociationTransaction.from_record(proof_transaction.to_record()) == (
+        proof_transaction
+    )
 
     attestation = AssociationAttestation(
         _ATTESTATION_ID,
@@ -328,6 +352,117 @@ def test_legacy_references_require_scoped_same_original_lock_attestation() -> No
         (attestation,),
     )
     assert transaction.to_record()["attestations"] == [attestation.to_record()]
+
+
+def test_legacy_migration_requires_attestation_or_exact_original_proof() -> None:
+    """The protected transition accepts only complete exact prior evidence."""
+    prior = _durable_v2_envelope()["data"]
+    owner = {
+        "entry_id": "rc-1",
+        "identity_key": "owner-identity",
+        "origin": "adopted",
+        "lockname": "lock.front_door",
+        "slot": 10,
+        "lock_observed": True,
+        "first_seen": "2026-11-21T00:00:00+00:00",
+        "last_seen": "2026-11-21T00:00:00+00:00",
+    }
+    record = {
+        "encoded_code": encode_code("4729", "encoding-salt"),
+        "encoding_salt_source": "entry_id",
+        "encoding_salt_value": "encoding-salt",
+        "code_length": 4,
+        "created_at": "2026-11-21T00:00:00+00:00",
+        "updated_at": "2026-11-21T00:00:00+00:00",
+        "owners": [owner],
+    }
+    prior["ledger"]["records"] = [record]
+    owner_reference = ledger_owner_reference(prior, record, owner)
+    assert owner_reference is not None
+    prior["pending_fences"] = [
+        {
+            "fence_id": "f" * 32,
+            "original_km_entry_id": "km-A",
+            "slot": 10,
+            "rc_entry_id": "rc-1",
+            "owner_ref": owner_reference,
+            "allocation_ref": "allocation-reference",
+            "created_transaction_id": _PREVIOUS_TX,
+            "created_generation": 1,
+            "fence_type": "allocation",
+        }
+    ]
+    assert association_references_for_snapshot(prior, "rc-1") is not None
+    change = AssociationChange(
+        "rc-1",
+        _legacy(),
+        _verified(_TX1),
+        association_references_for_snapshot(prior, "rc-1") or (),
+        "km-A",
+        association_references_for_snapshot(prior, "rc-1") or (),
+    )
+    transaction = AssociationTransaction(
+        _TX1,
+        2,
+        _PREVIOUS_TX,
+        (change,),
+    )
+    target = copy.deepcopy(prior)
+    target["transaction_id"] = _TX1
+    target["generation"] = 2
+    target["associations"] = [association_storage_record("rc-1", change.new)]
+    target["pending_config"] = [transaction.to_record()]
+
+    assert validate_snapshot_transition(prior, target)
+    target_envelope = _durable_v2_envelope()
+    target_envelope["data"] = target
+    assert validate_v2_envelope_shape(target_envelope)
+
+    released = copy.deepcopy(target)
+    released["transaction_id"] = "3" * 32
+    released["generation"] = 3
+    released["ledger"]["records"] = []
+    released["pending_fences"] = []
+    released["tombstones"] = [
+        resolve_fence_to_tombstone(
+            prior["pending_fences"][0],
+            tombstone_id="4" * 32,
+            resolved_transaction_id="3" * 32,
+            resolved_generation=3,
+            resolution_kind="owner_released",
+            retained_at="2026-11-21T00:01:00+00:00",
+        )
+    ]
+    assert validate_snapshot_transition(target, released)
+    released_envelope = _durable_v2_envelope()
+    released_envelope["data"] = released
+    assert validate_v2_envelope_shape(released_envelope)
+
+    unknown_prior = copy.deepcopy(prior)
+    unknown_prior["pending_fences"] = []
+    unknown_change = replace(
+        change,
+        affected_references=association_references_for_snapshot(unknown_prior, "rc-1")
+        or (),
+        independently_proven_references=association_references_for_snapshot(
+            unknown_prior, "rc-1"
+        )
+        or (),
+    )
+    unknown_transaction = AssociationTransaction(
+        _TX1,
+        2,
+        _PREVIOUS_TX,
+        (unknown_change,),
+    )
+    unknown_target = copy.deepcopy(unknown_prior)
+    unknown_target["transaction_id"] = _TX1
+    unknown_target["generation"] = 2
+    unknown_target["associations"] = [
+        association_storage_record("rc-1", unknown_change.new)
+    ]
+    unknown_target["pending_config"] = [unknown_transaction.to_record()]
+    assert not validate_snapshot_transition(unknown_prior, unknown_target)
 
 
 def test_shared_owner_attestations_cannot_contradict_each_other() -> None:

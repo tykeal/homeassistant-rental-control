@@ -7,10 +7,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .associations import AssociationAttestation
+from .association_evidence import AssociationAttestation
+from .association_evidence import AssociationRebindHold
 from .associations import AssociationChange
 from .associations import AssociationMode
-from .associations import AssociationRebindHold
 from .associations import AssociationReplayState
 from .associations import AssociationTuple
 from .associations import _opaque_id
@@ -143,7 +143,7 @@ class AssociationTransaction:
                 raise ValueError("unexpected association rebind hold")
 
     def _validate_legacy_references(self) -> None:
-        """Require legacy-owned references to be explicitly attested."""
+        """Require one complete attestation or independent proof per legacy set."""
         for change in self.changes:
             if (
                 change.old.mode is AssociationMode.LEGACY_UNRESOLVED
@@ -156,8 +156,14 @@ class AssociationTransaction:
                     if attestation.rc_entry_id == change.rc_entry_id
                     for reference in attestation.legacy_reference_ids
                 }
-                if not set(change.affected_references).issubset(covered_references):
-                    raise ValueError("legacy references lack explicit attestation")
+                affected = set(change.affected_references)
+                proven = set(change.independently_proven_references)
+                if (
+                    not covered_references.issubset(affected)
+                    or (covered_references and proven)
+                    or (covered_references != affected and proven != affected)
+                ):
+                    raise ValueError("legacy references lack complete provenance")
 
     def to_record(self) -> dict[str, object]:
         """Serialize a pending-config chain record."""

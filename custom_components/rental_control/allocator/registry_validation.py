@@ -17,6 +17,7 @@ from .models import ProtectionLoadResult
 from .models import ProtectionLoadState
 from .models import RawFileRead
 from .models import RawFileState
+from .registry_association_transitions import validate_association_history_evidence
 from .registry_files import MAX_REGISTRY_BYTES
 from .registry_payload import _is_typed_json_object
 from .registry_payload import _is_v1_ledger_shape
@@ -154,6 +155,8 @@ def _valid_v2_safety_sections(data: dict[str, Any]) -> bool:
     if not valid_tombstone_section(data["tombstones"]):
         return False
     if not validate_snapshot_structure(data):
+        return False
+    if not validate_association_history_evidence(data):
         return False
     generation = data["generation"]
     if not references_match_snapshot(

@@ -21,6 +21,7 @@ from custom_components.rental_control.allocator.models import (
 )
 from custom_components.rental_control.allocator.models import ProtectionLoadResult
 from custom_components.rental_control.allocator.models import ProtectionLoadState
+from custom_components.rental_control.config_flow import RentalControlOptionsFlow
 from custom_components.rental_control.config_flow import _handle_association_selection
 from custom_components.rental_control.config_flow import _start_config_flow
 from custom_components.rental_control.config_flow_helpers.models import (
@@ -51,6 +52,9 @@ from custom_components.rental_control.config_flow_helpers.validation import vali
 from custom_components.rental_control.const import ALLOCATOR
 from custom_components.rental_control.const import CONF_ASSOCIATION_ATTEST_SAME_LOCK
 from custom_components.rental_control.const import CONF_ASSOCIATION_ENTRY_CHOICE
+from custom_components.rental_control.const import CONF_ASSOCIATION_GENERATION
+from custom_components.rental_control.const import CONF_ASSOCIATION_MODE
+from custom_components.rental_control.const import CONF_ASSOCIATION_TRANSACTION_ID
 from custom_components.rental_control.const import CONF_CHECKIN
 from custom_components.rental_control.const import CONF_CHECKOUT
 from custom_components.rental_control.const import CONF_CODE_GENERATION
@@ -67,6 +71,7 @@ from custom_components.rental_control.const import CONF_SHOULD_UPDATE_CODE
 from custom_components.rental_control.const import CONF_START_SLOT
 from custom_components.rental_control.const import CONF_TIMEZONE
 from custom_components.rental_control.const import CONF_TRIM_NAMES
+from custom_components.rental_control.const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
 from custom_components.rental_control.const import DEFAULT_CHECKIN
 from custom_components.rental_control.const import DEFAULT_CHECKOUT
 from custom_components.rental_control.const import DEFAULT_CODE_LENGTH
@@ -587,3 +592,82 @@ async def test_options_association_waits_for_validation_and_strips_ui_fields(
     assert CONF_ASSOCIATION_ATTEST_SAME_LOCK not in result["data"]
     assert CONF_VERIFIED_KEYMASTER_ENTRY_ID not in result["data"]
     assert result["data"][CONF_LOCK_ENTRY] == "lock.front_door"
+
+
+async def test_committed_selector_edit_requires_protected_repair(hass, monkeypatch):
+    """A missing backend cannot silently ignore edits to a committed tuple."""
+    from custom_components.rental_control.allocator.associations import AssociationMode
+
+    front = MockConfigEntry(
+        domain=LOCK_MANAGER,
+        title="Front Door",
+        data={"lockname": "lock.front_door"},
+        entry_id="km-front",
+    )
+    back = MockConfigEntry(
+        domain=LOCK_MANAGER,
+        title="Back Door",
+        data={"lockname": "lock.back_door"},
+        entry_id="km-back",
+    )
+    front.add_to_hass(hass)
+    back.add_to_hass(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Rental",
+        entry_id="rc-committed-association",
+        data={
+            CONF_LOCK_ENTRY: "lock.front_door",
+            CONF_VERIFIED_KEYMASTER_ENTRY_ID: front.entry_id,
+            CONF_ASSOCIATION_GENERATION: 3,
+            CONF_ASSOCIATION_TRANSACTION_ID: "c" * 32,
+            CONF_ASSOCIATION_MODE: AssociationMode.VERIFIED.value,
+        },
+    )
+    entry.add_to_hass(hass)
+    flow = _OptionsFlow(hass)
+    flow.config_entry = entry
+
+    async def dispatch_handler(
+        target_flow,
+        _step_id,
+        _title,
+        user_input,
+        _defaults,
+        _entry_id,
+        *,
+        validated_input_handler,
+    ):
+        """Exercise the actual options-flow handler selection."""
+        assert validated_input_handler is not None
+        return await validated_input_handler(target_flow, user_input)
+
+    monkeypatch.setattr(
+        "custom_components.rental_control.config_flow._start_config_flow",
+        dispatch_handler,
+    )
+
+    changed = await RentalControlOptionsFlow.async_step_init(
+        flow,
+        {
+            **_valid_input(),
+            CONF_LOCK_ENTRY: "Back Door",
+        },
+    )
+    assert changed == (
+        {
+            **_valid_input(),
+            CONF_LOCK_ENTRY: "Back Door",
+        },
+        {CONF_LOCK_ENTRY: "association_repair_required"},
+    )
+    assert entry.data[CONF_LOCK_ENTRY] == "lock.front_door"
+
+    unchanged = await RentalControlOptionsFlow.async_step_init(
+        flow,
+        {
+            **_valid_input(),
+            CONF_LOCK_ENTRY: "Front Door",
+        },
+    )
+    assert unchanged[1] == {}

@@ -243,7 +243,7 @@ async def async_run_protected_operation(
     operation: Callable[[], Any],
     *,
     deadline_seconds: float = 5.0,
-    on_start: Callable[[], None] | None = None,
+    on_start: Callable[[], StorageRunResult | None] | None = None,
     on_completion: Callable[[StorageRunResult], None] | None = None,
 ) -> StorageRunResult:
     """Run protected I/O under ordered async/process locks and one deadline.
@@ -285,13 +285,25 @@ async def async_run_protected_operation(
             )
         if on_start is not None:
             try:
-                on_start()
+                start_result = on_start()
             except Exception:
                 _released, cancelled = await _release_io_lock_and_drain(
                     attempt.descriptor
                 )
                 if cancelled:
                     raise asyncio.CancelledError from None
+                return StorageRunResult(
+                    StorageRunState.UNAVAILABLE,
+                    failure_code="operation_failed",
+                )
+            if start_result is not None:
+                _released, cancelled = await _release_io_lock_and_drain(
+                    attempt.descriptor
+                )
+                if cancelled:
+                    raise asyncio.CancelledError from None
+                if isinstance(start_result, StorageRunResult):
+                    return start_result
                 return StorageRunResult(
                     StorageRunState.UNAVAILABLE,
                     failure_code="operation_failed",

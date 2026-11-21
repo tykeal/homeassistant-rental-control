@@ -10,11 +10,18 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntryDisabler
 from pytest_homeassistant.common import MockConfigEntry
 
+from custom_components.rental_control.allocator.association_references import (
+    association_references_for_snapshot,
+)
+from custom_components.rental_control.allocator.association_references import (
+    ledger_owner_reference,
+)
 from custom_components.rental_control.allocator.association_transactions import (
     association_storage_record,
 )
 from custom_components.rental_control.allocator.associations import AssociationMode
 from custom_components.rental_control.allocator.associations import AssociationTuple
+from custom_components.rental_control.allocator.code_codec import encode_code
 from custom_components.rental_control.allocator.models import (
     ProtectionAuthorizationState,
 )
@@ -197,18 +204,76 @@ async def test_known_original_safety_evidence_cannot_be_legacy_attested_to_b(
     assert not store.envelopes
 
 
-async def test_explicit_same_lock_attestation_is_committed_before_projection(
-    hass,
-) -> None:
-    """Attestation has an explicit checkbox and protected transaction record."""
+async def test_independent_original_entry_evidence_needs_no_attestation(hass) -> None:
+    """A prior fence proves the same original entry without operator assertion."""
     entry = _entry(hass)
-    _candidate(hass)
+    _candidate(hass, "km-a")
     flow, store = _flow(hass, entry)
+    owner = {
+        "entry_id": entry.entry_id,
+        "identity_key": "owner-identity",
+        "lockname": "lock.front_door",
+        "slot": 10,
+    }
+    ledger_record = {
+        "encoded_code": encode_code("4729", "encoding-salt"),
+        "encoding_salt_value": "encoding-salt",
+        "owners": [owner],
+    }
+    store.loaded_result.data["ledger"]["records"] = [ledger_record]
+    owner_reference = ledger_owner_reference(
+        store.loaded_result.data, ledger_record, owner
+    )
+    assert owner_reference is not None
+    store.loaded_result.data["pending_fences"] = [
+        {
+            "fence_id": "e" * 32,
+            "original_km_entry_id": "km-a",
+            "slot": 10,
+            "rc_entry_id": entry.entry_id,
+            "owner_ref": owner_reference,
+            "allocation_ref": "allocation-reference",
+            "created_transaction_id": _TX,
+            "created_generation": 1,
+            "fence_type": "allocation",
+        }
+    ]
+    references = association_references_for_snapshot(
+        store.loaded_result.data, entry.entry_id
+    )
+    assert references is not None
+    store.references = references
 
     result = await apply_association_selection(
         flow,
         {
             CONF_ASSOCIATION_ENTRY_CHOICE: "km-a",
+            CONF_ASSOCIATION_ATTEST_SAME_LOCK: False,
+            CONF_LOCK_ENTRY: "Front Door",
+        },
+    )
+
+    assert not result.errors
+    assert store.envelopes
+    data = store.envelopes[0]["data"]
+    assert data["attestations"] == []
+    change = data["pending_config"][-1]["changes"][0]
+    assert change["independent_original_keymaster_entry_id"] == "km-a"
+    assert change["independently_proven_references"] == list(references)
+
+
+async def test_explicit_same_lock_attestation_is_committed_before_projection(
+    hass,
+) -> None:
+    """A recreated entry needs an explicit same-lock claim and durable record."""
+    entry = _entry(hass)
+    _candidate(hass, "km-recreated")
+    flow, store = _flow(hass, entry)
+
+    result = await apply_association_selection(
+        flow,
+        {
+            CONF_ASSOCIATION_ENTRY_CHOICE: "km-recreated",
             CONF_ASSOCIATION_ATTEST_SAME_LOCK: True,
             CONF_LOCK_ENTRY: "Front Door",
             "unrelated_option": "preserved",
@@ -223,11 +288,11 @@ async def test_explicit_same_lock_attestation_is_committed_before_projection(
     association = AssociationTuple.from_config(entry.data)
     assert association is not None
     assert association.mode is AssociationMode.VERIFIED
-    assert association.verified_keymaster_entry_id == "km-a"
+    assert association.verified_keymaster_entry_id == "km-recreated"
     assert association.legacy_lock_selection_raw == "lock.front_door"
     assert (
         store.envelopes[0]["data"]["attestations"][0]["selected_keymaster_entry_id"]
-        == "km-a"
+        == "km-recreated"
     )
     assert store.envelopes[0]["data"]["pending_config"][0]["changes"][0][
         "affected_references"

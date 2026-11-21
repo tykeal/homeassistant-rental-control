@@ -284,6 +284,42 @@ class AllocationRegistry:
             del self.records[code]
         return True
 
+    def release_observed_aliases(
+        self,
+        identity_keys: tuple[str, ...],
+        code: str,
+        slot: int,
+    ) -> bool:
+        """Atomically remove only aliases still observed at this exact slot."""
+        if (
+            not identity_keys
+            or len(set(identity_keys)) != len(identity_keys)
+            or not code.isdecimal()
+            or not isinstance(slot, int)
+            or isinstance(slot, bool)
+            or slot < 1
+        ):
+            return False
+        record = self.records.get(code)
+        if record is None:
+            return False
+        owners = {
+            owner.identity_key: owner
+            for owner in record.owners
+            if owner.identity_key in identity_keys
+        }
+        if len(owners) != len(identity_keys) or any(
+            not is_observed_alias(owner.identity_key)
+            or not owner.lock_observed
+            or owner.slot != slot
+            for owner in owners.values()
+        ):
+            return False
+        for identity_key in identity_keys:
+            if not self.release(identity_key):
+                raise RuntimeError("validated alias release changed unexpectedly")
+        return True
+
     def conflicts(self) -> list[AllocationRecord]:
         """Return records issued to more than one physical slot.
 

@@ -65,6 +65,7 @@
       "prefix_too_long_for_trim": "Event prefix too long for max name length",
       "active_allocations": "Code length cannot be changed while this entry has active allocations or the shared code registry is recovering",
       "association_unavailable": "The protected association history is not ready; no selection was saved",
+      "association_repair_required": "The committed association history cannot be verified. No legacy lock selection was saved; reload after the protected registry is available.",
       "association_replay_required": "A protected association transaction is awaiting configuration projection. Reopen options to replay it safely.",
       "association_conflict": "This association change could transfer or obscure existing work and was not saved",
       "attestation_required": "Confirm explicitly that this is the same original physical lock to associate legacy work",
