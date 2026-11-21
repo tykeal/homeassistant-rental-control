@@ -16,19 +16,13 @@
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 
-from homeassistant.components.button import DOMAIN as BUTTON
-from homeassistant.components.datetime import DOMAIN as DATETIME
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.persistent_notification import async_dismiss
-from homeassistant.components.switch import DOMAIN as SWITCH
-from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.event import async_track_state_change_event
 
 from .allocator import async_get_or_create_allocator
 from .allocator import code_origin
@@ -50,6 +44,10 @@ from .coordinator_helpers.config_update import preserve_committed_association_tu
 from .coordinator_helpers.slot_exclusions import dismiss_excluded_slots
 from .coordinator_helpers.unreadable_slots import dismiss_unreadable_slots
 from .helpers import configured_lock_entry
+from .keymaster_feedback_listener import async_start_listener as async_start_listener
+from .keymaster_feedback_listener import (
+    lifecycle_listener_callback as _lifecycle_listener_callback,
+)
 from .keymaster_lifecycle import start_keymaster_lifecycle
 from .keymaster_lifecycle import stop_keymaster_lifecycle
 from .listeners import (
@@ -62,10 +60,10 @@ from .startup_readability import (
 from .startup_readability import (
     async_arm_startup_readability_refresh as async_arm_startup_readability_refresh,
 )
+from .startup_readability import reset_startup_readability_watcher
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
 from .util import get_entry_data
-from .util import handle_state_change
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -157,7 +155,12 @@ async def _async_start_coordinator(
     }
     coordinator._checkin_restore_pending = True
 
-    start_keymaster_lifecycle(hass, config_entry, coordinator)
+    start_keymaster_lifecycle(
+        hass,
+        config_entry,
+        coordinator,
+        on_resolved=_lifecycle_listener_callback(hass, config_entry, coordinator),
+    )
 
     # Perform first data refresh before platform setup to guarantee
     # coordinator.data is populated when entities are created
@@ -330,7 +333,13 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     if entry_data is None:
         return
     coordinator = entry_data[COORDINATOR]
-    start_keymaster_lifecycle(hass, config_entry, coordinator)
+    reset_startup_readability_watcher(hass, config_entry.entry_id)
+    start_keymaster_lifecycle(
+        hass,
+        config_entry,
+        coordinator,
+        on_resolved=_lifecycle_listener_callback(hass, config_entry, coordinator),
+    )
 
     # Unsubscribe to any listeners so we can create new ones
     for unsub_listener in list(entry_data.get(UNSUB_LISTENERS, [])):
@@ -342,36 +351,6 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
         async_register_keymaster_listener(hass, config_entry)
     else:
         _LOGGER.debug("Skipping re-adding listeners")
-
-
-async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
-    """Start tracking updates to entities."""
-    entities: list[str] = []
-
-    _LOGGER.debug("entry_id = '%s'", config_entry.unique_id)
-
-    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
-    lockname = coordinator.lockname
-
-    _LOGGER.debug("lockname = '%s'", lockname)
-
-    for i in range(
-        coordinator.start_slot, coordinator.start_slot + coordinator.max_events
-    ):
-        entities.append(f"{SWITCH}.{lockname}_code_slot_{i}_enabled")
-        entities.append(f"{TEXT}.{lockname}_code_slot_{i}_pin")
-        entities.append(f"{TEXT}.{lockname}_code_slot_{i}_name")
-        entities.append(f"{DATETIME}.{lockname}_code_slot_{i}_date_range_start")
-        entities.append(f"{DATETIME}.{lockname}_code_slot_{i}_date_range_end")
-        entities.append(f"{BUTTON}.{lockname}_code_slot_{i}_reset")
-
-    hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(
-        async_track_state_change_event(
-            hass,
-            list(entities),
-            functools.partial(handle_state_change, hass, config_entry),
-        )
-    )
 
 
 def _entry_has_lock(config_entry: ConfigEntry) -> bool:

@@ -6,8 +6,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..keymaster_operations import persisted_owner_identity_for_slot
+from ..keymaster_operations import prepare_verified_intent
+from ..keymaster_operations import verified_lifecycle_active
+from ..keymaster_slot_operations import async_slot_operation
 from ..reconciliation import ActionKind
-from .apply_clear import decide_clear_result_mutation
 from .apply_dispatch import classify_action
 from .apply_set import build_set_operation_id
 from .apply_set import build_suppression_changes
@@ -16,7 +19,9 @@ from .apply_set import decide_set_result_mutation
 from .apply_update import build_replacement_plan_id
 from .apply_update import build_update_time_suppression
 from .apply_update import parse_drift_fields
+from .shell_apply_clear import apply_clear
 
+_apply_clear = apply_clear
 _CODE_REQUIRED_ACTIONS = {
     ActionKind.ASSIGN,
     ActionKind.SET,
@@ -24,6 +29,51 @@ _CODE_REQUIRED_ACTIONS = {
     ActionKind.UPDATE_IN_PLACE,
     ActionKind.UPDATE_TIMES,
 }
+_SET_REQUIRED_PROPERTIES = (
+    "switch.code_slots:{slot}.enabled",
+    "switch.code_slots:{slot}.accesslimit_date_range_enabled",
+    "datetime.code_slots:{slot}.accesslimit_date_range_start",
+    "datetime.code_slots:{slot}.accesslimit_date_range_end",
+    "text.code_slots:{slot}.pin",
+    "text.code_slots:{slot}.name",
+)
+
+
+def _suppression_changes(
+    coordinator: Any, slot: int, res: Any, intent: Any
+) -> dict[str, str]:
+    """Build feedback suppression with only verified exact addresses."""
+    if intent is None:
+        return build_suppression_changes(coordinator.lockname, slot, res)
+    return {
+        intent.entity_id(
+            f"switch.code_slots:{slot}.accesslimit_date_range_enabled"
+        ): "on",
+        intent.entity_id(f"text.code_slots:{slot}.name"): res.display_slot_name,
+        intent.entity_id(f"text.code_slots:{slot}.pin"): res.slot_code,
+        intent.entity_id(
+            f"datetime.code_slots:{slot}.accesslimit_date_range_start"
+        ): res.buffered_start.isoformat(),
+        intent.entity_id(
+            f"datetime.code_slots:{slot}.accesslimit_date_range_end"
+        ): res.buffered_end.isoformat(),
+    }
+
+
+def _update_time_suppression(
+    coordinator: Any, slot: int, res: Any, intent: Any
+) -> dict[str, str]:
+    """Build date feedback suppression with verified exact addresses."""
+    if intent is None:
+        return build_update_time_suppression(coordinator.lockname, slot, res)
+    return {
+        intent.entity_id(
+            f"datetime.code_slots:{slot}.accesslimit_date_range_start"
+        ): res.buffered_start.isoformat(),
+        intent.entity_id(
+            f"datetime.code_slots:{slot}.accesslimit_date_range_end"
+        ): res.buffered_end.isoformat(),
+    }
 
 
 def _codeless_action_warning(action: Any, res_by_key: dict[str, Any]) -> str | None:
@@ -60,7 +110,12 @@ async def async_apply_plan(self, coordinator: Any, plan, res_by_key):
             if decision["operation"] == "clear":
                 results.append(
                     await self._apply_clear(
-                        coordinator, action.slot, preflight_read=action.preflight_read
+                        coordinator,
+                        action.slot,
+                        preflight_read=action.preflight_read,
+                        owner_identity_key=action.identity_key
+                        or action.desired_id
+                        or persisted_owner_identity_for_slot(coordinator, action.slot),
                     )
                 )
             elif decision["operation"] == "set":
@@ -92,58 +147,34 @@ async def async_apply_plan(self, coordinator: Any, plan, res_by_key):
     return results
 
 
-async def _apply_clear(
-    self, coordinator: Any, slot: int, *, preflight_read: bool = False
-):
-    """Apply a CLEAR, RETRY_CLEAR, or RESET action for one slot."""
-    operation_id = str(self._module.uuid.uuid4())
-    async with self._lock:
-        self._pending_fences[slot] = operation_id
-        self._pending_clear_slots[slot] = operation_id
-        expected_name = self.get_slot_name(slot) or None
-    if preflight_read:
-        preflight_result = self._preflight_clear_result(
-            coordinator, slot, expected_name
-        )
-        if preflight_result is not None:
-            async with self._lock:
-                self._pending_fences.pop(slot, None)
-                self._pending_clear_slots.pop(slot, None)
-            return preflight_result
-    result = await self._module.async_fire_clear_code(
-        coordinator, slot, expected_name=expected_name
-    )
-    async with self._lock:
-        if self._pending_fences.get(slot) != operation_id:
-            self._logger.warning(
-                "Stale clear token for slot %d (expected %s, got %s); discarding result",
-                slot,
-                operation_id,
-                self._pending_fences.get(slot),
-            )
-            return self._operation_result_type(
-                kind="clear", slot=slot, unconfirmed=True
-            )
-        mutation = decide_clear_result_mutation(result)
-        if mutation["clear_slot"]:
-            self._logger.debug("Clear confirmed for slot %d; marking free", slot)
-            self._pending_fences.pop(slot, None)
-            self._pending_clear_slots.pop(slot, None)
-            self._clear_assignment(slot)
-            self._clear_slot_error(slot)
-        elif mutation["record_error"]:
-            _log_clear_not_confirmed(self, slot, result)
-            self._record_slot_error(slot, mutation["record_error"])
-        else:
-            self._logger.debug(
-                "Clear unconfirmed for slot %d; slot remains pending-clear", slot
-            )
-        return result
-
-
 async def _apply_set(self, coordinator: Any, slot: int, res, plan_id: str):
+    """Serialize set preparation, hardware writes, and local reconciliation."""
+    async with async_slot_operation(coordinator, slot):
+        return await _apply_set_locked(self, coordinator, slot, res, plan_id)
+
+
+async def _apply_set_locked(self, coordinator: Any, slot: int, res, plan_id: str):
     """Apply a SET or ASSIGN action for one slot."""
-    if not self._slot_confirmed_empty(coordinator, slot):
+    verified = verified_lifecycle_active(coordinator)
+    intent = None
+    if verified:
+        intent = await prepare_verified_intent(
+            coordinator,
+            slot,
+            res.identity_key,
+            (
+                f"switch.code_slots:{slot}.enabled",
+                f"switch.code_slots:{slot}.accesslimit_date_range_enabled",
+                f"datetime.code_slots:{slot}.accesslimit_date_range_start",
+                f"datetime.code_slots:{slot}.accesslimit_date_range_end",
+                f"text.code_slots:{slot}.pin",
+                f"text.code_slots:{slot}.name",
+            ),
+            "allocation",
+        )
+        if intent is None:
+            return self._operation_result_type(kind="set", slot=slot, unconfirmed=True)
+    if not await self._slot_confirmed_empty(coordinator, slot, intent=intent):
         self._record_slot_error(slot, "slot not confirmed empty before set")
         return self._operation_result_type(
             kind="set", slot=slot, unconfirmed=True, error="slot not confirmed empty"
@@ -154,16 +185,28 @@ async def _apply_set(self, coordinator: Any, slot: int, res, plan_id: str):
         self._overrides[slot] = build_tentative_override(res)
         self._slot_miss_counts.pop(slot, None)
         self.suppress_state_changes(
-            slot, build_suppression_changes(coordinator.lockname, slot, res)
+            slot,
+            _suppression_changes(coordinator, slot, res, intent),
         )
-    result = await self._module.async_fire_set_code(
-        coordinator,
-        self._slot_event_cls(res.slot_name, res.slot_code, res.start, res.end),
-        slot,
-    )
+    if intent is None:
+        result = await self._module.async_fire_set_code(
+            coordinator,
+            self._slot_event_cls(res.slot_name, res.slot_code, res.start, res.end),
+            slot,
+        )
+    else:
+        result = await self._module.async_fire_set_code(
+            coordinator,
+            self._slot_event_cls(res.slot_name, res.slot_code, res.start, res.end),
+            slot,
+            verified_intent=intent,
+        )
     async with self._lock:
+        intent_current = intent is None or await intent.async_is_current()
         mutation = decide_set_result_mutation(
-            result, self._pending_fences.get(slot) == operation_id, slot
+            result,
+            self._pending_fences.get(slot) == operation_id and intent_current,
+            slot,
         )
         if mutation["status"] == "stale":
             self._logger.warning("Stale set token for slot %d; discarding result", slot)
@@ -190,18 +233,56 @@ async def _apply_set(self, coordinator: Any, slot: int, res, plan_id: str):
 
 
 async def _apply_update_times(self, coordinator: Any, slot: int, res):
+    """Serialize date preparation, writes, confirmations, and publication."""
+    async with async_slot_operation(coordinator, slot):
+        return await _apply_update_times_locked(self, coordinator, slot, res)
+
+
+async def _apply_update_times_locked(self, coordinator: Any, slot: int, res):
     """Apply an UPDATE_TIMES action for one slot."""
+    verified = verified_lifecycle_active(coordinator)
+    intent = None
+    if verified:
+        intent = await prepare_verified_intent(
+            coordinator,
+            slot,
+            res.identity_key,
+            (
+                f"text.code_slots:{slot}.name",
+                f"switch.code_slots:{slot}.accesslimit_date_range_enabled",
+                f"datetime.code_slots:{slot}.accesslimit_date_range_start",
+                f"datetime.code_slots:{slot}.accesslimit_date_range_end",
+            ),
+            "allocation",
+        )
+        if intent is None:
+            return self._operation_result_type(
+                kind="update_times", slot=slot, unconfirmed=True
+            )
     async with self._lock:
         self.suppress_state_changes(
-            slot, build_update_time_suppression(coordinator.lockname, slot, res)
+            slot,
+            _update_time_suppression(coordinator, slot, res, intent),
         )
-    result = await self._module.async_fire_update_times(
-        coordinator,
-        self._slot_event_cls(res.slot_name, res.slot_code, res.start, res.end),
-        slot,
-    )
+    if intent is None:
+        result = await self._module.async_fire_update_times(
+            coordinator,
+            self._slot_event_cls(res.slot_name, res.slot_code, res.start, res.end),
+            slot,
+        )
+    else:
+        result = await self._module.async_fire_update_times(
+            coordinator,
+            self._slot_event_cls(res.slot_name, res.slot_code, res.start, res.end),
+            slot,
+            verified_intent=intent,
+        )
     if result.confirmed:
         async with self._lock:
+            if intent is not None and not await intent.async_is_current():
+                return self._operation_result_type(
+                    kind="update_times", slot=slot, unconfirmed=True
+                )
             override = self._overrides.get(slot)
             if override is not None:
                 override["start_time"], override["end_time"] = (
@@ -212,6 +293,16 @@ async def _apply_update_times(self, coordinator: Any, slot: int, res):
 
 
 async def _apply_overwrite_manual_change(
+    self, coordinator: Any, slot: int, res, action, collector=None
+):
+    """Serialize clear-and-replacement as one indivisible slot operation."""
+    async with async_slot_operation(coordinator, slot):
+        return await _apply_overwrite_manual_change_locked(
+            self, coordinator, slot, res, action, collector
+        )
+
+
+async def _apply_overwrite_manual_change_locked(
     self, coordinator: Any, slot: int, res, action, collector=None
 ):
     """Apply an OVERWRITE_MANUAL_CHANGE or UPDATE_IN_PLACE action.
@@ -232,7 +323,10 @@ async def _apply_overwrite_manual_change(
         actual.get("has_code"),
     )
     clear_result = await self._apply_clear(
-        coordinator, slot, preflight_read=action.preflight_read
+        coordinator,
+        slot,
+        preflight_read=action.preflight_read,
+        owner_identity_key=res.identity_key,
     )
     if not clear_result.confirmed:
         self._logger.warning(
@@ -247,21 +341,4 @@ async def _apply_overwrite_manual_change(
         slot,
         res,
         build_replacement_plan_id(slot, self._module.uuid.uuid4),
-    )
-
-
-def _log_clear_not_confirmed(self, slot: int, result) -> None:
-    """Log the original failed or lingering clear messages."""
-    if result.failed:
-        self._logger.warning(
-            "Clear failed for slot %d (error: %s); slot remains pending-clear",
-            slot,
-            result.error,
-        )
-        return
-    self._logger.warning(
-        "Clear not fully confirmed for slot %d (lingering_name=%s, lingering_pin=%s); slot remains pending-clear",
-        slot,
-        result.lingering_name,
-        result.lingering_pin,
     )

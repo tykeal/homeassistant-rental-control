@@ -797,16 +797,10 @@ class TestAddCall:
 class TestHandleStateChangeLogging:
     """Tests for handle_state_change debug logging correctness."""
 
-    async def test_debug_log_contains_all_override_fields(
+    async def test_debug_log_excludes_sensitive_override_fields(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Verify the override update log message includes all fields.
-
-        Prior to the fix, extra f-string arguments were passed as
-        positional *args to _LOGGER.debug() and silently dropped.
-        This test ensures lockname, slot_num, slot_name, slot_code,
-        start_time, and end_time all appear in the emitted message.
-        """
+        """Verify useful context is logged without names, PINs, or dates."""
         lockname = "test_lock"
         slot_num = 10
         mock_slot_code_state = MagicMock()
@@ -860,22 +854,16 @@ class TestHandleStateChangeLogging:
         log_messages = " ".join(caplog.messages)
         assert lockname in log_messages
         assert str(slot_num) in log_messages
-        # Verify slot_name and slot_code objects appear (as repr strings)
-        assert "slot_name:" in log_messages
-        assert "slot_code:" in log_messages
-        # Verify start_time and end_time appear in the same message
-        assert "start_time:" in log_messages
-        assert "end_time:" in log_messages
-        # The critical assertion: all fields must be in a SINGLE log message.
-        # The original bug caused slot_name/slot_code/start_time/end_time to
-        # be silently dropped because they were separate f-string *args.
-        override_msgs = [m for m in caplog.messages if "updating overrides for" in m]
+        assert "Guest Name" not in log_messages
+        assert "1234" not in log_messages
+        assert "slot_name:" not in log_messages
+        assert "slot_code:" not in log_messages
+        override_msgs = [
+            message
+            for message in caplog.messages
+            if "updating overrides for" in message.lower()
+        ]
         assert len(override_msgs) == 1
-        single_msg = override_msgs[0]
-        assert "slot_name:" in single_msg
-        assert "slot_code:" in single_msg
-        assert "start_time:" in single_msg
-        assert "end_time:" in single_msg
 
 
 # ---------------------------------------------------------------------------

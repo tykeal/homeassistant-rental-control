@@ -1,0 +1,1462 @@
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+"""Exercise verified intent acknowledgement through real HA consumers."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
+from importlib import import_module
+from pathlib import Path
+import sys
+import threading
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import patch
+
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.helpers import entity_registry as er
+import pytest
+from pytest_homeassistant.common import MockConfigEntry
+
+from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
+from custom_components.rental_control.allocator.association_transactions import (
+    association_storage_record,
+)
+from custom_components.rental_control.allocator.associations import AssociationMode
+from custom_components.rental_control.allocator.associations import AssociationTuple
+from custom_components.rental_control.allocator.models import AllocationOrigin
+from custom_components.rental_control.allocator.models import AllocationOwner
+from custom_components.rental_control.allocator.models import AllocationRecord
+from custom_components.rental_control.allocator.models import (
+    ProtectionAuthorizationState,
+)
+from custom_components.rental_control.allocator.models import ProtectionLoadResult
+from custom_components.rental_control.allocator.models import ProtectionLoadState
+from custom_components.rental_control.allocator.protected_store import (
+    ProtectedRegistryStore,
+)
+from custom_components.rental_control.allocator.registry import AllocationRegistry
+from custom_components.rental_control.allocator.registry_commit import (
+    async_commit_protection_transaction,
+)
+from custom_components.rental_control.allocator.store import code_ref_for
+from custom_components.rental_control.allocator.store import serialize_registry_ledger
+from custom_components.rental_control.const import ALLOCATOR
+from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
+from custom_components.rental_control.coordinator_helpers.coordinator_config_shell import (
+    CoordinatorConfigMixin,
+)
+from custom_components.rental_control.coordinator_helpers.coordinator_setup_shell import (
+    CoordinatorSetupMixin,
+)
+from custom_components.rental_control.event_overrides import EventOverrides
+from custom_components.rental_control.keymaster_identity import (
+    build_capability_identity,
+)
+from custom_components.rental_control.keymaster_lifecycle import get_keymaster_lifecycle
+from custom_components.rental_control.keymaster_lifecycle import (
+    managed_slot_property_keys,
+)
+from custom_components.rental_control.keymaster_lifecycle import (
+    start_keymaster_lifecycle,
+)
+from custom_components.rental_control.keymaster_slot_operations import (
+    async_keymaster_slot_operation,
+)
+
+from tests.fixtures.keymaster_releases import artifact_paths
+from tests.fixtures.keymaster_releases import import_keymaster_release
+from tests.fixtures.keymaster_releases import remove_imported_package
+
+_RELEASES = ("v0.6.1", "v0.6.5")
+_RC_ENTRY_ID = "consumer-rc"
+_KM_ENTRY_ID = "consumer-km"
+_SLOT = 21
+_OWNER_IDENTITY = "consumer-reservation"
+_CODE = "2718"
+_TX = "a" * 32
+_ASSOCIATION_TX = "b" * 32
+
+
+async def test_selected_keymaster_slot_lock_is_shared_and_cancellation_safe(
+    hass,
+) -> None:
+    """Different RC owners share one KM slot lock; cancelled waiters unmark."""
+    first_pending: dict[int, int] = {}
+    second_pending: dict[int, int] = {}
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_entered = asyncio.Event()
+
+    async def hold_first() -> None:
+        """Hold the selected Keymaster slot until the test releases it."""
+        async with async_keymaster_slot_operation(
+            hass, _KM_ENTRY_ID, _SLOT, pending=first_pending
+        ):
+            first_entered.set()
+            await release_first.wait()
+
+    async def wait_from_other_rc() -> None:
+        """Attempt the same Keymaster slot lock from another RC owner."""
+        async with async_keymaster_slot_operation(
+            hass, _KM_ENTRY_ID, _SLOT, pending=second_pending
+        ):
+            second_entered.set()
+
+    first = asyncio.create_task(hold_first())
+    await first_entered.wait()
+    waiting = asyncio.create_task(wait_from_other_rc())
+    await asyncio.sleep(0)
+    assert second_pending == {_SLOT: 1}
+    assert not second_entered.is_set()
+
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    assert second_pending == {}
+    assert not second_entered.is_set()
+
+    replacement_waiter = asyncio.create_task(wait_from_other_rc())
+    await asyncio.sleep(0)
+    assert second_pending == {_SLOT: 1}
+    release_first.set()
+    await asyncio.gather(first, replacement_waiter)
+    assert second_entered.is_set()
+    assert first_pending == {}
+    assert second_pending == {}
+
+
+def _association() -> AssociationTuple:
+    """Return one exact committed association for the synthetic entries."""
+    return AssociationTuple(
+        legacy_lock_selection_present=True,
+        legacy_lock_selection_raw="lock.consumer",
+        verified_keymaster_entry_id=_KM_ENTRY_ID,
+        association_generation=1,
+        association_transaction_id=_ASSOCIATION_TX,
+        mode=AssociationMode.VERIFIED,
+    )
+
+
+async def _setup_verified_consumer(
+    hass, storage: Path, release: str = "v0.6.1", *, parented: bool = False
+):
+    """Create real protected storage, allocator, lifecycle, and HA entities."""
+    association = _association()
+    rc_entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Consumer test",
+        entry_id=_RC_ENTRY_ID,
+        data=association.merge_into_config({}),
+    )
+    km_data = {"lock_entity_id": "lock.selected_physical_lock"}
+    if parented:
+        parent_entry = MockConfigEntry(
+            domain="keymaster",
+            title="Parent lock",
+            entry_id="consumer-km-parent",
+            data={"lock_entity_id": "lock.parent_physical_lock"},
+        )
+        parent_entry.add_to_hass(hass)
+        parent_entry._async_set_state(hass, ConfigEntryState.LOADED, None)
+        km_data["parent_entry_id"] = parent_entry.entry_id
+    km_entry = MockConfigEntry(
+        domain="keymaster",
+        title="Selected lock",
+        entry_id=_KM_ENTRY_ID,
+        data=km_data,
+    )
+    rc_entry.add_to_hass(hass)
+    km_entry.add_to_hass(hass)
+    km_entry._async_set_state(hass, ConfigEntryState.LOADED, None)
+
+    registry = AllocationRegistry(code_ref_salt="persisted-test-reference-salt")
+    owner = AllocationOwner(
+        entry_id=_RC_ENTRY_ID,
+        identity_key=_OWNER_IDENTITY,
+        origin=AllocationOrigin.ADOPTED,
+        lockname="lock.consumer",
+        slot=_SLOT,
+        lock_observed=True,
+        first_seen="2026-11-21T00:00:00+00:00",
+        last_seen="2026-11-21T00:00:00+00:00",
+    )
+    code_reference = code_ref_for(_CODE, registry.code_ref_salt)
+    registry.records[_CODE] = AllocationRecord(
+        code=_CODE,
+        code_ref=code_reference,
+        encoding_salt_value=_RC_ENTRY_ID,
+        code_length=len(_CODE),
+        owners=[owner],
+        created_at="2026-11-21T00:00:00+00:00",
+        updated_at="2026-11-21T00:00:00+00:00",
+    )
+    registry.rebuild_index()
+    data: dict[str, Any] = {
+        "schema_version": 2,
+        "transaction_id": _TX,
+        "generation": 1,
+        "ledger": serialize_registry_ledger(registry),
+        "associations": [association_storage_record(_RC_ENTRY_ID, association)],
+        "attestations": [],
+        "pending_fences": [],
+        "holds": [],
+        "tombstones": [],
+        "pending_config": [],
+        "exclusions": [],
+    }
+
+    storage.mkdir(parents=True, exist_ok=True)
+    lock = asyncio.Lock()
+    initial = await async_commit_protection_transaction(
+        lock,
+        storage,
+        {
+            "version": 2,
+            "minor_version": 1,
+            "key": "rental_control.code_registry",
+            "data": data,
+        },
+    )
+    assert initial.state is ProtectionLoadState.VALID_V2
+    store = ProtectedRegistryStore(hass, lock, storage_dir=storage)
+    loaded = await store.async_load()
+    assert loaded.state is ProtectionLoadState.VALID_V2
+
+    allocator = DoorCodeAllocator(hass)
+    allocator._lock = lock
+    allocator._registry = registry
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    domain_data[PROTECTED_REGISTRY_STORE] = store
+    domain_data[ALLOCATOR] = allocator
+
+    overrides = EventOverrides(_SLOT, 1)
+    overrides._overrides[_SLOT] = overrides._override_dict(
+        _CODE,
+        "Guest",
+        datetime.now(UTC) + timedelta(hours=1),
+        datetime.now(UTC) + timedelta(hours=2),
+    )
+    coordinator = SimpleNamespace(
+        hass=hass,
+        config_entry=rc_entry,
+        _entry_id=_RC_ENTRY_ID,
+        start_slot=_SLOT,
+        max_events=1,
+        event_overrides=overrides,
+        lockname=None,
+        event_prefix=None,
+        trim_names=False,
+        max_name_length=32,
+        code_buffer_before=0,
+        code_buffer_after=0,
+        name="Consumer test",
+        timezone=UTC,
+    )
+    domain_data[_RC_ENTRY_ID] = {"coordinator": coordinator}
+
+    entity_ids: dict[str, str] = {}
+    module_name = "custom_components.keymaster"
+    assert f"keymaster-{release}" in artifact_paths()
+    assert module_name not in sys.modules
+    import_keymaster_release(release, storage.parent / release, module_name)
+    try:
+        for property_key in managed_slot_property_keys(_SLOT, 1):
+            identity = build_capability_identity(
+                _KM_ENTRY_ID, property_key, generation=1
+            )
+            assert identity is not None
+            assert identity.unique_id == _upstream_unique_id(
+                hass, km_entry, property_key, module_name
+            )
+            registry_entry = er.async_get(hass).async_get_or_create(
+                identity.domain,
+                identity.platform,
+                identity.unique_id,
+                suggested_object_id=f"renamed_{property_key.replace(':', '_').replace('.', '_')}",
+                config_entry=km_entry,
+            )
+            if identity.domain == "text":
+                initial_state = ""
+            elif identity.domain == "switch":
+                initial_state = "off"
+            else:
+                initial_state = "ready"
+            hass.states.async_set(registry_entry.entity_id, initial_state)
+            entity_ids[property_key] = registry_entry.entity_id
+    finally:
+        remove_imported_package(module_name)
+
+    start_keymaster_lifecycle(hass, rc_entry, coordinator)
+    await hass.async_block_till_done()
+    return coordinator, store, entity_ids
+
+
+def _upstream_unique_id(hass, entry, property_key: str, module_name: str) -> str:
+    """Return a unique ID generated by one pinned upstream Keymaster package."""
+    domain, _ = property_key.split(".", maxsplit=1)
+    class_name = {
+        "button": "Button",
+        "datetime": "DateTime",
+        "switch": "Switch",
+        "text": "Text",
+    }[domain]
+    platform = import_module(f"{module_name}.{domain}")
+    base = import_module(f"{module_name}.entity")
+    description = getattr(platform, f"Keymaster{class_name}EntityDescription")(
+        hass=hass,
+        config_entry=entry,
+        coordinator=SimpleNamespace(sync_get_lock_by_config_entry_id=lambda _id: None),
+        key=property_key,
+        name="Synthetic property",
+    )
+    with patch.object(base.CoordinatorEntity, "__init__", lambda *args: None):
+        entity = getattr(platform, f"Keymaster{class_name}")(description)
+    return str(entity.unique_id)
+
+
+async def _register_recording_services(
+    hass,
+    store,
+    entity_ids: dict[str, str],
+    events: list[dict[str, Any]],
+    *,
+    reset_clears_state: bool = True,
+):
+    """Register local HA services that record target identity and durable state."""
+
+    def service_handler(domain: str, service: str):
+        """Create a recorder for one synthetic Home Assistant service."""
+
+        async def handle(call) -> None:
+            """Record the exact target and emulate the provider state update."""
+            entity_id = call.data["entity_id"]
+            loaded = store.loaded_result
+            assert loaded is not None and loaded.data is not None
+            fences = loaded.data["pending_fences"]
+            expected_type = "pending_clear" if service == "press" else "allocation"
+            assert any(item["fence_type"] == expected_type for item in fences)
+            events.append(
+                {
+                    "domain": domain,
+                    "service": service,
+                    "entity_id": entity_id,
+                    "fences": tuple(item["fence_type"] for item in fences),
+                }
+            )
+            if domain == "text":
+                hass.states.async_set(entity_id, call.data["value"])
+            elif domain == "switch":
+                hass.states.async_set(
+                    entity_id, "on" if service == "turn_on" else "off"
+                )
+            elif domain == "datetime":
+                hass.states.async_set(entity_id, call.data["datetime"].isoformat())
+            elif domain == "button":
+                if reset_clears_state:
+                    for property_key in (
+                        f"text.code_slots:{_SLOT}.name",
+                        f"text.code_slots:{_SLOT}.pin",
+                    ):
+                        hass.states.async_set(entity_ids[property_key], "")
+
+        return handle
+
+    for domain, service in (
+        ("switch", "turn_off"),
+        ("switch", "turn_on"),
+        ("datetime", "set_value"),
+        ("text", "set_value"),
+        ("button", "press"),
+    ):
+        hass.services.async_register(domain, service, service_handler(domain, service))
+
+
+@pytest.mark.usefixtures("enable_custom_integrations")
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_real_set_and_clear_consumers_acknowledge_before_exact_dispatch(
+    hass,
+    tmp_path: Path,
+    release: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Set/reset calls use renamed exact entities only after durable fences."""
+    from dataclasses import replace
+
+    from custom_components.rental_control import util
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+
+    original_deps = util._keymaster_deps
+
+    async def immediate_sleep(_delay: float) -> None:
+        """Skip retry delay in this deterministic consumer test."""
+        return None
+
+    monkeypatch.setattr(
+        util,
+        "_keymaster_deps",
+        lambda: replace(original_deps(), sleep=immediate_sleep),
+    )
+
+    overrides = coordinator.event_overrides
+    reservation = SimpleNamespace(
+        identity_key=_OWNER_IDENTITY,
+        slot_name="Guest",
+        slot_code=_CODE,
+        start=datetime.now(UTC) + timedelta(hours=1),
+        end=datetime.now(UTC) + timedelta(hours=2),
+        buffered_start=datetime.now(UTC) + timedelta(hours=1),
+        buffered_end=datetime.now(UTC) + timedelta(hours=2),
+        display_slot_name="Guest",
+    )
+
+    set_result = await overrides._apply_set(coordinator, _SLOT, reservation, "set-1")
+
+    assert set_result.confirmed
+    assert events
+    assert all(event["entity_id"] in set(entity_ids.values()) for event in events)
+    assert events[0]["fences"] == ("allocation",)
+    assert events[0]["entity_id"] == entity_ids[f"switch.code_slots:{_SLOT}.enabled"]
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert any(
+        fence["fence_type"] == "allocation" for fence in loaded.data["pending_fences"]
+    )
+
+    previous_event_count = len(events)
+    updated_start = datetime.now(UTC) + timedelta(hours=3)
+    updated_end = datetime.now(UTC) + timedelta(hours=4)
+    update_result = await overrides._apply_update_times(
+        coordinator,
+        _SLOT,
+        SimpleNamespace(
+            identity_key=_OWNER_IDENTITY,
+            slot_name="Guest",
+            slot_code=_CODE,
+            start=updated_start,
+            end=updated_end,
+            buffered_start=updated_start,
+            buffered_end=updated_end,
+        ),
+    )
+
+    assert update_result.confirmed
+    date_events = events[previous_event_count:]
+    assert {event["entity_id"] for event in date_events} == {
+        entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_start"],
+        entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"],
+    }
+    assert all(event["fences"] == ("allocation",) for event in date_events)
+
+    previous_event_count = len(events)
+    coordinator.code_buffer_before = 10
+    coordinator.code_buffer_after = 20
+    coordinator._slot_mappings = {"mappings": {_OWNER_IDENTITY: {"slot": _SLOT}}}
+    await CoordinatorConfigMixin._async_update_buffer_times(
+        coordinator, old_before=0, old_after=0
+    )
+    buffered_events = events[previous_event_count:]
+    assert {event["entity_id"] for event in buffered_events} == {
+        entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_start"],
+        entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"],
+    }
+    assert all(event["fences"] == ("allocation",) for event in buffered_events)
+    assert (
+        hass.states.get(
+            entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_start"]
+        ).state
+        == (updated_start - timedelta(minutes=10)).isoformat()
+    )
+    assert (
+        hass.states.get(
+            entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
+        ).state
+        == (updated_end + timedelta(minutes=20)).isoformat()
+    )
+
+    clear_result = await overrides._apply_clear(
+        coordinator,
+        _SLOT,
+        owner_identity_key=_OWNER_IDENTITY,
+    )
+
+    assert clear_result.confirmed
+    assert events[-1]["domain"] == "button"
+    assert events[-1]["entity_id"] == entity_ids[f"button.code_slots:{_SLOT}.reset"]
+    assert events[-1]["fences"] == ("allocation", "pending_clear")
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert all(
+        fence["fence_type"] != "pending_clear"
+        for fence in loaded.data["pending_fences"]
+    )
+    assert any(
+        tombstone["resolution_kind"] == "clear_confirmed"
+        for tombstone in loaded.data["tombstones"]
+    )
+
+    # A confirmed hardware reset is not enough to release the durable
+    # allocation guard. Remove the exact owner only through the allocator's
+    # normal release guard, fed by the live exact-slot Keymaster state.
+    from custom_components.rental_control.allocator.models import CycleObservation
+    from custom_components.rental_control.allocator.registry_snapshot import (
+        SnapshotCommitHooks,
+    )
+    from custom_components.rental_control.allocator.registry_snapshot import (
+        async_commit_registry_snapshot,
+    )
+    from custom_components.rental_control.allocator.registry_snapshot import (
+        serialize_exclusion_snapshots,
+    )
+    from custom_components.rental_control.allocator.singleton import get_allocator
+    from custom_components.rental_control.keymaster_operations import (
+        _current_exclusion_snapshot,
+    )
+
+    allocator = get_allocator(hass)
+    assert allocator is not None
+    exclusions = serialize_exclusion_snapshots(
+        hass.config_entries.async_entries(DOMAIN)
+    )
+
+    def authorize_release(baseline, _candidate) -> bool:
+        """Use the allocator's live slot observation to authorize release."""
+        record = baseline.record_for_identity(_OWNER_IDENTITY)
+        if record is None:
+            return False
+        owner = next(
+            (item for item in record.owners if item.identity_key == _OWNER_IDENTITY),
+            None,
+        )
+        if owner is None:
+            return False
+        pin_state = hass.states.get(entity_ids[f"text.code_slots:{_SLOT}.pin"])
+        unreadable = (
+            frozenset({_SLOT})
+            if pin_state is None or pin_state.state in {"unknown", "unavailable"}
+            else frozenset()
+        )
+        observed_codes = (
+            {pin_state.state: _SLOT}
+            if pin_state is not None
+            and pin_state.state not in {"", "unknown", "unavailable"}
+            else {}
+        )
+        observation = CycleObservation(
+            entry_id=_RC_ENTRY_ID,
+            lockname=owner.lockname,
+            managed_slots=frozenset({_SLOT}),
+            observed_codes=observed_codes,
+            unreadable_slots=unreadable,
+        )
+        return allocator._release_guard_reason(record, [owner], [observation]) is None
+
+    def release_owner(candidate) -> None:
+        """Remove only the verified original owner from the staged model."""
+        candidate.release(_OWNER_IDENTITY)
+
+    release_result = await async_commit_registry_snapshot(
+        allocator,
+        store,
+        release_owner,
+        exclusions,
+        lambda: _current_exclusion_snapshot(hass, serialize_exclusion_snapshots),
+        hooks=SnapshotCommitHooks(authorize_owner_transition=authorize_release),
+    )
+    assert release_result.state is ProtectionLoadState.VALID_V2
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert loaded.data["pending_fences"] == []
+    assert any(
+        tombstone["resolution_kind"] == "owner_released"
+        and tombstone["fence_type"] == "allocation"
+        for tombstone in loaded.data["tombstones"]
+    )
+
+    # A new owner may reuse the physical slot only after its own protected
+    # allocation and exact new-generation fence have been acknowledged.
+    from custom_components.rental_control.allocator.association_references import (
+        ledger_allocation_references,
+    )
+    from custom_components.rental_control.allocator.models import AllocationOrigin
+    from custom_components.rental_control.allocator.models import AllocationRequest
+    from custom_components.rental_control.allocator.registry_safety_models import (
+        PendingSlotFence,
+    )
+    from custom_components.rental_control.allocator.store import code_ref_for
+
+    next_owner = "consumer-reservation-next"
+    next_code = "8346"
+
+    def allocate_next(candidate) -> None:
+        """Stage a separate owner after guarded release of the original."""
+        candidate.allocate(
+            AllocationRequest(
+                entry_id=_RC_ENTRY_ID,
+                identity_key=next_owner,
+                preferred_code=next_code,
+                code_length=len(next_code),
+                lockname="lock.consumer",
+                slot=_SLOT,
+            ),
+            next_code,
+            AllocationOrigin.PREFERRED,
+            code_ref_for(next_code, allocator._registry.code_ref_salt),
+            datetime.now(UTC).isoformat(),
+        )
+
+    def append_next_owner_fence(
+        _candidate,
+        data,
+        transaction_id: str,
+        generation: int,
+    ) -> None:
+        """Bind the new owner fence to the staged ledger transaction."""
+        references = ledger_allocation_references(data, _RC_ENTRY_ID, next_owner)
+        assert references is not None
+        owner_reference, allocation_reference, owner_slot = references
+        data["pending_fences"].append(
+            PendingSlotFence(
+                fence_id="c" * 32,
+                original_km_entry_id=_KM_ENTRY_ID,
+                slot=owner_slot,
+                rc_entry_id=_RC_ENTRY_ID,
+                owner_ref=owner_reference,
+                allocation_ref=allocation_reference,
+                created_transaction_id=transaction_id,
+                created_generation=generation,
+                fence_type="allocation",
+            ).to_record()
+        )
+
+    next_result = await async_commit_registry_snapshot(
+        allocator,
+        store,
+        allocate_next,
+        exclusions,
+        lambda: _current_exclusion_snapshot(hass, serialize_exclusion_snapshots),
+        hooks=SnapshotCommitHooks(safety_transition=append_next_owner_fence),
+    )
+    assert next_result.state is ProtectionLoadState.VALID_V2
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    next_references = ledger_allocation_references(
+        loaded.data, _RC_ENTRY_ID, next_owner
+    )
+    assert next_references is not None
+    overrides._overrides[_SLOT] = overrides._override_dict(
+        next_code,
+        "Next Guest",
+        datetime.now(UTC) + timedelta(hours=3),
+        datetime.now(UTC) + timedelta(hours=4),
+    )
+    next_now = datetime.now(UTC)
+    reuse_result = await overrides._apply_set(
+        coordinator,
+        _SLOT,
+        SimpleNamespace(
+            identity_key=next_owner,
+            slot_name="Next Guest",
+            slot_code=next_code,
+            start=next_now + timedelta(hours=3),
+            end=next_now + timedelta(hours=4),
+            buffered_start=next_now + timedelta(hours=3),
+            buffered_end=next_now + timedelta(hours=4),
+            display_slot_name="Next Guest",
+        ),
+        "set-after-guarded-release",
+    )
+    assert reuse_result.confirmed
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert any(
+        fence["fence_type"] == "allocation" and fence["owner_ref"] == next_references[0]
+        for fence in loaded.data["pending_fences"]
+    )
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_set_and_cleanup_share_one_slot_operation_lock(
+    hass,
+    tmp_path: Path,
+    release: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A same-slot reset waits until set dispatch and confirmation complete."""
+    from dataclasses import replace
+
+    from custom_components.rental_control import util
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    original_deps = util._keymaster_deps
+
+    async def immediate_sleep(_delay: float) -> None:
+        """Avoid retry delay while testing operation serialization."""
+        return None
+
+    monkeypatch.setattr(
+        util,
+        "_keymaster_deps",
+        lambda: replace(original_deps(), sleep=immediate_sleep),
+    )
+    entered_first_dispatch = asyncio.Event()
+    release_first_dispatch = asyncio.Event()
+    service_registry_type = type(hass.services)
+    original_async_call = service_registry_type.async_call
+    blocked = False
+
+    async def pause_first_set_call(service_registry, *args, **kwargs):
+        """Pause the first dispatch so a same-slot clear must wait."""
+        nonlocal blocked
+        if (
+            not blocked
+            and kwargs.get("domain") == "switch"
+            and kwargs.get("service") == "turn_off"
+        ):
+            blocked = True
+            entered_first_dispatch.set()
+            await release_first_dispatch.wait()
+        return await original_async_call(service_registry, *args, **kwargs)
+
+    monkeypatch.setattr(service_registry_type, "async_call", pause_first_set_call)
+    now = datetime.now(UTC)
+    reservation = SimpleNamespace(
+        identity_key=_OWNER_IDENTITY,
+        slot_name="Guest",
+        slot_code=_CODE,
+        start=now + timedelta(hours=1),
+        end=now + timedelta(hours=2),
+        buffered_start=now + timedelta(hours=1),
+        buffered_end=now + timedelta(hours=2),
+        display_slot_name="Guest",
+    )
+    overrides = coordinator.event_overrides
+    set_task = asyncio.create_task(
+        overrides._apply_set(coordinator, _SLOT, reservation, "serialized-set")
+    )
+    await entered_first_dispatch.wait()
+    clear_task = None
+    pending_before_clear = overrides._slot_operations_pending[_SLOT]
+    pending_while_waiting = 0
+    events_before_release: list[dict[str, Any]] = []
+    try:
+        clear_task = asyncio.create_task(
+            overrides._apply_clear(
+                coordinator, _SLOT, owner_identity_key=_OWNER_IDENTITY
+            )
+        )
+        await asyncio.sleep(0)
+        pending_while_waiting = overrides._slot_operations_pending[_SLOT]
+        events_before_release = list(events)
+    finally:
+        release_first_dispatch.set()
+    assert clear_task is not None
+    set_result, clear_result = await asyncio.gather(set_task, clear_task)
+
+    assert pending_before_clear >= 1
+    assert pending_while_waiting >= 3
+    assert events_before_release == []
+    assert set_result.confirmed
+    assert clear_result.confirmed
+    assert events[0]["service"] == "turn_off"
+    assert events[-1]["service"] == "press"
+    assert all(event["service"] != "press" for event in events[:-1])
+    assert _SLOT not in overrides._slot_operations_pending
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+@pytest.mark.parametrize("operation", ("set", "date", "clear", "overwrite"))
+async def test_held_unrelated_protected_commit_waits_for_verified_operation(
+    hass,
+    tmp_path: Path,
+    release: str,
+    operation: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Held unrelated commits settle before set/date/clear confirmation."""
+    import copy
+    import secrets
+
+    from custom_components.rental_control.allocator import registry_commit
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    overrides = coordinator.event_overrides
+    now = datetime.now(UTC)
+    reservation = SimpleNamespace(
+        identity_key=_OWNER_IDENTITY,
+        slot_name="Guest",
+        slot_code=_CODE,
+        start=now + timedelta(hours=1),
+        end=now + timedelta(hours=2),
+        buffered_start=now + timedelta(hours=1),
+        buffered_end=now + timedelta(hours=2),
+        display_slot_name="Guest",
+    )
+    if operation != "set":
+        initial = await overrides._apply_set(
+            coordinator, _SLOT, reservation, "held-commit-seed"
+        )
+        assert initial.confirmed
+        events.clear()
+
+    service_registry_type = type(hass.services)
+    original_async_call = service_registry_type.async_call
+    original_commit = registry_commit._commit_transaction_locked
+    loop = asyncio.get_running_loop()
+    writer_started = asyncio.Event()
+    release_writer = threading.Event()
+    commit_task: asyncio.Task | None = None
+    held = False
+    hold_requested = False
+
+    trigger_entity = {
+        "set": entity_ids[f"text.code_slots:{_SLOT}.name"],
+        "date": entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_start"],
+        "clear": entity_ids[f"button.code_slots:{_SLOT}.reset"],
+        "overwrite": entity_ids[f"text.code_slots:{_SLOT}.name"],
+    }[operation]
+
+    def hold_unrelated_commit(*args, **kwargs):
+        """Pause only the injected unrelated transaction's worker write."""
+        nonlocal held, hold_requested
+        if hold_requested and not held:
+            held = True
+            loop.call_soon_threadsafe(writer_started.set)
+            if not release_writer.wait(timeout=10):
+                raise TimeoutError("test did not release unrelated commit")
+        return original_commit(*args, **kwargs)
+
+    monkeypatch.setattr(
+        registry_commit, "_commit_transaction_locked", hold_unrelated_commit
+    )
+
+    async def commit_after_first_dispatch(service_registry, *args, **kwargs):
+        """Start a generation-only commit after the selected state update."""
+        result = await original_async_call(service_registry, *args, **kwargs)
+        nonlocal commit_task, hold_requested
+        if (
+            commit_task is None
+            and kwargs.get("target", {}).get("entity_id") == trigger_entity
+        ):
+            loaded = store.loaded_result
+            assert loaded is not None and loaded.data is not None
+            data = copy.deepcopy(loaded.data)
+            data["transaction_id"] = secrets.token_hex(16)
+            data["generation"] += 1
+            hold_requested = True
+            commit_task = asyncio.create_task(
+                store.async_commit(
+                    {
+                        "version": 2,
+                        "minor_version": 1,
+                        "key": "rental_control.code_registry",
+                        "data": data,
+                    }
+                )
+            )
+            await writer_started.wait()
+        return result
+
+    monkeypatch.setattr(
+        service_registry_type, "async_call", commit_after_first_dispatch
+    )
+    if operation == "set":
+        operation_task = asyncio.create_task(
+            overrides._apply_set(coordinator, _SLOT, reservation, "held-set")
+        )
+    elif operation == "date":
+        operation_task = asyncio.create_task(
+            overrides._apply_update_times(coordinator, _SLOT, reservation)
+        )
+    elif operation == "clear":
+        operation_task = asyncio.create_task(
+            overrides._apply_clear(
+                coordinator, _SLOT, owner_identity_key=_OWNER_IDENTITY
+            )
+        )
+    else:
+        operation_task = asyncio.create_task(
+            overrides._apply_overwrite_manual_change(
+                coordinator,
+                _SLOT,
+                reservation,
+                SimpleNamespace(reason="manual_drift", preflight_read=False),
+            )
+        )
+
+    try:
+        await writer_started.wait()
+        await asyncio.sleep(0)
+        assert not operation_task.done()
+    finally:
+        release_writer.set()
+    result = await operation_task
+    assert commit_task is not None
+    commit_result = await commit_task
+    assert held
+    assert commit_result.state is ProtectionLoadState.VALID_V2
+    assert result.confirmed
+    assert len(events) > 0
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    if operation == "clear":
+        assert loaded.generation >= 4
+        assert not any(
+            fence["fence_type"] == "pending_clear" and fence["slot"] == _SLOT
+            for fence in loaded.data["pending_fences"]
+        )
+    else:
+        assert any(
+            fence["fence_type"] == "allocation" and fence["slot"] == _SLOT
+            for fence in loaded.data["pending_fences"]
+        )
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_failed_unrelated_commit_freezes_and_retains_set_fence(
+    hass,
+    tmp_path: Path,
+    release: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed held write blocks confirmation and preserves the allocation fence."""
+    import copy
+    import secrets
+
+    from custom_components.rental_control.allocator import registry_commit
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    service_registry_type = type(hass.services)
+    original_async_call = service_registry_type.async_call
+    loop = asyncio.get_running_loop()
+    writer_started = asyncio.Event()
+    release_writer = threading.Event()
+    original_commit = registry_commit._commit_transaction_locked
+    hold_requested = False
+    commit_task: asyncio.Task | None = None
+
+    def fail_held_commit(*args, **kwargs):
+        """Fail the requested unrelated write after proving it is in flight."""
+        nonlocal hold_requested
+        if hold_requested:
+            hold_requested = False
+            loop.call_soon_threadsafe(writer_started.set)
+            if not release_writer.wait(timeout=10):
+                raise TimeoutError("test did not release failed commit")
+            raise OSError("synthetic storage failure")
+        return original_commit(*args, **kwargs)
+
+    monkeypatch.setattr(registry_commit, "_commit_transaction_locked", fail_held_commit)
+
+    async def start_failed_commit(service_registry, *args, **kwargs):
+        """Launch the synthetic failing generation update at the test boundary."""
+        nonlocal commit_task, hold_requested
+        result = await original_async_call(service_registry, *args, **kwargs)
+        if (
+            commit_task is None
+            and kwargs.get("target", {}).get("entity_id")
+            == entity_ids[f"text.code_slots:{_SLOT}.name"]
+        ):
+            loaded = store.loaded_result
+            assert loaded is not None and loaded.data is not None
+            data = copy.deepcopy(loaded.data)
+            data["transaction_id"] = secrets.token_hex(16)
+            data["generation"] += 1
+            hold_requested = True
+            commit_task = asyncio.create_task(
+                store.async_commit(
+                    {
+                        "version": 2,
+                        "minor_version": 1,
+                        "key": "rental_control.code_registry",
+                        "data": data,
+                    }
+                )
+            )
+            await writer_started.wait()
+        return result
+
+    monkeypatch.setattr(service_registry_type, "async_call", start_failed_commit)
+    now = datetime.now(UTC)
+    operation_task = asyncio.create_task(
+        coordinator.event_overrides._apply_set(
+            coordinator,
+            _SLOT,
+            SimpleNamespace(
+                identity_key=_OWNER_IDENTITY,
+                slot_name="Guest",
+                slot_code=_CODE,
+                start=now + timedelta(hours=1),
+                end=now + timedelta(hours=2),
+                buffered_start=now + timedelta(hours=1),
+                buffered_end=now + timedelta(hours=2),
+                display_slot_name="Guest",
+            ),
+            "set-before-failed-commit",
+        )
+    )
+    try:
+        await writer_started.wait()
+        await asyncio.sleep(0)
+        assert not operation_task.done()
+    finally:
+        release_writer.set()
+    set_result = await operation_task
+    assert commit_task is not None
+    commit_result = await commit_task
+    assert commit_result.state is ProtectionLoadState.PROTECTIVE_UNKNOWN
+    assert not set_result.confirmed
+    assert store.authorization_state is ProtectionAuthorizationState.PROTECTIVE_UNKNOWN
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert any(
+        fence["fence_type"] == "allocation" and fence["slot"] == _SLOT
+        for fence in loaded.data["pending_fences"]
+    )
+    assert coordinator.event_overrides._pending_fences[_SLOT]
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_child_reset_requires_live_parent_override_control(
+    hass,
+    tmp_path: Path,
+    release: str,
+) -> None:
+    """A child reset is blocked while inherited and allowed after override."""
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release, parented=True
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+
+    blocked = await coordinator.event_overrides._apply_clear(
+        coordinator,
+        _SLOT,
+        owner_identity_key=_OWNER_IDENTITY,
+    )
+    assert blocked.unconfirmed
+    assert events == []
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert all(
+        fence["fence_type"] != "pending_clear"
+        for fence in loaded.data["pending_fences"]
+    )
+
+    hass.states.async_set(
+        entity_ids[f"switch.code_slots:{_SLOT}.override_parent"], "on"
+    )
+    await hass.async_block_till_done()
+    lifecycle = get_keymaster_lifecycle(hass, _RC_ENTRY_ID)
+    assert lifecycle is not None
+    assert (
+        lifecycle.current[f"switch.code_slots:{_SLOT}.override_parent"].boolean_state
+        is True
+    )
+    assert lifecycle.current[f"text.code_slots:{_SLOT}.name"].ready
+    allowed = await coordinator.event_overrides._apply_clear(
+        coordinator,
+        _SLOT,
+        owner_identity_key=_OWNER_IDENTITY,
+    )
+    assert allowed.confirmed
+    assert events[-1]["domain"] == "button"
+    assert events[-1]["entity_id"] == entity_ids[f"button.code_slots:{_SLOT}.reset"]
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_unconfirmed_reset_retains_both_durable_slot_fences(
+    hass,
+    tmp_path: Path,
+    release: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unconfirmed hardware reset cannot release slot or owner protection."""
+    from dataclasses import replace
+
+    from custom_components.rental_control import util
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(
+        hass,
+        store,
+        entity_ids,
+        events,
+        reset_clears_state=False,
+    )
+    original_deps = util._keymaster_deps
+
+    async def immediate_sleep(_delay: float) -> None:
+        """Skip the reset retry delay for the inheritance test."""
+        return None
+
+    monkeypatch.setattr(
+        util,
+        "_keymaster_deps",
+        lambda: replace(original_deps(), sleep=immediate_sleep),
+    )
+    now = datetime.now(UTC)
+    set_result = await coordinator.event_overrides._apply_set(
+        coordinator,
+        _SLOT,
+        SimpleNamespace(
+            identity_key=_OWNER_IDENTITY,
+            slot_name="Guest",
+            slot_code=_CODE,
+            start=now + timedelta(hours=1),
+            end=now + timedelta(hours=2),
+            buffered_start=now + timedelta(hours=1),
+            buffered_end=now + timedelta(hours=2),
+            display_slot_name="Guest",
+        ),
+        "set-before-unconfirmed-reset",
+    )
+    assert set_result.confirmed
+    clear_result = await coordinator.event_overrides._apply_clear(
+        coordinator,
+        _SLOT,
+        owner_identity_key=_OWNER_IDENTITY,
+    )
+    assert clear_result.unconfirmed
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    fences = loaded.data["pending_fences"]
+    assert {fence["fence_type"] for fence in fences} == {
+        "allocation",
+        "pending_clear",
+    }
+    assert all(fence["slot"] == _SLOT for fence in fences)
+    assert all(
+        tombstone["resolution_kind"] != "clear_confirmed"
+        for tombstone in loaded.data["tombstones"]
+    )
+    assert _SLOT in coordinator.event_overrides._pending_clear_slots
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_association_change_after_dispatch_stops_remaining_set_calls(
+    hass,
+    tmp_path: Path,
+    release: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A same-slot association rebind invalidates an in-flight intent."""
+    from dataclasses import replace
+
+    from custom_components.rental_control import util
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    original_deps = util._keymaster_deps
+
+    async def immediate_sleep(_delay: float) -> None:
+        """Skip retry delay while checking association invalidation."""
+        return None
+
+    monkeypatch.setattr(
+        util,
+        "_keymaster_deps",
+        lambda: replace(original_deps(), sleep=immediate_sleep),
+    )
+    rc_entry = hass.config_entries.async_get_entry(_RC_ENTRY_ID)
+    assert rc_entry is not None
+    service_registry_type = type(hass.services)
+    original_async_call = service_registry_type.async_call
+    rebound = False
+
+    async def rebind_after_first_dispatch(service_registry, *args, **kwargs):
+        """Change the association after one real service dispatch."""
+        nonlocal rebound
+        result = await original_async_call(service_registry, *args, **kwargs)
+        if not rebound and kwargs.get("domain") == "switch":
+            rebound = True
+            association = replace(
+                _association(),
+                association_generation=2,
+                association_transaction_id="d" * 32,
+            )
+            hass.config_entries.async_update_entry(
+                rc_entry,
+                data=association.merge_into_config(rc_entry.data),
+            )
+        return result
+
+    monkeypatch.setattr(
+        service_registry_type, "async_call", rebind_after_first_dispatch
+    )
+    now = datetime.now(UTC)
+    result = await coordinator.event_overrides._apply_set(
+        coordinator,
+        _SLOT,
+        SimpleNamespace(
+            identity_key=_OWNER_IDENTITY,
+            slot_name="Guest",
+            slot_code=_CODE,
+            start=now + timedelta(hours=1),
+            end=now + timedelta(hours=2),
+            buffered_start=now + timedelta(hours=1),
+            buffered_end=now + timedelta(hours=2),
+            display_slot_name="Guest",
+        ),
+        "set-after-association-change",
+    )
+
+    assert rebound
+    assert result.unconfirmed
+    assert len(events) == 1
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert any(
+        fence["fence_type"] == "allocation" and fence["slot"] == _SLOT
+        for fence in loaded.data["pending_fences"]
+    )
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_failed_protected_commit_never_dispatches_a_set(
+    hass,
+    tmp_path: Path,
+    release: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected durable fence prevents every downstream service call."""
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+
+    async def reject_commit(*_args, **_kwargs) -> ProtectionLoadResult:
+        """Reject fence persistence before any hardware service is called."""
+        return ProtectionLoadResult(
+            ProtectionLoadState.UNAVAILABLE,
+            failure_code="injected_commit_rejection",
+        )
+
+    monkeypatch.setattr(store, "async_commit", reject_commit)
+    result = await coordinator.event_overrides._apply_set(
+        coordinator,
+        _SLOT,
+        SimpleNamespace(
+            identity_key=_OWNER_IDENTITY,
+            slot_name="Guest",
+            slot_code=_CODE,
+            start=datetime.now(UTC) + timedelta(hours=1),
+            end=datetime.now(UTC) + timedelta(hours=2),
+            buffered_start=datetime.now(UTC) + timedelta(hours=1),
+            buffered_end=datetime.now(UTC) + timedelta(hours=2),
+            display_slot_name="Guest",
+        ),
+        "set-rejected",
+    )
+
+    assert result.unconfirmed
+    assert not events
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert loaded.data["pending_fences"] == []
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_renamed_capability_rejects_consumer_without_legacy_fallback(
+    hass,
+    tmp_path: Path,
+    release: str,
+) -> None:
+    """A same-generation registry rename blocks writes until lifecycle rebind."""
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    old_entity_id = entity_ids[f"text.code_slots:{_SLOT}.name"]
+    new_entity_id = "text.manually_renamed_keymaster_slot"
+    er.async_get(hass).async_update_entity(old_entity_id, new_entity_id=new_entity_id)
+    hass.states.async_set(new_entity_id, "")
+    reused_entry = er.async_get(hass).async_get_or_create(
+        "text",
+        "keymaster",
+        "unrelated_keymaster_identity",
+        suggested_object_id=old_entity_id.split(".", maxsplit=1)[1],
+        config_entry=hass.config_entries.async_get_entry(_KM_ENTRY_ID),
+    )
+    hass.states.async_set(reused_entry.entity_id, "Unrelated")
+    coordinator._state_value = lambda entity_id: (
+        state.state if (state := hass.states.get(entity_id)) is not None else None
+    )
+    lifecycle = get_keymaster_lifecycle(hass, _RC_ENTRY_ID)
+    assert lifecycle is not None
+    stale_snapshot = CoordinatorSetupMixin._read_verified_slot_snapshot(
+        coordinator, _SLOT, lifecycle
+    )
+    assert stale_snapshot.name_state is None
+
+    result = await coordinator.event_overrides._apply_set(
+        coordinator,
+        _SLOT,
+        SimpleNamespace(
+            identity_key=_OWNER_IDENTITY,
+            slot_name="Guest",
+            slot_code=_CODE,
+            start=datetime.now(UTC) + timedelta(hours=1),
+            end=datetime.now(UTC) + timedelta(hours=2),
+            buffered_start=datetime.now(UTC) + timedelta(hours=1),
+            buffered_end=datetime.now(UTC) + timedelta(hours=2),
+            display_slot_name="Guest",
+        ),
+        "set-renamed",
+    )
+
+    assert result.unconfirmed
+    assert not events
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert loaded.data["pending_fences"] == []
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_rename_during_service_call_preserves_fence_and_stops_followups(
+    hass,
+    tmp_path: Path,
+    release: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rename after one real side effect blocks the remaining operation."""
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    service_registry_type = type(hass.services)
+    original_async_call = service_registry_type.async_call
+    rename_id = entity_ids[f"switch.code_slots:{_SLOT}.enabled"]
+    replacement_id = "switch.renamed_during_service"
+    renamed = False
+
+    async def rename_after_first_dispatch(service_registry, *args, **kwargs):
+        """Rename the target after one side effect to invalidate follow-ups."""
+        nonlocal renamed
+        await original_async_call(service_registry, *args, **kwargs)
+        if not renamed:
+            renamed = True
+            er.async_get(hass).async_update_entity(
+                rename_id, new_entity_id=replacement_id
+            )
+            hass.states.async_set(replacement_id, "off")
+
+    monkeypatch.setattr(
+        service_registry_type, "async_call", rename_after_first_dispatch
+    )
+    result = await coordinator.event_overrides._apply_set(
+        coordinator,
+        _SLOT,
+        SimpleNamespace(
+            identity_key=_OWNER_IDENTITY,
+            slot_name="Guest",
+            slot_code=_CODE,
+            start=datetime.now(UTC) + timedelta(hours=1),
+            end=datetime.now(UTC) + timedelta(hours=2),
+            buffered_start=datetime.now(UTC) + timedelta(hours=1),
+            buffered_end=datetime.now(UTC) + timedelta(hours=2),
+            display_slot_name="Guest",
+        ),
+        "set-renamed-mid-flight",
+    )
+
+    assert result.unconfirmed
+    assert len(events) == 1
+    assert events[0]["entity_id"] == rename_id
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert any(
+        fence["fence_type"] == "allocation" and fence["slot"] == _SLOT
+        for fence in loaded.data["pending_fences"]
+    )
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_calendar_cleanup_uses_acknowledged_exact_reset(
+    hass,
+    tmp_path: Path,
+    release: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cleanup consumer commits pending-clear before exact reset dispatch."""
+    from dataclasses import replace
+
+    from custom_components.rental_control import util
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    original_deps = util._keymaster_deps
+
+    async def immediate_sleep(_delay: float) -> None:
+        """Skip delay while testing the calendar cleanup consumer."""
+        return None
+
+    monkeypatch.setattr(
+        util,
+        "_keymaster_deps",
+        lambda: replace(original_deps(), sleep=immediate_sleep),
+    )
+    reservation = SimpleNamespace(
+        identity_key=_OWNER_IDENTITY,
+        slot_name="Guest",
+        slot_code=_CODE,
+        start=datetime.now(UTC) - timedelta(hours=2),
+        end=datetime.now(UTC) + timedelta(hours=2),
+        buffered_start=datetime.now(UTC) - timedelta(hours=2),
+        buffered_end=datetime.now(UTC) + timedelta(hours=2),
+        display_slot_name="Guest",
+    )
+    set_result = await coordinator.event_overrides._apply_set(
+        coordinator, _SLOT, reservation, "cleanup-set"
+    )
+    assert set_result.confirmed
+    coordinator._slot_mappings = {"mappings": {_OWNER_IDENTITY: {"slot": _SLOT}}}
+
+    await coordinator.event_overrides.async_check_overrides(coordinator, calendar=[])
+
+    assert events[-1]["domain"] == "button"
+    assert events[-1]["entity_id"] == entity_ids[f"button.code_slots:{_SLOT}.reset"]
+    assert events[-1]["fences"] == ("allocation", "pending_clear")
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert all(
+        fence["fence_type"] != "pending_clear"
+        for fence in loaded.data["pending_fences"]
+    )
+    assert any(
+        tombstone["resolution_kind"] == "clear_confirmed"
+        for tombstone in loaded.data["tombstones"]
+    )

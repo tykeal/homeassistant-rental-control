@@ -69,6 +69,8 @@ class ProtectedRegistryStore:
         self._commit_operation_serial = 0
         self._commit_in_flight: int | None = None
         self._state_lock = threading.RLock()
+        self._commit_settled = asyncio.Event()
+        self._commit_settled.set()
 
     @property
     def last_result(self) -> ProtectionLoadResult | None:
@@ -104,6 +106,29 @@ class ProtectedRegistryStore:
                 and loaded.transaction_id == token.transaction_id
                 and loaded.generation == token.generation
             )
+
+    def operation_snapshot_ready(self) -> bool:
+        """Return readiness for a live operation against the latest snapshot."""
+        with self._state_lock:
+            loaded = self._loaded_result
+            return bool(
+                self._authorization_state is ProtectionAuthorizationState.READY
+                and self._commit_in_flight is None
+                and loaded is not None
+                and loaded.state is ProtectionLoadState.VALID_V2
+                and loaded.data is not None
+            )
+
+    async def async_wait_for_commit_completion(self) -> bool:
+        """Wait without holding allocator locks, then recheck the sticky gate."""
+        while True:
+            with self._state_lock:
+                if self._commit_in_flight is None:
+                    return (
+                        self._authorization_state is ProtectionAuthorizationState.READY
+                    )
+                settled = self._commit_settled
+            await settled.wait()
 
     def association_for_entry(self, rc_entry_id: str) -> AssociationTuple | None:
         """Return one validated association only under the current READY gate."""
@@ -241,6 +266,7 @@ class ProtectedRegistryStore:
         with self._state_lock:
             self._commit_operation_serial += 1
             self._commit_in_flight = self._commit_operation_serial
+            self._commit_settled.clear()
             return self._commit_operation_serial
 
     def _apply_commit_completion(
@@ -260,6 +286,8 @@ class ProtectedRegistryStore:
                 self._last_result = result
                 if operation_id is not None:
                     self._commit_in_flight = None
+            if operation_id is not None:
+                self._commit_settled.set()
             return
         blocked_result: ProtectionLoadResult | None = None
         with self._state_lock:
@@ -285,6 +313,8 @@ class ProtectedRegistryStore:
                 self._authorization_state = ProtectionAuthorizationState.READY
             if operation_id is not None:
                 self._commit_in_flight = None
+        if operation_id is not None:
+            self._commit_settled.set()
         if blocked_result is not None:
             self._report_unknown(blocked_result.failure_code)
             return
@@ -308,6 +338,8 @@ class ProtectedRegistryStore:
             self._authorization_state = ProtectionAuthorizationState.PROTECTIVE_UNKNOWN
             if commit_operation_id is not None:
                 self._commit_in_flight = None
+        if commit_operation_id is not None:
+            self._commit_settled.set()
         self._report_unknown(result.failure_code)
 
     def _report_unknown(self, failure_code: str | None) -> None:

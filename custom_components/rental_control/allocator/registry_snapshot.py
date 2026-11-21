@@ -7,9 +7,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Mapping
+from contextlib import AsyncExitStack
 import copy
 from dataclasses import dataclass
-from functools import partial
 import secrets
 from typing import Any
 
@@ -20,9 +20,24 @@ from .models import ProtectionLoadResult
 from .models import ProtectionLoadState
 from .protected_store import ProtectedRegistryStore
 from .registry import AllocationRegistry
+from .registry_snapshot_owner_transitions import owner_transition_slots
+from .registry_snapshot_owner_transitions import resolve_released_owner_fences
 from .registry_validation import valid_exclusions_section
 from .registry_validation import validate_v2_envelope_shape
 from .store import serialize_registry_ledger
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotCommitHooks:
+    """Optional authorization and transition callbacks for one snapshot."""
+
+    authorize_owner_transition: (
+        Callable[[AllocationRegistry, AllocationRegistry], bool] | None
+    ) = None
+    safety_transition: (
+        Callable[[AllocationRegistry, dict[str, Any], str, int], None] | None
+    ) = None
+    event_loop_preflight: Callable[[], ProtectionLoadResult | None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +50,20 @@ class _StagedSnapshot:
     base_transaction_id: str | None
     base_generation: int
     exclusion_generation: int
+    base_data: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _SnapshotStageRequest:
+    """Inputs for constructing an isolated registry candidate."""
+
+    allocator: Any
+    protected_store: ProtectedRegistryStore
+    mutate: Callable[[AllocationRegistry], None]
+    exclusions: list[dict[str, Any]]
+    current_exclusion_snapshot: Callable[[], tuple[int, list[dict[str, Any]]]]
+    exclusion_generation: int
+    hooks: SnapshotCommitHooks
 
 
 def _unavailable(code: str) -> ProtectionLoadResult:
@@ -100,10 +129,7 @@ async def async_commit_registry_snapshot(
     exclusions: list[dict[str, Any]],
     current_exclusion_snapshot: Callable[[], tuple[int, list[dict[str, Any]]]],
     *,
-    authorize_owner_transition: Callable[[AllocationRegistry, AllocationRegistry], bool]
-    | None = None,
-    safety_transition: Callable[[AllocationRegistry, dict[str, Any], str, int], None]
-    | None = None,
+    hooks: SnapshotCommitHooks | None = None,
 ) -> ProtectionLoadResult:
     """Commit a staged complete snapshot before publishing it in memory.
 
@@ -126,50 +152,67 @@ async def async_commit_registry_snapshot(
     if exclusion_error is not None:
         return exclusion_error
     assert exclusion_generation is not None
+    commit_hooks = hooks or SnapshotCommitHooks()
 
     staged = await _stage_registry_snapshot(
-        allocator,
-        protected_store,
-        mutate,
-        exclusions,
-        current_exclusion_snapshot,
-        exclusion_generation,
-        safety_transition,
+        _SnapshotStageRequest(
+            allocator,
+            protected_store,
+            mutate,
+            exclusions,
+            current_exclusion_snapshot,
+            exclusion_generation,
+            commit_hooks,
+        )
     )
     if isinstance(staged, ProtectionLoadResult):
         return staged
-    return await _commit_staged_snapshot(
+    transition_slots = owner_transition_slots(
         allocator,
-        protected_store,
-        staged,
-        exclusions,
-        current_exclusion_snapshot,
-        authorize_owner_transition,
+        staged.base_data,
+        staged.envelope["data"],
     )
+    if isinstance(transition_slots, ProtectionLoadResult):
+        return transition_slots
+    async with AsyncExitStack() as stack:
+        from ..keymaster_slot_operations import async_keymaster_slot_operation
+
+        for transition_lock in transition_slots:
+            await stack.enter_async_context(
+                async_keymaster_slot_operation(
+                    allocator.hass,
+                    transition_lock.keymaster_entry_id,
+                    transition_lock.slot,
+                    pending=transition_lock.pending,
+                )
+            )
+        return await _commit_staged_snapshot(
+            allocator,
+            protected_store,
+            staged,
+            exclusions,
+            current_exclusion_snapshot,
+            commit_hooks,
+        )
 
 
 async def _stage_registry_snapshot(
-    allocator: Any,
-    protected_store: ProtectedRegistryStore,
-    mutate: Callable[[AllocationRegistry], None],
-    exclusions: list[dict[str, Any]],
-    current_exclusion_snapshot: Callable[[], tuple[int, list[dict[str, Any]]]],
-    exclusion_generation: int,
-    safety_transition: Callable[[AllocationRegistry, dict[str, Any], str, int], None]
-    | None,
+    request: _SnapshotStageRequest,
 ) -> _StagedSnapshot | ProtectionLoadResult:
     """Build and validate an isolated candidate under the allocator lock."""
+    allocator = request.allocator
+    protected_store = request.protected_store
     async with allocator._lock:
         if not _exclusion_snapshot_is_current(
-            current_exclusion_snapshot,
-            exclusion_generation,
-            exclusions,
+            request.current_exclusion_snapshot,
+            request.exclusion_generation,
+            request.exclusions,
         ):
             return _unavailable("snapshot_exclusions_changed")
         try:
             baseline: AllocationRegistry = copy.deepcopy(allocator._registry)
             candidate = copy.deepcopy(baseline)
-            mutate(candidate)
+            request.mutate(candidate)
             loaded = protected_store.loaded_result
             if (
                 protected_store.authorization_state
@@ -180,6 +223,11 @@ async def _stage_registry_snapshot(
                 or loaded.generation is None
             ):
                 return _unavailable("authorization_required")
+            if not _ledger_matches_registry(
+                loaded.data.get("ledger"),
+                serialize_registry_ledger(baseline),
+            ):
+                return _unavailable("registry_changed")
             transaction_id = secrets.token_hex(16)
             target_generation = loaded.generation + 1
             data = copy.deepcopy(loaded.data)
@@ -188,15 +236,21 @@ async def _stage_registry_snapshot(
                 transaction_id=transaction_id,
                 generation=target_generation,
                 ledger=serialize_registry_ledger(candidate),
-                exclusions=copy.deepcopy(exclusions),
+                exclusions=copy.deepcopy(request.exclusions),
             )
-            if safety_transition is not None:
-                safety_transition(
+            if request.hooks.safety_transition is not None:
+                request.hooks.safety_transition(
                     candidate,
                     data,
                     transaction_id,
                     target_generation,
                 )
+            resolve_released_owner_fences(
+                loaded.data,
+                data,
+                transaction_id=transaction_id,
+                generation=target_generation,
+            )
             envelope = {
                 "version": 2,
                 "minor_version": 1,
@@ -213,7 +267,8 @@ async def _stage_registry_snapshot(
         envelope,
         loaded.transaction_id,
         loaded.generation,
-        exclusion_generation,
+        request.exclusion_generation,
+        copy.deepcopy(loaded.data),
     )
 
 
@@ -223,8 +278,7 @@ async def _commit_staged_snapshot(
     staged: _StagedSnapshot,
     exclusions: list[dict[str, Any]],
     current_exclusion_snapshot: Callable[[], tuple[int, list[dict[str, Any]]]],
-    authorize_owner_transition: Callable[[AllocationRegistry, AllocationRegistry], bool]
-    | None,
+    hooks: SnapshotCommitHooks,
 ) -> ProtectionLoadResult:
     """Revalidate and commit a candidate, publishing only its acknowledgement."""
     if not _exclusion_snapshot_is_current(
@@ -243,15 +297,20 @@ async def _commit_staged_snapshot(
             or current.state is not ProtectionLoadState.VALID_V2
             or current.transaction_id != staged.base_transaction_id
             or current.generation != staged.base_generation
+            or current.data is None
+            or not _ledger_matches_registry(
+                current.data.get("ledger"),
+                serialize_registry_ledger(staged.baseline),
+            )
         ):
             return _unavailable("registry_changed")
         return None
 
     def authorize_staged_owner_transition() -> bool:
         """Run the allocator release guard on isolated staged models."""
-        if authorize_owner_transition is None:
+        if hooks.authorize_owner_transition is None:
             return False
-        return authorize_owner_transition(
+        return hooks.authorize_owner_transition(
             copy.deepcopy(staged.baseline),
             copy.deepcopy(staged.candidate),
         )
@@ -266,15 +325,26 @@ async def _commit_staged_snapshot(
             raise ValueError("snapshot_exclusions_changed")
         allocator._registry = staged.candidate
 
-    return await protected_store.async_commit(
-        staged.envelope,
-        precondition=precondition,
-        on_locked_preflight=partial(
-            _locked_exclusion_preflight,
+    def locked_preflight() -> ProtectionLoadResult | None:
+        """Check event-loop evidence while both persistence locks are held."""
+        exclusion_result = _locked_exclusion_preflight(
             current_exclusion_snapshot,
             staged.exclusion_generation,
             exclusions,
-        ),
+        )
+        if exclusion_result is not None:
+            return exclusion_result
+        if hooks.event_loop_preflight is None:
+            return None
+        try:
+            return hooks.event_loop_preflight()
+        except Exception:
+            return _unavailable("snapshot_precondition_failed")
+
+    return await protected_store.async_commit(
+        staged.envelope,
+        precondition=precondition,
+        on_locked_preflight=locked_preflight,
         authorize_owner_transition=authorize_staged_owner_transition,
         on_acknowledged=publish,
     )
@@ -299,6 +369,15 @@ def _validated_exclusion_generation(
     ):
         return None, _unavailable("snapshot_exclusions_changed")
     return generation, None
+
+
+def _ledger_matches_registry(persisted: object, serialized: dict[str, Any]) -> bool:
+    """Compare ledger contents while excluding its per-serialization timestamp."""
+    if not isinstance(persisted, dict) or set(persisted) != set(serialized):
+        return False
+    return {key: value for key, value in persisted.items() if key != "updated_at"} == {
+        key: value for key, value in serialized.items() if key != "updated_at"
+    }
 
 
 def _exclusion_snapshot_is_current(

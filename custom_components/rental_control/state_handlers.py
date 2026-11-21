@@ -4,14 +4,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable
-from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime
-import logging
 import re
 from typing import Any
-from typing import cast
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event
@@ -21,45 +16,12 @@ from homeassistant.util import dt
 
 from .const import COORDINATOR
 from .const import DOMAIN
-
-
-@dataclass(frozen=True, slots=True)
-class StateHandlerDeps:
-    """Runtime dependencies supplied by the util compatibility shell."""
-
-    sleep: Callable[..., Awaitable[Any]]
-    logger: logging.Logger
-    normalize_keymaster_text_state: Callable[[Any], str | None]
-    trim_name: Callable[[str, int], str]
-
-
-@dataclass(frozen=True, slots=True)
-class StateChangeContext:
-    """Resolved state-change context for one Keymaster entity event."""
-
-    hass: HomeAssistant
-    event: Event[EventStateChangedData]
-    coordinator: Any
-    lockname: str
-    entity_id: str
-    event_new_value: Any
-    event_has_new_value: bool
-    slot_num: int
-    existing_override: dict[str, Any] | None
-
-
-@dataclass(frozen=True, slots=True)
-class SlotStateSnapshot:
-    """Home Assistant states needed to normalize a slot update."""
-
-    slot_code_entity_id: str
-    slot_name_entity_id: str
-    start_time_entity_id: str
-    end_time_entity_id: str
-    slot_code: Any
-    slot_name: Any
-    g_start_time: Any
-    g_end_time: Any
+from .keymaster_lifecycle import get_keymaster_lifecycle
+from .state_handler_models import VERIFIED_FEEDBACK_PROPERTIES
+from .state_handler_models import SlotStateSnapshot
+from .state_handler_models import StateChangeContext
+from .state_handler_models import StateHandlerDeps
+from .state_handler_values import build_override_update as _build_override_update
 
 
 async def handle_state_change(
@@ -71,11 +33,21 @@ async def handle_state_change(
     """Listener to track state changes of Keymaster input entities."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
     lockname = coordinator.lockname
-    if not lockname or not coordinator.event_overrides:
+    lifecycle = get_keymaster_lifecycle(hass, config_entry.entry_id)
+    if (not lockname and lifecycle is None) or not coordinator.event_overrides:
+        return
+    context = _resolve_context(
+        hass,
+        event,
+        coordinator,
+        lockname,
+        deps,
+        config_entry_id=config_entry.entry_id,
+    )
+    if context is None:
         return
     await deps.sleep(0.1)
-    context = _resolve_context(hass, event, coordinator, lockname, deps)
-    if context is None:
+    if not _context_is_current(context):
         return
     if await _handle_reset_entity(context, deps):
         return
@@ -96,6 +68,8 @@ def _resolve_context(
     coordinator: Any,
     lockname: str,
     deps: StateHandlerDeps,
+    *,
+    config_entry_id: str | None = None,
 ) -> StateChangeContext | None:
     """Resolve state-change inputs and extract the Keymaster slot number."""
     entity_id = event.data["entity_id"]
@@ -104,16 +78,50 @@ def _resolve_context(
         getattr(event_new_state, "state", None) if event_new_state is not None else None
     )
     event_has_new_value = event_new_value is not None
-    deps.logger.debug(
-        "Handling state change for %s in %s with event: %s", entity_id, lockname, event
-    )
-    slot_match = re.search(r"_code_slot_(\d+)_", entity_id)
-    if slot_match is None:
-        deps.logger.warning(
-            "Could not extract slot number from entity_id: %s", entity_id
+    deps.logger.debug("Handling state change for %s in %s", entity_id, lockname)
+    entry_id = config_entry_id or coordinator.config_entry.entry_id
+    lifecycle = get_keymaster_lifecycle(hass, entry_id)
+    property_key: str | None = None
+    capability_entity_ids: dict[str, str] | None = None
+    lifecycle_generation: int | None = None
+    capability_identity = None
+    if lifecycle is not None:
+        lifecycle_generation = lifecycle.generation
+        current = lifecycle.current
+        matched = next(
+            (
+                resolution
+                for resolution in current.values()
+                if resolution.entity_id == entity_id and resolution.identity is not None
+            ),
+            None,
         )
-        return None
-    slot_num = int(slot_match.group(1))
+        if matched is None or not matched.ready or matched.identity is None:
+            return None
+        property_key = matched.identity.property_key
+        capability_identity = matched.identity
+        if property_key not in {
+            template.format(slot=matched.identity.slot)
+            for template in VERIFIED_FEEDBACK_PROPERTIES
+        }:
+            return None
+        slot_num = matched.identity.slot
+        capability_entity_ids = {
+            key: resolution.entity_id
+            for key, resolution in current.items()
+            if resolution.identity is not None
+            and resolution.identity.slot == slot_num
+            and resolution.ready
+            and resolution.entity_id is not None
+        }
+    else:
+        slot_match = re.search(r"_code_slot_(\d+)_", entity_id)
+        if slot_match is None:
+            deps.logger.warning(
+                "Could not extract slot number from entity_id: %s", entity_id
+            )
+            return None
+        slot_num = int(slot_match.group(1))
     existing_override: dict[str, Any] | None = None
     if event_has_new_value and coordinator.event_overrides:
         existing_override = coordinator.event_overrides.overrides.get(slot_num)
@@ -127,6 +135,41 @@ def _resolve_context(
         event_has_new_value,
         slot_num,
         existing_override,
+        property_key,
+        capability_entity_ids,
+        lifecycle_generation,
+        capability_identity,
+        entry_id,
+    )
+
+
+def _context_is_current(context: StateChangeContext) -> bool:
+    """Return whether a captured feedback event still names the same capability."""
+    domain_data = context.hass.data.get(DOMAIN)
+    if not isinstance(domain_data, dict):
+        return False
+    entry_id = context.config_entry_id
+    if entry_id is None:
+        return False
+    entry_data = domain_data.get(entry_id)
+    if not isinstance(entry_data, dict):
+        return False
+    if entry_data.get(COORDINATOR) is not context.coordinator:
+        return False
+    lifecycle = get_keymaster_lifecycle(
+        context.hass,
+        entry_id,
+    )
+    if context.capability_identity is None:
+        return lifecycle is None and context.lifecycle_generation is None
+    if lifecycle is None or lifecycle.generation != context.lifecycle_generation:
+        return False
+    current = lifecycle.current.get(context.property_key or "")
+    return (
+        current is not None
+        and current.ready
+        and current.entity_id == context.entity_id
+        and current.identity == context.capability_identity
     )
 
 
@@ -134,13 +177,29 @@ async def _handle_reset_entity(
     context: StateChangeContext, deps: StateHandlerDeps
 ) -> bool:
     """Handle reset-button state changes and report whether processing is done."""
-    if "_reset" not in context.entity_id:
+    if not _context_is_current(context):
+        return True
+    if context.capability_entity_ids is not None:
+        if context.property_key != f"button.code_slots:{context.slot_num}.reset":
+            return False
+        required = (
+            f"text.code_slots:{context.slot_num}.name",
+            f"text.code_slots:{context.slot_num}.pin",
+        )
+        if any(key not in context.capability_entity_ids for key in required):
+            return True
+    elif "_reset" not in context.entity_id:
         return False
     deps.logger.debug(
         "Resetting overrides %s for %s.", context.slot_num, context.lockname
     )
     await context.coordinator.event_overrides.async_update(
-        context.slot_num, "", "", dt.start_of_local_day(), dt.start_of_local_day()
+        context.slot_num,
+        "",
+        "",
+        dt.start_of_local_day(),
+        dt.start_of_local_day(),
+        guard=lambda: _context_is_current(context),
     )
     return True
 
@@ -169,9 +228,15 @@ def _read_slot_state_snapshot(
     """Read all Home Assistant states required for a slot override update."""
     slot = context.slot_num
     lockname = context.lockname
-    slot_enabled_entity_id = f"switch.{lockname}_code_slot_{slot}_enabled"
+    slot_enabled_entity_id = _context_entity_id(
+        context,
+        f"switch.code_slots:{slot}.enabled",
+        f"switch.{lockname}_code_slot_{slot}_enabled",
+    )
+    if slot_enabled_entity_id is None:
+        return None
     slot_state = context.hass.states.get(slot_enabled_entity_id)
-    deps.logger.debug("Slot %s state: %s", slot, slot_state)
+    deps.logger.debug("Read enabled state for slot %s", slot)
     if slot_state is None:
         return None
     slot_enabled_state = (
@@ -189,25 +254,47 @@ def _read_slot_state_snapshot(
 
 def _read_enabled_slot_states(
     context: StateChangeContext, deps: StateHandlerDeps
-) -> SlotStateSnapshot:
+) -> SlotStateSnapshot | None:
     """Read Keymaster code, name, and optional date-range states."""
     slot = context.slot_num
     lockname = context.lockname
-    slot_code_entity_id = f"text.{lockname}_code_slot_{slot}_pin"
-    slot_name_entity_id = f"text.{lockname}_code_slot_{slot}_name"
+    slot_code_entity_id = _context_entity_id(
+        context, f"text.code_slots:{slot}.pin", f"text.{lockname}_code_slot_{slot}_pin"
+    )
+    slot_name_entity_id = _context_entity_id(
+        context,
+        f"text.code_slots:{slot}.name",
+        f"text.{lockname}_code_slot_{slot}_name",
+    )
+    if slot_code_entity_id is None or slot_name_entity_id is None:
+        return None
     slot_code = context.hass.states.get(slot_code_entity_id)
     slot_name = context.hass.states.get(slot_name_entity_id)
-    use_date_range_entity_id = (
-        f"switch.{lockname}_code_slot_{slot}_use_date_range_limits"
+    use_date_range_entity_id = _context_entity_id(
+        context,
+        f"switch.code_slots:{slot}.accesslimit_date_range_enabled",
+        f"switch.{lockname}_code_slot_{slot}_use_date_range_limits",
     )
+    if use_date_range_entity_id is None:
+        return None
     use_date_range = context.hass.states.get(use_date_range_entity_id)
-    deps.logger.debug("Use Date Range: %s", use_date_range)
+    deps.logger.debug("Read date-range enablement for slot %s", slot)
     use_date_range_state = _effective_state(
         context, use_date_range_entity_id, use_date_range
     )
     if use_date_range_state == "on":
-        start_entity = f"datetime.{lockname}_code_slot_{slot}_date_range_start"
-        end_entity = f"datetime.{lockname}_code_slot_{slot}_date_range_end"
+        start_entity = _context_entity_id(
+            context,
+            f"datetime.code_slots:{slot}.accesslimit_date_range_start",
+            f"datetime.{lockname}_code_slot_{slot}_date_range_start",
+        )
+        end_entity = _context_entity_id(
+            context,
+            f"datetime.code_slots:{slot}.accesslimit_date_range_end",
+            f"datetime.{lockname}_code_slot_{slot}_date_range_end",
+        )
+        if start_entity is None or end_entity is None:
+            return None
         return SlotStateSnapshot(
             slot_code_entity_id,
             slot_name_entity_id,
@@ -218,6 +305,7 @@ def _read_enabled_slot_states(
             context.hass.states.get(start_entity),
             context.hass.states.get(end_entity),
         )
+
     return SlotStateSnapshot(
         slot_code_entity_id,
         slot_name_entity_id,
@@ -230,116 +318,20 @@ def _read_enabled_slot_states(
     )
 
 
+def _context_entity_id(
+    context: StateChangeContext, property_key: str, legacy_entity_id: str
+) -> str | None:
+    """Return one exact verified address or the unchanged legacy address."""
+    if context.capability_entity_ids is None:
+        return legacy_entity_id
+    return context.capability_entity_ids.get(property_key)
+
+
 def _effective_state(context: StateChangeContext, entity_id: str, state: Any) -> Any:
     """Return event value for the changed entity, otherwise the stored state."""
     if context.event_has_new_value and context.entity_id == entity_id:
         return context.event_new_value
     return state.state if state else None
-
-
-def _build_override_update(
-    context: StateChangeContext, snapshot: SlotStateSnapshot, deps: StateHandlerDeps
-) -> tuple[str, str, datetime, datetime] | None:
-    """Build normalized override update fields or return None to skip."""
-    if snapshot.slot_code is None or snapshot.slot_name is None:
-        return None
-    slot_code_value = _slot_text_value(
-        context, snapshot.slot_code_entity_id, snapshot.slot_code, "slot_code", deps
-    )
-    if slot_code_value is None:
-        return None
-    slot_name_value = _slot_text_value(
-        context, snapshot.slot_name_entity_id, snapshot.slot_name, "slot_name", deps
-    )
-    if slot_name_value is None:
-        return None
-    if slot_code_value and not slot_name_value:
-        deps.logger.warning(
-            "Ignoring Keymaster slot %s state change with a code but no readable name; keeping the slot out of the free pool.",
-            context.slot_num,
-        )
-        return None
-    start_time, end_time = _parse_slot_times(context, snapshot)
-    slot_name_value = _restore_full_name_for_trim_match(context, slot_name_value, deps)
-    return slot_code_value, slot_name_value, start_time, end_time
-
-
-def _slot_text_value(
-    context: StateChangeContext,
-    entity_id: str,
-    state: Any,
-    key: str,
-    deps: StateHandlerDeps,
-) -> str | None:
-    """Return the normalized text value for one slot text entity."""
-    if context.event_has_new_value and context.entity_id == entity_id:
-        return deps.normalize_keymaster_text_state(context.event_new_value)
-    if context.event_has_new_value and context.existing_override is not None:
-        return str(context.existing_override[key])
-    return deps.normalize_keymaster_text_state(state.state)
-
-
-def _parse_slot_times(
-    context: StateChangeContext, snapshot: SlotStateSnapshot
-) -> tuple[datetime, datetime]:
-    """Parse start and end times with existing override preservation."""
-    start_time = dt.start_of_local_day()
-    end_time = dt.start_of_local_day()
-    if context.event_has_new_value and context.existing_override is not None:
-        start_time = context.existing_override["start_time"]
-        end_time = context.existing_override["end_time"]
-    start_time = _parse_one_time(
-        context, snapshot.g_start_time, snapshot.start_time_entity_id, start_time
-    )
-    end_time = _parse_one_time(
-        context, snapshot.g_end_time, snapshot.end_time_entity_id, end_time
-    )
-    return start_time, end_time
-
-
-def _parse_one_time(
-    context: StateChangeContext, state: Any, entity_id: str, current: datetime
-) -> datetime:
-    """Parse one datetime state while preserving feedback semantics."""
-    if state is None:
-        return current
-    if context.event_has_new_value and context.entity_id == entity_id:
-        parsed = dt.parse_datetime(context.event_new_value)
-        return parsed if parsed else current
-    if not (context.event_has_new_value and context.existing_override is not None):
-        parsed = dt.parse_datetime(state.state)
-        return parsed if parsed else current
-    return current
-
-
-def _restore_full_name_for_trim_match(
-    context: StateChangeContext, slot_name_value: str, deps: StateHandlerDeps
-) -> str:
-    """Restore an untrimmed override name when Keymaster shows its trim."""
-    if not context.coordinator.trim_names or not slot_name_value:
-        return slot_name_value
-    existing = (
-        context.coordinator.event_overrides.overrides.get(context.slot_num)
-        if context.coordinator.event_overrides
-        else None
-    )
-    if not existing or not existing["slot_name"]:
-        return slot_name_value
-    prefix = (
-        f"{context.coordinator.event_prefix} "
-        if context.coordinator.event_prefix
-        else ""
-    )
-    guest_max = context.coordinator.max_name_length - len(prefix)
-    expected_trimmed = deps.trim_name(existing["slot_name"], guest_max)
-    incoming_guest = (
-        slot_name_value[len(prefix) :]
-        if prefix and slot_name_value.startswith(prefix)
-        else slot_name_value
-    )
-    if incoming_guest == expected_trimmed:
-        return prefix + cast("str", existing["slot_name"])
-    return slot_name_value
 
 
 async def _dispatch_override_update(
@@ -350,18 +342,17 @@ async def _dispatch_override_update(
     """Dispatch the final override update without launching reconciliation."""
     slot_code_value, slot_name_value, start_time, end_time = update
     deps.logger.debug(
-        "updating overrides for %s slot %s. slot_name: '%s', slot_code: '%s', start_time: '%s', end_time: '%s'",
+        "Updating overrides for %s slot %s from state feedback.",
         context.lockname,
         context.slot_num,
-        slot_name_value,
-        slot_code_value,
-        start_time,
-        end_time,
     )
+    if not _context_is_current(context):
+        return
     await context.coordinator.update_event_overrides(
         context.slot_num,
         slot_code_value,
         slot_name_value,
         start_time,
         end_time,
+        guard=lambda: _context_is_current(context),
     )

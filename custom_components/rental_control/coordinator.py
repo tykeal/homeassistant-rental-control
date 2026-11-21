@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Mapping
 from datetime import datetime
 from datetime import timedelta
@@ -359,19 +360,23 @@ class RentalControlCoordinator(
         update: EventOverrideUpdate | int | None = None,
         *values: Any,
         request_refresh: bool = True,
+        guard: Callable[[], bool] | None = None,
         **legacy: Any,
     ) -> None:
         """Update the event overrides with the ServiceCall data."""
         _LOGGER.debug("In update_event_overrides")
         payload = normalize_event_override_update(update, values, legacy)
         if self.event_overrides:
-            await self.event_overrides.async_update(
+            accepted = await self.event_overrides.async_update(
                 payload.slot,
                 payload.slot_code,
                 payload.slot_name,
                 payload.start_time,
                 payload.end_time,
                 self.event_prefix,
+                guard=guard,
             )
-        if request_refresh:
+        else:
+            accepted = guard is None
+        if request_refresh and accepted:
             await self.async_request_refresh()

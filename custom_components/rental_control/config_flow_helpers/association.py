@@ -4,18 +4,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
-from uuid import uuid4
 
 from homeassistant.config_entries import ConfigEntry
 
-from ..allocator.association_evidence import AssociationAttestation
-from ..allocator.association_evidence import AssociationRebindHold
 from ..allocator.association_references import has_known_original_safety_record
 from ..allocator.association_references import original_keymaster_entry_for_references
 from ..allocator.association_transactions import AssociationTransaction
-from ..allocator.associations import AssociationChange
 from ..allocator.associations import AssociationMode
 from ..allocator.associations import AssociationTuple
 from ..allocator.models import ProtectionAuthorizationState
@@ -34,43 +29,10 @@ from ..const import STORE_CODE_REGISTRY_KEY
 from ..coordinator_helpers.config_update import AssociationApplyState
 from ..coordinator_helpers.config_update import async_commit_association_transaction
 from ..coordinator_helpers.config_update import replay_pending_association_transactions
+from .association_flow_models import AssociationFlowResult
+from .association_flow_models import AssociationIntent
+from .association_transaction import build_association_transaction
 from .schemas import lock_entry_convert
-
-
-@dataclass(frozen=True, slots=True)
-class AssociationFlowResult:
-    """Association transition outcome and sanitized form errors."""
-
-    user_input: dict[str, Any]
-    errors: dict[str, str]
-
-
-@dataclass(frozen=True, slots=True)
-class _AssociationIntent:
-    """Validated options-flow intent before reading or mutating storage."""
-
-    rc_entry_id: str
-    form_input: dict[str, Any]
-    submitted: dict[str, Any]
-    old: AssociationTuple
-    mode: AssociationMode
-    keymaster_entry_id: str | None
-    legacy_present: bool
-    legacy_raw: str | None
-    attest_same_lock: bool
-
-    @property
-    def changes_tuple(self) -> bool:
-        """Return whether the committed association tuple changes."""
-        return (
-            self.mode is not self.old.mode
-            or self.keymaster_entry_id != self.old.verified_keymaster_entry_id
-            or (self.legacy_present, self.legacy_raw)
-            != (
-                self.old.legacy_lock_selection_present,
-                self.old.legacy_lock_selection_raw,
-            )
-        )
 
 
 async def apply_association_selection(
@@ -119,7 +81,7 @@ async def apply_association_selection(
     if evidence_error is not None:
         return evidence_error
 
-    transaction = _build_transaction(
+    transaction = build_association_transaction(
         intent,
         loaded,
         tuple(affected_references),
@@ -151,7 +113,7 @@ async def apply_association_selection(
 
 def _unchanged_association_result(
     flow: Any,
-    intent: _AssociationIntent,
+    intent: AssociationIntent,
 ) -> AssociationFlowResult:
     """Keep unrelated options usable while replaying any known config chain."""
     protected = _ready_protected_store(flow)
@@ -170,7 +132,7 @@ def _unchanged_association_result(
 
 
 def _independent_original_entry(
-    intent: _AssociationIntent,
+    intent: AssociationIntent,
     data: dict[str, Any],
     affected_references: tuple[str, ...],
 ) -> tuple[str | None, AssociationFlowResult | None]:
@@ -213,7 +175,7 @@ def _replay_pending_projection(
 
 def _build_intent(
     flow: Any, user_input: dict[str, Any]
-) -> _AssociationIntent | AssociationFlowResult:
+) -> AssociationIntent | AssociationFlowResult:
     """Validate form values and association transition policy."""
     submitted = dict(user_input)
     attest_same_lock = submitted.pop(CONF_ASSOCIATION_ATTEST_SAME_LOCK, False)
@@ -235,7 +197,7 @@ def _build_intent(
     if isinstance(target, AssociationFlowResult):
         return target
     mode, keymaster_entry_id = target
-    intent = _AssociationIntent(
+    intent = AssociationIntent(
         entry.entry_id,
         user_input,
         submitted,
@@ -313,167 +275,6 @@ def _ready_protected_store(
     ):
         return None
     return store, loaded
-
-
-def _build_transaction(
-    intent: _AssociationIntent,
-    loaded: ProtectionLoadResult,
-    affected_references: tuple[str, ...],
-    *,
-    independently_proven_original: str | None,
-) -> AssociationTransaction | AssociationFlowResult:
-    """Create one typed transition, requiring scoped historical attestation."""
-    if loaded.generation is None or loaded.transaction_id is None:
-        return _association_error(intent.form_input, "association_unavailable")
-    validation_error = _validate_association_intent(
-        intent,
-        affected_references,
-        independently_proven_original=independently_proven_original,
-    )
-    if validation_error is not None:
-        return validation_error
-    return _create_association_transaction(
-        intent,
-        loaded,
-        affected_references,
-        independently_proven_original=independently_proven_original,
-    )
-
-
-def _validate_association_intent(
-    intent: _AssociationIntent,
-    affected_references: tuple[str, ...],
-    *,
-    independently_proven_original: str | None,
-) -> AssociationFlowResult | None:
-    """Validate how selected history may be attached to a Keymaster entry."""
-    if (
-        intent.old.mode is AssociationMode.EXPLICIT_LOCKLESS
-        and intent.mode is AssociationMode.VERIFIED
-        and affected_references
-    ):
-        return _association_error(
-            intent.form_input,
-            "association_conflict",
-            field=CONF_ASSOCIATION_ENTRY_CHOICE,
-        )
-    if (
-        intent.old.mode is AssociationMode.LEGACY_UNRESOLVED
-        and intent.mode is AssociationMode.VERIFIED
-        and affected_references
-    ):
-        if intent.old.legacy_lock_selection_raw in {None, LOCK_ENTRY_NONE}:
-            return _association_error(
-                intent.form_input,
-                "association_conflict",
-                field=CONF_ASSOCIATION_ENTRY_CHOICE,
-            )
-        if independently_proven_original == intent.keymaster_entry_id:
-            if intent.attest_same_lock:
-                return _association_error(
-                    intent.form_input,
-                    "attestation_unused",
-                    field=CONF_ASSOCIATION_ATTEST_SAME_LOCK,
-                )
-            return None
-        if not intent.attest_same_lock:
-            return _association_error(
-                intent.form_input,
-                "attestation_required",
-                field=CONF_ASSOCIATION_ATTEST_SAME_LOCK,
-            )
-    elif intent.attest_same_lock:
-        return _association_error(
-            intent.form_input,
-            "attestation_unused",
-            field=CONF_ASSOCIATION_ATTEST_SAME_LOCK,
-        )
-    return None
-
-
-def _create_association_transaction(
-    intent: _AssociationIntent,
-    loaded: ProtectionLoadResult,
-    affected_references: tuple[str, ...],
-    *,
-    independently_proven_original: str | None,
-) -> AssociationTransaction:
-    """Build tuple, attestation, and retained-hold records for one commit."""
-    assert loaded.generation is not None
-    assert loaded.transaction_id is not None
-    transaction_generation = loaded.generation + 1
-    transaction_id = uuid4().hex
-    new_tuple = AssociationTuple(
-        intent.legacy_present,
-        intent.legacy_raw,
-        intent.keymaster_entry_id,
-        intent.old.association_generation + 1,
-        transaction_id,
-        intent.mode,
-    )
-    change = AssociationChange(
-        intent.rc_entry_id,
-        intent.old,
-        new_tuple,
-        affected_references,
-        independently_proven_original
-        if (
-            independently_proven_original is not None
-            and intent.old.mode is AssociationMode.LEGACY_UNRESOLVED
-            and independently_proven_original == intent.keymaster_entry_id
-        )
-        else None,
-        affected_references
-        if (
-            independently_proven_original is not None
-            and intent.old.mode is AssociationMode.LEGACY_UNRESOLVED
-            and independently_proven_original == intent.keymaster_entry_id
-        )
-        else (),
-    )
-    retained_holds: tuple[AssociationRebindHold, ...] = ()
-    if (
-        intent.old.mode is AssociationMode.VERIFIED
-        and intent.old.verified_keymaster_entry_id is not None
-        and intent.keymaster_entry_id != intent.old.verified_keymaster_entry_id
-        and affected_references
-    ):
-        retained_holds = (
-            AssociationRebindHold(
-                uuid4().hex,
-                intent.rc_entry_id,
-                intent.old.verified_keymaster_entry_id,
-                intent.keymaster_entry_id,
-                affected_references,
-                transaction_id,
-                transaction_generation,
-            ),
-        )
-    attestations: tuple[AssociationAttestation, ...] = ()
-    if (
-        intent.attest_same_lock
-        and intent.old.mode is AssociationMode.LEGACY_UNRESOLVED
-        and intent.mode is AssociationMode.VERIFIED
-        and affected_references
-        and intent.keymaster_entry_id is not None
-    ):
-        attestations = (
-            AssociationAttestation(
-                uuid4().hex,
-                intent.rc_entry_id,
-                intent.keymaster_entry_id,
-                affected_references,
-                transaction_id,
-            ),
-        )
-    return AssociationTransaction(
-        transaction_id,
-        transaction_generation,
-        loaded.transaction_id,
-        (change,),
-        attestations,
-        retained_holds,
-    )
 
 
 def _submitted_legacy_selection(

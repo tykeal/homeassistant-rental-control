@@ -126,29 +126,57 @@ def _state_deps() -> _state_handlers.StateHandlerDeps:
 
 
 async def async_fire_clear_code(
-    coordinator: Any, slot: int, expected_name: str | None = None
+    coordinator: Any,
+    slot: int,
+    expected_name: str | None = None,
+    *,
+    verified_intent: Any = None,
 ) -> OperationResult:
     """Fire a clear_code signal."""
+    if verified_intent is None:
+        return await _keymaster_services.async_fire_clear_code(
+            coordinator, slot, expected_name, _keymaster_deps()
+        )
     return await _keymaster_services.async_fire_clear_code(
-        coordinator, slot, expected_name, _keymaster_deps()
+        coordinator,
+        slot,
+        expected_name,
+        _keymaster_deps(),
+        verified_intent=verified_intent,
     )
 
 
 async def async_fire_set_code(
-    coordinator: Any, event: Any, slot: int
+    coordinator: Any, event: Any, slot: int, *, verified_intent: Any = None
 ) -> OperationResult:
     """Set codes into a slot."""
+    if verified_intent is None:
+        return await _keymaster_services.async_fire_set_code(
+            coordinator, event, slot, _keymaster_deps()
+        )
     return await _keymaster_services.async_fire_set_code(
-        coordinator, event, slot, _keymaster_deps()
+        coordinator,
+        event,
+        slot,
+        _keymaster_deps(),
+        verified_intent=verified_intent,
     )
 
 
 async def async_fire_update_times(
-    coordinator: Any, event: Any, slot: int
+    coordinator: Any, event: Any, slot: int, *, verified_intent: Any = None
 ) -> OperationResult:
     """Update times on slot."""
+    if verified_intent is None:
+        return await _keymaster_services.async_fire_update_times(
+            coordinator, event, slot, _keymaster_deps()
+        )
     return await _keymaster_services.async_fire_update_times(
-        coordinator, event, slot, _keymaster_deps()
+        coordinator,
+        event,
+        slot,
+        _keymaster_deps(),
+        verified_intent=verified_intent,
     )
 
 
@@ -162,11 +190,21 @@ async def _async_wait_for_expected_name(
 
 
 async def _async_wait_for_expected_datetime(
-    hass: HomeAssistant, entity_id: str, expected: datetime, timeout: float
+    hass: HomeAssistant,
+    entity_id: str,
+    expected: datetime,
+    timeout: float,
+    *,
+    intent: Any = None,
 ) -> bool:
     """Wait briefly for one datetime entity to match the expected value."""
     return await _keymaster_services._async_wait_for_expected_datetime(
-        hass, entity_id, expected, timeout, _keymaster_deps()
+        hass,
+        entity_id,
+        expected,
+        timeout,
+        _keymaster_deps(),
+        intent=intent,
     )
 
 

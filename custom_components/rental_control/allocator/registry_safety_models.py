@@ -183,7 +183,13 @@ def references_match_snapshot(
 
 
 def validate_snapshot_structure(data: dict[str, Any]) -> bool:
-    """Reject duplicate active allocations and active/tombstone ID collisions."""
+    """Reject duplicate active fences and active/tombstone ID collisions.
+
+    An allocation fence and a pending-clear fence may coexist for the same
+    physical slot and owner allocation: the former preserves allocation
+    history while the latter records an in-flight clear. Duplicates of either
+    fence type remain invalid.
+    """
     target_fences = data["pending_fences"]
     target_tombstones = data["tombstones"]
     active_fence_ids = {record["fence_id"] for record in target_fences}
@@ -200,6 +206,7 @@ def validate_snapshot_structure(data: dict[str, Any]) -> bool:
             record["original_km_entry_id"],
             record["slot"],
             record["allocation_ref"],
+            record["fence_type"],
         )
         for record in target_fences
     ]

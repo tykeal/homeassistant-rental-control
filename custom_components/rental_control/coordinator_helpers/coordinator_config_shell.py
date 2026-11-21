@@ -10,12 +10,15 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 from collections.abc import Mapping
+from datetime import date
 from datetime import datetime
+from datetime import time
 from datetime import timedelta
 from datetime import tzinfo
 import importlib
 import logging
 from typing import Any
+from typing import cast
 from zoneinfo import ZoneInfo  # noreorder
 
 from homeassistant.components.datetime import DOMAIN as DATETIME
@@ -24,6 +27,7 @@ from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 import homeassistant.helpers.config_validation as cv
 
+from .. import util as _util
 from ..bookings_only import feed_is_bookings_only
 from ..const import CONF_CHECKIN
 from ..const import CONF_CHECKOUT
@@ -49,8 +53,13 @@ from ..const import DEFAULT_CODE_GENERATION
 from ..const import DEFAULT_CODE_LENGTH
 from ..const import DEFAULT_MAX_NAME_LENGTH
 from ..const import DEFAULT_TRIM_NAMES
+from ..event_overrides import EventOverride
 from ..event_overrides import EventOverrides
 from ..helpers import configured_lock_slug
+from ..keymaster_operations import persisted_owner_identity_for_slot
+from ..keymaster_operations import prepare_verified_intent
+from ..keymaster_operations import verified_lifecycle_active
+from ..keymaster_slot_operations import async_slot_operation
 from ..util import apply_buffer
 from ..util import check_gather_results
 from . import config_update
@@ -182,69 +191,207 @@ class CoordinatorConfigMixin:
         already-buffered values.  To avoid double-buffering, reverse
         the previous buffer before applying the new one.
         """
-        if not self.event_overrides or not self.lockname:
+        verified = verified_lifecycle_active(self)
+        if not self.event_overrides or (not verified and not self.lockname):
             return
         for slot in range(self.start_slot, self.start_slot + self.max_events):
             override = self.event_overrides.overrides.get(slot)
             if override is None:
                 continue
-            # Reverse the old buffer to recover unbuffered times
-            start, end = config_update.unbuffer_window(
-                override["start_time"], override["end_time"], old_before, old_after
+            if verified:
+                await _async_update_verified_buffer_slot(
+                    self, slot, override, old_before, old_after
+                )
+                continue
+            await _async_update_legacy_buffer_slot(
+                self, slot, override, old_before, old_after
             )
-            # Apply new buffer
-            buffered_start, buffered_end = apply_buffer(
-                start,
-                end,
-                self.code_buffer_before,
-                self.code_buffer_after,
-                self,
-            )
-            start_entity = (
-                f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_start"
-            )
-            end_entity = f"{DATETIME}.{self.lockname}_code_slot_{slot}_date_range_end"
-            self.event_overrides.suppress_state_changes(
-                slot,
-                {
-                    start_entity: (
-                        buffered_start.isoformat()
-                        if isinstance(buffered_start, datetime)
-                        else buffered_start
-                    ),
-                    end_entity: (
-                        buffered_end.isoformat()
-                        if isinstance(buffered_end, datetime)
-                        else buffered_end
-                    ),
-                },
-            )
-            coro: list[Coroutine] = []
-            coro = _coordinator_module().add_call(
-                self.hass,
-                coro,
-                DATETIME,
-                "set_value",
-                end_entity,
-                {"datetime": buffered_end},
-            )
-            coro = _coordinator_module().add_call(
-                self.hass,
-                coro,
-                DATETIME,
-                "set_value",
-                start_entity,
-                {"datetime": buffered_start},
-            )
-            results = await asyncio.gather(*coro, return_exceptions=True)
-            check_gather_results(
-                results,
-                f"Buffer time update slot {slot} ({self.lockname})",
-                _LOGGER,
-            )
-            override["start_time"] = (
-                buffered_start if isinstance(buffered_start, datetime) else start
-            )
-            override["end_time"] = (
-                buffered_end if isinstance(buffered_end, datetime) else end
-            )
+
+
+def _buffered_override_window(
+    coordinator: Any,
+    override: Mapping[str, Any],
+    old_before: int,
+    old_after: int,
+) -> tuple[date | datetime, date | datetime, date | datetime, date | datetime]:
+    """Return original and newly buffered datetimes for one slot."""
+    start, end = config_update.unbuffer_window(
+        override["start_time"], override["end_time"], old_before, old_after
+    )
+    buffered_start, buffered_end = apply_buffer(
+        start,
+        end,
+        coordinator.code_buffer_before,
+        coordinator.code_buffer_after,
+        coordinator,
+    )
+    return start, end, buffered_start, buffered_end
+
+
+async def _async_update_verified_buffer_slot(
+    coordinator: Any,
+    slot: int,
+    override: EventOverride,
+    old_before: int,
+    old_after: int,
+) -> None:
+    """Serialize date-fence preparation through final confirmation."""
+    async with async_slot_operation(coordinator, slot):
+        await _async_update_verified_buffer_slot_locked(
+            coordinator, slot, override, old_before, old_after
+        )
+
+
+async def _async_update_verified_buffer_slot_locked(
+    coordinator: Any,
+    slot: int,
+    override: EventOverride,
+    old_before: int,
+    old_after: int,
+) -> None:
+    """Commit, dispatch, and confirm a protected exact-identity date update."""
+    owner_identity_key = persisted_owner_identity_for_slot(coordinator, slot)
+    if owner_identity_key is None:
+        return
+    intent = await prepare_verified_intent(
+        coordinator,
+        slot,
+        owner_identity_key,
+        (
+            f"text.code_slots:{slot}.name",
+            f"switch.code_slots:{slot}.accesslimit_date_range_enabled",
+            f"datetime.code_slots:{slot}.accesslimit_date_range_start",
+            f"datetime.code_slots:{slot}.accesslimit_date_range_end",
+        ),
+        "allocation",
+    )
+    if intent is None:
+        return
+    _start, _end, buffered_start_value, buffered_end_value = _buffered_override_window(
+        coordinator, override, old_before, old_after
+    )
+    buffered_start = _as_coordinator_datetime(buffered_start_value, coordinator)
+    buffered_end = _as_coordinator_datetime(buffered_end_value, coordinator)
+    start_entity = intent.entity_id(
+        f"datetime.code_slots:{slot}.accesslimit_date_range_start"
+    )
+    end_entity = intent.entity_id(
+        f"datetime.code_slots:{slot}.accesslimit_date_range_end"
+    )
+    coordinator.event_overrides.suppress_state_changes(
+        slot,
+        {
+            start_entity: buffered_start.isoformat(),
+            end_entity: buffered_end.isoformat(),
+        },
+    )
+    try:
+        await intent.async_call(
+            f"datetime.code_slots:{slot}.accesslimit_date_range_end",
+            "set_value",
+            {"datetime": buffered_end},
+        )
+        await intent.async_call(
+            f"datetime.code_slots:{slot}.accesslimit_date_range_start",
+            "set_value",
+            {"datetime": buffered_start},
+        )
+    except Exception:
+        _LOGGER.warning("Verified date update did not complete for slot %s", slot)
+        return
+    if not await _confirm_verified_buffer_window(
+        coordinator, intent, start_entity, end_entity, buffered_start, buffered_end
+    ):
+        return
+    if await intent.async_is_current():
+        override["start_time"] = buffered_start
+        override["end_time"] = buffered_end
+
+
+def _as_coordinator_datetime(value: date | datetime, coordinator: Any) -> datetime:
+    """Convert date-only buffers to local midnight for HA datetime services."""
+    if isinstance(value, datetime):
+        return value
+    return datetime.combine(value, time.min, tzinfo=coordinator.timezone)
+
+
+async def _confirm_verified_buffer_window(
+    coordinator: Any,
+    intent: Any,
+    start_entity: str,
+    end_entity: str,
+    buffered_start: datetime,
+    buffered_end: datetime,
+) -> bool:
+    """Confirm both current date values against the same still-current intent."""
+    end_matches = await _util._async_wait_for_expected_datetime(
+        coordinator.hass,
+        end_entity,
+        buffered_end,
+        _util._SET_CODE_CONFIRMATION_TIMEOUT,
+        intent=intent,
+    )
+    if not end_matches:
+        return False
+    return await _util._async_wait_for_expected_datetime(
+        coordinator.hass,
+        start_entity,
+        buffered_start,
+        _util._SET_CODE_CONFIRMATION_TIMEOUT,
+        intent=intent,
+    )
+
+
+async def _async_update_legacy_buffer_slot(
+    coordinator: Any,
+    slot: int,
+    override: EventOverride,
+    old_before: int,
+    old_after: int,
+) -> None:
+    """Preserve existing slug-based date update behavior for legacy entries."""
+    start, end, buffered_start, buffered_end = _buffered_override_window(
+        coordinator, override, old_before, old_after
+    )
+    start_entity = (
+        f"{DATETIME}.{coordinator.lockname}_code_slot_{slot}_date_range_start"
+    )
+    end_entity = f"{DATETIME}.{coordinator.lockname}_code_slot_{slot}_date_range_end"
+    coordinator.event_overrides.suppress_state_changes(
+        slot,
+        {
+            start_entity: buffered_start.isoformat(),
+            end_entity: buffered_end.isoformat(),
+        },
+    )
+    calls: list[Coroutine] = []
+    calls = _coordinator_module().add_call(
+        coordinator.hass,
+        calls,
+        DATETIME,
+        "set_value",
+        end_entity,
+        {"datetime": buffered_end},
+    )
+    calls = _coordinator_module().add_call(
+        coordinator.hass,
+        calls,
+        DATETIME,
+        "set_value",
+        start_entity,
+        {"datetime": buffered_start},
+    )
+    results = await asyncio.gather(*calls, return_exceptions=True)
+    check_gather_results(
+        results,
+        f"Buffer time update slot {slot} ({coordinator.lockname})",
+        _LOGGER,
+    )
+    override["start_time"] = (
+        buffered_start
+        if isinstance(buffered_start, datetime)
+        else cast(datetime, start)
+    )
+    override["end_time"] = (
+        buffered_end if isinstance(buffered_end, datetime) else cast(datetime, end)
+    )

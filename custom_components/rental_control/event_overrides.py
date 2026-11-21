@@ -204,6 +204,7 @@ class EventOverrides:
         self._overrides: dict[int, EventOverride | None] = {}
         self._ready = False
         self._retry_counts: dict[int, int] = {}
+        self._slot_operations_pending: dict[int, int] = {}
         self._slot_miss_counts: dict[int, int] = {}
         self._slot_uids: dict[int, str | None] = {}
         self._start_slot = start_slot

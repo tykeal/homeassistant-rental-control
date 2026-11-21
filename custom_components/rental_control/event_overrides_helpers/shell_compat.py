@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from time import monotonic
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import cast
 
 from ..const import DEFAULT_MAX_RETRY_CYCLES
+from ..keymaster_operations import VerifiedOperationRejected
 from ..util import is_cleared_keymaster_text_state
 from ..util import normalize_uid
 from .apply_clear import decide_clear_preflight
@@ -111,43 +113,68 @@ def release_pending_clear_slot(self, slot: int) -> None:
     self._clear_slot_error(slot)
 
 
-def _slot_confirmed_empty(self, coordinator: Any, slot: int) -> bool:
+async def _slot_confirmed_empty(
+    self, coordinator: Any, slot: int, *, intent: Any = None
+) -> bool:
     """Return whether a fresh Keymaster read shows blank name and PIN."""
-    lockname = getattr(coordinator, "lockname", None)
     hass = getattr(coordinator, "hass", None)
-    if not lockname or hass is None:
+    if hass is None:
         return False
-    name_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_name")
-    pin_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_pin")
-    return (
+    if intent is None:
+        lockname = getattr(coordinator, "lockname", None)
+        if not lockname:
+            return False
+        name_entity = f"text.{lockname}_code_slot_{slot}_name"
+        pin_entity = f"text.{lockname}_code_slot_{slot}_pin"
+    else:
+        try:
+            name_entity = intent.entity_id(f"text.code_slots:{slot}.name")
+            pin_entity = intent.entity_id(f"text.code_slots:{slot}.pin")
+        except VerifiedOperationRejected:
+            return False
+    name_state = hass.states.get(name_entity)
+    pin_state = hass.states.get(pin_entity)
+    is_empty = (
         bool(name_state and pin_state)
         and is_cleared_keymaster_text_state(name_state.state)
         and is_cleared_keymaster_text_state(pin_state.state)
     )
+    return is_empty and (intent is None or await intent.async_is_current())
 
 
-def _fresh_slot_text_states(
-    self, coordinator: Any, slot: int
+async def _fresh_slot_text_states(
+    self, coordinator: Any, slot: int, *, intent: Any = None
 ) -> tuple[Any, Any] | None:
     """Return a fresh physical Keymaster name/PIN read for ``slot``."""
-    lockname = getattr(coordinator, "lockname", None)
     hass = getattr(coordinator, "hass", None)
-    if not lockname or hass is None:
+    if hass is None:
         return None
-    name_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_name")
-    pin_state = hass.states.get(f"text.{lockname}_code_slot_{slot}_pin")
-    return (
-        None
-        if name_state is None or pin_state is None
-        else (name_state.state, pin_state.state)
-    )
+    if intent is None:
+        lockname = getattr(coordinator, "lockname", None)
+        if not lockname:
+            return None
+        name_entity = f"text.{lockname}_code_slot_{slot}_name"
+        pin_entity = f"text.{lockname}_code_slot_{slot}_pin"
+    else:
+        try:
+            name_entity = intent.entity_id(f"text.code_slots:{slot}.name")
+            pin_entity = intent.entity_id(f"text.code_slots:{slot}.pin")
+        except VerifiedOperationRejected:
+            return None
+    name_state = hass.states.get(name_entity)
+    pin_state = hass.states.get(pin_entity)
+    if name_state is None or pin_state is None:
+        return None
+    if intent is not None and not await intent.async_is_current():
+        return None
+    return name_state.state, pin_state.state
 
 
-def _preflight_clear_result(
-    self, coordinator: Any, slot: int, expected_name: str | None
+async def _preflight_clear_result(
+    self, coordinator: Any, slot: int, expected_name: str | None, *, intent: Any = None
 ):
     """Abort stale clear actions when the physical slot changed after plan."""
-    fresh = self._fresh_slot_text_states(coordinator, slot)
+    fresh = await self._fresh_slot_text_states(coordinator, slot, intent=intent)
     actual = self._actual_state_cache.get(slot) or {}
     if (
         fresh is not None
@@ -161,7 +188,8 @@ def _preflight_clear_result(
     if outcome["status"] == "proceed":
         return None
     if outcome["status"] == "confirmed":
-        self.release_pending_clear_slot(slot)
+        if intent is None:
+            self.release_pending_clear_slot(slot)
         return self._operation_result_type(kind="clear", slot=slot, confirmed=True)
     log_method = (
         self._logger.debug
@@ -186,7 +214,11 @@ def _get_slots_with_values(self) -> list[int]:
 
 def _get_slots_without_values(self, max_slot: int = 0) -> list[int]:
     """Return sorted free slot numbers greater than ``max_slot``."""
-    return get_slots_without_values(self._overrides, max_slot)
+    return [
+        slot
+        for slot in get_slots_without_values(self._overrides, max_slot)
+        if not self._slot_operations_pending.get(slot)
+    ]
 
 
 def _override_dict(self, slot_code: str, slot_name: str, start_time, end_time):
@@ -296,7 +328,13 @@ async def async_reserve_or_get_slot(
         return cast("ReserveResult", self._reserve_result(slot, True, False))
 
 
-async def async_update(self, update=None, *values: Any, **legacy: Any) -> None:
+async def async_update(
+    self,
+    update=None,
+    *values: Any,
+    guard: Callable[[], bool] | None = None,
+    **legacy: Any,
+) -> bool:
     """Update a slot with duplicate-detection enforcement."""
     if isinstance(update, self._update_request_type):
         if values or legacy:
@@ -313,6 +351,8 @@ async def async_update(self, update=None, *values: Any, **legacy: Any) -> None:
         else payload.slot_name
     )
     async with self._lock:
+        if guard is not None and not guard():
+            return False
         slot = payload.slot
         if slot_name:
             duplicate = self._find_overlapping_slot(
@@ -335,6 +375,7 @@ async def async_update(self, update=None, *values: Any, **legacy: Any) -> None:
         self._assign_next_slot()
         if len(self._overrides) == self.max_slots:
             self._ready = True
+        return True
 
 
 def verify_slot_ownership(self, slot: int, expected_name: str) -> bool:

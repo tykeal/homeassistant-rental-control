@@ -343,6 +343,20 @@ def reset_capabilities_ready(
     if isinstance(slot, bool) or not isinstance(slot, int) or slot < 1:
         return False
     registry_index = CapabilityRegistryIndex.build(hass)
+    entry = hass.config_entries.async_get_entry(keymaster_entry_id)
+    name_identity = build_capability_identity(
+        keymaster_entry_id,
+        f"text.code_slots:{slot}.name",
+        generation=generation,
+    )
+    if (
+        entry is None
+        or entry.domain != _KEYMASTER_DOMAIN
+        or name_identity is None
+        or _child_inheritance_status(hass, entry, name_identity, registry_index)
+        is not CapabilityStatus.READY
+    ):
+        return False
     properties = (
         f"button.code_slots:{slot}.reset",
         f"text.code_slots:{slot}.name",

@@ -287,6 +287,72 @@ def ledger_owner_reference(
     )
 
 
+def ledger_allocation_references(
+    data: dict[str, Any],
+    rc_entry_id: str,
+    identity_key: str,
+) -> tuple[str, str, int] | None:
+    """Return domain-separated opaque references for one exact ledger owner.
+
+    The returned values are suitable for binding a slot fence to a current
+    allocation without persisting or logging a PIN.  Ambiguous, malformed, or
+    undecodable ledger rows fail closed.
+    """
+    ledger = data.get("ledger")
+    if not isinstance(ledger, dict):
+        return None
+    salt = _code_reference_salt(data)
+    records = ledger.get("records")
+    if salt is None or not isinstance(records, list):
+        return None
+
+    match: tuple[str, str, int] | None = None
+    try:
+        for record in records:
+            if not isinstance(record, dict) or not isinstance(
+                record.get("owners"), list
+            ):
+                return None
+            for owner in record["owners"]:
+                if not isinstance(owner, dict):
+                    return None
+                if (
+                    owner.get("entry_id") != rc_entry_id
+                    or owner.get("identity_key") != identity_key
+                ):
+                    continue
+                owner_reference = ledger_owner_reference(data, record, owner)
+                if owner_reference is None:
+                    return None
+                encoded_code = record.get("encoded_code")
+                encoding_salt = record.get("encoding_salt_value")
+                if not isinstance(encoded_code, str) or not isinstance(
+                    encoding_salt, str
+                ):
+                    return None
+                code_reference = code_ref_for(
+                    decode_code(encoded_code, encoding_salt), salt
+                )
+                slot = owner.get("slot")
+                if not isinstance(slot, int) or isinstance(slot, bool) or slot < 1:
+                    return None
+                allocation_reference = _opaque_reference(
+                    salt,
+                    "allocation",
+                    code_reference,
+                    rc_entry_id,
+                    identity_key,
+                    owner.get("lockname"),
+                    slot,
+                )
+                if match is not None:
+                    return None
+                match = (owner_reference, allocation_reference, slot)
+    except Exception:
+        return None
+    return match
+
+
 def _safety_record_references(
     data: dict[str, Any], rc_entry_id: str, code_ref_salt: str
 ) -> set[str] | None:

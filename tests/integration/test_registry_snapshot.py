@@ -53,6 +53,9 @@ from custom_components.rental_control.allocator.registry_safety_transitions impo
     validate_snapshot_transition,
 )
 from custom_components.rental_control.allocator.registry_snapshot import (
+    SnapshotCommitHooks,
+)
+from custom_components.rental_control.allocator.registry_snapshot import (
     async_commit_registry_snapshot,
 )
 from custom_components.rental_control.allocator.registry_snapshot import (
@@ -248,7 +251,7 @@ async def test_protected_alias_migration_uses_actual_adoption_path(
         stage_observed_alias,
         [],
         current_exclusion_snapshot=_snapshot_provider([]),
-        safety_transition=add_alias_fence,
+        hooks=SnapshotCommitHooks(safety_transition=add_alias_fence),
     )
     assert first.state is ProtectionLoadState.VALID_V2
     prior = store.loaded_result
@@ -363,8 +366,10 @@ async def test_protected_alias_migration_uses_actual_adoption_path(
         stage_alias_transfer,
         [],
         current_exclusion_snapshot=_snapshot_provider([]),
-        authorize_owner_transition=authorize_observed_adoption,
-        safety_transition=record_alias_transfer,
+        hooks=SnapshotCommitHooks(
+            authorize_owner_transition=authorize_observed_adoption,
+            safety_transition=record_alias_transfer,
+        ),
     )
 
     assert migrated.state is ProtectionLoadState.VALID_V2
@@ -902,7 +907,7 @@ async def test_guarded_slot_move_and_release_require_current_tombstones(
         add_owner,
         [],
         current_exclusion_snapshot=_snapshot_provider([]),
-        safety_transition=create_fence,
+        hooks=SnapshotCommitHooks(safety_transition=create_fence),
     )
     assert first.state is ProtectionLoadState.VALID_V2
 
@@ -1032,8 +1037,10 @@ async def test_guarded_slot_move_and_release_require_current_tombstones(
         move_owner,
         [],
         current_exclusion_snapshot=_snapshot_provider([]),
-        authorize_owner_transition=authorize_slot_move,
-        safety_transition=record_slot_move,
+        hooks=SnapshotCommitHooks(
+            authorize_owner_transition=authorize_slot_move,
+            safety_transition=record_slot_move,
+        ),
     )
     assert moved.state is ProtectionLoadState.VALID_V2
     assert allocator._registry.record_for_identity(owner.identity_key) is not None
@@ -1102,8 +1109,10 @@ async def test_guarded_slot_move_and_release_require_current_tombstones(
         release_owner,
         [],
         current_exclusion_snapshot=_snapshot_provider([]),
-        authorize_owner_transition=authorize_release,
-        safety_transition=resolve_fence,
+        hooks=SnapshotCommitHooks(
+            authorize_owner_transition=authorize_release,
+            safety_transition=resolve_fence,
+        ),
     )
 
     assert released.state is ProtectionLoadState.VALID_V2

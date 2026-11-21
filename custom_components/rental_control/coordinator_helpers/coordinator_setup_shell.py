@@ -66,6 +66,8 @@ from ..const import LOCK_MANAGER
 from ..const import VERSION
 from ..event_overrides import EventOverrides
 from ..helpers import configured_lock_slug
+from ..keymaster_identity import resolve_capability
+from ..keymaster_lifecycle import get_keymaster_lifecycle
 from ..reconciliation import DesiredPlan as _DesiredPlan
 from ..reconciliation import Reservation as _Reservation
 from . import keymaster_bootstrap
@@ -88,6 +90,10 @@ class CoordinatorSetupMixin:
     async def _async_setup_keymaster_overrides_impl(self) -> None:
         """Bootstrap Keymaster slot overrides on first load."""
         if not self.lockname:
+            return
+        if get_keymaster_lifecycle(self.hass, self._entry_id) is not None:
+            # Bootstrap may clear partially populated slots using legacy IDs.
+            # Verified mode waits for converted, fenced consumers instead.
             return
 
         default_start = dt.start_of_local_day()
@@ -259,6 +265,9 @@ class CoordinatorSetupMixin:
 
     def _read_slot_snapshot(self, slot: int) -> KeymasterSlotSnapshot:
         """Read all Keymaster entity states for a slot into a snapshot."""
+        lifecycle = get_keymaster_lifecycle(self.hass, self._entry_id)
+        if lifecycle is not None:
+            return self._read_verified_slot_snapshot(slot, lifecycle)
         base = f"{self.lockname}_code_slot_{slot}"
         return KeymasterSlotSnapshot(
             slot=slot,
@@ -270,6 +279,47 @@ class CoordinatorSetupMixin:
             enabled_state=self._state_value(f"{SWITCH}.{base}_enabled"),
             start_state=self._state_value(f"{DATETIME}.{base}_date_range_start"),
             end_state=self._state_value(f"{DATETIME}.{base}_date_range_end"),
+        )
+
+    def _read_verified_slot_snapshot(
+        self, slot: int, lifecycle: Any
+    ) -> KeymasterSlotSnapshot:
+        """Read only live, same-slot properties from the selected identity."""
+
+        def state_for(domain: str, property_name: str) -> str | None:
+            """Return one exact property state only when its proof is current."""
+            resolution = lifecycle.current.get(
+                f"{domain}.code_slots:{slot}.{property_name}"
+            )
+            if (
+                resolution is None
+                or not resolution.ready
+                or resolution.identity is None
+                or resolution.identity.slot != slot
+                or resolution.identity.keymaster_entry_id
+                != lifecycle.keymaster_entry_id
+                or resolution.identity.generation != lifecycle.generation
+                or resolution.entity_id is None
+            ):
+                return None
+            fresh = resolve_capability(
+                self.hass,
+                lifecycle.keymaster_entry_id,
+                f"{domain}.code_slots:{slot}.{property_name}",
+                generation=lifecycle.generation,
+            )
+            if not fresh.ready or fresh.entity_id != resolution.entity_id:
+                return None
+            return self._state_value(resolution.entity_id)
+
+        return KeymasterSlotSnapshot(
+            slot=slot,
+            name_state=state_for("text", "name"),
+            pin_state=state_for("text", "pin"),
+            use_date_range_state=state_for("switch", "accesslimit_date_range_enabled"),
+            enabled_state=state_for("switch", "enabled"),
+            start_state=state_for("datetime", "accesslimit_date_range_start"),
+            end_state=state_for("datetime", "accesslimit_date_range_end"),
         )
 
     def _reservation_build_context(self) -> ReservationBuildContext:

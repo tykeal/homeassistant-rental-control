@@ -21,6 +21,17 @@ from pytest_homeassistant.common import async_fire_time_changed
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import UNSUB_LISTENERS
+from custom_components.rental_control.keymaster_identity import CapabilityResolution
+from custom_components.rental_control.keymaster_identity import CapabilityStatus
+from custom_components.rental_control.keymaster_identity import (
+    build_capability_identity,
+)
+from custom_components.rental_control.startup_readability import (
+    _STARTUP_READABILITY_ARMED,
+)
+from custom_components.rental_control.startup_readability import (
+    _STARTUP_READABILITY_WATCHER,
+)
 from custom_components.rental_control.startup_readability import (
     _all_managed_slots_readable,
 )
@@ -306,3 +317,68 @@ async def test_refresh_exception_is_logged(
     assert (
         "Startup readability refresh failed for refresh_exception_entry" in caplog.text
     )
+
+
+async def test_old_watcher_teardown_cannot_clear_replacement_generation(
+    hass: HomeAssistant,
+    monkeypatch,
+) -> None:
+    """Rebinding replaces a watcher and old cleanup cannot clear the new owner."""
+    entry = _lock_config_entry("generation_watcher")
+    coordinator = _coordinator(None)
+    _prepare_entry(hass, entry, coordinator)
+    properties = (
+        ("text.code_slots:10.name", "text.custom_name"),
+        ("text.code_slots:10.pin", "text.custom_pin"),
+        ("switch.code_slots:10.enabled", "switch.custom_enabled"),
+    )
+    lifecycle = MagicMock()
+    lifecycle.generation = 7
+    lifecycle.keymaster_entry_id = "km-entry"
+    coordinator.hass = hass
+    coordinator._entry_id = entry.entry_id
+    lifecycle.current = {
+        key: CapabilityResolution(
+            build_capability_identity("km-entry", key, generation=7),
+            CapabilityStatus.READY,
+            entity_id,
+        )
+        for key, entity_id in properties
+    }
+    monkeypatch.setattr(
+        "custom_components.rental_control.startup_readability.get_keymaster_lifecycle",
+        lambda *_args: lifecycle,
+    )
+    for _key, entity_id in properties:
+        hass.states.async_set(entity_id, "ready")
+
+    async_arm_startup_readability_refresh(
+        hass, entry, coordinator, startup_slots_unreadable=True
+    )
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    old_watcher = entry_data[_STARTUP_READABILITY_WATCHER]
+    assert entry_data[_STARTUP_READABILITY_ARMED] == 7
+
+    lifecycle.generation = 8
+    lifecycle.current = {
+        key: CapabilityResolution(
+            build_capability_identity("km-entry", key, generation=8),
+            CapabilityStatus.READY,
+            entity_id,
+        )
+        for key, entity_id in properties
+    }
+    async_arm_startup_readability_refresh(
+        hass, entry, coordinator, startup_slots_unreadable=True
+    )
+    new_watcher = entry_data[_STARTUP_READABILITY_WATCHER]
+
+    assert new_watcher is not old_watcher
+    assert old_watcher.done
+    assert entry_data[_STARTUP_READABILITY_ARMED] == 8
+    old_watcher.remove_self()
+    assert entry_data[_STARTUP_READABILITY_WATCHER] is new_watcher
+    assert entry_data[_STARTUP_READABILITY_ARMED] == 8
+    new_watcher.remove_self()
+    assert _STARTUP_READABILITY_WATCHER not in entry_data
+    assert _STARTUP_READABILITY_ARMED not in entry_data
