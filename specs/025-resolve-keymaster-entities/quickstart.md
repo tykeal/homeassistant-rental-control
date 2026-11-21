@@ -153,8 +153,8 @@ not an assumption that HA Store already guarantees them:
    protection. On release failure after replacement, restart from actual disk
    bytes and prove tombstone recovery rechecks the original slot without
    losing any later valid owner.
-2. Crash/restart before/after pending marker, after pending but before
-   envelope replacement, after replacement but before final marker, after
+2. Exercise restart boundaries before/after pending marker, after pending but
+   before envelope replacement, after replacement but before final marker, after
    final marker, and before/during/after hardware call,
    after local confirmation, before/after envelope resolution, and at every
    migration/config-entry/cache update. Restart from actual disk bytes
@@ -222,6 +222,14 @@ not an assumption that HA Store already guarantees them:
    crash recovery under the protocol's writer, ordering and no-external-
    restore assumptions, retaining earlier fences and never inferring hardware
    completion from the marker.
+   These boundaries are deterministic injected-failure/restart tests, not
+   claims of power-loss or abrupt-process-crash testing. In particular, before
+   the first pending-marker rename, a surviving RC-owned temporary file with no
+   authoritative marker remains partial-history evidence and must stay
+   protective-unknown. Tests may construct that evidence directly; they must
+   not delete it or invoke cleanup to turn it into verified absence. A real
+   subprocess-crash test is required before claiming that abrupt termination
+   behavior was exercised.
 3. Inject missing, corrupt and unsupported-version v1/v2 registry, read
    failure, size overflow, missing/invalid mandatory v2 safety sections,
    absent marker, marker/envelope generation or digest mismatch,

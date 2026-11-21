@@ -8,6 +8,27 @@ from dataclasses import dataclass
 from dataclasses import field
 from enum import StrEnum
 
+from .registry_storage_models import AtomicWriteResult as AtomicWriteResult
+from .registry_storage_models import CleanupResult as CleanupResult
+from .registry_storage_models import CleanupState as CleanupState
+from .registry_storage_models import EvidenceScanResult as EvidenceScanResult
+from .registry_storage_models import IOLockAttempt as IOLockAttempt
+from .registry_storage_models import PreparedJsonBytes as PreparedJsonBytes
+from .registry_storage_models import (
+    ProtectionAuthorizationState as ProtectionAuthorizationState,
+)
+from .registry_storage_models import ProtectionLoadResult as ProtectionLoadResult
+from .registry_storage_models import ProtectionLoadState as ProtectionLoadState
+from .registry_storage_models import ProtectionRecoveryPlan as ProtectionRecoveryPlan
+from .registry_storage_models import RawFileRead as RawFileRead
+from .registry_storage_models import RawFileState as RawFileState
+from .registry_storage_models import RecoveryAction as RecoveryAction
+from .registry_storage_models import StorageRunResult as StorageRunResult
+from .registry_storage_models import StorageRunState as StorageRunState
+from .registry_storage_models import (
+    protection_result_from_storage as protection_result_from_storage,
+)
+
 
 class AllocationOrigin(StrEnum):
     """Describe how an allocation owner obtained a code."""

@@ -9,11 +9,9 @@ beside the encoded value and anyone with file access can recover the code.
 
 from __future__ import annotations
 
-import base64
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
-import hashlib
 import logging
 import secrets
 from typing import Any
@@ -28,6 +26,9 @@ from ..const import CODE_REGISTRY_SCHEMA_VERSION
 from ..const import DOMAIN
 from ..const import NAME
 from ..const import STORE_CODE_REGISTRY_KEY
+from .code_codec import code_ref_for
+from .code_codec import decode_code
+from .code_codec import encode_code
 from .models import AllocationOrigin
 from .models import AllocationOwner
 from .models import AllocationRecord
@@ -46,25 +47,6 @@ class RegistryLoadResult:
     registry: AllocationRegistry
     registry_lost: bool
     registry_missing: bool = False
-
-
-def encode_code(code: str, salt: str) -> str:
-    """Obfuscate a door code with a salt prefix and base64 encoding."""
-    return base64.b64encode(salt.encode("utf-8") + code.encode("utf-8")).decode("utf-8")
-
-
-def decode_code(encoded_code: str, salt: str) -> str:
-    """Recover an obfuscated door code using its stored salt value."""
-    salt_bytes = salt.encode("utf-8")
-    raw = base64.b64decode(encoded_code, validate=True)
-    if not raw.startswith(salt_bytes):
-        raise ValueError("encoded code does not match stored salt")
-    return raw[len(salt_bytes) :].decode("utf-8")
-
-
-def code_ref_for(code: str, salt: str) -> str:
-    """Return the masked diagnostic reference for a plain code."""
-    return hashlib.sha256(f"{salt}{code}".encode("utf-8")).hexdigest()[:8]
 
 
 class RegistryStore:
