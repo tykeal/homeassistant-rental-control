@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from . import adoption
 from . import adoption_reports
+from . import protection_gate
 from . import recovery
 from . import reissue
 from . import services
@@ -164,7 +165,11 @@ async def resolve_cycle(
     allocator: DoorCodeAllocator, request: CycleRequest
 ) -> CycleResult:
     """Resolve one refresh cycle atomically under the allocator lock."""
+    if not await protection_gate.async_operation_ready(allocator):
+        return protection_gate.protective_unknown_cycle_result(request)
     async with allocator._lock:
+        if not protection_gate.snapshot_ready(allocator):
+            return protection_gate.protective_unknown_cycle_result(request)
         reissue_outcomes, staged_reissues = _stage_forced_reissues(allocator, request)
         adopted = _apply_adoptions(allocator, request)
 

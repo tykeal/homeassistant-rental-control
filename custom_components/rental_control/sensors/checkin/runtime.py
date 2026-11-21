@@ -22,10 +22,12 @@ from ...const import CHECKIN_STATE_NO_RESERVATION
 from ...const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from ...const import EVENT_RENTAL_CONTROL_CHECKIN
 from ...const import EVENT_RENTAL_CONTROL_CHECKOUT
+from ...keymaster_topology import association_requires_verified_routing
 from ...util import add_call
 from ...util import check_gather_results
 from ...util import compute_early_expiry_time
 from ...util import get_entry_data
+from .verified_date import async_update_verified_lock_code_expiry
 
 _LOGGER = logging.getLogger("custom_components.rental_control.sensors.checkinsensor")
 
@@ -94,8 +96,13 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         new_end,
         entity._tracked_event_summary,
     )
+    previous_end = entity._tracked_event_end
     entity._tracked_event_end = new_end
-    await async_update_lock_code_expiry(entity, new_end)
+    updated = await async_update_lock_code_expiry(
+        entity, new_end, identity_end=previous_end
+    )
+    if not updated and association_requires_verified_routing(entity._config_entry):
+        entity._tracked_event_end = previous_end
 
 
 async def async_set_state(entity: Any, state: str) -> None:
@@ -205,19 +212,30 @@ def _unlock_slot_mismatch(entity: Any, code_slot_num: int) -> bool:
     return True
 
 
-async def async_update_lock_code_expiry(entity: Any, new_end: datetime) -> None:
+async def async_update_lock_code_expiry(
+    entity: Any,
+    new_end: datetime,
+    *,
+    identity_end: datetime | None = None,
+) -> bool:
     """Update keymaster lock code expiry after early checkout."""
     if (
         entity._tracked_event_slot_name is None
         or not entity.coordinator.event_overrides
     ):
-        return
+        return False
+    if association_requires_verified_routing(entity._config_entry):
+        return await async_update_verified_lock_code_expiry(
+            entity,
+            new_end,
+            identity_end=identity_end,
+        )
     slot = entity.coordinator.event_overrides.get_slot_key_by_name(
         entity._tracked_event_slot_name
     )
     lockname = entity.coordinator.lockname
     if not slot or not lockname:
-        return
+        return False
     module = import_module("custom_components.rental_control.sensors.checkinsensor")
     caller = getattr(module, "add_call", add_call)
     coro = caller(
@@ -230,6 +248,7 @@ async def async_update_lock_code_expiry(entity: Any, new_end: datetime) -> None:
     )
     results = await asyncio.gather(*coro, return_exceptions=True)
     check_gather_results(results, "Early checkout lock code expiry update", _LOGGER)
+    return True
 
 
 def transition_to_no_reservation(entity: Any) -> None:

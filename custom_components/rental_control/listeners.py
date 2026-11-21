@@ -24,6 +24,11 @@ from .const import DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from .const import DOMAIN
 from .const import KEYMASTER_MONITORING_SWITCH
 from .const import UNSUB_LISTENERS
+from .keymaster_topology import association_is_verified
+from .keymaster_topology import association_requires_verified_routing
+from .keymaster_topology import event_name_matches_source
+from .keymaster_topology import event_slot_name_matches
+from .keymaster_topology import verified_slot_source
 from .util import get_entry_data
 
 _LOGGER = logging.getLogger(__name__)
@@ -109,7 +114,8 @@ def _handle_keymaster_event(
     # disposition string is retained as a reserved value for
     # schema stability with downstream consumers but is no
     # longer emitted.
-    if event_lockname not in coordinator.monitored_locknames:
+    verified_route = association_requires_verified_routing(config_entry)
+    if not verified_route and event_lockname not in coordinator.monitored_locknames:
         return
 
     code_slot_num = event_data.get("code_slot_num")
@@ -134,8 +140,33 @@ def _handle_keymaster_event(
         max_events,
     ):
         return
+    if verified_route and (
+        not association_is_verified(config_entry)
+        or not _verified_event_matches_source(context)
+    ):
+        _record_if_enabled(context, "rejected_identity")
+        return
 
     _forward_keymaster_unlock(context)
+
+
+def _verified_event_matches_source(context: _KeymasterEventContext) -> bool:
+    """Require the current selected physical source and same-slot authority."""
+    slot = context.code_slot_num
+    if isinstance(slot, bool) or not isinstance(slot, int):
+        return False
+    source = verified_slot_source(context.hass, context.config_entry, slot)
+    if source is None:
+        return False
+    return (
+        context.event_data.get("entity_id") == source.lock_entity_id
+        and event_name_matches_source(context.raw_lockname, source)
+        and event_slot_name_matches(
+            context.hass,
+            context.event_data.get("code_slot_name"),
+            source,
+        )
+    )
 
 
 def _normalized_event_lockname(
@@ -159,7 +190,11 @@ def _event_should_be_rejected(
     if context.event_data.get("state") != "unlocked":
         disposition = "rejected_state"
     # FR-017: Ignore code_slot_num == 0
-    elif context.code_slot_num is None or context.code_slot_num == 0:
+    elif (
+        isinstance(context.code_slot_num, bool)
+        or not isinstance(context.code_slot_num, int)
+        or context.code_slot_num == 0
+    ):
         disposition = "rejected_slot_zero"
     elif not (start_slot <= context.code_slot_num < start_slot + max_events):
         disposition = "rejected_out_of_range"

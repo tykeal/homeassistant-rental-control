@@ -59,6 +59,9 @@ def lifecycle_listener_callback(
                 or entry_data.get(COORDINATOR) is not coordinator
             ):
                 return
+            refresh_topology = getattr(coordinator, "_refresh_child_locks", None)
+            if callable(refresh_topology):
+                refresh_topology()
             await async_start_listener(
                 hass,
                 config_entry,

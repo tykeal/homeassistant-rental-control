@@ -68,6 +68,9 @@ from ..event_overrides import EventOverrides
 from ..helpers import configured_lock_slug
 from ..keymaster_identity import resolve_capability
 from ..keymaster_lifecycle import get_keymaster_lifecycle
+from ..keymaster_topology import association_is_verified
+from ..keymaster_topology import association_requires_verified_routing
+from ..keymaster_topology import verified_association_entry
 from ..reconciliation import DesiredPlan as _DesiredPlan
 from ..reconciliation import Reservation as _Reservation
 from . import keymaster_bootstrap
@@ -221,15 +224,25 @@ class CoordinatorSetupMixin:
                 )
 
     def _find_parent_entry_id(self) -> str | None:
-        """Find the keymaster config entry ID for the parent lock.
+        """Find the exact selected Keymaster entry, without name inference.
 
-        Iterates over keymaster config entries and returns the
-        ``entry_id`` whose slugified ``data["lockname"]`` matches
-        ``self.lockname``.
+        A committed verified association is authoritative. Legacy entries keep
+        their historic name-based monitoring until they are explicitly
+        associated; a malformed or unavailable verified selection never falls
+        back to a matching name.
 
         Returns:
-            The parent keymaster entry_id, or None if not found.
+            The associated Keymaster entry ID, or None when unresolved.
         """
+        if association_requires_verified_routing(self.config_entry):
+            if association_is_verified(self.config_entry):
+                selected = verified_association_entry(self.hass, self.config_entry)
+                return selected.entry_id if selected is not None else None
+            return None
+        return self._find_legacy_parent_entry_id()
+
+    def _find_legacy_parent_entry_id(self) -> str | None:
+        """Preserve pre-association name discovery for legacy monitoring."""
         for entry in self.hass.config_entries.async_entries(LOCK_MANAGER):
             raw = entry.data.get("lockname")
             if isinstance(raw, str) and raw.strip() and slugify(raw) == self.lockname:
@@ -249,6 +262,37 @@ class CoordinatorSetupMixin:
         """
         if self._parent_entry_id is None:
             return set()
+
+        selected = self.hass.config_entries.async_get_entry(self._parent_entry_id)
+        if association_requires_verified_routing(self.config_entry):
+            if not association_is_verified(self.config_entry):
+                return set()
+            if selected is None or selected.domain != LOCK_MANAGER:
+                return set()
+            selected_lock = selected.data.get("lock_entity_id")
+            names: set[str] = set()
+            parent_id = selected.data.get("parent_entry_id")
+            if isinstance(parent_id, str):
+                parent = self.hass.config_entries.async_get_entry(parent_id)
+                if (
+                    parent is not None
+                    and parent.domain == LOCK_MANAGER
+                    and parent.data.get("lock_entity_id") == selected_lock
+                ):
+                    parent_name = parent.data.get("lockname")
+                    if isinstance(parent_name, str) and parent_name.strip():
+                        names.add(slugify(parent_name))
+            for entry in self.hass.config_entries.async_entries(LOCK_MANAGER):
+                if (
+                    entry.data.get("parent_entry_id") != selected.entry_id
+                    or entry.disabled_by is not None
+                    or entry.data.get("lock_entity_id") != selected_lock
+                ):
+                    continue
+                child_lockname = entry.data.get("lockname")
+                if isinstance(child_lockname, str) and child_lockname.strip():
+                    names.add(slugify(child_lockname))
+            return names
 
         children: set[str] = set()
         for entry in self.hass.config_entries.async_entries(LOCK_MANAGER):

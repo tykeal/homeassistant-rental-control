@@ -23,6 +23,7 @@ from . import adoption_reports
 from . import diagnostics
 from . import issuance
 from . import orphans
+from . import protection_gate
 from . import recovery
 from . import reissue
 from . import release_guard
@@ -158,17 +159,18 @@ class DoorCodeAllocator:
         if not isinstance(request, ReissuePreviewRequest):
             msg = "async_preview_reissue requires a ReissuePreviewRequest"
             raise TypeError(msg)
-        async with self._lock:
-            from . import reissue_preview
-
-            return reissue_preview.preview_reissue(self, request)
+        return await protection_gate.async_preview_reissue(self, request)
 
     async def async_adopt(self, request: object) -> AllocationResult:
         """Adopt an observed lock code into the shared registry."""
         if not isinstance(request, AdoptionRequest):
             msg = "async_adopt requires an AdoptionRequest"
             raise TypeError(msg)
+        if not await protection_gate.async_operation_ready(self):
+            return AllocationResult(reason="protective_unknown")
         async with self._lock:
+            if not protection_gate.snapshot_ready(self):
+                return AllocationResult(reason="protective_unknown")
             result = self._adopt_unlocked(request)
             if not self._registry_lost:
                 self._store.async_save(self._registry)
@@ -201,11 +203,7 @@ class DoorCodeAllocator:
 
     async def async_rekey(self, old_key: str, new_key: str) -> bool:
         """Move an existing allocation identity to a new stable key."""
-        async with self._lock:
-            changed = self._rekey_unlocked(old_key, new_key)
-            if changed:
-                self._store.async_save(self._registry)
-            return changed
+        return await protection_gate.async_rekey(self, old_key, new_key)
 
     def _rekey_unlocked(self, old_key: str, new_key: str) -> bool:
         """Move an allocation identity while the lock is already held."""
@@ -237,7 +235,11 @@ class DoorCodeAllocator:
         if not isinstance(request, AllocationRequest):
             msg = "async_allocate requires an AllocationRequest"
             raise TypeError(msg)
+        if not await protection_gate.async_operation_ready(self):
+            return AllocationResult(reason="protective_unknown")
         async with self._lock:
+            if not protection_gate.snapshot_ready(self):
+                return AllocationResult(reason="protective_unknown")
             self._warn_if_gate_expired()
             result = self._allocate_unlocked(request)
             if result.code is not None and (
@@ -296,7 +298,13 @@ class DoorCodeAllocator:
         self, observation: CycleObservation, active_keys: set[str]
     ) -> ReleaseReport:
         """Release inactive allocations proven absent from the observed lock."""
+        if not await protection_gate.async_operation_ready(self):
+            return await protection_gate.async_retention_report(
+                self, observation.entry_id
+            )
         async with self._lock:
+            if not protection_gate.snapshot_ready(self):
+                return protection_gate.retention_report(self, observation.entry_id)
             report = self._sweep_unlocked(observation, active_keys)
             if report.released:
                 self._store.async_save(self._registry)
@@ -339,7 +347,11 @@ class DoorCodeAllocator:
 
     async def async_mark_entry_removed(self, entry_id: str) -> ReleaseReport:
         """Release lockless removed owners and retain unverifiable lock owners."""
+        if not await protection_gate.async_operation_ready(self):
+            return await protection_gate.async_retention_report(self, entry_id)
         async with self._lock:
+            if not protection_gate.snapshot_ready(self):
+                return protection_gate.retention_report(self, entry_id)
             self._pending_adoption.discard(entry_id)
             self._pending_adoption_slots.pop(entry_id, None)
             self._adopted_locks.pop(entry_id, None)
@@ -372,7 +384,14 @@ class DoorCodeAllocator:
         loaded_entry_ids: set[str] | None = None,
     ) -> OrphanCleanupReport:
         """Clear orphaned allocations that the shared guard proves safe."""
+        if not await protection_gate.async_operation_ready(self):
+            return await protection_gate.async_cleanup_report(self, dry_run)
         async with self._lock:
+            if not protection_gate.snapshot_ready(self):
+                return OrphanCleanupReport(
+                    dry_run,
+                    retained=protection_gate.retention_report(self).retained,
+                )
             report = orphans.clear_orphans(
                 self,
                 known_entry_ids,
