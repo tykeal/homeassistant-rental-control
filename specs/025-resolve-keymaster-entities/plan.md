@@ -22,7 +22,7 @@ installed version independently from capability failures. See
 ## Technical Context
 
 **Language/Version**: Python >=3.14.2
-**Primary Dependencies**: Home Assistant >=2026.11.0, Keymaster v0.6.0/v0.6.5 entity contracts; HA's pinned AwesomeVersion comparator
+**Primary Dependencies**: Home Assistant >=2026.11.0, Keymaster v0.6.1/v0.6.5 entity contracts; HA's pinned AwesomeVersion comparator
 **Storage**: HA config entries and existing persistent allocator/reconciliation stores
 **Testing**: pytest-homeassistant, pytest, pytest-cov, unit and integration tests
 **Target Platform**: Home Assistant async runtime
@@ -31,7 +31,7 @@ installed version independently from capability failures. See
 **Constraints**: Fail closed, preserve public selectors and existing holds, no PINs in diagnostics; no physical-erasure claim
 **Scale/Scope**: Multiple RC entries, overlapping numbers on distinct locks, disjoint ranges on shared locks, parent/child topology
 
-The support floor is KM v0.6.0; the unsuffixed v0.0.0 development placeholder
+The support floor is KM v0.6.1; the unsuffixed v0.0.0 development placeholder
 is a separate exception. Version status alone never adds a hardware block.
 Non-baseline versions have no assumed identity variants: use only exact
 verified supported identities, or fail closed per capability.

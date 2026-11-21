@@ -132,7 +132,7 @@ and restart after migration.
    if automatic verification is not possible. A same-named replacement for a
    removed verified entry is never silently selected.
 3. **Given** a monitored parent, a linked child, and an unrelated lock, **When**
-   actual v0.6.0 and v0.6.5 payloads report valid unlocks on a managed parent slot
+   actual v0.6.1 and v0.6.5 payloads report valid unlocks on a managed parent slot
    and on the child's corresponding inherited slot, **Then** each attributable event
    affects only the intended stay. An independently overridden child slot does
    not check in a parent guest based on matching slot number alone. Conflicting
@@ -194,12 +194,12 @@ messages, logs and downloadable diagnostics with synthetic PINs.
    the affected entry, slot and capability and a corrective action, never an
    incompatible-version warning based on the reset failure. An unrelated button
    with the old ID does not satisfy the capability.
-2. **Given** packaged v0.6.0 and v0.6.5 installs and a source checkout declaring
+2. **Given** packaged v0.6.1 and v0.6.5 installs and a source checkout declaring
    v0.0.0 in separate fixtures, **When** version is diagnosed and a slot operation
    is requested, **Then** the packages are reported as supported and v0.0.0
    as an explicitly allowed development placeholder, not incompatible or
    unknown. Operations proceed only with all required checks satisfied.
-   The packaged v0.6.0 and v0.6.5 fixtures exercise the read, write, date-update,
+   The packaged v0.6.1 and v0.6.5 fixtures exercise the read, write, date-update,
    reset, confirmation and check-in scenarios using each release's contracts.
 3. **Given** verification fails or an operation cannot be confirmed, **When**
    the operator inspects logs, warnings or exported diagnostics, **Then** the
@@ -212,19 +212,19 @@ messages, logs and downloadable diagnostics with synthetic PINs.
    version as unknown. The operation may proceed when every required identity,
    capability, state and safety check passes and is withheld if any required
    check fails. Exercise both outcomes for each unknown-version case.
-5. **Given** reliable loaded metadata for a release below v0.6.0 other than
+5. **Given** reliable loaded metadata for a release below v0.6.1 other than
    the v0.0.0 exception, **When** compatibility is diagnosed, **Then** the
-   warning reports the version and the v0.6.0 support floor independently of
+   warning reports the version and the v0.6.1 support floor independently of
    any capability failure. Version status alone adds no new hardware block.
    Exercise otherwise identical valid and invalid capabilities to show that
    the existing safety rules still determine whether the operation can proceed,
    without promising support for the older release.
-6. **Given** loaded metadata for `0.0.0`, `v0.0.0-dev`, `v0.6.0-rc.1`,
-   `v0.6.0+local`, `v0.6.1rc1`, `7`, `2026.11`, `20260101`, `0.6`, and
-   `0.0` and `v.0.0.71` in separate fixtures, **When** compatibility is diagnosed,
+6. **Given** loaded metadata for `0.0.0`, `v0.0.0-dev`, `v0.6.0`,
+   `v0.6.1rc1`, `v0.6.2rc1`, `v0.6.1+local`, `7`, `2026.11`, `20260101`,
+   `0.6`, `0.0`, and `v.0.0.71` in separate fixtures, **When** compatibility is diagnosed,
    **Then** only the unsuffixed zero version is the placeholder exception.
-   `v0.0.0-dev` and `v0.6.0-rc.1` are below the floor, and
-   `v0.6.1rc1` is supported. `v0.6.0+local` is unknown because neither
+   `v0.0.0-dev`, `v0.6.0`, and `v0.6.1rc1` are below the floor, and
+   `v0.6.2rc1` is supported. `v0.6.1+local` is unknown because neither
    floor comparison is true. `7`, `2026.11`, `20260101`, `0.6`, and `0.0`
    are unknown because they lack the required release shape, even if the
    comparator recognizes them. For the unknown cases, test that the same
@@ -387,7 +387,7 @@ and forced-release paths, and an operator slot exclusion.
   disjoint ranges on the same lock, and continue supported parent/child
   check-in behavior using verified topology, slot inheritance and unambiguous
   event attribution. Evaluate fields appropriate to the supported payload;
-  for v0.6.0 and v0.6.5 require a valid event `entity_id` matching the verified
+  for v0.6.1 and v0.6.5 require a valid event `entity_id` matching the verified
   underlying lock entity for the source Keymaster entry. `lockname` may
   corroborate that match or help disambiguate entries for that verified lock,
   but cannot replace the physical source. Do not ignore
@@ -423,7 +423,7 @@ and forced-release paths, and an operator slot exclusion.
   Report missing metadata, non-release shapes, and labels that do not parse
   as one of those version forms as unknown. For any remaining verified
   release version, report it as outside support if `<` stable
-  v0.6.0 is true, or supported if `>=` stable v0.6.0 is true, including
+  v0.6.1 is true, or supported if `>=` stable v0.6.1 is true, including
   prereleases that meet that comparison. If neither comparison is true,
   or a comparison fails, report unknown, not supported by default.
   Unknown versions may operate only when all
@@ -581,25 +581,29 @@ and forced-release paths, and an operator slot exclusion.
   prescribe replacing all of those uses with a new stored field. Planning must
   establish how legacy owners, exclusions and pending work will remain
   attributable before changing any equality rule, serialization or selector.
-- **Compatibility baseline**: The maintainer set v0.6.0 as the release support
-  floor with the explicit v0.0.0 development exception; v0.6.5 is the reported
-  configuration. Verified both shipped release archives
-  ([v0.6.0](https://github.com/FutureTense/keymaster/releases/tag/v0.6.0),
-  [v0.6.5](https://github.com/FutureTense/keymaster/releases/tag/v0.6.5)).
-  The packaged releases and their tagged entity source
-  ([v0.6.0](https://github.com/FutureTense/keymaster/blob/v0.6.0/custom_components/keymaster/entity.py),
+- **Compatibility baseline**: The maintainer selected the lowest stable v0.6.x
+  release whose full real package imports: v0.6.1, with the explicit unsuffixed
+  v0.0.0 development exception; v0.6.5 is the reported configuration.
+  The official v0.6.0 ZIP fails because its `helpers.py` imports
+  `LARGE_LOCK_ACK_STORE_VERSION`, missing from its packaged `const.py`, though
+  the tagged source has it. The official v0.6.1 package imported in a fresh
+  HA 2026.11.0 process with authentic provider dependencies and no Keymaster,
+  provider or constant stubs; this does not prove runtime or hardware behavior.
+  See [research](research.md#version-and-diagnostics) for artifact provenance.
+  The tagged v0.6.1 and v0.6.5 entity source
+  ([v0.6.1](https://github.com/FutureTense/keymaster/blob/v0.6.1/custom_components/keymaster/entity.py),
   [v0.6.5](https://github.com/FutureTense/keymaster/blob/v0.6.5/custom_components/keymaster/entity.py))
-  construct the unique ID as `<Keymaster config entry ID>_<slugified property key>`.
+  constructs the unique ID as `<Keymaster config entry ID>_<slugified property key>`.
   The property `text.code_slots:<slot>.pin` is an input to that calculation,
   not the unique ID. `button.code_slots:<slot>.reset` and `button.reset_lock`
   are distinct properties for different operations. Use the actual installed
   manifest version exposed by Home Assistant's loaded integration metadata:
-  both release archives report their respective release versions; both tagged
-  source manifests say `v0.0.0`. Rental Control's current `v0.1.0-b0` warning
+  tagged source manifests say `v0.0.0`. Verify packaged manifest versions in
+  the release harness. Rental Control's current `v0.1.0-b0` warning
   checks only for the old reset address and logs/posts a notification; it
   neither reads a version nor imposes a version-based operation block.
-- **Event and state evidence**: The shipped `keymaster_lock_state_changed`
-  payloads ([v0.6.0](https://github.com/FutureTense/keymaster/blob/v0.6.0/custom_components/keymaster/coordinator.py),
+- **Event and state evidence**: The `keymaster_lock_state_changed`
+  source contracts ([v0.6.1](https://github.com/FutureTense/keymaster/blob/v0.6.1/custom_components/keymaster/coordinator.py),
   [v0.6.5](https://github.com/FutureTense/keymaster/blob/v0.6.5/custom_components/keymaster/bus_events.py))
   both include `entity_id` (the underlying lock entity), `lockname`, `state`,
   `code_slot_num`, `code_slot_name`, `notification_source`, `action_code` and
@@ -653,10 +657,11 @@ and forced-release paths, and an operator slot exclusion.
   publication in these baselines. Masked live test values are synthetic
   negative fixtures, not expected baseline output.
 - **Version comparison evidence**: HA 2026.11 loads `AwesomeVersion` from
-  the installed manifest and pins `awesomeversion` 25.8.0. Probes confirmed
+  the installed manifest and pins `awesomeversion` 25.8.0. The recorded
+  [synthetic probes](research.md#version-and-diagnostics) confirmed
   the optional `v` on the unsuffixed zero, below-floor ordering for
-  `v0.6.0-rc.1`, above-floor ordering for `v0.6.1rc1`, and that
-  `<`, `>=`, and `==` are all false for `v0.6.0+local` against the stable
+  `v0.6.1rc1`, above-floor ordering for `v0.6.2rc1`, and that
+  `<`, `>=`, and `==` are all false for `v0.6.1+local` against the stable
   floor. Under FR-007 that case is unknown. The published Keymaster tags from
   v0.6.0 through v0.6.5 all use three numeric components and parse as SemVer.
   Historical tags such as v0.1.1-b3 also parse as SemVer and compare below
