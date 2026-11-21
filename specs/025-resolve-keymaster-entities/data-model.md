@@ -379,15 +379,15 @@ The direct disk reader returns a typed result, not `None` for every failure:
 | Result | Handling |
 |---|---|
 | Valid v1, no marker, activation, partial-write, or quarantine evidence (complete bounded evidence scan) | Apply existing v1 validation and loss rules; migrate with marker before activating v2 |
-| Both registry and marker paths return verified `ENOENT`, no symlinks, partial-write, activation, or boundedly discovered quarantine evidence (the scan completed within its cap) | Treat as the existing first-run/legacy-absent case, subject to existing adoption gates; absence is not evidence that arbitrary past history never existed |
+| Both registry and marker paths return verified `ENOENT`, no symlinks, partial-write, activation, or boundedly discovered quarantine evidence (the scan completed within its cap) | Support fresh installs and the existing legacy-absent case, subject to existing adoption gates; absence is not evidence that arbitrary past history never existed |
 | Valid v2 and matching finalized marker, without evidence of external restore/deletion, corruption or other suspected rollback | Re-acknowledge exact validated envelope and marker bytes before availability; restore ledger, fences and transaction bookkeeping; validate identities/owners/generation before observation |
 | Pending marker and exact recorded target envelope | Validate target generation/schema, re-acknowledge exact pending-marker and target bytes, finalize marker idempotently, then recover any existing fences before work |
 | Pending marker and exact recorded prior envelope | Re-acknowledge exact prior bytes; roll back only that pending transaction and retry from prior state **only** if all sequencing/no-dispatch conditions below are proven; retain all prior active operations and holds |
 | Pending genesis marker with explicit absent predecessor, registry path verified `ENOENT`, and no activation/partial/quarantine evidence | Remove only the exact pending marker after confirming its genesis transaction and no possible target dispatch; fsync the `.storage` directory, leave the registry path absent (do not create or delete an envelope), then return to first-run activation. If marker removal/fsync is uncertain, remain protective-unknown |
 | Valid v1 with a valid finalized v1-genesis marker matching its exact bytes after rollback, with trustworthy predecessor and no evidence of external restore/deletion, corruption or other suspected rollback | Re-acknowledge exact v1 and marker bytes; retry activation only after the existing quiescence and live-state agreement checks, without authorizing v2 dispatch |
 | Valid v1 with a present marker not matching a valid finalized v1-genesis or pending case, or v2 without a valid matching marker | Protective-unknown; never assume migration did not already complete |
-| Valid v1 with a matching `.corrupt.*` sibling or other prior-corruption evidence but no valid marker authenticating those exact v1 bytes, or with an incomplete bounded evidence scan and no such marker | Protective-unknown; do not treat the v1 file as complete, migrate/adopt from it, or use operator attestation to override the missing history; require a verified sufficiently current complete envelope and matching marker |
-| Any otherwise matching marker with known or suspected external restore, deletion, corruption or rollback not resolved by verified restoration | Protective-unknown; a digest match alone does not establish current complete history |
+| Valid v1 with a matching `.corrupt.*` sibling or other prior-corruption evidence but no valid marker authenticating those exact v1 bytes, or with an incomplete bounded evidence scan and no such marker | Protective-unknown; preserve evidence, do not migrate/adopt from it or allow attestation to override missing history; this release has no supported external recovery or genuine verifier |
+| Any otherwise matching marker with known or suspected external restore, deletion, corruption or rollback | Protective-unknown; matching digest alone does not establish current complete history, and this release has no supported external restore or override |
 | Absent with marker other than a valid recorded genesis-absent predecessor, unexplained partial transaction or boundedly discovered matching `.corrupt.*` evidence | Protective-unknown; never treat as fresh install |
 | Unreadable file, invalid UTF-8/JSON, size-limit overflow, invalid/unsupported marker or v2 envelope, unsupported version, missing/invalid required v2 protection section, or marker mismatch | Protective-unknown; preserve evidence and do not rebuild, overwrite, issue, release, reassign, or reset |
 
@@ -412,8 +412,11 @@ not assert that every other nonmutating read avoids the allocator lock.
 Preserve claims and fences already loaded and avoid hardware or ownership mutation
 where information is unavailable; do not claim that codes missing from
 damaged state remain visible or present, or that they are absent or reusable.
-Expose persistent actionable status that directs the operator to restore
-verified safety state, without PINs, raw storage contents or raw exceptions.
+Expose persistent sanitized status directing the operator to preserve the
+current registry, marker and quarantine evidence, and explaining that
+external recovery is unavailable with no supported restore or override in
+this release when history cannot be verified. Do not expose PINs, raw
+storage contents or raw exceptions.
 Keep calendar-only behavior where it does not mutate access. Use the
 RC-owned bounded raw-byte reader for both registry and marker; never invoke
 HA `Store.async_load`, `load_json`, or another path that can quarantine,
@@ -428,36 +431,51 @@ delete, or log those files or their paths. If the bounded scan is
 inaccessible or exceeds its cap, quarantine absence is unproven and the
 result is protective-unknown, never first-run.
 
-**Repair**: surface a sanitized persistent actionable error, preserve the
-damaged file/marker, and have an operator restore a *verified sufficiently
-current* complete envelope and matching marker through a stopped,
-documented backup/restore procedure, then validate current original
-identities and live observations before resuming. An older backup is not
-sufficient merely because it parses; it may omit later work.
-For v1 plus a quarantined sibling the approved choice is **verified backup**,
-not an operator-approved risky recovery. Stop RC/HA, preserve the current
-registry, marker and quarantine evidence, and restore the complete envelope
-and its matching marker as a pair from a verified backup. Before resuming,
-check both bounded files' schema, supported versions, marker transaction and
-generation, and digest against the exact restored envelope bytes, and
-re-acknowledge those exact bytes. Independently verify that the backup covers
-all relevant committed ledger transactions and any possible hardware effects
-through the incident/quiescence point, including outstanding holds and
-fences. Record the evidence without PINs or raw ledger contents. A checksum,
-timestamp, backup success, digest match, observed slots, or operator
-attestation alone proves neither completeness nor currency; identity
-attestation cannot supply missing ledger history. If those independent facts
-cannot be verified, keep issuance and release blocked. A markerless v1
-backup does not supply the matching marker or independently establish
-completeness: this design does not authorize creating a genesis marker from
-it in this recovery case. No existing mechanism has been established to
-prove a markerless v1 backup covers all later work; a different recovery path
-requires maintainer policy, not an inferred override. If no sufficiently
-current verified complete marker-bearing backup exists, persistent sanitized
-status must say so, explain that a markerless v1 backup alone cannot prove
-completeness, and direct the operator to recover such a backup. There is no
-automatic recovery or operator override; issuance and release remain blocked.
-This block may be indefinite if no qualifying backup can be established.
+**Repair and external backups**: surface a persistent sanitized status,
+stop RC/HA before inspecting a candidate, and preserve the original registry,
+marker and quarantine evidence. For v1 plus a quarantined sibling the approved
+policy permits only a **verified backup**, not operator-approved risky
+recovery; this release has no supported verifier or external recovery path.
+A candidate would need a complete envelope and matching marker. Schema, supported
+versions, transaction/generation and the marker's digest of the exact
+envelope bytes are necessary consistency checks only; even a successful
+re-acknowledgement cannot establish currency or prove that later work did not
+occur. Do not overwrite evidence or resume merely because these checks pass.
+
+External recovery also requires independently verifiable authoritative
+evidence that the candidate covers every committed protective transaction
+and every possible dispatched hardware effect through a proven quiescent
+incident boundary, including outstanding claims and fences. Evidence must
+cover the entire interval, all participating writers and operations, and be
+independently protected from the same rollback; otherwise a gap is unknown.
+These are necessary evidentiary properties, not a defined verifier or an
+operator authorization mechanism. The current allocator has delayed HA
+Store snapshots and no independent authoritative transaction/hardware-effect
+journal or rollback-resistant witness. This release has no genuine verifier
+for historical external backups and no supported restore or override where
+history cannot be verified. The maintainer chose `block_and_proceed`: ship
+without a staged release and keep affected installations blocked potentially
+indefinitely. Intact v1 upgrades remain supported under existing validation,
+quiescence and no-corruption/partial-history gates. Fresh installs with
+verified absence remain supported under existing adoption gates.
+Do not implement an acceptance or override path based on hypothetical evidence.
+This is not a claim that verifying a backup is mathematically impossible.
+Any future verifier must be separately designed and reviewed before it may
+authorize recovery; a different risk policy needs separate maintainer approval.
+
+A matching digest, checksum, backup timestamp or successful backup is not
+proof of recency. An operator statement or identity attestation, a lack of
+log entries, current slot observations, and HA repair confirmation do not
+prove that missing transactions or hardware effects never happened. No
+combination of these replaces independent authoritative evidence. A
+markerless v1 backup cannot establish completeness or justify creating a
+genesis marker in this recovery case. If independent completeness cannot be
+verified, persistent sanitized status must say external recovery is
+unavailable, no supported restore or override exists in this release, and
+the current registry, marker and quarantine evidence must be preserved.
+Explain that a markerless v1 backup alone cannot prove completeness.
+Issuance, reuse and release remain blocked.
+This block may be indefinite; no external restore is supported in this release.
 This includes legacy installations that never activated v2: a markerless v1
 backup alone cannot prove complete history, and no risky recovery or new
 legacy exception is authorized without a separate maintainer policy decision.
@@ -511,14 +529,30 @@ may already have produced partial hardware effects: their durable fences and
 owners are part of the prior envelope and are not canceled or confirmed by
 rolling back a newer pending intent.
 
-Recovery after an ordinary **process crash**, with no evidence of external
-restore/deletion or storage failure, first validates the bounded raw bytes,
+Recovery after an ordinary **process crash**, under the single-writer,
+ordered durable-write and no external restore/deletion assumptions, with no
+known evidence contradicting them, first validates the bounded raw bytes,
 then re-acknowledges exact validated bytes using the atomic writer in
 protocol order (pending marker before envelope; finalized envelope before
 final marker). This rewrite does not reserialize or alter bytes. Do not make
 the allocator available until the required file and directory fsync or
 platform write-through acknowledgement succeeds. If re-acknowledgement
 fails, or any raw read/write reports an error, remain protective-unknown.
+This crash protocol reasons about a live transaction's recorded predecessor
+or target and its pre-dispatch ordering, not about an external historical
+backup. A marker digest establishes byte correlation, not recency or absence
+of intervening operations. A later external restore of *both* files can
+produce the same bytes as an uninterrupted crash; in that case, the two
+histories are not always distinguishable. If both files are silently rolled
+back with no surviving contrary evidence, the reader may accept the stale
+pair under its ordinary-crash assumptions and lose later safety state, potentially
+permitting unsafe PIN reuse; neither the marker nor this design guarantees
+detection or safe recovery. Preventing undetected rollback requires an
+independent outside record protected from the same rollback; no such safeguard
+is provided by this design. The maintainer explicitly accepted this residual
+risk (`accept_residual`). If restore/rollback is known or suspected, the
+ordinary crash assumptions do not apply and the external repair gate above
+remains closed.
 
 1. If marker is pending and actual validated disk bytes match a recorded
    prior envelope digest/version/generation, re-acknowledge those exact prior
@@ -718,9 +752,10 @@ confirmation flow does not restore or validate the file. Test the actual
 corrupt-downgrade path. If
 encountered, stop RC/HA and preserve the quarantined bytes and marker.
 Reinstalling a compatible newer version alone cannot reconstruct missing
-safety state: restore a verified, sufficiently current complete envelope and
-matching marker through the stopped repair process. Without that restore,
-remain protective-unknown and do not claim recovery is safe.
+safety state. Preserve the evidence and remain protective-unknown: the
+external-backup gate above requires independently verifiable authoritative
+completeness evidence, and this plan defines no verifier for historical
+external backups. A matching restored pair alone is not safe recovery.
 No v1 mirror may overwrite v2 after activation.
 
 ## Event source and topology

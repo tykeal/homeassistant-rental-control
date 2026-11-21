@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Feature Specification: Resolve Keymaster Entities by Verified Identity
 
-**Feature Branch**: `025-resolve-keymaster-entities`
+**Feature**: `025-resolve-keymaster-entities`
 
 **Created**: 2026-11-20
 
@@ -167,8 +167,10 @@ and restart after migration.
    downgrade to v4.0.3, which may block setup of all entries when HA can
    decode a top-level storage `version` integer greater than 1 (the planned
    envelope uses `version: 2`), before checking the inner payload. Persistent,
-   sanitized, actionable status directs the operator to restore a verified,
-   sufficiently current complete envelope and matching marker. It does not
+   sanitized status directs the operator to preserve the registry, marker and
+   quarantine evidence and explains that external recovery is unavailable
+   and no supported restore or override exists in this release when history
+   cannot be verified. It does not
    claim that codes missing from damaged state remain visible or present, or
    that they are absent or reusable.
 
@@ -400,8 +402,11 @@ and forced-release paths, and an operator slot exclusion.
   fences where available and avoid hardware or ownership mutation. If damaged
   state makes prior codes or claims unknowable, do not claim that those codes
   remain visible or present, or that they are absent or reusable.
-  Maintain a persistent, actionable, sanitized status explaining that safety
-  state must be restored; do not expose PINs, storage contents or raw exceptions.
+  Maintain a persistent sanitized status directing preservation of the
+  registry, marker and quarantine evidence and explaining that external
+  recovery is unavailable and no supported restore or override exists in this
+  release when history cannot be verified; do not expose PINs, storage
+  contents or raw exceptions.
 - **FR-007**: Rental Control MUST distinguish a reliable, installed-version
   result from a missing or ambiguous lock association and from missing,
   disabled, not-ready, unavailable, ambiguous, or unsupported capabilities.
@@ -686,9 +691,22 @@ and forced-release paths, and an operator slot exclusion.
   before v4.0.3 checks the version; that loader can treat the registry as
   absent and enter adoption recovery without the new safety metadata. This is
   not a safe guard or recovery. Reinstalling a compatible newer version alone
-  cannot reconstruct missing state: preserve the quarantined bytes and marker
-  and restore a verified, sufficiently current complete envelope and marker,
-  or remain protective-unknown.
+  cannot reconstruct missing state: preserve the quarantined bytes and marker.
+  External recovery requires a verified sufficiently current complete
+  envelope and marker plus independently verifiable authoritative evidence
+  of completeness; a matching pair alone does not establish recency. This
+  release has no genuine historical-backup verifier, so it has no supported
+  external restore or override when history cannot be verified. The
+  maintainer approved proceeding without a staged release and keeping
+  affected installations blocked potentially indefinitely. Intact v1 upgrades
+  and fresh installs with verified absence remain supported under existing
+  validation and adoption safety gates. Silent
+  rollback of both files can be indistinguishable from normal crash recovery
+  and may be accepted as current, potentially permitting unsafe PIN reuse;
+  no detection is guaranteed. Known or suspected rollback remains blocked.
+  The maintainer explicitly accepted this residual risk (`accept_residual`);
+  preventing undetected rollback requires an independent outside record
+  protected from the same rollback, which this design does not provide.
 
 No ban on corroborating event names or switch to slot-scoped blocking is
 prescribed by this draft.
