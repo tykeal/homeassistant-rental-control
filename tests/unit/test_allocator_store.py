@@ -7,10 +7,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
+from homeassistant.core import CoreState
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.storage import Store as HomeAssistantStore
+from homeassistant.util.file import WriteError
 import pytest
 
 from custom_components.rental_control.allocator import store as store_module
@@ -380,6 +385,90 @@ def test_save_uses_delayed_store_write() -> None:
     assert (
         FakeStore.last_instance.delayed_payload["records"][0]["encoded_code"] != "0042"
     )
+
+
+async def test_real_ha_store_swallows_serialization_failure(
+    hass,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A completed HA Store save can return without persisting bad data."""
+    store: HomeAssistantStore[dict[str, Any]] = HomeAssistantStore(
+        hass, 1, "rental_control.serialization_probe"
+    )
+
+    await store.async_save({"unsupported": object()})
+
+    assert not Path(store.path).exists()
+    assert "Error writing config" in caplog.text
+
+
+async def test_real_ha_store_swallows_write_failure(
+    hass,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A completed HA Store save can return after a swallowed write error."""
+    store: HomeAssistantStore[dict[str, Any]] = HomeAssistantStore(
+        hass, 1, "rental_control.write_probe"
+    )
+    write = AsyncMock(side_effect=WriteError("synthetic write failure"))
+    monkeypatch.setattr(store._io, "async_write", write)
+
+    await store.async_save({"safe": "data"})
+
+    assert write.await_count == 1
+    assert not Path(store.path).exists()
+    assert "synthetic write failure" in caplog.text
+
+
+async def test_real_ha_store_read_only_save_is_not_persisted(hass) -> None:
+    """A read-only Store returns from save without writing its pending data."""
+    store: HomeAssistantStore[dict[str, Any]] = HomeAssistantStore(
+        hass,
+        1,
+        "rental_control.read_only_probe",
+        read_only=True,
+    )
+
+    await store.async_save({"safe": "data"})
+
+    assert not Path(store.path).exists()
+    assert store._data is None
+
+
+async def test_real_ha_store_stopping_save_is_only_pending_data(hass) -> None:
+    """A stopping Store save returns before final-write persistence."""
+    hass.set_state(CoreState.stopping)
+    store: HomeAssistantStore[dict[str, Any]] = HomeAssistantStore(
+        hass, 1, "rental_control.stopping_probe"
+    )
+    payload = {"safe": "pending"}
+
+    await store.async_save(payload)
+
+    assert not Path(store.path).exists()
+    assert store._data is not None
+    assert await store.async_load() == payload
+    assert not Path(store.path).exists()
+
+
+async def test_real_ha_store_delayed_save_loads_same_instance_pending_data(
+    hass,
+) -> None:
+    """A delayed Store save is visible to itself before reaching disk."""
+    store: HomeAssistantStore[dict[str, Any]] = HomeAssistantStore(
+        hass, 1, "rental_control.delayed_probe"
+    )
+    payload = {"safe": "pending"}
+    store.async_delay_save(lambda: payload, delay=60)
+
+    try:
+        assert not Path(store.path).exists()
+        assert await store.async_load() == payload
+        assert not Path(store.path).exists()
+    finally:
+        store._async_cleanup_delay_listener()
+        store._async_cleanup_final_write_listener()
 
 
 def _record_payload(code: str, entry_id: str, identity_key: str) -> dict[str, Any]:
