@@ -166,6 +166,23 @@ def test_known_free_slot_does_not_retain_matching_exemption() -> None:
     assert reason is None
 
 
+def test_redundant_same_slot_owner_can_retire_without_releasing_code() -> None:
+    """A shadowed booking retires while its same-slot owner retains the code."""
+    allocator = _allocator()
+    record = _record(owner_keys=("identity-old", "identity-current"))
+    record.owners[1].slot = record.owners[0].slot
+
+    reason = allocator._release_guard_reason(record, [record.owners[0]], [])
+
+    assert reason is None
+    allocator._registry.records[_CODE] = record
+    allocator._registry.rebuild_index()
+    allocator._registry.release("identity-old")
+    assert allocator._registry.code_for_identity("identity-old") is None
+    assert allocator._registry.code_for_identity("identity-current") == _CODE
+    assert not allocator._registry.is_available(_CODE, 4, "identity-next")
+
+
 async def test_only_named_hold_owner_is_releasable_from_conflict() -> None:
     """A forced exemption releases only the targeted hold owner."""
     allocator = _allocator()

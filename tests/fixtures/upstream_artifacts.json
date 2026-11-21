@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "keymaster": [
+    {
+      "version": "v0.6.0",
+      "tag": "v0.6.0",
+      "tag_commit": "cc2131582531104ad22de3edff950491fd7088a5",
+      "source_filename": "keymaster-source-v0.6.0.zip",
+      "source_url": "https://codeload.github.com/FutureTense/keymaster/legacy.zip/cc2131582531104ad22de3edff950491fd7088a5",
+      "source_size": 735247,
+      "source_sha256": "9986be1694f0fc1e56cca6d37e6e2b042aef8eba31f0d4e51028d89e2b266827",
+      "source_manifest_version": "v0.0.0",
+      "release_id": 351137249,
+      "asset_id": 534084528,
+      "asset_name": "keymaster.zip",
+      "filename": "keymaster-v0.6.0.zip",
+      "url": "https://github.com/FutureTense/keymaster/releases/download/v0.6.0/keymaster.zip",
+      "size": 134956,
+      "sha256": "a8029ea4694e19db36719d8a8985f36ac830d1ba411d37418ebc4a11f69c9155",
+      "license": "MIT"
+    },
+    {
+      "version": "v0.6.5",
+      "tag": "v0.6.5",
+      "tag_commit": "cab5fab4e54a8e32c1006f14ae05c14efd07b32d",
+      "source_filename": "keymaster-source-v0.6.5.zip",
+      "source_url": "https://codeload.github.com/FutureTense/keymaster/legacy.zip/cab5fab4e54a8e32c1006f14ae05c14efd07b32d",
+      "source_size": 783268,
+      "source_sha256": "3e0f868df539b84e72f79f247a49874a777f8081c3ef37b86f9c477d008d89f5",
+      "source_manifest_version": "v0.0.0",
+      "release_id": 442353104,
+      "asset_id": 768794072,
+      "asset_name": "keymaster.zip",
+      "filename": "keymaster-v0.6.5.zip",
+      "url": "https://github.com/FutureTense/keymaster/releases/download/v0.6.5/keymaster.zip",
+      "size": 150460,
+      "sha256": "c5bdb6396c03ca1b98e438bb5eaeeeca9953779d38d00b1b93279177d9f14544",
+      "license": "MIT"
+    }
+  ],
+  "rental_control": {
+    "version": "4.0.3",
+    "commit": "ad8a04ee385534c84a48c0ac294b056e470e1188",
+    "commit_api_url": "https://api.github.com/repos/tykeal/homeassistant-rental-control/commits/ad8a04ee385534c84a48c0ac294b056e470e1188",
+    "archive_url": "https://codeload.github.com/tykeal/homeassistant-rental-control/legacy.zip/ad8a04ee385534c84a48c0ac294b056e470e1188",
+    "filename": "rental-control-v4.0.3-ad8a04ee385534c84a48c0ac294b056e470e1188.zip",
+    "size": 2097894,
+    "sha256": "e552068ec7bf2a2ae42a8d77687ec2ac3ba4f61708ebfb08b043dd3a93aac7fb",
+    "manifest_version": "0.0.0",
+    "license": "Apache-2.0"
+  }
+}

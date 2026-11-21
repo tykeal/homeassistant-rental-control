@@ -365,6 +365,54 @@ PINs in an echoed exception and unexpected event field. Assert zero leakage,
 including on failure; sanitized context must still identify the entry, slot,
 capability and remedy.
 
+## Upstream fixture acquisition and re-pinning
+
+The upstream characterization tests require the pinned Keymaster release and
+tagged-source archives plus the Rental Control v4.0.3 archive. Pytest never
+downloads them: it requires `RC_UPSTREAM_ARTIFACTS_DIR` and verifies every
+artifact before use. CI acquires into the runner's temporary directory before
+pytest and exports that variable only to the test step.
+
+For a local online run, acquire once and then use the same verified directory:
+
+```bash
+uv sync --extra test
+export RC_UPSTREAM_ARTIFACTS_DIR="${TMPDIR:-/tmp}/rc-025-upstream-artifacts"
+uv run --no-project --python 3.14 python tests/fixtures/keymaster_releases.py acquire \
+  --output-dir "$RC_UPSTREAM_ARTIFACTS_DIR"
+uv run --no-project --python 3.14 python tests/fixtures/keymaster_releases.py verify \
+  --directory "$RC_UPSTREAM_ARTIFACTS_DIR"
+uv run --extra test pytest --assert=plain tests/integration/test_upstream_artifacts.py
+```
+
+`GH_TOKEN` is optional for public acquisition. When set, the downloader uses
+it only for requests whose exact origin is `https://api.github.com`; it
+refuses redirects for token-bearing requests. Release and codeload downloads
+remain unauthenticated. Do not put a token in a command-line argument.
+Acquisition allows at most two retries per request: transient failures use
+short exponential backoff, and GitHub `Retry-After`/primary rate-limit reset
+delays are honored only up to five seconds. Longer server delays and
+authentication, provenance or digest failures stop without fallback.
+
+For an offline test run, point `RC_UPSTREAM_ARTIFACTS_DIR` at an already
+acquired directory, run the `verify` command above, then run the desired
+pytest command. Verification and pytest do not access the network. Missing or
+changed files fail closed; there is no skip or latest-release fallback.
+
+GitHub-generated codeload ZIP bytes can change even when their source commit
+does not. Do not respond by weakening hash checks or blindly replacing a
+digest. For a deliberate source-archive re-pin, first confirm the pinned tag
+still resolves to the same full commit SHA, then compare the complete archive
+path set and every extracted file byte against that commit's tree, including
+the manifest and license. Only if the source tree is identical may the
+codeload archive's expected size and SHA-256 be updated; retain the commit-SHA
+URL and provenance check, document old/new digests and evidence in the review,
+and rerun clean acquisition, verification and characterization tests. A
+release-package asset mismatch is different: verify its exact release ID,
+asset ID, URL and published digest, and stop for upstream/review resolution
+if any differ. Never repin it to another asset or latest release as a
+workaround.
+
 ## Commands for the implementation stage
 
 Run from the worktree root; Python 3.14 is required. Install/resolve the

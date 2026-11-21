@@ -10,15 +10,55 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from homeassistant.core import HomeAssistant
 import homeassistant.util.dt as dt_util
 import pytest
+from pytest_homeassistant.common import MockConfigEntry
 
+from custom_components.rental_control.allocator import recovery
+from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
+from custom_components.rental_control.allocator.models import ObservedLock
+from custom_components.rental_control.const import CONF_LOCK_ENTRY
+from custom_components.rental_control.const import CONF_MAX_EVENTS
+from custom_components.rental_control.const import CONF_START_SLOT
+from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.event_overrides import EventOverrides
 from custom_components.rental_control.reconciliation import ActionKind
 from custom_components.rental_control.reconciliation import ManagedSlot
 from custom_components.rental_control.reconciliation import Reservation
 from custom_components.rental_control.reconciliation import SlotStatus
 from custom_components.rental_control.reconciliation import compute_desired_plan
+
+
+async def test_adoption_hold_scopes_other_entries_after_complete_read(
+    hass: HomeAssistant,
+) -> None:
+    """Unobserved locks gate all entries; complete reads reserve codes only."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Front lock",
+        data={
+            CONF_LOCK_ENTRY: "front",
+            CONF_START_SLOT: 1,
+            CONF_MAX_EVENTS: 1,
+        },
+        entry_id="entry-lock",
+    )
+    entry.add_to_hass(hass)
+    allocator = DoorCodeAllocator(hass)
+    allocator._pending_adoption = {"entry-lock"}
+
+    assert recovery.adoption_blocks(allocator, "entry-calendar")
+
+    allocator._read_pending_locks["entry-lock"] = (
+        ObservedLock("front", frozenset({1})),
+        frozenset({"2468"}),
+        frozenset(),
+    )
+
+    assert recovery.adoption_blocks(allocator, "entry-lock")
+    assert not recovery.adoption_blocks(allocator, "entry-calendar")
+    assert recovery.pending_lock_codes(allocator) == frozenset({"2468"})
 
 
 @pytest.mark.asyncio

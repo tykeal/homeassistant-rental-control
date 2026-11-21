@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Routing and Privacy Inventory
 
-Inventory against base `72787134bc2a3d46339d82faf10151cfd0b5d50b`;
+Inventory against base `208578ba541f03b6187daf06e643768087b51381`;
 line numbers are navigation aids, not a substitute for re-reading callers.
 All paths below are under `custom_components/rental_control/`. An exact
 source scan and call-graph review must be repeated at implementation time.
@@ -13,6 +13,18 @@ Do **not** make a zero-`rg` result a gate: a human-readable diagnostic,
 legacy selector or RC's own entity name may legitimately contain a lockname
 or familiar ID pattern. For every routing/read/write/evidence site below,
 tests must prove verified entry, slot and property provenance.
+
+The T003 re-scan at #960 searched entity-ID construction, direct state reads,
+service dispatch, state tracking, and Keymaster event subscriptions across
+the current source tree. It confirmed the inventory below and specifically
+re-checked `state_handlers.py`, `startup_readability.py`,
+`coordinator_helpers/coordinator_config_shell.py`,
+`keymaster_services.py`, `keymaster_service_helpers.py`,
+`event_overrides_helpers/apply_set.py`, `apply_update.py`, `shell_compat.py`,
+`sensors/checkin/runtime.py`, `coordinator.py`, and `listeners.py`.
+Generic service calls in `helpers.py` are calendar/integration utilities,
+not additional Keymaster slot-routing paths. The implementation re-scan must
+extend this inventory for any newly added call sites.
 
 | Site | Current behavior to replace or audit | Required coverage |
 |---|---|---|
@@ -54,3 +66,50 @@ Regression tests must inject a synthetic PIN in State values, unexpected event
 fields, exception messages and service failures; capture normal/debug logs,
 notifications and diagnostics. Do not copy upstream raw event data into
 diagnostic records, and distinguish redacted from unavailable information.
+
+## Storage, lifecycle, and writer-quiescence notes (T005)
+
+Verified against the installed Home Assistant 2026.11.0 source and the live
+Rental Control symbols at this base:
+
+- `RegistryStore` creates one HA `Store` per shared allocator with the
+  registry key/schema. Its loader treats decoded `{}` as absence, returns
+  pending same-instance `_data` before disk I/O, adds a missing HA
+  `minor_version` default of `1`, and sends malformed JSON through HA's
+  quarantine path, which logs storage paths/error text and creates an issue.
+  Unsupported envelope versions can raise. Rental Control's current wrapper
+  then treats `None` as missing and invalid payloads as reset/re-adoption.
+- Current authoritative writes call `Store.async_delay_save` with a one-second
+  delay. The call only schedules/replaces pending `_data`; it is not an
+  acknowledgement. HA serializes and writes later under the Store instance's
+  `_write_lock`; serialization or write failures are logged and swallowed by
+  the callback. A pending delayed callback or final-write listener may still
+  run during shutdown. There is no public Store API that proves all old
+  delayed writers are quiescent.
+- The allocator's per-instance `asyncio.Lock` covers mutation of in-memory
+  owners, adoption, reissue-cycle staging, and scheduling saves. Its
+  singleton uses a separate module-level creation lock and awaits the initial
+  store load before publication. The one allocator instance serializes normal
+  in-process callers, but HA Store does not coordinate RC processes or other
+  Store instances. Migration therefore must stop new old-writer producers,
+  account for/drain an already-running Store write, and reconcile the live
+  snapshot with disk before switching authority; delayed-save return cannot
+  establish quiescence or durability.
+- Override reservation/update methods use an `EventOverrides` lock for
+  in-memory state. Most apply paths release it before awaiting Keymaster
+  services; the legacy greedy `shell_cleanup.async_check_overrides` path
+  currently holds it across awaited clear calls. The reissue service's
+  per-coordinator pending-state lock covers preview and pending-state mutation;
+  its preview can acquire the allocator lock. It releases the reissue lock
+  before requesting a coordinator refresh. Preserve the existing
+  reissue-lock-to-allocator order and do not introduce the inverse order.
+  Likewise never add an allocator transaction while holding the override
+  lock. Allocator cycles schedule persistence while holding the allocator
+  lock, but do not perform Keymaster service calls there.
+- Setup currently registers a config-entry update listener and explicit
+  `async_unload_entry` teardown, retaining state-listener unsubscribe
+  functions; it does not subscribe to HA's entity-registry
+  create/update/remove event. HA 2026.11.0 exposes
+  `EVENT_ENTITY_REGISTRY_UPDATED` and `ConfigEntry.async_on_unload` for the
+  planned identity lifecycle manager. Registry subscription must be installed
+  before taking the initial snapshot and removed on entry unload/rebind.
