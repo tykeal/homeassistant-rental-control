@@ -30,11 +30,13 @@ manager's independent rubber-duck review, fix findings and obtain re-review
 before progressing or committing. Keep coupled unsafe changes dormant or
 together as one coherent reviewed slice.
 For every future agent-assisted commit, use the actual human author's DCO
-`Signed-off-by` and the required
-`Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`
-trailer. After each commit, inspect its message and verify both trailers
-before proceeding; never bypass hooks. Commit task-list updates separately
-from the implementation or documentation they track.
+`Signed-off-by` and a `Co-authored-by` trailer identifying the actual assisting
+agent with the appropriate name and email under the constitution and
+repository instructions. For Copilot contributions, use
+`Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
+After each commit, inspect its message and verify the DCO and appropriate
+coauthor trailers before proceeding; never bypass hooks. Commit task-list
+updates separately from the implementation or documentation they track.
 
 ## Phase 1: Setup and characterization
 
