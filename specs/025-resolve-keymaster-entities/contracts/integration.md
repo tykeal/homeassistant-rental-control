@@ -203,7 +203,7 @@ protective-unknown: no adoption-based rebuild, issuance, reuse, release or
 overwrite. In the new version, lockless RC entries still set up and display
 their calendars without Keymaster, but new lockless code issuance is withheld
 until the shared allocator safety state is restored. Use the marker/config
-correlation and verified restore protocol in the data model; current slot
+correlation and external-recovery gate in the data model; current slot
 states and exclusions cannot reconstruct lost pending holds.
 While the allocator is busy or locking is unsupported, unsafe or unavailable,
 preserve lockless setup, first refresh, display and calendar-only check-in via
@@ -213,24 +213,43 @@ fences. Unavailable locking alone does not establish persistent corruption.
 Do not promise every
 nonmutating read avoids the lock or bound calendar network/already-started
 filesystem operations.
-Expose persistent, sanitized, actionable status directing the operator to
-restore a verified, sufficiently current complete envelope and matching
-marker. For v1 with quarantine evidence the approved path is verified backup,
-not risky operator override: validate the restored pair and exact digest, and
-independently verify completeness through the incident/quiescence point as
-specified in the data model. A markerless v1 backup, digest, timestamp, slot
-observation or attestation alone is not such proof; if unavailable, keep the
-gate. Preserve claims and fences already loaded, avoid hardware or ownership
+Expose persistent, sanitized status directing the operator to preserve the
+current registry, marker and quarantine evidence and explaining that external
+recovery is unavailable with no supported restore or override in this release
+when history cannot be verified. For v1 with quarantine evidence the approved
+policy is verified-backup-only, not risky operator override; this release
+provides no genuine verifier or supported external recovery path. A matching
+envelope and marker, exact digest, timestamp,
+log absence, slot observation or attestation cannot establish completeness
+or recency. External recovery requires independently verifiable authoritative
+evidence covering all relevant committed transactions and possible hardware
+effects through quiescence. This release has no genuine historical-backup
+verifier; without verification recovery is unavailable and the gate remains
+closed potentially indefinitely. The maintainer chose to proceed without a
+staged release and keep affected installations blocked. Intact v1 upgrades
+and fresh installs with verified absence remain supported under their existing
+validation and adoption safety gates.
+See the data model; ordinary crash recovery is a distinct assumption-bound
+protocol, not proof about an external restore. Preserve claims and fences
+already loaded, avoid hardware or ownership
 mutation where information is unavailable, and do not claim that codes missing
 from damaged state remain visible or present, or that they are absent or
 reusable. HA may separately present its generic storage-corruption repair
 issue after quarantining invalid JSON; confirming that issue is not restoration
 or validation of the allocator state.
-If no sufficiently current verified complete marker-bearing backup exists,
-persistent sanitized status must say so, explain that a markerless v1 backup
-alone cannot prove completeness, and state there is no automatic recovery or
-operator override; issuance and release remain blocked.
-This can continue indefinitely if no qualifying backup can be established.
+If both files are silently restored to an older matching pair with no
+surviving contrary evidence, ordinary crash recovery may accept that stale
+pair and omit later safety state, potentially permitting unsafe PIN reuse.
+Detection and safe recovery are not guaranteed. The maintainer explicitly
+accepted this residual risk (`accept_residual`); preventing undetected
+rollback requires an independent outside record protected from the same
+rollback, which this design does not provide. Known or suspected rollback
+remains blocked.
+If completeness cannot be verified, persistent sanitized status must say so,
+explain that a markerless v1 backup alone cannot prove completeness, and
+state there is no supported restore or override in this release; issuance,
+reuse and release remain blocked.
+This can continue indefinitely; no external restore is supported in this release.
 That includes legacy installations that never activated v2: markerless v1
 alone is insufficient, and another recovery policy requires separate approval.
 Each pending marker records a proven prior finalized/genesis version,
@@ -264,9 +283,9 @@ for the quarantined file is not restored safety state; with the surviving
 activation marker, the new reader classifies it as protective-unknown.
 This path is not a safety guard or safe recovery. Stop RC/HA and preserve the
 quarantined bytes and marker. Reinstalling compatible newer RC alone cannot
-reconstruct missing safety state: restore a verified, sufficiently current
-complete envelope and matching marker through the stopped repair process.
-Without that restore, remain protective-unknown. Test the actual path. No
+reconstruct missing safety state. Preserve evidence and remain
+protective-unknown; this release has no supported external restore, override
+or genuine historical-backup verifier. Test the actual path. No
 guard is promised for other versions or deleted/replaced/restored storage.
 
 ## Registry and lifecycle messages

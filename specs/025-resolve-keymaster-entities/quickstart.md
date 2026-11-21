@@ -190,20 +190,38 @@ not an assumption that HA Store already guarantees them:
    registry `ENOENT` and no quarantine evidence; remove only the exact pending
    marker with directory fsync and perform no envelope write or deletion.
    With valid v1 plus a quarantined sibling, preserve evidence and test the
-   approved verified-backup path, never risky operator override. Restore a
-   complete envelope and matching marker from a verified backup while RC/HA
-   is stopped; validate schema, transaction/generation and exact digest, then
-   re-acknowledge. Independently establish that all relevant committed
-   transactions and possible hardware effects through incident/quiescence,
-   including holds and fences, are covered. A checksum, timestamp, slot
-   observation or attestation is not proof; a markerless v1 backup cannot
-   be promoted by creating a genesis marker in this case. If independent
-   evidence is unavailable, assert persistent sanitized status explains no
-   sufficiently current verified complete marker-bearing backup exists,
-   markerless v1 alone cannot prove completeness, there is no automatic
-   recovery or override, and issuance and release remain blocked potentially
-   indefinitely, including on legacy installations that never activated v2;
-   a different recovery path requires separate policy approval.
+   approved verified-backup-only policy, never risky operator override; this
+   release provides no genuine verifier or supported external recovery path. A
+   matching candidate's schema, transaction/generation, exact digest and
+   re-acknowledgement establish consistency, not recency or completeness.
+   This release has no genuine historical-backup verifier and no supported
+   restore or override when history cannot be verified. Assert no
+   restoration-based resume, adoption, issuance, reuse, release or dependent
+   hardware action. A checksum, timestamp, absent logs,
+   current slot observation or attestation cannot fill the gap, separately
+   or together; markerless v1 cannot be promoted by a new genesis marker.
+   Assert sanitized persistent status directs preservation of current
+   registry, marker and quarantine evidence and explains external recovery
+   is unavailable with no supported restore or override in this release
+   when history cannot be verified. The maintainer chose to proceed without a
+   staged release; the block may be indefinite, including installations that
+   never activated v2. A different risk policy requires separate approval.
+   Also verify intact v1 upgrades and fresh installs with verified absence
+   remain supported under existing validation, quiescence, evidence-scan and
+   adoption gates.
+   Build two synthetic histories: an ordinary process crash and an external
+   rollback of both files to the same earlier bytes after a later committed
+   operation. Show byte/digest equality cannot distinguish them. With known
+   or suspected rollback evidence, the second history must remain blocked
+   despite matching bytes and favorable current slots/logs; do not claim the
+   unflagged rollback can be detected; it may be accepted as ordinary crash
+   recovery and omit later safety state, potentially allowing unsafe PIN reuse.
+   The maintainer accepted this residual risk (`accept_residual`); preventing
+   undetected rollback requires an independent outside record protected from
+   the same rollback, which this design does not provide. Separately verify ordinary
+   crash recovery under the protocol's writer, ordering and no-external-
+   restore assumptions, retaining earlier fences and never inferring hardware
+   completion from the marker.
 3. Inject missing, corrupt and unsupported-version v1/v2 registry, read
    failure, size overflow, missing/invalid mandatory v2 safety sections,
    absent marker, marker/envelope generation or digest mismatch,
@@ -214,15 +232,17 @@ not an assumption that HA Store already guarantees them:
    prior pending-clear fence on A, an unreadable held slot, an attestation
    and a tombstone: assert no adoption-based rebuild, issuance/reuse, reset,
    release or overwrite even if B/another A slot appears empty or exclusion
-   is requested. Preserve corrupt files, report actionable repair and
-   validate restoration only from a demonstrably current complete snapshot.
+   is requested. Preserve corrupt files and report sanitized repair status;
+   never treat a matching snapshot as proof of external recovery.
    If no complete evidence exists the hold remains. Also verify that lockless
    entry setup and calendar displays remain available in the new version while
    new code issuance is withheld until safety state is restored. Separately test
    genuine first-run and legacy-absent behavior with no
    activation/partial/quarantine evidence under existing adoption gates.
    Verify the persistent status is sanitized and directs the operator to
-   restore verified safety state; do not assert visibility, presence or
+   preserve current registry, marker and quarantine evidence, with no supported
+   external restore or override in this release when history cannot be verified;
+   do not assert visibility, presence or
    absence of codes missing from damaged state. Confirm HA's generic
    storage-corruption issue from the old v4.0.3 downgrade path may be
    submitted without restoring or validating allocator state; the new raw
@@ -243,11 +263,10 @@ not an assumption that HA Store already guarantees them:
    and returns `None`, the old loader reports registry absent and may enter
    adoption recovery, and old code does not enforce the marker. The new
    reader must never take this path. It is not safe to rely on old recovery:
-   preserve
-   `.corrupt.*` and marker, stop RC/HA, reinstall compatible RC, and restore
-   a verified, sufficiently current complete envelope and matching marker.
-   Verify that reinstallation alone cannot reconstruct missing safety state;
-   without a verified restore, the new version remains protective-unknown.
+   preserve `.corrupt.*` and marker and stop RC/HA. Verify that reinstallation
+   or a consistent backup pair alone cannot reconstruct or verify missing
+   safety state; absent independent authoritative completeness evidence the
+   new version remains protective-unknown.
    Also show that a mere payload bump has
    different behavior and extra v1 fields may be dropped. Never delete or
    restore a stale ledger to force downgrade; do not claim protection for

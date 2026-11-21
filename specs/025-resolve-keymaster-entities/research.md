@@ -228,8 +228,9 @@ submitting the repair. HA's generic
 confirms and removes the issue; it does not restore or validate the file.
 Rental Control v4.0.3 has no custom repair flow. Therefore, issue confirmation
 alone is not evidence that a complete allocator envelope and matching marker
-were recovered. The operator must follow the verified stopped restore
-procedure; reinstalling newer code does not reconstruct missing state.
+were recovered. Stop RC/HA and preserve evidence; reinstalling newer code
+does not reconstruct missing state, and an external backup cannot be used to
+resume without the independently verifiable evidence described below.
 `atomic_writes=True` selects a stronger file write but does not stop Store
 swallowing errors. Default writes use replace without the atomic helper's
 fsync. Config entries also use delayed saves.
@@ -357,14 +358,39 @@ or a writer is active; stale temps are never authoritative.
 Preflight the exact serialized target envelope and both pending/final marker
 bytes against the corresponding read caps before any transaction mutation;
 oversize output cannot be acknowledged and must not dispatch dependent work.
-For a valid v1 beside quarantined evidence, the approved route is a verified
-backup, not an operator override. The [data model](data-model.md#load-classification-and-protective-unknown-recovery)
-requires a restored matching pair and independent proof of completeness
-through the incident; neither a markerless v1 backup nor a digest or
-attestation proves it. No general evidence source for that proof is assumed.
-This can block legacy installations that never activated v2 indefinitely if
-no qualifying backup exists; a different recovery path requires separately
-approved policy.
+For a valid v1 beside quarantined evidence, the approved policy is
+verified-backup-only, not an operator override; no genuine verifier or
+external recovery path is supported in this release. The
+[data model](data-model.md#load-classification-and-protective-unknown-recovery)
+requires a complete matching pair and independent authoritative evidence of
+completeness through the incident; neither a markerless v1 backup nor a
+digest or attestation proves it. The current allocator serializes a v1
+snapshot via delayed `RegistryStore.async_save`; its payload has records,
+owners and conflict bookkeeping, not an independent transaction/hardware-effect
+journal. No rollback-resistant external witness or historical-backup
+verification mechanism is established in this design. Snapshot consistency
+and re-acknowledgement do not prove recency. A separate authoritative,
+independently verifiable source covering the full interval and quiescence is
+necessary; without it recovery is unavailable, rather than automatically
+accepting a candidate or guessing from logs, attestations or live slots.
+The maintainer chose to proceed without a staged release and keep affected
+installations blocked potentially indefinitely. This release has no genuine
+historical-backup verifier or supported external restore/override when
+history cannot be verified; this does not assert verification is
+mathematically impossible. Intact v1 upgrades and fresh installs with verified
+absence remain supported under their existing validation and adoption gates.
+An ordinary crash with validated predecessor/target bytes under the
+single-writer/no-external-restore assumptions is a separate protocol; an
+external rollback of both files can make the histories indistinguishable.
+With no surviving contrary evidence, ordinary crash recovery may accept that
+stale pair and omit later safety state, potentially permitting unsafe PIN
+reuse; neither detection nor safe recovery is guaranteed. The maintainer
+explicitly accepted this residual risk (`accept_residual`). Preventing
+undetected rollback requires an independent outside record protected from
+the same rollback, which this design does not provide. Known or suspected
+rollback remains blocked. This can block legacy installations that never
+activated v2 indefinitely; no external restore is supported in this release
+and a different recovery policy requires separate approval.
 
 Catch `Exception` failures from serialization, encoding, hashing, raw
 reads/decoding, writer/replace/fsync, cleanup, executor submission and
@@ -451,9 +477,9 @@ that v4.0.3 creates or writes after HA returns `None` for the quarantined file
 is not restored safety state: the new reader classifies it alongside the
 surviving activation marker as protective-unknown. That path is not a guard.
 Reinstalling a compatible newer RC version alone cannot reconstruct missing
-safety state: preserve the quarantined bytes and marker and restore a verified,
-sufficiently current complete envelope and matching marker, or remain
-protective-unknown. In the new version, protective-unknown must not prevent
+safety state: preserve the quarantined bytes and marker and remain
+protective-unknown; this release has no supported external restore or
+historical-backup verifier. In the new version, protective-unknown must not prevent
 lockless entry setup or calendar displays, but the shared allocator withholds
 new lockless code issuance until safety state is restored. This differs from
 v4.0.3's top-level version-2-header downgrade block, which may prevent all RC

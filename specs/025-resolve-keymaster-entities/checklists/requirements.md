@@ -50,8 +50,10 @@ SPDX-License-Identifier: Apache-2.0
 - FR-004–FR-006: Stories 2–3 cover startup, rebind, migration, topology, disjoint
   slot ranges, and lockless setup/calendar availability with issuance withheld
   under protective-unknown allocator state. Story 3 also checks persistent
-  sanitized restoration guidance without claiming that codes lost from damaged
-  state remain visible/present or are absent/reusable.
+  sanitized guidance to preserve the registry, marker and quarantine evidence
+  and explains that external recovery is unavailable with no supported restore
+  or override in this release when history cannot be verified, without
+  claiming unknowable codes are present, absent, visible or reusable.
 - FR-007–FR-008: Story 4 covers installed-version evidence, capability
   diagnostics and PIN redaction independently. Source checks verified the
   two packaged baselines (v0.6.0 and v0.6.5), including common unique-ID

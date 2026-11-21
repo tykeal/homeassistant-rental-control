@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Implementation Plan: Resolve Keymaster Entities by Verified Identity
 
-**Branch**: `025-resolve-keymaster-entities-plan` | **Date**: 2026-11-20 |
+**Feature**: `025-resolve-keymaster-entities` | **Date**: 2026-11-20 |
 **Spec**: [spec.md](spec.md) | **Issue**: #954
 
 ## Summary
@@ -286,8 +286,21 @@ confirmation; reusing lockname-shaped IDs is unsafe.
    calendar displays but withholds new lockless code issuance. A corrupt v2
    file can instead be quarantined by HA and treated as absent by v4.0.3; its
    adoption recovery is not safe and does not reconstruct the missing safety
-   metadata. Preserve the quarantined bytes and marker, stop RC/HA, reinstall
-   compatible newer RC, and restore a verified, sufficiently current complete
-   envelope and matching marker. Reinstallation alone cannot reconstruct lost
-   state; without a valid restore, remain protective-unknown. This guard is not
+   metadata. Stop RC/HA and preserve the quarantined bytes and marker.
+   Reinstalling compatible newer RC or restoring a matching backup pair alone
+   cannot establish completeness or recency. The
+   [external recovery gate](data-model.md#load-classification-and-protective-unknown-recovery)
+   requires independently verifiable authoritative evidence; this release has
+   no genuine historical-backup verifier and no supported external restore or
+   override when history cannot be verified. The maintainer chose
+   `block_and_proceed`: proceed without a staged release while affected
+   installations remain blocked potentially indefinitely. Intact v1 upgrades
+   and fresh installs with verified absence remain supported under their
+   existing validation and adoption safety gates. Silent rollback of both files
+   can be accepted as ordinary crash recovery, omit later safety state and
+   permit unsafe PIN reuse. Detection is not guaranteed; known or suspected
+   rollback remains blocked. The maintainer explicitly accepted this residual
+   risk (`accept_residual`). Preventing undetected rollback requires an
+   independent outside record protected from the same rollback, which this
+   design does not provide. This guard is not
    a claim about all older versions or removed/replaced storage.
