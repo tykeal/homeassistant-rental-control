@@ -47,12 +47,22 @@ async def handle_state_change(
     )
     if context is None:
         return
+    is_reset_event = _is_reset_event(context)
+    if not is_reset_event and _should_ignore_suppressed_feedback(context, deps):
+        return
+    feedback_event = None
+    if context.event_has_new_value and not is_reset_event:
+        feedback_event_key = context.property_key or context.entity_id
+        feedback_event = (
+            feedback_event_key,
+            context.coordinator.event_overrides.begin_feedback_event(
+                context.slot_num, feedback_event_key
+            ),
+        )
     await deps.sleep(0.1)
     if not _context_is_current(context):
         return
     if await _handle_reset_entity(context, deps):
-        return
-    if _should_ignore_suppressed_feedback(context, deps):
         return
     snapshot = _read_slot_state_snapshot(context, deps)
     if snapshot is None:
@@ -60,7 +70,23 @@ async def handle_state_change(
     update = _build_override_update(context, snapshot, deps)
     if update is None:
         return
-    await _dispatch_override_update(context, update, deps)
+    feedback_field = (
+        {
+            snapshot.slot_code_entity_id: "slot_code",
+            snapshot.slot_name_entity_id: "slot_name",
+            snapshot.start_time_entity_id: "start_time",
+            snapshot.end_time_entity_id: "end_time",
+        }.get(context.entity_id)
+        if context.event_has_new_value
+        else "replace"
+    )
+    await _dispatch_override_update(
+        context,
+        update,
+        deps,
+        feedback_field=feedback_field,
+        feedback_event=feedback_event,
+    )
 
 
 def _resolve_context(
@@ -124,8 +150,13 @@ def _resolve_context(
             return None
         slot_num = int(slot_match.group(1))
     existing_override: dict[str, Any] | None = None
+    override_generation: int | None = None
     if event_has_new_value and coordinator.event_overrides:
         existing_override = coordinator.event_overrides.overrides.get(slot_num)
+    if coordinator.event_overrides:
+        override_generation = coordinator.event_overrides.get_feedback_generation(
+            slot_num
+        )
     return StateChangeContext(
         hass,
         event,
@@ -141,6 +172,7 @@ def _resolve_context(
         lifecycle_generation,
         capability_identity,
         entry_id,
+        override_generation,
     )
 
 
@@ -172,6 +204,13 @@ def _context_is_current(context: StateChangeContext) -> bool:
         and current.entity_id == context.entity_id
         and current.identity == context.capability_identity
     )
+
+
+def _is_reset_event(context: StateChangeContext) -> bool:
+    """Return whether a feedback event is the Keymaster reset control."""
+    if context.capability_entity_ids is not None:
+        return context.property_key == f"button.code_slots:{context.slot_num}.reset"
+    return "_reset" in context.entity_id
 
 
 async def _handle_reset_entity(
@@ -236,6 +275,12 @@ def _read_slot_state_snapshot(
     slot_state = context.hass.states.get(slot_enabled_entity_id)
     deps.logger.debug("Read enabled state for slot %s", slot)
     if slot_state is None:
+        return None
+    if (
+        context.event_has_new_value
+        and context.entity_id == slot_enabled_entity_id
+        and slot_state.state != context.event_new_value
+    ):
         return None
     slot_enabled_state = (
         context.event_new_value
@@ -334,6 +379,9 @@ async def _dispatch_override_update(
     context: StateChangeContext,
     update: tuple[str, str, datetime, datetime],
     deps: StateHandlerDeps,
+    *,
+    feedback_field: str | None,
+    feedback_event: tuple[str, int] | None,
 ) -> None:
     """Dispatch the final override update without launching reconciliation."""
     slot_code_value, slot_name_value, start_time, end_time = update
@@ -350,4 +398,8 @@ async def _dispatch_override_update(
         start_time,
         end_time,
         guard=lambda: _context_is_current(context),
+        merge_feedback=True,
+        feedback_field=feedback_field,
+        feedback_generation=context.override_generation,
+        feedback_event=feedback_event,
     )

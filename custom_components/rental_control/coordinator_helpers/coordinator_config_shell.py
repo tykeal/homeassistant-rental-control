@@ -53,7 +53,6 @@ from ..const import DEFAULT_CODE_GENERATION
 from ..const import DEFAULT_CODE_LENGTH
 from ..const import DEFAULT_MAX_NAME_LENGTH
 from ..const import DEFAULT_TRIM_NAMES
-from ..event_overrides import EventOverride
 from ..event_overrides import EventOverrides
 from ..helpers import configured_lock_slug
 from ..keymaster_operations import persisted_owner_identity_for_slot
@@ -198,7 +197,7 @@ class CoordinatorConfigMixin:
                 continue
             if verified:
                 await _async_update_verified_buffer_slot(
-                    self, slot, override, old_before, old_after
+                    self, slot, old_before, old_after
                 )
                 continue
             if protected_registry_active(self.hass):
@@ -208,9 +207,7 @@ class CoordinatorConfigMixin:
                     slot,
                 )
                 continue
-            await _async_update_legacy_buffer_slot(
-                self, slot, override, old_before, old_after
-            )
+            await _async_update_legacy_buffer_slot(self, slot, old_before, old_after)
 
 
 def _buffered_override_window(
@@ -236,25 +233,28 @@ def _buffered_override_window(
 async def _async_update_verified_buffer_slot(
     coordinator: Any,
     slot: int,
-    override: EventOverride,
     old_before: int,
     old_after: int,
 ) -> None:
     """Serialize date-fence preparation through final confirmation."""
     async with async_slot_operation(coordinator, slot):
         await _async_update_verified_buffer_slot_locked(
-            coordinator, slot, override, old_before, old_after
+            coordinator, slot, old_before, old_after
         )
 
 
 async def _async_update_verified_buffer_slot_locked(
     coordinator: Any,
     slot: int,
-    override: EventOverride,
     old_before: int,
     old_after: int,
 ) -> None:
     """Commit, dispatch, and confirm a protected exact-identity date update."""
+    current_override = coordinator.event_overrides.overrides.get(slot)
+    if current_override is None:
+        return
+    expected_generation = coordinator.event_overrides.get_feedback_generation(slot)
+    override_snapshot = dict(current_override)
     owner_identity_key = persisted_owner_identity_for_slot(coordinator, slot)
     if owner_identity_key is None:
         return
@@ -273,7 +273,7 @@ async def _async_update_verified_buffer_slot_locked(
     if intent is None:
         return
     _start, _end, buffered_start_value, buffered_end_value = _buffered_override_window(
-        coordinator, override, old_before, old_after
+        coordinator, override_snapshot, old_before, old_after
     )
     buffered_start = _as_coordinator_datetime(buffered_start_value, coordinator)
     buffered_end = _as_coordinator_datetime(buffered_end_value, coordinator)
@@ -309,8 +309,17 @@ async def _async_update_verified_buffer_slot_locked(
     ):
         return
     if await intent.async_is_current():
-        override["start_time"] = buffered_start
-        override["end_time"] = buffered_end
+        await coordinator.event_overrides.async_update_times(
+            slot,
+            buffered_start,
+            buffered_end,
+            expected_generation=expected_generation,
+            expected_times=(
+                override_snapshot["start_time"],
+                override_snapshot["end_time"],
+            ),
+            guard=intent.is_current,
+        )
 
 
 def _as_coordinator_datetime(value: date | datetime, coordinator: Any) -> datetime:
@@ -350,13 +359,17 @@ async def _confirm_verified_buffer_window(
 async def _async_update_legacy_buffer_slot(
     coordinator: Any,
     slot: int,
-    override: EventOverride,
     old_before: int,
     old_after: int,
 ) -> None:
     """Preserve existing slug-based date update behavior for legacy entries."""
+    current_override = coordinator.event_overrides.overrides.get(slot)
+    if current_override is None:
+        return
+    expected_generation = coordinator.event_overrides.get_feedback_generation(slot)
+    override_snapshot = dict(current_override)
     start, end, buffered_start, buffered_end = _buffered_override_window(
-        coordinator, override, old_before, old_after
+        coordinator, override_snapshot, old_before, old_after
     )
     start_entity = (
         f"{DATETIME}.{coordinator.lockname}_code_slot_{slot}_date_range_start"
@@ -392,11 +405,21 @@ async def _async_update_legacy_buffer_slot(
         f"Buffer time update slot {slot} ({coordinator.lockname})",
         _LOGGER,
     )
-    override["start_time"] = (
+    updated_start = (
         buffered_start
         if isinstance(buffered_start, datetime)
         else cast(datetime, start)
     )
-    override["end_time"] = (
+    updated_end = (
         buffered_end if isinstance(buffered_end, datetime) else cast(datetime, end)
+    )
+    await coordinator.event_overrides.async_update_times(
+        slot,
+        updated_start,
+        updated_end,
+        expected_generation=expected_generation,
+        expected_times=(
+            override_snapshot["start_time"],
+            override_snapshot["end_time"],
+        ),
     )

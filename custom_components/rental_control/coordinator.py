@@ -398,6 +398,10 @@ class RentalControlCoordinator(
         *values: Any,
         request_refresh: bool = True,
         guard: Callable[[], bool] | None = None,
+        merge_feedback: bool = False,
+        feedback_field: str | None = None,
+        feedback_generation: int | None = None,
+        feedback_event: tuple[str, int] | None = None,
         **legacy: Any,
     ) -> None:
         """Update the event overrides with the ServiceCall data."""
@@ -412,6 +416,10 @@ class RentalControlCoordinator(
                 payload.end_time,
                 self.event_prefix,
                 guard=guard,
+                merge_feedback=merge_feedback,
+                feedback_field=feedback_field,
+                feedback_generation=feedback_generation,
+                feedback_event=feedback_event,
             )
         else:
             accepted = guard is None

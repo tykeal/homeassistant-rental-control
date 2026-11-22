@@ -240,7 +240,10 @@ def _restore_slot_name(self, result: Any) -> None:
         and result.restored_slot_name
         and self._overrides.get(result.slot) is not None
     ):
-        self._overrides[result.slot]["slot_name"] = result.restored_slot_name
+        override = self._overrides[result.slot]
+        if override["slot_name"] != result.restored_slot_name:
+            override["slot_name"] = result.restored_slot_name
+            self._advance_feedback_generation(result.slot)
 
 
 def _clear_assignment(self, slot: int) -> None:
@@ -248,6 +251,7 @@ def _clear_assignment(self, slot: int) -> None:
     self._overrides[slot] = None
     self._slot_uids.pop(slot, None)
     self._slot_miss_counts.pop(slot, None)
+    self._advance_feedback_generation(slot)
 
 
 def _find_overlapping_slot(
@@ -297,8 +301,11 @@ async def async_reserve_or_get_slot(
         )
         if existing is not None:
             self._slot_miss_counts.pop(existing, None)
+            owner_changed = False
             if payload.uid is not None:
-                self._slot_uids[existing] = normalize_uid(payload.uid)
+                normalized_uid = normalize_uid(payload.uid)
+                owner_changed = self._slot_uids.get(existing) != normalized_uid
+                self._slot_uids[existing] = normalized_uid
             override = self._overrides[existing]
             changed = override is not None and (
                 self._shell_to_utc(override["start_time"])
@@ -311,6 +318,8 @@ async def async_reserve_or_get_slot(
                     payload.start_time,
                     payload.end_time,
                 )
+            if changed or owner_changed:
+                self._advance_feedback_generation(existing)
             return cast("ReserveResult", self._reserve_result(existing, False, changed))
         if self._next_slot is None:
             self._logger.warning(
@@ -325,6 +334,7 @@ async def async_reserve_or_get_slot(
         self._slot_miss_counts.pop(slot, None)
         if payload.uid is not None:
             self._slot_uids[slot] = normalize_uid(payload.uid)
+        self._advance_feedback_generation(slot)
         self._assign_next_slot()
         return cast("ReserveResult", self._reserve_result(slot, True, False))
 
@@ -334,6 +344,10 @@ async def async_update(
     update=None,
     *values: Any,
     guard: Callable[[], bool] | None = None,
+    merge_feedback: bool = False,
+    feedback_field: str | None = None,
+    feedback_generation: int | None = None,
+    feedback_event: tuple[str, int] | None = None,
     **legacy: Any,
 ) -> bool:
     """Update a slot with duplicate-detection enforcement."""
@@ -351,13 +365,48 @@ async def async_update(
         if payload.slot_name and payload.prefix
         else payload.slot_name
     )
+    if merge_feedback and feedback_field not in {
+        None,
+        "replace",
+        "slot_code",
+        "slot_name",
+        "start_time",
+        "end_time",
+    }:
+        return False
     async with self._lock:
         if guard is not None and not guard():
             return False
         slot = payload.slot
+        if (
+            merge_feedback
+            and feedback_generation is not None
+            and feedback_generation != self._feedback_generations.get(slot, 0)
+        ):
+            return False
+        if (
+            merge_feedback
+            and feedback_event is not None
+            and self._feedback_event_versions.get((slot, feedback_event[0]))
+            != feedback_event[1]
+        ):
+            return False
+        slot_code = payload.slot_code
+        start_time = payload.start_time
+        end_time = payload.end_time
+        current = self._overrides.get(slot)
+        if merge_feedback and current is not None:
+            feedback_values = _feedback_update_values(
+                current, payload, slot_name, feedback_field
+            )
+            if feedback_values is None:
+                return True
+            slot_code, slot_name, start_time, end_time = feedback_values
+        if merge_feedback and slot_code and not slot_name:
+            return False
         if slot_name:
             duplicate = self._find_overlapping_slot(
-                slot_name, payload.start_time, payload.end_time, exclude_slot=slot
+                slot_name, start_time, end_time, exclude_slot=slot
             )
             if duplicate is not None:
                 self._logger.warning(
@@ -366,8 +415,10 @@ async def async_update(
                 )
                 slot = duplicate
             self._overrides[slot] = self._override_dict(
-                payload.slot_code, slot_name, payload.start_time, payload.end_time
+                slot_code, slot_name, start_time, end_time
             )
+            if not merge_feedback:
+                self._advance_feedback_generation(slot)
             self._slot_miss_counts.pop(slot, None)
         else:
             self._clear_assignment(slot)
@@ -375,6 +426,38 @@ async def async_update(
         if len(self._overrides) == self.max_slots:
             self._ready = True
         return True
+
+
+def _feedback_update_values(
+    current: dict[str, Any],
+    payload: Any,
+    slot_name: str,
+    feedback_field: str | None,
+) -> tuple[Any, str, Any, Any] | None:
+    """Merge a changed feedback field or return a full-snapshot replacement."""
+    if feedback_field is None:
+        return None
+    incoming = {
+        "slot_code": payload.slot_code,
+        "slot_name": slot_name,
+        "start_time": payload.start_time,
+        "end_time": payload.end_time,
+    }
+    if feedback_field == "replace":
+        return (
+            incoming["slot_code"],
+            incoming["slot_name"],
+            incoming["start_time"],
+            incoming["end_time"],
+        )
+    values = dict(current)
+    values[feedback_field] = incoming[feedback_field]
+    return (
+        values["slot_code"],
+        values["slot_name"],
+        values["start_time"],
+        values["end_time"],
+    )
 
 
 def verify_slot_ownership(self, slot: int, expected_name: str) -> bool:

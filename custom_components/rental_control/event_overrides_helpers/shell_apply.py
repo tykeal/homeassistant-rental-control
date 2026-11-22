@@ -187,6 +187,7 @@ async def _apply_set_locked(self, coordinator: Any, slot: int, res, plan_id: str
     async with self._lock:
         self._pending_fences[slot] = operation_id
         self._overrides[slot] = build_tentative_override(res)
+        self._advance_feedback_generation(slot)
         self._slot_miss_counts.pop(slot, None)
         self.suppress_state_changes(
             slot,
@@ -289,10 +290,10 @@ async def _apply_update_times_locked(self, coordinator: Any, slot: int, res):
                 )
             override = self._overrides.get(slot)
             if override is not None:
-                override["start_time"], override["end_time"] = (
-                    res.buffered_start,
-                    res.buffered_end,
-                )
+                updated_times = (res.buffered_start, res.buffered_end)
+                if (override["start_time"], override["end_time"]) != updated_times:
+                    self._advance_feedback_generation(slot)
+                override["start_time"], override["end_time"] = updated_times
     return result
 
 

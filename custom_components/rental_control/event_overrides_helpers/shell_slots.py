@@ -200,6 +200,7 @@ def update(self, update=None, *values: Any, **legacy: Any) -> None:
     )
     self._slot_miss_counts.pop(payload.slot, None)
     self._overrides = overrides
+    self._advance_feedback_generation(payload.slot)
     self._assign_next_slot()
     if len(overrides) == self.max_slots:
         self._ready = True

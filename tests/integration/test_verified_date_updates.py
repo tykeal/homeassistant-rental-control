@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
@@ -13,10 +14,13 @@ from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from custom_components.rental_control import util
+from custom_components.rental_control.coordinator import RentalControlCoordinator
 from custom_components.rental_control.coordinator_helpers.coordinator_config_shell import (
     CoordinatorConfigMixin,
 )
@@ -140,6 +144,91 @@ async def test_verified_override_and_buffer_updates_preserve_code_and_suppress_f
     assert after is not None and after.data is not None
     assert after.transaction_id == before_transaction_id
     assert after.data["ledger"] == before_ledger
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_buffer_update_fences_queued_full_state_feedback(
+    hass,
+    tmp_path: Path,
+    release: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A queued full snapshot cannot undo a confirmed buffer-time update."""
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    original_deps = util._state_deps()
+
+    async def immediate_sleep(_delay: float) -> None:
+        """Skip feedback settling delay while orchestrating the race."""
+
+    monkeypatch.setattr(
+        util,
+        "_state_deps",
+        lambda: replace(original_deps, sleep=immediate_sleep),
+    )
+    start = datetime.now(UTC) + timedelta(hours=1)
+    end = datetime.now(UTC) + timedelta(hours=2)
+    reservation = SimpleNamespace(
+        identity_key=_OWNER_IDENTITY,
+        slot_name="Guest",
+        slot_code=_CODE,
+        start=start,
+        end=end,
+        buffered_start=start,
+        buffered_end=end,
+        display_slot_name="Guest",
+    )
+    result = await coordinator.event_overrides._apply_set(
+        coordinator, _SLOT, reservation, "buffer-feedback-race"
+    )
+    assert result.confirmed
+    coordinator.async_request_refresh = AsyncMock()
+    coordinator.update_event_overrides = (
+        RentalControlCoordinator.update_event_overrides.__get__(
+            coordinator, RentalControlCoordinator
+        )
+    )
+    coordinator.code_buffer_before = 15
+    coordinator.code_buffer_after = 30
+    coordinator._slot_mappings = {"mappings": {_OWNER_IDENTITY: {"slot": _SLOT}}}
+
+    entered_update = asyncio.Event()
+    release_update = asyncio.Event()
+    original_update = coordinator.update_event_overrides
+
+    async def pause_before_update(*args: Any, **kwargs: Any) -> None:
+        """Pause after the stale full snapshot was read but before its commit."""
+        entered_update.set()
+        await release_update.wait()
+        await original_update(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator, "update_event_overrides", pause_before_update)
+    event = MagicMock()
+    event.data = {"entity_id": entity_ids[f"text.code_slots:{_SLOT}.name"]}
+    feedback = asyncio.create_task(
+        util.handle_state_change(hass, coordinator.config_entry, event)
+    )
+    await entered_update.wait()
+
+    await CoordinatorConfigMixin._async_update_buffer_times(
+        coordinator, old_before=0, old_after=0
+    )
+    expected_start = start - timedelta(minutes=15)
+    expected_end = end + timedelta(minutes=30)
+    override = coordinator.event_overrides.overrides[_SLOT]
+    assert override is not None
+    assert override["start_time"] == expected_start
+    assert override["end_time"] == expected_end
+
+    release_update.set()
+    await feedback
+    override = coordinator.event_overrides.overrides[_SLOT]
+    assert override is not None
+    assert override["start_time"] == expected_start
+    assert override["end_time"] == expected_end
 
 
 @pytest.mark.parametrize(

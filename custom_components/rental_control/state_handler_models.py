@@ -45,6 +45,7 @@ class StateChangeContext:
     lifecycle_generation: int | None = None
     capability_identity: CapabilityIdentity | None = None
     config_entry_id: str | None = None
+    override_generation: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
