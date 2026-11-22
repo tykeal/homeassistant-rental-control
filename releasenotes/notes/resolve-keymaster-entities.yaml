@@ -1,0 +1,55 @@
+---
+# SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
+# SPDX-License-Identifier: Apache-2.0
+upgrade:
+  - |
+    Rental Control now protects shared door-code ownership and pending
+    operations with a durable registry and protection marker. An intact v1
+    registry is validated and migrated during setup; a verified fresh install
+    follows the existing adoption gates. If history cannot be verified,
+    issuance, reuse, and release remain blocked, potentially indefinitely,
+    while lockless calendar and display tracking remain available.
+
+    If Home Assistant reports storage corruption, stop Home Assistant and
+    preserve the current registry, protection marker, and quarantine evidence
+    without editing or restoring them. Home Assistant's generic repair
+    confirmation, an auto-created default, or a fresh v1 registry written by
+    Rental Control v4.0.3 after quarantine is not restored safety state.
+    Reinstalling, accepting the repair prompt, or restoring a matching backup
+    pair alone does not establish recency or completeness; a markerless v1
+    backup cannot prove completeness. This release has no supported external
+    restore or operator override when history cannot be verified. Persistent
+    status gives sanitized guidance; do not infer whether an unverified code
+    is present, absent, visible, or reusable.
+
+    Rental Control v4.0.3 refuses the new registry format based on its
+    top-level version-2 header before inspecting the payload. Its older
+    corruption path may quarantine invalid JSON and treat the registry as
+    absent, and it does not enforce the new protection marker. Do not
+    downgrade against damaged or quarantined state. A simultaneous rollback
+    of the registry and marker may not be detectable because this protocol
+    has no independent external record of the latest pair.
+
+    The protected registry file and process-lock path is verified on
+    Linux/POSIX. Native Windows path traversal, ACL and lock behavior has not
+    been validated, so protected registry operations fail closed there.
+    Lockless calendar and display tracking remain available when the protected
+    store is unavailable; dependent code issuance, reuse, release and writes
+    remain gated.
+
+    Legacy-unknown association history requires an explicit, auditable
+    assertion that the selected Keymaster entry is attached to the same
+    original physical lock, including after a Keymaster entry is recreated.
+    This assertion is not physical proof and does not confirm clear or release
+    a retained hold. Known work from one Keymaster entry is never transferred
+    to another.
+
+    Existing Keymaster-backed Rental Control entries may remain unresolved
+    after upgrading; their prior display-name selector is not automatically
+    trusted as a Keymaster configuration identity. A Home Assistant repair
+    issue directs the operator to select the intended Keymaster entry in
+    Options. Setting and clearing door codes are withheld until the
+    association is repaired. If v1 ledger owners have no independent
+    original-entry evidence, verified selection also requires an explicit
+    same-original-physical-lock assertion. Known work from another entry is
+    never transferred by that assertion.

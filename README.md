@@ -24,6 +24,7 @@ and sensors for managing rental properties.
         - [Lock Code Buffer Times](#lock-code-buffer-times)
         - [Keymaster Event Diagnostics](#keymaster-event-diagnostics)
     - [Using Door Codes Without Keymaster](#using-door-codes-without-keymaster)
+    - [Protected Registry Recovery and Downgrades](#protected-registry-recovery-and-downgrades)
 - [Installation](#installation)
     - [Keymaster (optional)](#keymaster-optional)
     - [Calendar Triggers in Home Assistant 2026.11](#calendar-triggers-in-home-assistant-202611)
@@ -258,22 +259,103 @@ An unmatched code usually belongs to a booking that has gone away, and clears
 itself once Keymaster finishes clearing the slot. If it persists, clear that
 code at the lock.
 
-When Home Assistant loses the shared code registry, or finds it corrupt, the
-integration rebuilds it from the locks. New codes resume once every config
-entry that drives a lock has read its lock across its whole managed slot
-range, and the registry counts as rebuilt from then on. A slot you excluded
-with the slot exclusion action counts as read. A lock that the integration
-cannot reach keeps codes withheld for every entry until it comes back online,
-and the `code adoption pending` notification marks such an entry as
-unreachable. If you widen an entry's slot range, the integration must read
-the new slots too before it trusts the rebuilt registry.
+When the integration cannot verify the shared registry history, it enters
+protective-unknown mode. It preserves available registry and recovery evidence and withholds new
+issuance, code reuse, and release of existing ownership. Reading locks, an
+empty-looking slot, an exclusion, or a current state observation does not
+reconstruct missing history or prove that the old credential no longer exists.
+Lockless
+entries can continue calendar and display tracking, but they cannot issue new
+codes while the shared safety state is unknown.
 
-In that situation a **disabled** config entry that drives a lock also holds the gate shut. Disabling an entry leaves its
-codes on the lock, and with the registry gone nothing else records them, so
-any code issued could already open that lock. The `code adoption pending`
-notification marks such an entry as disabled. Enable it so the integration
-reads its lock again, or delete the entry once you have cleared its codes from
-the lock.
+Intact first-run and supported v1 upgrade paths follow the normal validation
+and adoption gates. If Rental Control cannot verify history, enabling entries
+or completing an adoption scan does not clear protective-unknown status.
+
+### Protected Registry Recovery and Downgrades
+
+#### Repairing a legacy Keymaster association
+
+After an upgrade, an existing Keymaster-backed Rental Control entry may remain
+unresolved even when its old selector names a lock. Rental Control does not
+infer the Keymaster configuration from a display name, entity ID, or that old
+selector. Rental Control withholds code setting and clearing until you repair
+the association; calendar and display tracking remain available. A Home Assistant
+repair issue points to the entry's Options, where you must select the intended
+Keymaster configuration. Entries are not automatically associated.
+
+If the protected registry contains legacy allocations and no independent
+evidence ties every affected allocation to a Keymaster entry, selection alone
+does not resolve the association: the options flow asks you to attest that the
+selected configuration controls the same original physical lock. This is an
+operator assertion, not machine proof. A v1 ledger owner without an allocation
+fence remains legacy-unknown, so expect this assertion when such an
+owner exists. Independently verified evidence for the same original entry
+does not need an assertion. Rental Control will not transfer work known to
+belong to another entry. A verified selection with no protected allocations also needs no
+historical assertion. Rental Control records the selection and any required
+assertion in the protected registry before updating the config.
+
+The shared registry protects code ownership, pending operations, and clear
+fences. If Rental Control reports that it cannot verify this history:
+
+1. Stop Home Assistant and preserve the current registry, protection marker,
+   and any quarantine evidence exactly as found. Do not edit, delete, copy
+   over, or restore these files while Home Assistant or Rental Control is
+   running.
+2. Do **not** accept Home Assistant's generic storage-corruption repair
+   prompt as proof of recovery. Home Assistant may quarantine a damaged file
+   and create a default or a fresh v1 registry; neither action restores the
+   missing safety history.
+3. Do not reinstall, reload, or downgrade to try to clear the warning.
+   Rental Control has no supported external restore procedure or operator
+   override in this release. A matching backup pair, checksum, timestamp,
+   current lock state, or operator attestation alone does not establish that
+   a backup is complete and current. A markerless v1 backup cannot establish
+   completeness. Persistent status explains that issuance, reuse, and release
+   may remain blocked indefinitely until a supported recovery method exists.
+4. Seek maintainer guidance before any recovery attempt and provide only
+   sanitized status information; do not post registry or marker contents,
+   paths, PINs, or quarantine contents.
+
+Do not infer whether an unverified code is present, absent, visible, or
+reusable. Pending holds and clear work remain until operators can verify the
+exact original entry, physical lock, slot, owner, and required fresh evidence.
+Legacy-unknown association history requires an explicit, auditable assertion
+that the selected entry remains bound to the same original physical lock,
+including after an operator deletes and recreates a Keymaster entry. That
+assertion does not provide machine proof or confirm a clear or hold release.
+The integration never transfers known work from one Keymaster entry to
+another, even if an operator says both entries use the same physical lock.
+
+The integration keeps resolved fence history to preserve evidence that rejects
+unsafe owner reuse. Diagnostics report only its count and oldest age; the
+integration does not prune history without a proven safe checkpoint.
+Registry-size limits remain fail-closed: if the integration cannot safely
+commit the complete protected snapshot within its size bound, it stops
+protected operations rather than discarding tombstones. This release offers
+no operator command to compact or prune that history.
+
+#### Platform availability
+
+Linux/POSIX tests cover the protected registry file and process-lock path.
+This release has no native Windows tests for path traversal, ACL or lock
+behavior. The integration fails closed for protected registry operations on
+Windows.
+Code issuance, reuse, release and dependent lock writes remain gated when the
+protected store is unavailable, while lockless calendar and display tracking
+remain available. This is not a claim of native Windows protected-operation
+support.
+
+Rental Control v4.0.3 checks the top-level version-2 header and refuses to
+load the new registry format before allocator use, regardless of whether the
+inner payload is valid. If the registry contains corrupt JSON, older
+Home Assistant/Rental Control storage handling may quarantine it and treat it
+as absent; v4.0.3 does not enforce the new protection marker. Do not run that
+older version against damaged or quarantined registry state. Reinstalling a
+newer version cannot reconstruct missing history. Rolling back both the
+registry and marker together can also evade detection; the protocol has no
+independent external record that proves the latest pair.
 
 ### Slot Exclusion Action
 

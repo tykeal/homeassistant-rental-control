@@ -7,8 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 
 Inventory against base `208578ba541f03b6187daf06e643768087b51381`;
 line numbers are navigation aids, not a substitute for re-reading callers.
-All paths below are under `custom_components/rental_control/`. An exact
-source scan and call-graph review must be repeated at implementation time.
+All paths below are under `custom_components/rental_control/`. The source and
+call-graph re-scan was repeated during implementation; the table below records
+the baseline hazards and the implementation tests that exercise their
+replacement.
 Do **not** make a zero-`rg` result a gate: a human-readable diagnostic,
 legacy selector or RC's own entity name may legitimately contain a lockname
 or familiar ID pattern. For every routing/read/write/evidence site below,
@@ -24,9 +26,9 @@ re-checked `state_handlers.py`, `startup_readability.py`,
 `sensors/checkin/runtime.py`, `coordinator.py`, and `listeners.py`.
 Generic service calls in `helpers.py` are calendar/integration utilities,
 not additional Keymaster slot-routing paths. The implementation re-scan must
-extend this inventory for any newly added call sites.
+include any newly added call sites.
 
-| Site | Current behavior to replace or audit | Required coverage |
+| Site | Baseline hazard to replace or audit | Required coverage |
 |---|---|---|
 | `__init__.py:333-360`, `async_start_listener` | Constructs slot enabled, PIN, name, datetime and reset IDs from lockname; config updates tear down/recreate | Real registry renames, current-address rebinding, one callback, unload and repeated reload |
 | `state_handlers.py:71-145`, `handle_state_change`, `_resolve_context`, `_handle_reset_entity` | Parses slot with regex from event ID; `_reset` substring selects reset path | Identity→slot/property mapping, no regex/substring as authorization, stale/reused ID and unrelated reset tests |
@@ -42,6 +44,51 @@ extend this inventory for any newly added call sites.
 | `sensors/checkin/runtime.py:132-165,215-237`, `sensors/checkinsensor.py:259-295,421-428` | Check-in routing and constructed date-range end lookup | Parent/child and lockless transitions, verified check-in/normal/early checkout date reads |
 | `coordinator_helpers/reissue.py:109`, `allocator/issuance.py:44`, `allocator/adoption.py:244`, `allocator/reissue_service.py:394` | Lockname-based internal slot keys, owner/adoption equivalence and service target resolution | Compatibility-preserving ledger migration, shared locks, collisions, unambiguous selectors and dry runs; not a blind global string replacement |
 | `coordinator_helpers/exclusion_targets.py:35-108`, `allocator/exclusion_service.py:99-175`, `coordinator_helpers/reissue_targets.py:25-51,71-96,127-144` | `set_slot_exclusion` resolves RC sensor registry ownership or the unique attribute fallback; lockname narrows by managed range and, on removal, persisted exclusion ownership with existing fallbacks. Only exclusion creation runs its eligibility guard. | Preserve those unambiguous selector/refusal, out-of-range removal and dry-run behaviors. Resolve the RC entry first, then verify its KM association and same-slot evidence for exclusion creation; aliases or sensor fallback never authorize a hardware target. Removal remains a config cleanup, not a clear or an authorization. |
+
+## Implementation audit
+
+The following legacy-shaped addresses remain only as compatibility helpers.
+When the production protected registry is registered, a missing verified
+lifecycle now makes these paths inert: set/clear/update services reject the
+constructed address; allocator reconciliation refuses unverified writes;
+feedback listeners and startup readability do not subscribe to guessed IDs;
+state feedback ignores events without a current lifecycle; buffer-date and
+early-checkout writes require verified routing; and observed-PIN publication
+reads the current lifecycle capability or returns no observation. A lockname
+or sensor selector remains useful for display and resolving the RC entry, but
+does not authorize a Keymaster target.
+
+Verification is distributed across real-consumer tests, not inferred from
+string scans:
+
+- Lifecycle rebinding, rename/reused-address rejection and listener teardown:
+  `test_verified_lifecycle_feedback.py`,
+  `test_verified_lifecycle_recovery.py`, and
+  `test_verified_slot_lifecycle.py`.
+- Property snapshots, manual feedback and startup readability:
+  `test_state_handlers.py`, `test_startup_readability.py`, and
+  `test_verified_lifecycle_feedback.py`.
+- Parent/child topology, exact event-source attribution, and check-in date
+  writes: `test_verified_checkin.py` and `test_checkin_tracking.py`.
+- Set, clear, reset, override, date, cleanup, and missing-identity dispatch:
+  `test_verified_consumer_dispatch.py`,
+  `test_verified_clear_recovery.py`,
+  `test_verified_date_updates.py`, and
+  `test_verified_service_helpers.py`.
+- Public selector compatibility, reissue, and exclusion safety:
+  `test_verified_public_services.py`,
+  `test_verified_exclusion_safety.py`,
+  `test_exclusion_targets.py`, and `test_allocator_reissue_cycle.py`.
+- Sensitive output and notification redaction:
+  `test_verified_identity_privacy.py` and
+  `test_registry_protective_unknown.py`.
+
+The no-lifecycle path remains available only to isolated legacy compatibility
+contexts without a registered protected store; production activation tests
+exercise the protected path. This is not a claim of native-Windows validation
+or abrupt-process-crash testing. POSIX process-lock unavailability remains a
+fail-closed protected-storage state, while lockless calendar tracking is
+covered separately by `test_lockless_end_to_end.py`.
 
 `allocator/`, `reconciliation/`, `coordinator_helpers/`, `event_overrides.py`
 and helpers also carry observations, owner IDs, pending work and cross-entry
