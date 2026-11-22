@@ -39,17 +39,6 @@ async def async_update_verified_lock_code_expiry(
         or reservation_end is None
     ):
         return False
-    matching_slots = [
-        slot
-        for slot in range(
-            coordinator.start_slot,
-            coordinator.start_slot + coordinator.max_events,
-        )
-        if overrides.get_slot_name(slot) == slot_name
-    ]
-    if len(matching_slots) != 1:
-        return False
-    slot = matching_slots[0]
     identity_key = make_reservation_fingerprint(
         config_entry.entry_id,
         slot_name,
@@ -57,7 +46,17 @@ async def async_update_verified_lock_code_expiry(
         reservation_end,
     )
     assignment = getattr(coordinator, "get_slot_assignment", None)
-    if not callable(assignment) or assignment(identity_key) != slot:
+    if not callable(assignment):
+        return False
+    slot = assignment(identity_key)
+    if (
+        not isinstance(slot, int)
+        or isinstance(slot, bool)
+        or not coordinator.start_slot
+        <= slot
+        < coordinator.start_slot + coordinator.max_events
+        or overrides.get_slot_name(slot) != slot_name
+    ):
         return False
     if verified_slot_source(entity._hass, config_entry, slot) is None:
         return False

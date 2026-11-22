@@ -236,8 +236,8 @@ async def test_buffer_update_fences_queued_full_state_feedback(
     (
         "overrides_missing",
         "slot_absent",
-        "slot_ambiguous",
         "owner_mismatch",
+        "assigned_name_mismatch",
         "source_unverified",
     ),
 )
@@ -259,13 +259,15 @@ async def test_date_update_requires_unique_verified_slot_and_owner(
     if failure != "overrides_missing":
         names = {
             _SLOT: None if failure == "slot_absent" else "Guest",
-            _SLOT + 1: "Guest" if failure == "slot_ambiguous" else None,
+            _SLOT + 1: "Different Guest"
+            if failure == "assigned_name_mismatch"
+            else None,
         }
-        coordinator.max_events = 2 if failure == "slot_ambiguous" else 1
+        coordinator.max_events = 2 if failure == "assigned_name_mismatch" else 1
         coordinator.event_overrides = SimpleNamespace(
             get_slot_name=lambda slot: names.get(slot)
         )
-    if failure == "owner_mismatch":
+    if failure in {"owner_mismatch", "assigned_name_mismatch"}:
         coordinator.get_slot_assignment = lambda _identity: _SLOT + 1
     config_entry = SimpleNamespace(entry_id="rc-entry")
     entity = SimpleNamespace(
@@ -294,6 +296,111 @@ async def test_date_update_requires_unique_verified_slot_and_owner(
 
     assert not result
     assert calls == []
+
+
+async def test_same_name_early_checkout_routes_by_tracked_reservation_identity(
+    hass,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Duplicate display names still route to the tracked stay's selected slot."""
+    from custom_components.rental_control.reconciliation import (
+        make_reservation_fingerprint,
+    )
+    from custom_components.rental_control.sensors.checkin import verified_date
+
+    start = datetime.now(UTC)
+    end = start + timedelta(days=4)
+    identity = make_reservation_fingerprint("rc-entry", "Guest", start, end)
+    target_slot = _SLOT + 1
+    slot_names = {_SLOT: "Guest", target_slot: "Guest"}
+    coordinator = SimpleNamespace(
+        event_overrides=SimpleNamespace(
+            get_slot_name=lambda slot: slot_names.get(slot)
+        ),
+        hass=hass,
+        start_slot=_SLOT,
+        max_events=2,
+        get_slot_assignment=lambda key: target_slot if key == identity else None,
+    )
+    entity = SimpleNamespace(
+        coordinator=coordinator,
+        _config_entry=SimpleNamespace(entry_id="rc-entry"),
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=end,
+        _hass=hass,
+    )
+    dispatched: list[tuple[int, str, str]] = []
+    entity_ids: list[str] = []
+    steps: list[str] = []
+
+    class Intent:
+        """Record only the exact verified slot/property selected for dispatch."""
+
+        def entity_id(self, property_key: str) -> str:
+            """Return the address for the requested property and selected slot."""
+            steps.append("entity_id")
+            entity_id = f"datetime.keymaster_slot_{target_slot}_end"
+            entity_ids.append(entity_id)
+            return entity_id
+
+        async def async_call(
+            self, property_key: str, _service: str, _data: dict[str, str]
+        ) -> None:
+            """Record the exact assigned slot and property dispatch."""
+            steps.append("async_call")
+            dispatched.append((target_slot, identity, property_key))
+
+    @asynccontextmanager
+    async def slot_operation(_coordinator: Any, slot: int):
+        """Assert the shared slot lock uses the tracked reservation's slot."""
+        assert slot == target_slot
+        yield
+
+    async def prepare(
+        _coordinator: Any,
+        slot: int,
+        owner_identity: str,
+        _properties: tuple[str, ...],
+        _fence: str,
+    ) -> Intent:
+        """Assert the durable owner identity and slot before dispatch."""
+        steps.append("prepare")
+        assert slot == target_slot
+        assert owner_identity == identity
+        return Intent()
+
+    monkeypatch.setattr(verified_date, "async_slot_operation", slot_operation)
+    monkeypatch.setattr(
+        verified_date,
+        "verified_slot_source",
+        lambda *_args: SimpleNamespace(),
+    )
+    monkeypatch.setattr(verified_date, "prepare_verified_intent", prepare)
+
+    async def confirm(*_args: Any, **_kwargs: Any) -> bool:
+        """Confirm the date update on the selected slot entity."""
+        steps.append("confirm")
+        return True
+
+    monkeypatch.setattr(verified_date, "_async_wait_for_expected_datetime", confirm)
+
+    result = await async_update_verified_lock_code_expiry(
+        entity,
+        start + timedelta(days=1),
+        identity_end=end,
+    )
+
+    assert result, steps
+    assert steps == ["prepare", "entity_id", "async_call", "confirm"]
+    assert entity_ids == [f"datetime.keymaster_slot_{target_slot}_end"]
+    assert dispatched == [
+        (
+            target_slot,
+            identity,
+            f"datetime.code_slots:{target_slot}.accesslimit_date_range_end",
+        )
+    ]
 
 
 @pytest.mark.parametrize("error_kind", ["rejected", "unexpected"])
