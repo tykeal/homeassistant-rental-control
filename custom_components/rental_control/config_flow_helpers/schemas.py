@@ -369,8 +369,11 @@ def _association_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     if current_mode == "explicit_lockless":
         default_choice = ASSOCIATION_CHOICE_LOCKLESS
     else:
-        default_choice = data.get(
-            CONF_VERIFIED_KEYMASTER_ENTRY_ID, ASSOCIATION_CHOICE_NO_CHANGE
+        selected_entry = data.get(CONF_VERIFIED_KEYMASTER_ENTRY_ID)
+        default_choice = (
+            selected_entry
+            if isinstance(selected_entry, str) and selected_entry
+            else ASSOCIATION_CHOICE_NO_CHANGE
         )
 
     choices = [
@@ -395,6 +398,7 @@ def _association_fields(context: SchemaBuildContext) -> dict[Any, Any]:
             SelectSelectorConfig(
                 options=choices,
                 mode=SelectSelectorMode.DROPDOWN,
+                translation_key=CONF_ASSOCIATION_ENTRY_CHOICE,
             )
         ),
         probatio.Optional(

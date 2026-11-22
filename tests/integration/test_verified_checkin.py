@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Mapping
+from dataclasses import replace
 import importlib
 from pathlib import Path
 import tempfile
@@ -19,11 +20,13 @@ from homeassistant.helpers import entity_registry as er
 import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
+from custom_components.rental_control import util
 from custom_components.rental_control.allocator.associations import AssociationMode
 from custom_components.rental_control.allocator.associations import AssociationTuple
 from custom_components.rental_control.const import CHECKIN_SENSOR
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
 from custom_components.rental_control.const import LOCK_MANAGER
 from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
@@ -796,14 +799,18 @@ async def test_corrected_valid_event_follows_rejected_zero_slot(hass) -> None:
     stop_keymaster_lifecycle(hass, rc_entry.entry_id)
 
 
-@pytest.mark.parametrize("release", _RELEASES)
+@pytest.mark.parametrize(
+    ("release", "apply_state"),
+    [(release, apply_state) for release in _RELEASES for apply_state in (True, False)],
+)
 async def test_early_checkout_date_uses_verified_live_datetime_capability(
     hass,
     tmp_path: Path,
     release: str,
+    apply_state: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Verified checkout writes an acknowledged owner's exact date entity."""
+    """Verified checkout retains shortening only after exact state confirmation."""
     from datetime import UTC
     from datetime import datetime
     from datetime import timedelta
@@ -825,9 +832,10 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
     coordinator.get_slot_assignment = lambda identity: (
         _SLOT if identity == identity_key else None
     )
-    start = datetime(2026, 11, 21, 15, tzinfo=UTC)
+    start = datetime.now(UTC)
     old_end = start + timedelta(days=3)
-    new_end = old_end - timedelta(hours=4)
+    now = datetime.now(UTC)
+    new_end = runtime.compute_early_expiry_time(now, old_end)
     monkeypatch.setattr(
         verified_date,
         "make_reservation_fingerprint",
@@ -835,15 +843,27 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
     )
     fallback = AsyncMock()
     monkeypatch.setattr(runtime, "add_call", fallback)
+    original_deps = util._keymaster_deps
+    monkeypatch.setattr(
+        util,
+        "_keymaster_deps",
+        lambda: replace(original_deps(), confirmation_timeout=0.01),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "get_entry_data",
+        lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
+    )
     dispatches: list[dict[str, Any]] = []
 
     async def set_datetime(call) -> None:
-        """Record the actual entity target and apply a harmless state update."""
+        """Record the exact target and optionally apply the requested state."""
         dispatches.append(dict(call.data))
-        hass.states.async_set(
-            call.data["entity_id"],
-            call.data["datetime"],
-        )
+        if apply_state:
+            hass.states.async_set(
+                call.data["entity_id"],
+                call.data["datetime"],
+            )
 
     hass.services.async_register("datetime", "set_value", set_datetime)
     entity = SimpleNamespace(
@@ -855,19 +875,15 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
         _tracked_event_end=old_end,
     )
 
-    updated = await runtime.async_update_lock_code_expiry(
-        entity,
-        new_end,
-        identity_end=old_end,
-    )
+    end_id = entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
+    hass.states.async_set(end_id, old_end.isoformat())
+    await runtime._maybe_shorten_lock_expiry(entity, now)
 
-    assert updated is True
+    assert entity._tracked_event_end == (new_end if apply_state else old_end)
     assert len(dispatches) == 1
-    assert (
-        dispatches[0]["entity_id"]
-        == entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
-    )
-    assert dispatches[0]["datetime"] == new_end.isoformat()
+    assert dispatches[0]["entity_id"] == end_id
+    assert dispatches[0]["datetime"] != old_end.isoformat()
+    assert (hass.states.get(end_id).state == dispatches[0]["datetime"]) is apply_state
     assert store.loaded_result is not None
     assert any(
         record["fence_type"] == "allocation"

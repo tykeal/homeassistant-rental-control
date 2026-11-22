@@ -13,6 +13,8 @@ from ...keymaster_operations import prepare_verified_intent
 from ...keymaster_slot_operations import async_slot_operation
 from ...keymaster_topology import verified_slot_source
 from ...reconciliation import make_reservation_fingerprint
+from ...util import _SET_CODE_CONFIRMATION_TIMEOUT
+from ...util import _async_wait_for_expected_datetime
 
 _LOGGER = logging.getLogger("custom_components.rental_control.sensors.checkinsensor")
 
@@ -72,11 +74,25 @@ async def async_update_verified_lock_code_expiry(
             )
             if intent is None:
                 return False
+            entity_id = intent.entity_id(property_key)
             await intent.async_call(
                 property_key,
                 "set_value",
                 {"datetime": new_end.isoformat()},
             )
+            if not await _async_wait_for_expected_datetime(
+                coordinator.hass,
+                entity_id,
+                new_end,
+                _SET_CODE_CONFIRMATION_TIMEOUT,
+                intent=intent,
+            ):
+                _LOGGER.warning(
+                    "Verified early checkout expiry update was not confirmed for entry %s slot %d",
+                    config_entry.entry_id,
+                    slot,
+                )
+                return False
     except VerifiedOperationRejected:
         _LOGGER.warning(
             "Verified early checkout expiry update was not confirmed for entry %s slot %d",

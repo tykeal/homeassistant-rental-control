@@ -39,6 +39,7 @@ from custom_components.rental_control.const import ASSOCIATION_CHOICE_NO_CHANGE
 from custom_components.rental_control.const import CODE_GENERATORS
 from custom_components.rental_control.const import CONF_ASSOCIATION_ATTEST_SAME_LOCK
 from custom_components.rental_control.const import CONF_ASSOCIATION_ENTRY_CHOICE
+from custom_components.rental_control.const import CONF_ASSOCIATION_MODE
 from custom_components.rental_control.const import CONF_CHECKIN
 from custom_components.rental_control.const import CONF_CHECKOUT
 from custom_components.rental_control.const import CONF_CODE_BUFFER_AFTER
@@ -60,6 +61,7 @@ from custom_components.rental_control.const import CONF_SHOULD_UPDATE_CODE
 from custom_components.rental_control.const import CONF_START_SLOT
 from custom_components.rental_control.const import CONF_TIMEZONE
 from custom_components.rental_control.const import CONF_TRIM_NAMES
+from custom_components.rental_control.const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
 from custom_components.rental_control.const import DEFAULT_CHECKIN
 from custom_components.rental_control.const import DEFAULT_CODE_LENGTH
 from custom_components.rental_control.const import DEFAULT_REFRESH_FREQUENCY
@@ -227,12 +229,30 @@ def test_association_options_list_entry_ids_and_disabled_candidates(
     selector = schema.schema[choice_key]
     options = selector.config["options"]
 
+    assert selector.config["translation_key"] == CONF_ASSOCIATION_ENTRY_CHOICE
     assert options[:2] == [
         ASSOCIATION_CHOICE_NO_CHANGE,
         ASSOCIATION_CHOICE_LOCKLESS,
     ]
     assert set(options[2:]) == {"km-one", "km-two"}
     assert _schema_key(schema, CONF_ASSOCIATION_ATTEST_SAME_LOCK).default() is False
+
+
+def test_legacy_unresolved_options_default_to_no_change(hass: "HomeAssistant") -> None:
+    """A nullable legacy association remains an accepted selector default."""
+    hass.data[DOMAIN] = {PROTECTED_REGISTRY_STORE: object()}
+    defaults = {
+        **RentalControlFlowHandler.DEFAULTS,
+        CONF_ASSOCIATION_MODE: "legacy_unresolved",
+        CONF_VERIFIED_KEYMASTER_ENTRY_ID: None,
+    }
+
+    schema = _get_schema(hass, {}, defaults, "rc-entry")
+
+    assert (
+        _schema_key(schema, CONF_ASSOCIATION_ENTRY_CHOICE).default()
+        == ASSOCIATION_CHOICE_NO_CHANGE
+    )
 
 
 def test_association_options_are_hidden_without_protected_backend(

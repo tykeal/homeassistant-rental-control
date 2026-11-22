@@ -20,6 +20,7 @@ import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.config_flow import _normalize_lock_entry
+from custom_components.rental_control.const import ASSOCIATION_CHOICE_NO_CHANGE
 from custom_components.rental_control.const import CONF_ASSOCIATION_ENTRY_CHOICE
 from custom_components.rental_control.const import CONF_ASSOCIATION_GENERATION
 from custom_components.rental_control.const import CONF_ASSOCIATION_MODE
@@ -688,7 +689,7 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
                 CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
                 CONF_CODE_GENERATION: "Start/End Date",
                 CONF_SHOULD_UPDATE_CODE: True,
-                CONF_ASSOCIATION_ENTRY_CHOICE: "",
+                CONF_ASSOCIATION_ENTRY_CHOICE: ASSOCIATION_CHOICE_NO_CHANGE,
             },
         )
 

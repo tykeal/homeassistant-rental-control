@@ -31,6 +31,7 @@ from custom_components.rental_control.config_flow_helpers.association import (
     apply_association_selection,
 )
 from custom_components.rental_control.const import ASSOCIATION_CHOICE_LOCKLESS
+from custom_components.rental_control.const import ASSOCIATION_CHOICE_NO_CHANGE
 from custom_components.rental_control.const import CONF_ASSOCIATION_ATTEST_SAME_LOCK
 from custom_components.rental_control.const import CONF_ASSOCIATION_ENTRY_CHOICE
 from custom_components.rental_control.const import CONF_ASSOCIATION_GENERATION
@@ -452,7 +453,7 @@ async def test_no_change_keeps_legacy_unresolved_and_does_not_commit(hass) -> No
     result = await apply_association_selection(
         flow,
         {
-            CONF_ASSOCIATION_ENTRY_CHOICE: "",
+            CONF_ASSOCIATION_ENTRY_CHOICE: ASSOCIATION_CHOICE_NO_CHANGE,
             CONF_ASSOCIATION_ATTEST_SAME_LOCK: False,
             CONF_LOCK_ENTRY: "Front Door",
         },
