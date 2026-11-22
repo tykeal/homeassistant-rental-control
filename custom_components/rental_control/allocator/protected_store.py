@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""HA-facing status adapter for the dormant protected registry protocol."""
+"""HA-facing status adapter for the protected registry protocol."""
 
 from __future__ import annotations
 

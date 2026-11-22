@@ -185,3 +185,62 @@ async def test_preview_forwards_exclusions_to_the_adoption_check(
     )
 
     assert seen == [frozenset({_DEAD_SLOT})]
+
+
+@pytest.mark.parametrize(
+    ("pending", "lost", "expected_reason"),
+    (
+        ({"entry-a"}, False, "adoption_pending"),
+        (set(), True, "recovery_fail_closed"),
+    ),
+)
+async def test_preview_stops_before_observation_when_allocator_is_gated(
+    monkeypatch: pytest.MonkeyPatch,
+    pending: set[str],
+    lost: bool,
+    expected_reason: str,
+) -> None:
+    """Pending adoption and registry loss never reach the allocator preview."""
+    allocator = _allocator()
+    allocator._pending_adoption = pending
+    allocator._registry_lost = lost
+    allocator.async_preview_reissue = _unexpected
+    _, preview = await reissue_preview.preview_request_and_result(
+        allocator, _coordinator([]), _target()
+    )
+
+    assert preview.reason == expected_reason
+
+
+async def test_preview_fails_closed_when_current_observation_is_unaccounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The preview cannot bypass the issuance eligibility gate."""
+    monkeypatch.setattr(
+        reissue_preview.issuance, "unaccounted_slots", lambda *_a, **_k: True
+    )
+    allocator = _allocator()
+    _, preview = await reissue_preview.preview_request_and_result(
+        allocator,
+        _coordinator([{"slot": _DEAD_SLOT}]),
+        _target(),
+    )
+
+    assert preview.reason == "unaccounted_slots"
+
+
+async def test_preview_rejects_an_incomplete_adoption_readiness_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read-only preview still requires the live adoption checks to pass."""
+    monkeypatch.setattr(
+        reissue_preview, "_adoption_would_complete", lambda *_a, **_k: False
+    )
+    allocator = _allocator()
+    _, preview = await reissue_preview.preview_request_and_result(
+        allocator,
+        _coordinator([{"slot": _DEAD_SLOT}]),
+        _target(),
+    )
+
+    assert preview.reason == "adoption_pending"

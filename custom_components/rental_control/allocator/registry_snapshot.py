@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Dormant staged commits for complete, protected allocator snapshots."""
+"""Staged commits for complete, protected allocator snapshots."""
 
 from __future__ import annotations
 
@@ -38,6 +38,7 @@ class SnapshotCommitHooks:
         Callable[[AllocationRegistry, dict[str, Any], str, int], None] | None
     ) = None
     event_loop_preflight: Callable[[], ProtectionLoadResult | None] | None = None
+    publish_state: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,11 +131,12 @@ async def async_commit_registry_snapshot(
     current_exclusion_snapshot: Callable[[], tuple[int, list[dict[str, Any]]]],
     *,
     hooks: SnapshotCommitHooks | None = None,
+    operation_lock_held: bool = False,
 ) -> ProtectionLoadResult:
     """Commit a staged complete snapshot before publishing it in memory.
 
-    The operation is deliberately injectable and is not selected by the
-    production allocator. It requires the protected store and allocator to
+    The production allocator routes protected mutations through this
+    transaction boundary. It requires the protected store and allocator to
     share one lock, snapshots under that lock, then rechecks the exact base
     while the store holds that same lock for I/O. Only the acknowledged
     completion callback publishes the staged registry before releasing it.
@@ -143,6 +145,19 @@ async def async_commit_registry_snapshot(
     independently requires exact prior-fence resolution and fresh location
     evidence.
     """
+    mutation_lock = getattr(allocator, "_mutation_lock", None)
+    if mutation_lock is not None and not operation_lock_held:
+        async with mutation_lock:
+            return await async_commit_registry_snapshot(
+                allocator,
+                protected_store,
+                mutate,
+                exclusions,
+                current_exclusion_snapshot,
+                hooks=hooks,
+                operation_lock_held=True,
+            )
+
     if not protected_store.uses_async_lock(allocator._lock):
         return _unavailable("allocator_lock_mismatch")
     exclusion_generation, exclusion_error = _validated_exclusion_generation(
@@ -175,25 +190,34 @@ async def async_commit_registry_snapshot(
     if isinstance(transition_slots, ProtectionLoadResult):
         return transition_slots
     async with AsyncExitStack() as stack:
+        from ..keymaster_slot_operations import SlotOperationBusy
         from ..keymaster_slot_operations import async_keymaster_slot_operation
 
-        for transition_lock in transition_slots:
-            await stack.enter_async_context(
-                async_keymaster_slot_operation(
-                    allocator.hass,
-                    transition_lock.keymaster_entry_id,
-                    transition_lock.slot,
-                    pending=transition_lock.pending,
+        try:
+            for transition_lock in transition_slots:
+                await stack.enter_async_context(
+                    async_keymaster_slot_operation(
+                        allocator.hass,
+                        transition_lock.keymaster_entry_id,
+                        transition_lock.slot,
+                        pending=transition_lock.pending,
+                        wait=False,
+                    )
                 )
+            return await _commit_staged_snapshot(
+                allocator,
+                protected_store,
+                staged,
+                exclusions,
+                current_exclusion_snapshot,
+                commit_hooks,
             )
-        return await _commit_staged_snapshot(
-            allocator,
-            protected_store,
-            staged,
-            exclusions,
-            current_exclusion_snapshot,
-            commit_hooks,
-        )
+        except SlotOperationBusy:
+            # The mutation lock is held by the caller. Never await a slot lock
+            # here: a slot-held consumer may be waiting to acknowledge its
+            # fence through this same mutation lock. The caller retains its
+            # current state and a later refresh retries from a fresh snapshot.
+            return _unavailable("slot_operation_busy")
 
 
 async def _stage_registry_snapshot(
@@ -324,6 +348,8 @@ async def _commit_staged_snapshot(
         ):
             raise ValueError("snapshot_exclusions_changed")
         allocator._registry = staged.candidate
+        if hooks.publish_state is not None:
+            hooks.publish_state()
 
     def locked_preflight() -> ProtectionLoadResult | None:
         """Check event-loop evidence while both persistence locks are held."""

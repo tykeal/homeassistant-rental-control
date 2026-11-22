@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Lifecycle invalidation for dormant, verified Keymaster capabilities."""
+"""Lifecycle invalidation for verified Keymaster capabilities."""
 
 from __future__ import annotations
 
@@ -36,8 +36,7 @@ _GenerationFactory = Callable[[], int]
 class KeymasterEntityLifecycle:
     """Track one selected KM entry and invalidate evidence before rebinding.
 
-    This object is intentionally dormant: its resolutions are observations
-    only, and the callback cannot authorize hardware operations by itself.
+    The lifecycle's resolutions are identity observations, not authorization.
     Consumers must still check the allocator's live protective token at their
     serialized dispatch boundary.
     """

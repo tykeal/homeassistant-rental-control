@@ -8,6 +8,7 @@ from typing import Any
 
 from ..keymaster_operations import persisted_owner_identity_for_slot
 from ..keymaster_operations import prepare_verified_intent
+from ..keymaster_operations import protected_registry_active
 from ..keymaster_operations import verified_lifecycle_active
 from ..keymaster_slot_operations import async_slot_operation
 from ..reconciliation import ActionKind
@@ -156,6 +157,8 @@ async def _apply_set(self, coordinator: Any, slot: int, res, plan_id: str):
 async def _apply_set_locked(self, coordinator: Any, slot: int, res, plan_id: str):
     """Apply a SET or ASSIGN action for one slot."""
     verified = verified_lifecycle_active(coordinator)
+    if not verified and protected_registry_active(coordinator.hass):
+        return self._operation_result_type(kind="set", slot=slot, unconfirmed=True)
     intent = None
     if verified:
         intent = await prepare_verified_intent(
@@ -238,6 +241,10 @@ async def _apply_update_times(self, coordinator: Any, slot: int, res):
 async def _apply_update_times_locked(self, coordinator: Any, slot: int, res):
     """Apply an UPDATE_TIMES action for one slot."""
     verified = verified_lifecycle_active(coordinator)
+    if not verified and protected_registry_active(coordinator.hass):
+        return self._operation_result_type(
+            kind="update_times", slot=slot, unconfirmed=True
+        )
     intent = None
     if verified:
         intent = await prepare_verified_intent(

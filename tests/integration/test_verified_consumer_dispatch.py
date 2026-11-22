@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
+from dataclasses import replace
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
@@ -76,9 +78,18 @@ from custom_components.rental_control.keymaster_lifecycle import (
 from custom_components.rental_control.keymaster_lifecycle import (
     stop_keymaster_lifecycle,
 )
+from custom_components.rental_control.keymaster_operations import (
+    async_prepare_verified_operation_intent,
+)
+from custom_components.rental_control.keymaster_operations import (
+    create_verified_operation_intent,
+)
+from custom_components.rental_control.keymaster_slot_operations import _LOCKS_KEY
+from custom_components.rental_control.keymaster_slot_operations import SlotOperationBusy
 from custom_components.rental_control.keymaster_slot_operations import (
     async_keymaster_slot_operation,
 )
+from custom_components.rental_control.keymaster_topology import verified_slot_source
 from custom_components.rental_control.keymaster_version import KeymasterVersionStatus
 from custom_components.rental_control.keymaster_version import (
     diagnose_keymaster_version,
@@ -125,25 +136,167 @@ async def test_selected_keymaster_slot_lock_is_shared_and_cancellation_safe(
 
     first = asyncio.create_task(hold_first())
     await first_entered.wait()
+    lock_states = hass.data[DOMAIN][_LOCKS_KEY]
+    key = (_KM_ENTRY_ID, _SLOT)
+    assert lock_states[key].claims == 1
     waiting = asyncio.create_task(wait_from_other_rc())
     await asyncio.sleep(0)
     assert second_pending == {_SLOT: 1}
+    assert lock_states[key].claims == 2
     assert not second_entered.is_set()
 
     waiting.cancel()
     with pytest.raises(asyncio.CancelledError):
         await waiting
     assert second_pending == {}
+    assert lock_states[key].claims == 1
     assert not second_entered.is_set()
 
     replacement_waiter = asyncio.create_task(wait_from_other_rc())
     await asyncio.sleep(0)
     assert second_pending == {_SLOT: 1}
+    assert lock_states[key].claims == 2
     release_first.set()
     await asyncio.gather(first, replacement_waiter)
     assert second_entered.is_set()
     assert first_pending == {}
     assert second_pending == {}
+    assert key not in lock_states
+
+
+async def test_same_task_slot_operation_is_reentrant_without_extra_claim(hass) -> None:
+    """Nested operations in one task keep one lock claim and unwind cleanly."""
+    pending: dict[int, int] = {}
+    key = (_KM_ENTRY_ID, _SLOT)
+    lock_states = hass.data.setdefault(DOMAIN, {}).setdefault(_LOCKS_KEY, {})
+
+    async with async_keymaster_slot_operation(
+        hass, _KM_ENTRY_ID, _SLOT, pending=pending
+    ):
+        state = lock_states[key]
+        assert state.claims == 1
+        assert pending == {_SLOT: 1}
+        async with async_keymaster_slot_operation(
+            hass, _KM_ENTRY_ID, _SLOT, pending=pending
+        ):
+            assert lock_states[key] is state
+            assert state.claims == 1
+            assert pending == {_SLOT: 2}
+        assert state.claims == 1
+        assert pending == {_SLOT: 1}
+
+    assert pending == {}
+    assert key not in lock_states
+
+
+async def test_waiter_claim_blocks_transition_during_lock_handoff(hass, monkeypatch):
+    """A queued task's reservation survives release-before-resume handoff."""
+    holder_entered = asyncio.Event()
+    release_holder = asyncio.Event()
+    waiter_started = asyncio.Event()
+    waiter_entered = asyncio.Event()
+    release_waiter = asyncio.Event()
+    handoff_started = asyncio.Event()
+    transition_finished = asyncio.Event()
+    transition_mutations: list[str] = []
+    transition_observations: list[tuple[bool, int]] = []
+    key = (_KM_ENTRY_ID, _SLOT)
+
+    async def holder() -> None:
+        """Own the slot until a queued waiter has reserved it."""
+        async with async_keymaster_slot_operation(hass, _KM_ENTRY_ID, _SLOT):
+            holder_entered.set()
+            await release_holder.wait()
+
+    async def queued_waiter() -> None:
+        """Queue behind the holder and keep ownership after handoff."""
+        waiter_started.set()
+        async with async_keymaster_slot_operation(hass, _KM_ENTRY_ID, _SLOT):
+            waiter_entered.set()
+            await release_waiter.wait()
+
+    holder_task = asyncio.create_task(holder())
+    await holder_entered.wait()
+    waiter_task = asyncio.create_task(queued_waiter())
+    await waiter_started.wait()
+    await asyncio.sleep(0)
+    lock_states = hass.data[DOMAIN][_LOCKS_KEY]
+    state = lock_states[key]
+    assert state.claims == 2
+
+    async def transition() -> None:
+        """Attempt the allocator-side nonwaiting reservation at handoff."""
+        await handoff_started.wait()
+        try:
+            async with async_keymaster_slot_operation(
+                hass, _KM_ENTRY_ID, _SLOT, wait=False
+            ):
+                transition_mutations.append("must-not-run")
+        except SlotOperationBusy:
+            transition_observations.append((waiter_entered.is_set(), state.claims))
+        finally:
+            transition_finished.set()
+
+    transition_task = asyncio.create_task(transition())
+    target_lock = state.lock
+    original_release = asyncio.Lock.release
+
+    def release_with_handoff(lock: asyncio.Lock) -> None:
+        """Schedule the transition before waking the queued lock waiter."""
+        if lock is target_lock and not handoff_started.is_set():
+            handoff_started.set()
+        original_release(lock)
+
+    monkeypatch.setattr(asyncio.Lock, "release", release_with_handoff)
+    release_holder.set()
+    await asyncio.wait_for(transition_finished.wait(), timeout=1)
+
+    # The transition ran before the waiter resumed. Its synchronous reservation
+    # check saw the queued claim and rejected without entering/mutating.
+    assert transition_observations == [(False, 1)]
+    assert transition_mutations == []
+    assert waiter_entered.is_set()
+
+    release_waiter.set()
+    await asyncio.wait_for(asyncio.gather(holder_task, waiter_task, transition_task), 1)
+    assert key not in lock_states
+
+
+async def test_multislot_busy_unwinds_earlier_reservation(hass) -> None:
+    """A later busy slot unwinds every earlier AsyncExitStack claim."""
+    first_key = (_KM_ENTRY_ID, _SLOT)
+    blocked_slot = _SLOT + 1
+    blocked_key = (_KM_ENTRY_ID, blocked_slot)
+    holder_entered = asyncio.Event()
+    release_holder = asyncio.Event()
+
+    async def hold_second_slot() -> None:
+        """Keep the second physical slot unavailable."""
+        async with async_keymaster_slot_operation(hass, _KM_ENTRY_ID, blocked_slot):
+            holder_entered.set()
+            await release_holder.wait()
+
+    holder_task = asyncio.create_task(hold_second_slot())
+    await holder_entered.wait()
+    lock_states = hass.data[DOMAIN][_LOCKS_KEY]
+
+    with pytest.raises(SlotOperationBusy):
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(
+                async_keymaster_slot_operation(hass, _KM_ENTRY_ID, _SLOT)
+            )
+            assert lock_states[first_key].claims == 1
+            await stack.enter_async_context(
+                async_keymaster_slot_operation(
+                    hass, _KM_ENTRY_ID, blocked_slot, wait=False
+                )
+            )
+
+    assert first_key not in lock_states
+    assert lock_states[blocked_key].claims == 1
+    release_holder.set()
+    await asyncio.wait_for(holder_task, 1)
+    assert blocked_key not in lock_states
 
 
 def _association() -> AssociationTuple:
@@ -166,6 +319,7 @@ async def _setup_verified_consumer(
     parented: bool = False,
     shared_owner: bool = False,
     native_empty_text: bool = False,
+    second_rc_entry_id: str | None = None,
 ):
     """Create real protected storage, allocator, lifecycle, and HA entities."""
     association = _association()
@@ -175,6 +329,23 @@ async def _setup_verified_consumer(
         entry_id=_RC_ENTRY_ID,
         data=association.merge_into_config({}),
     )
+    second_rc_entry = None
+    second_association = None
+    if second_rc_entry_id is not None:
+        second_association = AssociationTuple(
+            legacy_lock_selection_present=association.legacy_lock_selection_present,
+            legacy_lock_selection_raw=association.legacy_lock_selection_raw,
+            verified_keymaster_entry_id=association.verified_keymaster_entry_id,
+            association_generation=1,
+            association_transaction_id="2" * 32,
+            mode=AssociationMode.VERIFIED,
+        )
+        second_rc_entry = MockConfigEntry(
+            domain=DOMAIN,
+            title="Second consumer test",
+            entry_id=second_rc_entry_id,
+            data=second_association.merge_into_config({}),
+        )
     km_data = {"lock_entity_id": "lock.selected_physical_lock"}
     if parented:
         parent_entry = MockConfigEntry(
@@ -193,6 +364,9 @@ async def _setup_verified_consumer(
         data=km_data,
     )
     rc_entry.add_to_hass(hass)
+    if second_rc_entry is not None:
+        second_rc_entry.add_to_hass(hass)
+        second_rc_entry._async_set_state(hass, ConfigEntryState.LOADED, None)
     km_entry.add_to_hass(hass)
     km_entry._async_set_state(hass, ConfigEntryState.LOADED, None)
 
@@ -217,6 +391,19 @@ async def _setup_verified_consumer(
         created_at="2026-11-21T00:00:00+00:00",
         updated_at="2026-11-21T00:00:00+00:00",
     )
+    if second_rc_entry_id is not None:
+        registry.records[_CODE].owners.append(
+            AllocationOwner(
+                entry_id=second_rc_entry_id,
+                identity_key="consumer-second-active-owner",
+                origin=AllocationOrigin.ADOPTED,
+                lockname="lock.consumer",
+                slot=_SLOT + 2,
+                lock_observed=True,
+                first_seen="2026-11-21T00:00:00+00:00",
+                last_seen="2026-11-21T00:00:00+00:00",
+            )
+        )
     if shared_owner:
         registry.records[_CODE].owners.append(
             AllocationOwner(
@@ -236,7 +423,14 @@ async def _setup_verified_consumer(
         "transaction_id": _TX,
         "generation": 1,
         "ledger": serialize_registry_ledger(registry),
-        "associations": [association_storage_record(_RC_ENTRY_ID, association)],
+        "associations": [
+            association_storage_record(_RC_ENTRY_ID, association),
+            *(
+                [association_storage_record(second_rc_entry_id, second_association)]
+                if second_rc_entry_id is not None and second_association is not None
+                else []
+            ),
+        ],
         "attestations": [],
         "pending_fences": [],
         "holds": [],
@@ -263,6 +457,7 @@ async def _setup_verified_consumer(
     assert loaded.state is ProtectionLoadState.VALID_V2
 
     allocator = DoorCodeAllocator(hass)
+    allocator._protection_required = True
     allocator._lock = lock
     allocator._registry = registry
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -1900,6 +2095,170 @@ async def test_failed_unrelated_commit_freezes_and_retains_set_fence(
         for fence in loaded.data["pending_fences"]
     )
     assert coordinator.event_overrides._pending_fences[_SLOT]
+
+
+@pytest.mark.parametrize(
+    "damage",
+    (
+        "missing_snapshot",
+        "missing_generation",
+        "zero_generation",
+        "boolean_generation",
+        "missing_transaction",
+        "missing_association",
+        "missing_entry_data",
+        "missing_lifecycle",
+        "missing_store",
+        "protective_unknown",
+        "unloaded_keymaster",
+        "malformed_physical_lock",
+        "stale_association_generation",
+    ),
+)
+async def test_real_intent_factory_rejects_malformed_authority_snapshots(
+    hass,
+    tmp_path: Path,
+    damage: str,
+) -> None:
+    """Malformed or stale authority evidence never yields a dispatch intent."""
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage"
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    required = (
+        f"switch.code_slots:{_SLOT}.enabled",
+        f"text.code_slots:{_SLOT}.pin",
+        f"text.code_slots:{_SLOT}.name",
+    )
+    acknowledged = await async_prepare_verified_operation_intent(
+        hass,
+        _RC_ENTRY_ID,
+        slot=_SLOT,
+        owner_identity_key=_OWNER_IDENTITY,
+        required_properties=required,
+    )
+    assert acknowledged is not None
+    loaded = store.loaded_result
+    assert loaded is not None
+
+    if damage == "missing_snapshot":
+        store._loaded_result = None
+    elif damage in {"missing_generation", "zero_generation", "boolean_generation"}:
+        generation = {
+            "missing_generation": None,
+            "zero_generation": 0,
+            "boolean_generation": True,
+        }[damage]
+        store._loaded_result = replace(loaded, generation=generation)
+    elif damage == "missing_transaction":
+        store._loaded_result = replace(loaded, transaction_id=None)
+    elif damage == "missing_association":
+        assert loaded.data is not None
+        data = dict(loaded.data)
+        data["associations"] = []
+        store._loaded_result = replace(loaded, data=data)
+    elif damage == "protective_unknown":
+        store._enter_protective_unknown(
+            ProtectionLoadResult(
+                ProtectionLoadState.PROTECTIVE_UNKNOWN,
+                failure_code="operation_failed",
+            )
+        )
+    elif damage == "unloaded_keymaster":
+        km_entry = hass.config_entries.async_get_entry(acknowledged.keymaster_entry_id)
+        assert km_entry is not None
+        km_entry._async_set_state(hass, ConfigEntryState.NOT_LOADED, None)
+    elif damage == "missing_entry_data":
+        hass.data[DOMAIN].pop(_RC_ENTRY_ID)
+    elif damage == "missing_lifecycle":
+        stop_keymaster_lifecycle(hass, _RC_ENTRY_ID)
+    elif damage == "missing_store":
+        hass.data[DOMAIN].pop(PROTECTED_REGISTRY_STORE)
+    elif damage in {"malformed_physical_lock", "stale_association_generation"}:
+        if damage == "malformed_physical_lock":
+            entry = hass.config_entries.async_get_entry(acknowledged.keymaster_entry_id)
+            assert entry is not None
+            hass.config_entries.async_update_entry(
+                entry,
+                data={**entry.data, "lock_entity_id": "invalid"},
+            )
+        else:
+            entry = hass.config_entries.async_get_entry(_RC_ENTRY_ID)
+            assert entry is not None
+            hass.config_entries.async_update_entry(
+                entry,
+                data={**entry.data, "association_generation": 2},
+            )
+
+    assert (
+        create_verified_operation_intent(
+            hass,
+            _RC_ENTRY_ID,
+            slot=_SLOT,
+            owner_identity_key=_OWNER_IDENTITY,
+            required_properties=required,
+        )
+        is None
+    )
+    assert events == []
+    assert coordinator.config_entry.entry_id == _RC_ENTRY_ID
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_empty_live_slot_name_is_not_an_event_source(
+    hass,
+    tmp_path: Path,
+    release: str,
+) -> None:
+    """A selected lock and matching label cannot replace unknown live name state."""
+    coordinator, store, _entity_ids = await _setup_verified_consumer(
+        hass,
+        tmp_path / ".storage",
+        release,
+    )
+    selected = hass.config_entries.async_get_entry(_KM_ENTRY_ID)
+    assert selected is not None
+    hass.config_entries.async_update_entry(
+        selected,
+        data={**selected.data, "lockname": "selected_front_door"},
+    )
+
+    assert store.association_for_entry(_RC_ENTRY_ID) is not None
+    assert verified_slot_source(hass, coordinator.config_entry, _SLOT) is None
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_live_name_from_selected_keymaster_resolves_verified_source(
+    hass,
+    tmp_path: Path,
+    release: str,
+) -> None:
+    """Both packaged releases resolve routing only from current live capability."""
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass,
+        tmp_path / ".storage",
+        release,
+    )
+    selected = hass.config_entries.async_get_entry(_KM_ENTRY_ID)
+    assert selected is not None
+    hass.config_entries.async_update_entry(
+        selected,
+        data={**selected.data, "lockname": "selected_front_door"},
+    )
+    name_entity_id = entity_ids[f"text.code_slots:{_SLOT}.name"]
+    hass.states.async_set(name_entity_id, "Guest")
+    await hass.async_block_till_done()
+
+    source = verified_slot_source(hass, coordinator.config_entry, _SLOT)
+
+    assert store.association_for_entry(_RC_ENTRY_ID) is not None
+    assert source is not None
+    assert source.entry.entry_id == _KM_ENTRY_ID
+    assert source.lock_entity_id == selected.data["lock_entity_id"]
+    assert source.lockname == "selected_front_door"
+    assert source.name_capability.entity_id == name_entity_id
+    assert source.lifecycle_generation > 0
 
 
 @pytest.mark.parametrize("release", _RELEASES)

@@ -4,21 +4,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from . import reissue
+from .allocator_protocol import AllocatorState
 from .models import AllocationOwner
 from .models import AllocationRecord
 from .models import CycleObservation
 from .models import OrphanCleanupReport
 from .models import OrphanOutcome
 
-if TYPE_CHECKING:
-    from .allocator import DoorCodeAllocator
-
 
 def clear_orphans(
-    allocator: DoorCodeAllocator,
+    allocator: AllocatorState,
     known_entry_ids: set[str],
     observations: list[CycleObservation],
     *,

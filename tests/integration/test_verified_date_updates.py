@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC
@@ -19,6 +20,12 @@ from custom_components.rental_control import util
 from custom_components.rental_control.coordinator_helpers.coordinator_config_shell import (
     CoordinatorConfigMixin,
 )
+from custom_components.rental_control.keymaster_operations import (
+    VerifiedOperationRejected,
+)
+from custom_components.rental_control.sensors.checkin.verified_date import (
+    async_update_verified_lock_code_expiry,
+)
 
 from tests.integration.test_verified_consumer_dispatch import _CODE
 from tests.integration.test_verified_consumer_dispatch import _OWNER_IDENTITY
@@ -28,15 +35,19 @@ from tests.integration.test_verified_consumer_dispatch import (
 )
 from tests.integration.test_verified_consumer_dispatch import _setup_verified_consumer
 
+_RELEASES = ("v0.6.1", "v0.6.5")
 
+
+@pytest.mark.parametrize("release", _RELEASES)
 async def test_verified_override_and_buffer_updates_preserve_code_and_suppress_feedback(
     hass,
     tmp_path: Path,
+    release: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Direct and buffer-driven amendments confirm exact addresses only."""
     coordinator, store, entity_ids = await _setup_verified_consumer(
-        hass, tmp_path / ".storage"
+        hass, tmp_path / ".storage", release
     )
     events: list[dict[str, Any]] = []
     await _register_recording_services(hass, store, entity_ids, events)
@@ -129,3 +140,185 @@ async def test_verified_override_and_buffer_updates_preserve_code_and_suppress_f
     assert after is not None and after.data is not None
     assert after.transaction_id == before_transaction_id
     assert after.data["ledger"] == before_ledger
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        "overrides_missing",
+        "slot_absent",
+        "slot_ambiguous",
+        "owner_mismatch",
+        "source_unverified",
+    ),
+)
+async def test_date_update_requires_unique_verified_slot_and_owner(
+    hass,
+    failure: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Date writes stop before intent creation when routing is not exact."""
+    from custom_components.rental_control.sensors.checkin import verified_date
+
+    start = datetime.now(UTC)
+    coordinator = SimpleNamespace(
+        event_overrides=None,
+        start_slot=_SLOT,
+        max_events=1,
+        get_slot_assignment=lambda _identity: _SLOT,
+    )
+    if failure != "overrides_missing":
+        names = {
+            _SLOT: None if failure == "slot_absent" else "Guest",
+            _SLOT + 1: "Guest" if failure == "slot_ambiguous" else None,
+        }
+        coordinator.max_events = 2 if failure == "slot_ambiguous" else 1
+        coordinator.event_overrides = SimpleNamespace(
+            get_slot_name=lambda slot: names.get(slot)
+        )
+    if failure == "owner_mismatch":
+        coordinator.get_slot_assignment = lambda _identity: _SLOT + 1
+    config_entry = SimpleNamespace(entry_id="rc-entry")
+    entity = SimpleNamespace(
+        coordinator=coordinator,
+        _config_entry=config_entry,
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=start + timedelta(hours=1),
+        _hass=hass,
+    )
+    calls: list[str] = []
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> None:
+        """Record any intent preparation past a failed precondition."""
+        calls.append("intent")
+
+    monkeypatch.setattr(verified_date, "prepare_verified_intent", forbidden)
+    if failure == "source_unverified":
+        monkeypatch.setattr(verified_date, "verified_slot_source", lambda *_a: None)
+
+    result = await async_update_verified_lock_code_expiry(
+        entity,
+        start + timedelta(hours=2),
+        identity_end=None,
+    )
+
+    assert not result
+    assert calls == []
+
+
+@pytest.mark.parametrize("error_kind", ["rejected", "unexpected"])
+async def test_date_update_fails_closed_after_verified_dispatch_error(
+    hass,
+    error_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dispatch failures do not report a date write as confirmed."""
+    from custom_components.rental_control.sensors.checkin import verified_date
+
+    start = datetime.now(UTC)
+    coordinator = SimpleNamespace(
+        event_overrides=SimpleNamespace(get_slot_name=lambda _slot: "Guest"),
+        start_slot=_SLOT,
+        max_events=1,
+        get_slot_assignment=lambda _identity: _SLOT,
+    )
+    config_entry = SimpleNamespace(entry_id="rc-entry")
+    entity = SimpleNamespace(
+        coordinator=coordinator,
+        _config_entry=config_entry,
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=start + timedelta(hours=1),
+        _hass=hass,
+    )
+
+    @asynccontextmanager
+    async def slot_operation(_coordinator: Any, _slot: int):
+        """Supply the per-slot serialization context without provider I/O."""
+        yield
+
+    class FailedIntent:
+        """Represent a verified provider dispatch that did not complete."""
+
+        async def async_call(
+            self, _property_key: str, _service: str, _data: dict[str, str]
+        ) -> None:
+            """Raise the injected provider failure without exposing details."""
+            if error_kind == "rejected":
+                raise VerifiedOperationRejected("private provider details")
+            raise RuntimeError("private provider details")
+
+    monkeypatch.setattr(verified_date, "async_slot_operation", slot_operation)
+    monkeypatch.setattr(
+        verified_date,
+        "verified_slot_source",
+        lambda *_args: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        verified_date,
+        "prepare_verified_intent",
+        lambda *_args: _resolved(FailedIntent()),
+    )
+
+    result = await async_update_verified_lock_code_expiry(
+        entity,
+        start + timedelta(hours=2),
+        identity_end=None,
+    )
+
+    assert not result
+
+
+async def test_date_update_requires_prepared_intent_before_dispatch(
+    hass,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing durable owner fence cannot trigger a date service call."""
+    from custom_components.rental_control.sensors.checkin import verified_date
+
+    start = datetime.now(UTC)
+    coordinator = SimpleNamespace(
+        event_overrides=SimpleNamespace(get_slot_name=lambda _slot: "Guest"),
+        start_slot=_SLOT,
+        max_events=1,
+        get_slot_assignment=lambda _identity: _SLOT,
+    )
+    entity = SimpleNamespace(
+        coordinator=coordinator,
+        _config_entry=SimpleNamespace(entry_id="rc-entry"),
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=start + timedelta(hours=1),
+        _hass=hass,
+    )
+
+    @asynccontextmanager
+    async def slot_operation(_coordinator: Any, _slot: int):
+        """Supply the per-slot serialization context without provider I/O."""
+        yield
+
+    monkeypatch.setattr(verified_date, "async_slot_operation", slot_operation)
+    monkeypatch.setattr(
+        verified_date,
+        "verified_slot_source",
+        lambda *_args: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        verified_date,
+        "prepare_verified_intent",
+        lambda *_args: _resolved(None),
+    )
+
+    result = await async_update_verified_lock_code_expiry(
+        entity,
+        start + timedelta(hours=2),
+        identity_end=None,
+    )
+
+    assert not result
+
+
+async def _resolved(value: Any) -> Any:
+    """Return one immediate intent result for the narrow failure-boundary test."""
+    return value

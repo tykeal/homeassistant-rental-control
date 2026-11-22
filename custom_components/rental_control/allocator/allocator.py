@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Collection
 from collections.abc import Mapping
+import copy
 from datetime import UTC
 from datetime import datetime
 import logging
@@ -18,34 +18,27 @@ from homeassistant.core import HomeAssistant
 
 from ..const import DOMAIN
 from ..const import NAME
-from ..const import PROTECTED_REGISTRY_STORE
 from . import adoption
 from . import adoption_reports
 from . import diagnostics
 from . import issuance
-from . import orphans
 from . import protection_gate
 from . import recovery
-from . import reissue
-from . import release_guard
-from . import services
-from .association_references import ledger_allocation_references
+from .allocator_lifecycle import AllocatorLifecycleMixin
 from .associations import AssociationTuple
 from .models import AdoptionRequest
-from .models import AllocationOwner
-from .models import AllocationRecord
 from .models import AllocationRequest
 from .models import AllocationResult
-from .models import CycleObservation
 from .models import CycleRequest
 from .models import CycleResult
 from .models import ObservedLock
-from .models import OrphanCleanupReport
+from .models import ProtectionLoadState
 from .models import ReissuePreview
 from .models import ReissuePreviewRequest
-from .models import ReleaseReport
 from .registry import AllocationRegistry
-from .registry_safety_models import validate_pending_fence
+from .registry_mutation import after_commit
+from .registry_mutation import async_commit_staged_registry
+from .registry_mutation import clone_allocator
 from .store import RegistryStore
 from .store import code_ref_for
 
@@ -63,7 +56,7 @@ _REGISTRY_LOST_NOTICE = (
 )
 
 
-class DoorCodeAllocator:
+class DoorCodeAllocator(AllocatorLifecycleMixin):
     """System-wide allocator state shared by all Rental Control entries."""
 
     def __init__(self, hass: HomeAssistant) -> None:
@@ -71,7 +64,11 @@ class DoorCodeAllocator:
         self.hass = hass
         self._registry = AllocationRegistry()
         self._store = RegistryStore(hass)
+        self._protection_required = False
         self._lock = asyncio.Lock()
+        # Serialize protected read/modify/commit sequences without holding the
+        # allocator state lock while storage I/O is in progress.
+        self._mutation_lock = asyncio.Lock()
         self._registry_lost = False
         self._pending_adoption = self._seed_pending_adoption()
         self._adopted_locks: dict[str, ObservedLock] = {}
@@ -91,6 +88,11 @@ class DoorCodeAllocator:
 
     async def async_load(self) -> None:
         """Load the persisted registry before the allocator is used."""
+        if self._protection_required:
+            from .activation import async_activate_protected_store
+
+            await async_activate_protected_store(self)
+            return
         result = await self._store.async_load()
         self._registry = result.registry
         self._registry_lost = result.registry_lost
@@ -173,6 +175,22 @@ class DoorCodeAllocator:
             raise TypeError(msg)
         if not await protection_gate.async_operation_ready(self):
             return AllocationResult(reason="protective_unknown")
+        if self._protection_required:
+            async with self._mutation_lock:
+                async with self._lock:
+                    if not protection_gate.snapshot_ready(self):
+                        return AllocationResult(reason="protective_unknown")
+                    baseline = copy.deepcopy(self._registry)
+                    staged = clone_allocator(self)
+                    result = staged._adopt_unlocked(request)
+                committed = await async_commit_staged_registry(
+                    self, baseline, staged, operation_lock_held=True
+                )
+                return (
+                    result
+                    if committed.state is ProtectionLoadState.VALID_V2
+                    else AllocationResult(reason="protective_unknown")
+                )
         async with self._lock:
             if not protection_gate.snapshot_ready(self):
                 return AllocationResult(reason="protective_unknown")
@@ -237,6 +255,30 @@ class DoorCodeAllocator:
             raise TypeError(msg)
         if not await protection_gate.async_operation_ready(self):
             return AllocationResult(reason="protective_unknown")
+        if self._protection_required:
+            async with self._mutation_lock:
+                async with self._lock:
+                    if not protection_gate.snapshot_ready(self):
+                        return AllocationResult(reason="protective_unknown")
+                    baseline = copy.deepcopy(self._registry)
+                    staged = clone_allocator(self)
+                    staged._warn_if_gate_expired()
+                    result = staged._allocate_unlocked(request)
+                    if result.code is not None and (
+                        not staged._registry_lost
+                        or staged._registry_missing
+                        or recovery.rebuilt_registry_trusted(staged)
+                    ):
+                        staged._registry_lost = False
+                        staged._registry_missing = False
+                committed = await async_commit_staged_registry(
+                    self, baseline, staged, operation_lock_held=True
+                )
+                return (
+                    result
+                    if committed.state is ProtectionLoadState.VALID_V2
+                    else AllocationResult(reason="protective_unknown")
+                )
         async with self._lock:
             if not protection_gate.snapshot_ready(self):
                 return AllocationResult(reason="protective_unknown")
@@ -271,221 +313,23 @@ class DoorCodeAllocator:
             "%d entries. New code issuance remains disabled.",
             pending_count,
         )
-        async_create(
-            self.hass,
-            (
-                "Rental Control is still waiting to read the door codes "
-                f"already programmed in {pending_count} entries. Those entries "
-                "issue no new door codes until that finishes. While any of their "
-                "locks still has a slot that has not been read, no other "
-                "entry issues new door codes either, because every entry "
-                "shares one door code space. Review the Keymaster readiness "
-                "status for affected entries."
-                + (_REGISTRY_LOST_NOTICE if self._registry_lost else "")
+        message = (
+            "Rental Control is still waiting to read the door codes "
+            f"already programmed in {pending_count} entries. Those entries "
+            "issue no new door codes until that finishes. While any of their "
+            "locks still has a slot that has not been read, no other "
+            "entry issues new door codes either, because every entry "
+            "shares one door code space. Review the Keymaster readiness "
+            "status for affected entries."
+            + (_REGISTRY_LOST_NOTICE if self._registry_lost else "")
+        )
+        after_commit(
+            self,
+            lambda: async_create(
+                self.hass,
+                message,
+                title=f"{NAME} code adoption pending",
+                notification_id=_GATE_NOTIFICATION_ID,
             ),
-            title=f"{NAME} code adoption pending",
-            notification_id=_GATE_NOTIFICATION_ID,
         )
         self._gate_warning_sent = True
-
-    async def async_sweep(
-        self, observation: CycleObservation, active_keys: set[str]
-    ) -> ReleaseReport:
-        """Release inactive allocations proven absent from the observed lock."""
-        if not await protection_gate.async_operation_ready(self):
-            return await protection_gate.async_retention_report(
-                self, observation.entry_id
-            )
-        async with self._lock:
-            if not protection_gate.snapshot_ready(self):
-                return protection_gate.retention_report(self, observation.entry_id)
-            report = self._sweep_unlocked(observation, active_keys)
-            if report.released:
-                self._store.async_save(self._registry)
-            return report
-
-    def _sweep_unlocked(
-        self, observation: CycleObservation, active_keys: set[str]
-    ) -> ReleaseReport:
-        """Sweep inactive owners while the allocator lock is already held."""
-        released = []
-        retained = []
-        observations = [observation]
-        for record in list(self._registry.records.values()):
-            for owner in list(record.owners):
-                if owner.entry_id != observation.entry_id:
-                    continue
-                if reissue.is_forced_release_hold(owner.identity_key):
-                    continue
-                if owner.identity_key in active_keys:
-                    self._refresh_owner_observed(record, owner, observations)
-                    continue
-                reason = self._release_guard_reason(
-                    record,
-                    [owner],
-                    observations,
-                )
-                outcome = orphans.build_outcome(record, owner, reason)
-                if reason is None:
-                    self._registry.release(owner.identity_key)
-                    released.append(outcome)
-                    _LOGGER.info("Released shared allocation ownership")
-                else:
-                    retained.append(outcome)
-        return ReleaseReport(released=released, retained=retained)
-
-    async def async_mark_entry_removed(self, entry_id: str) -> ReleaseReport:
-        """Release lockless removed owners and retain unverifiable lock owners."""
-        if not await protection_gate.async_operation_ready(self):
-            return await protection_gate.async_retention_report(self, entry_id)
-        async with self._lock:
-            if not protection_gate.snapshot_ready(self):
-                return protection_gate.retention_report(self, entry_id)
-            self._pending_adoption.discard(entry_id)
-            self._pending_adoption_slots.pop(entry_id, None)
-            self._adopted_locks.pop(entry_id, None)
-            if not self._pending_adoption:
-                self._gate_deadline = 0.0
-                self._gate_warning_sent = False
-            released = []
-            retained = []
-            for record in list(self._registry.records.values()):
-                for owner in list(record.owners):
-                    if owner.entry_id != entry_id:
-                        continue
-                    reason = self._release_guard_reason(record, [owner], [])
-                    outcome = orphans.build_outcome(record, owner, reason)
-                    if reason is None:
-                        self._registry.release(owner.identity_key)
-                        released.append(outcome)
-                    else:
-                        retained.append(outcome)
-            if released or retained:
-                self._store.async_save(self._registry)
-            return ReleaseReport(released=released, retained=retained)
-
-    async def async_clear_orphans(
-        self,
-        known_entry_ids: set[str],
-        observations: list[CycleObservation],
-        dry_run: bool = False,
-        force_reissued_holds: bool = False,
-        loaded_entry_ids: set[str] | None = None,
-    ) -> OrphanCleanupReport:
-        """Clear orphaned allocations that the shared guard proves safe."""
-        if not await protection_gate.async_operation_ready(self):
-            return await protection_gate.async_cleanup_report(self, dry_run)
-        async with self._lock:
-            if not protection_gate.snapshot_ready(self):
-                return OrphanCleanupReport(
-                    dry_run,
-                    retained=protection_gate.retention_report(self).retained,
-                )
-            report = orphans.clear_orphans(
-                self,
-                known_entry_ids,
-                observations,
-                dry_run=dry_run,
-                force_reissued_holds=force_reissued_holds,
-                loaded_entry_ids=loaded_entry_ids or set(),
-            )
-            if report.cleared and not dry_run:
-                self._store.async_save(self._registry)
-            services.report_orphan_cleanup(self.hass, report)
-            if not dry_run and (report.cleared or report.retained):
-                services.report_forced_hold_deferrals(self, (), observations)
-            return report
-
-    def _release_guard_reason(
-        self,
-        record: AllocationRecord,
-        owners: list[AllocationOwner],
-        observations: list[CycleObservation],
-        *,
-        refresh_observed: bool = True,
-        forced_release: reissue.ForcedReleaseExemption | None = None,
-        releasing: Collection[str] = (),
-    ) -> str | None:
-        """Return why owners must be retained, or None when safe to release."""
-        required_keymaster_identities = self._required_keymaster_identities(owners)
-        return release_guard.release_guard_reason(
-            record,
-            owners,
-            observations,
-            refresh_observed=refresh_observed,
-            forced_release=forced_release,
-            releasing=releasing,
-            required_keymaster_identities=required_keymaster_identities,
-        )
-
-    def _required_keymaster_identities(
-        self, owners: list[AllocationOwner]
-    ) -> dict[tuple[str, str], tuple[str, int] | None] | None:
-        """Bind protected-owner release evidence to its acknowledged KM epoch.
-
-        A missing protected store means the legacy allocator path is still in
-        use. Once protected state exists, every owner must have one exact
-        allocation fence and a live observation from that fence's original
-        selected Keymaster lifecycle.
-        """
-        domain_data = self.hass.data.get(DOMAIN)
-        store = (
-            domain_data.get(PROTECTED_REGISTRY_STORE)
-            if isinstance(domain_data, dict)
-            else None
-        )
-        if store is None:
-            return None
-
-        from ..coordinator_helpers.cycle_requests import verified_observation_identity
-        from .models import ProtectionAuthorizationState
-        from .models import ProtectionLoadState
-
-        loaded = getattr(store, "loaded_result", None)
-        required: dict[tuple[str, str], tuple[str, int] | None] = {}
-        if (
-            getattr(store, "authorization_state", None)
-            is not ProtectionAuthorizationState.READY
-            or loaded is None
-            or loaded.state is not ProtectionLoadState.VALID_V2
-            or loaded.data is None
-        ):
-            return {(owner.entry_id, owner.identity_key): None for owner in owners}
-
-        for owner in owners:
-            key = (owner.entry_id, owner.identity_key)
-            references = ledger_allocation_references(
-                loaded.data, owner.entry_id, owner.identity_key
-            )
-            if references is None or references[2] != owner.slot:
-                required[key] = None
-                continue
-            owner_reference = references[0]
-            fences = [
-                fence
-                for fence in loaded.data.get("pending_fences", [])
-                if validate_pending_fence(fence)
-                and fence["fence_type"] == "allocation"
-                and fence["rc_entry_id"] == owner.entry_id
-                and fence["owner_ref"] == owner_reference
-                and fence["slot"] == owner.slot
-            ]
-            identity = verified_observation_identity(self.hass, owner.entry_id)
-            if (
-                len(fences) != 1
-                or identity is None
-                or fences[0]["original_km_entry_id"] != identity[0]
-            ):
-                required[key] = None
-                continue
-            required[key] = identity
-        return required
-
-    def _refresh_owner_observed(
-        self,
-        record: AllocationRecord,
-        owner: AllocationOwner,
-        observations: list[CycleObservation],
-    ) -> None:
-        """Refresh observed state without making a release decision."""
-        release_guard.owner_still_programmed(record, owner, observations)

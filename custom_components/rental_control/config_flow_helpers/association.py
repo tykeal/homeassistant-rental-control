@@ -16,6 +16,7 @@ from ..allocator.associations import AssociationTuple
 from ..allocator.models import ProtectionAuthorizationState
 from ..allocator.models import ProtectionLoadResult
 from ..allocator.models import ProtectionLoadState
+from ..allocator.singleton import get_allocator
 from ..const import ASSOCIATION_CHOICE_LOCKLESS
 from ..const import ASSOCIATION_CHOICE_NO_CHANGE
 from ..const import CONF_ASSOCIATION_ATTEST_SAME_LOCK
@@ -39,6 +40,17 @@ async def apply_association_selection(
     flow: Any, user_input: dict[str, Any]
 ) -> AssociationFlowResult:
     """Acknowledge association state before exposing its options projection."""
+    allocator = get_allocator(flow.hass)
+    if allocator is not None and allocator._protection_required:
+        async with allocator._mutation_lock:
+            return await _apply_association_selection(flow, user_input)
+    return await _apply_association_selection(flow, user_input)
+
+
+async def _apply_association_selection(
+    flow: Any, user_input: dict[str, Any]
+) -> AssociationFlowResult:
+    """Run validation and durable association transition under its coordinator."""
     intent_or_result = _build_intent(flow, user_input)
     if isinstance(intent_or_result, AssociationFlowResult):
         return intent_or_result

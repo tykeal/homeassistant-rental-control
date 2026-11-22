@@ -20,6 +20,7 @@ from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 from custom_components.rental_control.const import UNSUB_LISTENERS
 from custom_components.rental_control.keymaster_identity import CapabilityResolution
 from custom_components.rental_control.keymaster_identity import CapabilityStatus
@@ -137,6 +138,17 @@ def test_managed_slot_readability_entity_ids() -> None:
         "text.front_door_code_slot_11_pin",
         "switch.front_door_code_slot_11_enabled",
     ]
+
+
+def test_protected_startup_without_lifecycle_has_no_guessed_targets(
+    hass: HomeAssistant,
+) -> None:
+    """Protected mode never arms a readability watcher on guessed IDs."""
+    hass.data[DOMAIN] = {PROTECTED_REGISTRY_STORE: object()}
+    coordinator = _coordinator()
+    coordinator.hass = hass
+
+    assert _managed_slot_readability_entity_ids(coordinator) == []
 
 
 def test_readable_keymaster_state_rules() -> None:

@@ -13,8 +13,11 @@ from unittest.mock import MagicMock
 from homeassistant.util import dt as dt_util
 import pytest
 
+from custom_components.rental_control import keymaster_operations
 from custom_components.rental_control import keymaster_service_helpers
 from custom_components.rental_control import keymaster_services
+from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 from custom_components.rental_control.keymaster_operations import (
     VerifiedOperationIntent,
 )
@@ -171,6 +174,26 @@ async def test_set_routes_each_step_to_exact_renamed_capability_without_fallback
         "switch.renamed_enabled",
     ]
     assert coordinator.hass.services.async_call.await_count == 0
+
+
+async def test_active_protected_store_blocks_set_without_selected_lifecycle() -> None:
+    """A missing lifecycle cannot fall back to a constructed Keymaster address."""
+    coordinator, event = _set_operation_inputs()
+    service_call = AsyncMock()
+    coordinator.hass = SimpleNamespace(
+        data={DOMAIN: {PROTECTED_REGISTRY_STORE: object()}},
+        services=SimpleNamespace(async_call=service_call),
+    )
+
+    result = await keymaster_services.async_fire_set_code(
+        coordinator,
+        event,
+        21,
+        _deps(),
+    )
+
+    assert result.unconfirmed
+    assert service_call.await_count == 0
 
 
 @pytest.mark.parametrize("invalidate_at", range(1, 8))
@@ -384,3 +407,263 @@ async def test_active_verified_lifecycle_blocks_legacy_service_fallback(
 
     assert result.unconfirmed
     coordinator.hass.services.async_call.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("coordinator", "active", "expected"),
+    (
+        (
+            SimpleNamespace(config_entry=None, _entry_id="rc-entry", hass=object()),
+            True,
+            True,
+        ),
+        (SimpleNamespace(config_entry=None, _entry_id="", hass=object()), True, False),
+        (
+            SimpleNamespace(config_entry=None, _entry_id="rc-entry", hass=None),
+            True,
+            False,
+        ),
+        (
+            SimpleNamespace(config_entry=None, _entry_id="rc-entry", hass=object()),
+            False,
+            False,
+        ),
+    ),
+)
+def test_verified_lifecycle_gate_requires_exact_loaded_entry(
+    monkeypatch, coordinator, active: bool, expected: bool
+) -> None:
+    """Only an exact selected lifecycle makes the verified route active."""
+    monkeypatch.setattr(
+        keymaster_operations,
+        "get_keymaster_lifecycle",
+        lambda *_args: object() if active else None,
+    )
+
+    assert keymaster_operations.verified_lifecycle_active(coordinator) is expected
+
+
+@pytest.mark.parametrize(
+    ("runtime", "expected"),
+    (
+        (SimpleNamespace(), False),
+        (SimpleNamespace(data=[]), False),
+        (SimpleNamespace(data={DOMAIN: []}), False),
+        (SimpleNamespace(data={DOMAIN: {}}), False),
+        (SimpleNamespace(data={DOMAIN: {PROTECTED_REGISTRY_STORE: object()}}), True),
+    ),
+)
+def test_protected_registry_presence_is_not_inferred_from_other_state(
+    runtime, expected: bool
+) -> None:
+    """A missing or malformed production store never opens protected routing."""
+    assert keymaster_operations.protected_registry_active(runtime) is expected
+
+
+def test_intent_factory_rejects_malformed_owner_and_native_empty_scope(hass) -> None:
+    """Malformed identity and out-of-scope empty-text requests fail closed."""
+    assert (
+        keymaster_operations.create_verified_operation_intent(
+            hass,
+            "rc-entry",
+            slot=0,
+            owner_identity_key="reservation",
+            required_properties=("text.code_slots:{slot}.pin",),
+        )
+        is None
+    )
+    assert (
+        keymaster_operations.create_verified_operation_intent(
+            hass,
+            "rc-entry",
+            slot=21,
+            owner_identity_key="reservation",
+            required_properties=("text.code_slots:{slot}.pin",),
+            allow_native_empty_text=True,
+        )
+        is None
+    )
+
+
+def test_intent_factory_requires_resolved_same_slot_capabilities(
+    hass, monkeypatch
+) -> None:
+    """A missing live property capability cannot produce an operation intent."""
+    monkeypatch.setattr(
+        keymaster_operations, "_authorization_inputs", lambda *_args: object()
+    )
+    monkeypatch.setattr(
+        keymaster_operations,
+        "_resolve_required_capabilities",
+        lambda *_args, **_kw: None,
+    )
+
+    assert (
+        keymaster_operations.create_verified_operation_intent(
+            hass,
+            "rc-entry",
+            slot=21,
+            owner_identity_key="reservation",
+            required_properties=("text.code_slots:{slot}.pin",),
+        )
+        is None
+    )
+
+
+def test_intent_factory_requires_ledger_owner_and_acknowledged_fence(
+    hass, monkeypatch
+) -> None:
+    """Even current capabilities are insufficient without exact durable owner evidence."""
+    inputs = SimpleNamespace(loaded=SimpleNamespace(data={}))
+    monkeypatch.setattr(
+        keymaster_operations, "_authorization_inputs", lambda *_args: inputs
+    )
+    monkeypatch.setattr(
+        keymaster_operations, "_resolve_required_capabilities", lambda *_args, **_kw: ()
+    )
+    assert (
+        keymaster_operations.create_verified_operation_intent(
+            hass,
+            "rc-entry",
+            slot=21,
+            owner_identity_key="reservation",
+            required_properties=("text.code_slots:{slot}.pin",),
+        )
+        is None
+    )
+
+    monkeypatch.setattr(
+        keymaster_operations,
+        "ledger_allocation_references",
+        lambda *_args: ("owner-reference", "allocation-reference", 21),
+    )
+    monkeypatch.setattr(keymaster_operations, "_matching_fence", lambda *_args: None)
+    assert (
+        keymaster_operations.create_verified_operation_intent(
+            hass,
+            "rc-entry",
+            slot=21,
+            owner_identity_key="reservation",
+            required_properties=("text.code_slots:{slot}.pin",),
+        )
+        is None
+    )
+
+
+def test_persisted_slot_mapping_must_be_unique_and_exact() -> None:
+    """Legacy cache hints are accepted only for one exact slot owner."""
+    coordinator = SimpleNamespace(
+        _slot_mappings={
+            "mappings": {
+                "reservation-one": {"slot": 21},
+                "reservation-other-slot": {"slot": 22},
+            }
+        }
+    )
+    assert (
+        keymaster_operations.persisted_owner_identity_for_slot(coordinator, 21)
+        == "reservation-one"
+    )
+    coordinator._slot_mappings["mappings"]["reservation-duplicate"] = {"slot": 21}
+    assert (
+        keymaster_operations.persisted_owner_identity_for_slot(coordinator, 21) is None
+    )
+    preferred = SimpleNamespace(
+        get_persisted_slot_mappings=lambda: {"reservation-from-ledger": {"slot": 21}}
+    )
+    assert (
+        keymaster_operations.persisted_owner_identity_for_slot(preferred, 21)
+        == "reservation-from-ledger"
+    )
+
+
+def test_verified_lifecycle_uses_current_config_entry_id(monkeypatch) -> None:
+    """The selected config entry, not a stale lock label, identifies its lifecycle."""
+    runtime = SimpleNamespace(
+        config_entry=SimpleNamespace(entry_id="rc-entry"),
+        hass=object(),
+    )
+    monkeypatch.setattr(
+        keymaster_operations,
+        "get_keymaster_lifecycle",
+        lambda hass, entry_id: (
+            object() if hass is runtime.hass and entry_id == "rc-entry" else None
+        ),
+    )
+
+    assert keymaster_operations.verified_lifecycle_active(runtime)
+
+
+async def test_prepare_verified_intent_rejects_missing_entry_and_failed_proof(
+    monkeypatch,
+) -> None:
+    """No entry identifier or failed authorization creates a dispatch intent."""
+    coordinator = SimpleNamespace(config_entry=None, hass=object(), _entry_id=None)
+    assert (
+        await keymaster_operations.prepare_verified_intent(
+            coordinator,
+            21,
+            "reservation",
+            ("text.code_slots:{slot}.pin",),
+            "allocation",
+        )
+        is None
+    )
+    coordinator._entry_id = "rc-entry"
+
+    async def reject(*_args, **_kwargs):
+        """Reject the prepared operation with a private test-only error."""
+        raise RuntimeError("private operation context")
+
+    monkeypatch.setattr(
+        keymaster_operations,
+        "async_prepare_verified_operation_intent",
+        reject,
+    )
+    assert (
+        await keymaster_operations.prepare_verified_intent(
+            coordinator,
+            21,
+            "reservation",
+            ("text.code_slots:{slot}.pin",),
+            "allocation",
+        )
+        is None
+    )
+
+
+async def test_prepare_verified_intent_passes_exact_slot_and_owner_to_authorizer(
+    monkeypatch,
+) -> None:
+    """The helper formats the requested slot before forwarding protected proof."""
+    coordinator = SimpleNamespace(
+        config_entry=SimpleNamespace(entry_id="rc-entry"),
+        hass=object(),
+    )
+    intent = object()
+    authorize = AsyncMock(return_value=intent)
+    monkeypatch.setattr(
+        keymaster_operations,
+        "async_prepare_verified_operation_intent",
+        authorize,
+    )
+
+    result = await keymaster_operations.prepare_verified_intent(
+        coordinator,
+        21,
+        "reservation",
+        ("text.code_slots:{slot}.pin", "text.code_slots:{slot}.name"),
+        "allocation",
+        allow_native_empty_text=True,
+    )
+
+    assert result is intent
+    authorize.assert_awaited_once_with(
+        coordinator.hass,
+        "rc-entry",
+        slot=21,
+        owner_identity_key="reservation",
+        required_properties=("text.code_slots:21.pin", "text.code_slots:21.name"),
+        fence_type="allocation",
+        allow_native_empty_text=True,
+    )

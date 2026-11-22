@@ -25,6 +25,7 @@ from homeassistant.util import dt
 from .helpers import OperationResult
 from .keymaster_lifecycle import get_keymaster_lifecycle
 from .keymaster_operations import VerifiedOperationRejected
+from .keymaster_operations import protected_registry_active
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,7 +384,9 @@ async def force_clear_name(
 
 
 def _require_legacy_address(coordinator: Any) -> None:
-    """Block constructed IDs once a selected-entry lifecycle is active."""
+    """Block constructed IDs once protected operation is active."""
+    if protected_registry_active(getattr(coordinator, "hass", None)):
+        raise VerifiedOperationRejected("verified_route_required")
     config_entry = getattr(coordinator, "config_entry", None)
     entry_id = getattr(config_entry, "entry_id", None)
     if not isinstance(entry_id, str) or not entry_id:

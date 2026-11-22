@@ -340,8 +340,8 @@ async def test_two_owner_record_still_retained_by_ordinary_paths() -> None:
     ]
 
 
-def test_only_forced_hold_release_constructs_exemption() -> None:
-    """Only forced hold release activates the production exemption path."""
+def test_only_forced_release_paths_construct_exemption() -> None:
+    """Only explicit forced-release paths can construct the exemption."""
     production = Path("custom_components/rental_control")
     sources = {
         path: path.read_text(encoding="utf-8")
@@ -359,12 +359,15 @@ def test_only_forced_hold_release_constructs_exemption() -> None:
         and path != Path("custom_components/rental_control/allocator/allocator.py")
     ]
 
-    assert constructor_sites == [
-        Path("custom_components/rental_control/allocator/reissue_holds.py")
-    ]
-    assert call_sites == [
-        Path("custom_components/rental_control/allocator/reissue_holds.py")
-    ]
+    assert set(constructor_sites) == {
+        Path("custom_components/rental_control/allocator/reissue_holds.py"),
+        Path("custom_components/rental_control/allocator/registry_mutation.py"),
+    }
+    assert set(call_sites) == {
+        Path("custom_components/rental_control/allocator/reissue_holds.py"),
+        Path("custom_components/rental_control/allocator/registry_mutation.py"),
+        Path("custom_components/rental_control/allocator/allocator_lifecycle.py"),
+    }
 
 
 def _allocator() -> DoorCodeAllocator:

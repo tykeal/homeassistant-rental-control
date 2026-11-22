@@ -69,7 +69,7 @@ def _event(payload: Mapping[str, Any]) -> Event[Mapping[str, Any]]:
 
 
 class _ProtectedStore:
-    """Expose the exact acknowledged association to the dormant test path."""
+    """Expose the exact acknowledged association to the verified test path."""
 
     def __init__(self, association: AssociationTuple) -> None:
         """Bind one validated association to its RC config entry."""

@@ -345,3 +345,32 @@ async def test_healthy_recovery_clears_only_exclusion_not_protective_evidence(
         and fence["slot"] == _SLOT
         for fence in after.data["pending_fences"]
     )
+
+
+@pytest.mark.usefixtures("enable_custom_integrations")
+async def test_exclusion_expires_when_slot_leaves_managed_range(
+    hass, tmp_path: Path
+) -> None:
+    """Unreadability outside the current managed range cannot retain an exclusion."""
+    coordinator, _store, _entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage"
+    )
+    coordinator.lockname = "lock.consumer"
+    excluded_slot = _SLOT + 1
+    assert persist_excluded_slots(
+        hass, _RC_ENTRY_ID, {excluded_slot: "unreadable before range change"}
+    )
+    observation = CycleObservation(
+        entry_id=_RC_ENTRY_ID,
+        lockname="lock.consumer",
+        managed_slots=frozenset({_SLOT}),
+        observed_codes={},
+        unreadable_slots=frozenset({excluded_slot}),
+        keymaster_entry_id=_KM_ENTRY_ID,
+        keymaster_generation=1,
+    )
+
+    kept = revalidate_persisted(hass, _RC_ENTRY_ID, "lock.consumer", observation)
+
+    assert kept == {}
+    assert load_exclusions(hass, _RC_ENTRY_ID) == {}

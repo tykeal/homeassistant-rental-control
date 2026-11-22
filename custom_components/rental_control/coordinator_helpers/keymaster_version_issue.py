@@ -22,6 +22,7 @@ from homeassistant.helpers.issue_registry import async_get as async_get_issue_re
 from ..allocator.associations import AssociationMode
 from ..allocator.associations import AssociationTuple
 from ..const import DOMAIN
+from ..const import LOCK_ENTRY_NONE
 from ..const import LOCK_MANAGER
 from ..const import PROTECTED_REGISTRY_STORE
 from ..keymaster_version import KeymasterVersionDiagnosis
@@ -31,6 +32,7 @@ from ..keymaster_version import diagnose_keymaster_version
 _LOGGER = logging.getLogger(__name__)
 _TRACKER_KEY: Final = "_keymaster_version_issue_tracker"
 _ISSUE_PREFIX: Final = "keymaster_version_"
+_ASSOCIATION_ISSUE_PREFIX: Final = "keymaster_association_repair_"
 
 
 def report_keymaster_version(hass: HomeAssistant, entry_id: str) -> None:
@@ -147,6 +149,7 @@ class KeymasterVersionIssueTracker:
             return
 
         selected_entry_ids: set[str] = set()
+        association_repair_entry_ids: set[str] = set()
         for rc_entry_id in tuple(self._rc_entry_ids):
             rc_entry = self._hass.config_entries.async_get_entry(rc_entry_id)
             runtime = domain_data.get(rc_entry_id)
@@ -156,18 +159,46 @@ class KeymasterVersionIssueTracker:
                 or not isinstance(runtime, dict)
             ):
                 continue
+            association = AssociationTuple.from_config(rc_entry.data)
+            if (
+                association is not None
+                and association.mode is AssociationMode.LEGACY_UNRESOLVED
+                and association.legacy_lock_selection_present
+                and association.legacy_lock_selection_raw not in (None, LOCK_ENTRY_NONE)
+                and _protected_snapshot_is_ready(domain_data)
+            ):
+                association_repair_entry_ids.add(rc_entry_id)
             selected = _selected_loaded_keymaster_entry(self._hass, rc_entry)
             if selected is not None:
                 selected_entry_ids.add(selected.entry_id)
 
         issue_registry = async_get_issue_registry(self._hass)
         for issue_domain, issue_id in tuple(issue_registry.issues):
-            if (
-                issue_domain == DOMAIN
-                and issue_id.startswith(_ISSUE_PREFIX)
-                and issue_id[len(_ISSUE_PREFIX) :] not in selected_entry_ids
+            if issue_domain == DOMAIN and (
+                (
+                    issue_id.startswith(_ISSUE_PREFIX)
+                    and issue_id[len(_ISSUE_PREFIX) :] not in selected_entry_ids
+                )
+                or (
+                    issue_id.startswith(_ASSOCIATION_ISSUE_PREFIX)
+                    and issue_id[len(_ASSOCIATION_ISSUE_PREFIX) :]
+                    not in association_repair_entry_ids
+                )
             ):
                 async_delete_issue(self._hass, DOMAIN, issue_id)
+
+        for rc_entry_id in sorted(association_repair_entry_ids):
+            async_create_issue(
+                self._hass,
+                DOMAIN,
+                f"{_ASSOCIATION_ISSUE_PREFIX}{rc_entry_id}",
+                config_entry_id=rc_entry_id,
+                is_fixable=False,
+                is_persistent=True,
+                issue_domain=DOMAIN,
+                severity=IssueSeverity.WARNING,
+                translation_key="keymaster_association_repair",
+            )
 
         if not selected_entry_ids:
             self._last_diagnoses.clear()
@@ -222,6 +253,22 @@ def _selected_loaded_keymaster_entry(
     ):
         return None
     return selected
+
+
+def _protected_snapshot_is_ready(domain_data: dict[str, object]) -> bool:
+    """Require the activated, acknowledged v2 snapshot before prompting repair."""
+    store = domain_data.get(PROTECTED_REGISTRY_STORE)
+    readiness = getattr(store, "operation_snapshot_ready", None)
+    loaded = getattr(store, "loaded_result", None)
+    try:
+        return (
+            callable(readiness)
+            and bool(readiness())
+            and getattr(getattr(loaded, "state", None), "value", None) == "valid_v2"
+            and isinstance(getattr(loaded, "data", None), dict)
+        )
+    except Exception:
+        return False
 
 
 def register_keymaster_version_tracking(hass: HomeAssistant, rc_entry_id: str) -> None:

@@ -62,6 +62,7 @@ _STORAGE_FAILURE_CODES = frozenset(
         "serialization_failed",
         "serialization_invalid",
         "serialized_oversize",
+        "slot_operation_busy",
         "transaction_failed",
         "transaction_id_reused",
         "transaction_preflight_failed",
@@ -219,7 +220,7 @@ class StorageRunResult:
 
 
 class ProtectionLoadState(StrEnum):
-    """Publicly safe state of the dormant protected registry loader."""
+    """Publicly safe state of the protected registry loader."""
 
     ABSENT = "absent"
     LEGACY_V1 = "legacy_v1"

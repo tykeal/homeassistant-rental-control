@@ -22,6 +22,7 @@ from ...const import CHECKIN_STATE_NO_RESERVATION
 from ...const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from ...const import EVENT_RENTAL_CONTROL_CHECKIN
 from ...const import EVENT_RENTAL_CONTROL_CHECKOUT
+from ...keymaster_operations import protected_registry_active
 from ...keymaster_topology import association_requires_verified_routing
 from ...util import add_call
 from ...util import check_gather_results
@@ -215,6 +216,8 @@ async def async_update_lock_code_expiry(
             new_end,
             identity_end=identity_end,
         )
+    if protected_registry_active(entity._hass):
+        return False
     slot = entity.coordinator.event_overrides.get_slot_key_by_name(
         entity._tracked_event_slot_name
     )

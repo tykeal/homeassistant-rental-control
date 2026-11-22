@@ -47,6 +47,10 @@
           "date_only": "Displays each reservation as a single all-day block. Guest arrival and departure times are hidden from the calendar."
         },
         "issues": {
+          "keymaster_association_repair": {
+            "title": "Repair the Keymaster association",
+            "description": "This entry's legacy Keymaster selection is unresolved; Rental Control does not automatically associate entries by name or entity ID. Open this entry's Options and select the intended Keymaster configuration. Until the association is verified, Rental Control withholds setting and clearing door codes. If protected legacy allocations have no independent record identifying their original Keymaster entry, the options form will also require an explicit assertion that the selected entry controls the same original physical lock. Known work from another Keymaster entry cannot be transferred by this assertion."
+          },
           "keymaster_version_outside_support": {
             "title": "Keymaster version is outside tested support",
             "description": "The loaded Keymaster version {version} is below Rental Control's tested support floor {support_floor}. This is a support diagnosis only: version status alone does not block or authorize lock operations. Verify the selected Keymaster entry and its current slot capabilities; update Keymaster where practical."

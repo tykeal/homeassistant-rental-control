@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone as dt_timezone
@@ -27,10 +28,18 @@ from custom_components.rental_control.allocator.models import ObservedLock
 from custom_components.rental_control.allocator.models import (
     ProtectionAuthorizationState,
 )
+from custom_components.rental_control.allocator.models import ProtectionLoadState
+from custom_components.rental_control.allocator.registry_safety_models import (
+    PendingSlotFence,
+)
+from custom_components.rental_control.allocator.registry_safety_models import (
+    resolve_fence_to_tombstone,
+)
 from custom_components.rental_control.codegen import generate_date_based_code
 from custom_components.rental_control.const import ALLOCATOR
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 from custom_components.rental_control.coordinator_helpers.keymaster_observation import (
     classify_slot,
 )
@@ -281,6 +290,52 @@ async def test_diagnostics_report_allocator_and_slot_state(
     assert "end" not in reservation
     assert slots[10]["actual_window_set"] is True
     assert slots[10]["actual_window_matches_desired"] is True
+
+
+async def test_diagnostics_report_only_validated_tombstone_pressure(
+    hass: HomeAssistant,
+) -> None:
+    """Protected diagnostics expose count and age, never retained identities."""
+    entry = _entry(hass)
+    _install_coordinator(hass, entry)
+    await _allocator(hass)
+    fence = PendingSlotFence(
+        fence_id="1" * 32,
+        original_km_entry_id="private-keymaster-entry",
+        slot=10,
+        rc_entry_id="private-rental-entry",
+        owner_ref="private-owner-reference",
+        allocation_ref="private-allocation-reference",
+        created_transaction_id="2" * 32,
+        created_generation=1,
+        fence_type="pending_clear",
+    ).to_record()
+    tombstone = resolve_fence_to_tombstone(
+        fence,
+        tombstone_id="3" * 32,
+        resolved_transaction_id="4" * 32,
+        resolved_generation=2,
+        resolution_kind="clear_confirmed",
+        retained_at=datetime.now(UTC).isoformat(),
+    )
+    hass.data[DOMAIN][PROTECTED_REGISTRY_STORE] = SimpleNamespace(
+        loaded_result=SimpleNamespace(
+            state=ProtectionLoadState.VALID_V2,
+            data={"tombstones": [tombstone]},
+        ),
+        authorization_state=ProtectionAuthorizationState.READY,
+    )
+
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    allocator_status = result["allocator"]
+    serialized = json.dumps(allocator_status, cls=ExtendedJSONEncoder)
+
+    assert allocator_status["retained_resolution_pressure"]["count"] == 1
+    assert allocator_status["retained_resolution_pressure"]["oldest_age_seconds"] == 0
+    assert "private-keymaster-entry" not in serialized
+    assert "private-rental-entry" not in serialized
+    assert "private-owner-reference" not in serialized
+    assert "private-allocation-reference" not in serialized
 
 
 async def test_diagnostics_never_leak_codes_or_guest_names(

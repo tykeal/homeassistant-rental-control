@@ -16,6 +16,7 @@ import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 from custom_components.rental_control.coordinator import RentalControlCoordinator
 from custom_components.rental_control.event_overrides import EventOverrides
 
@@ -219,6 +220,43 @@ async def test_update_buffer_times_no_assigned_slots(
         await coordinator._async_update_buffer_times(0, 0)
 
     mock_add_call.assert_not_called()
+
+
+async def test_protected_buffer_update_without_lifecycle_is_inert(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Do not write a guessed datetime address while protection is active."""
+    mock_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_entry)
+    coordinator.code_buffer_before = 30
+    coordinator.code_buffer_after = 60
+    start_time = datetime(2025, 1, 15, 16, 0, tzinfo=ZoneInfo("America/New_York"))
+    end_time = datetime(2025, 1, 20, 11, 0, tzinfo=ZoneInfo("America/New_York"))
+    overrides = EventOverrides(10, 3)
+    overrides._overrides = {
+        10: {
+            "slot_name": "Guest A",
+            "slot_code": "1234",
+            "start_time": start_time,
+            "end_time": end_time,
+        },
+        11: None,
+        12: None,
+    }
+    overrides._ready = True
+    coordinator.event_overrides = overrides
+    hass.data.setdefault(DOMAIN, {})[PROTECTED_REGISTRY_STORE] = object()
+
+    with patch(
+        "custom_components.rental_control.coordinator.add_call",
+    ) as mock_add_call:
+        await coordinator._async_update_buffer_times(0, 0)
+
+    mock_add_call.assert_not_called()
+    override = overrides.overrides[10]
+    assert override is not None
+    assert override["start_time"] == start_time
+    assert override["end_time"] == end_time
 
 
 async def test_update_buffer_times_no_lockname(

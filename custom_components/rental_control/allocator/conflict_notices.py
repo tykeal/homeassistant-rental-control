@@ -27,6 +27,7 @@ from . import entry_info
 from .models import AllocationOwner
 from .registry import SlotKey
 from .registry import physical_slot
+from .registry_mutation import after_commit
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
@@ -141,4 +142,7 @@ def _day(value: Any) -> str:
 
 def _dismiss(allocator: DoorCodeAllocator, notification_id: str) -> None:
     """Dismiss one notification this module raised."""
-    async_dismiss(allocator.hass, notification_id)
+    after_commit(
+        allocator,
+        lambda: async_dismiss(allocator.hass, notification_id),
+    )

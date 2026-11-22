@@ -886,3 +886,83 @@ async def test_queued_load_rechecks_restore_latch_under_storage_locks(
     assert store.loaded_result is loaded_before
     assert read_calls.call_count == 0
     assert notifications.call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_commit_completion_waits_for_current_operation_and_restore_latch(
+    hass: HomeAssistant,
+    isolated_storage: Path,
+) -> None:
+    """Only the current acknowledged operation can settle a READY store."""
+    store = ProtectedRegistryStore(hass, asyncio.Lock(), storage_dir=isolated_storage)
+    assert (await store.async_load()).state is ProtectionLoadState.ABSENT
+    committed = await store.async_commit(_v2_envelope("c" * 32, 1, []))
+    assert committed.state is ProtectionLoadState.VALID_V2
+    prior = store.loaded_result
+    assert prior is not None
+
+    operation_id = store._begin_commit_operation()
+    waiting = asyncio.create_task(store.async_wait_for_commit_completion())
+    await asyncio.sleep(0)
+    assert not waiting.done()
+    store._apply_commit_completion(
+        ProtectionLoadResult(ProtectionLoadState.BUSY),
+        operation_id=operation_id + 1,
+    )
+    assert store._commit_in_flight == operation_id
+    assert not waiting.done()
+    store._apply_commit_completion(
+        ProtectionLoadResult(ProtectionLoadState.BUSY),
+        operation_id=operation_id,
+    )
+    assert await waiting
+    assert store.authorization_state is ProtectionAuthorizationState.READY
+    assert store.last_result is not None
+    assert store.last_result.state is ProtectionLoadState.BUSY
+    assert store.loaded_result is prior
+
+    operation_id = store._begin_commit_operation()
+    store.mark_external_restore_suspected()
+    replacement = ProtectionLoadResult(
+        ProtectionLoadState.VALID_V2,
+        data={"schema_version": 2},
+        transaction_id="d" * 32,
+        generation=2,
+    )
+    store._apply_commit_completion(replacement, operation_id=operation_id)
+
+    assert store.authorization_state is ProtectionAuthorizationState.PROTECTIVE_UNKNOWN
+    assert store.last_result is not None
+    assert store.last_result.failure_code == "external_restore_suspected"
+    assert store.loaded_result is prior
+    assert store._commit_in_flight is None
+
+
+@pytest.mark.asyncio
+async def test_status_publication_failures_never_log_storage_details(
+    hass: HomeAssistant,
+    isolated_storage: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Failed issue APIs keep guidance sanitized and never chain raw errors."""
+    store = ProtectedRegistryStore(hass, asyncio.Lock(), storage_dir=isolated_storage)
+
+    def fail_with_sensitive_detail(*_args: Any, **_kwargs: Any) -> None:
+        """Inject a provider exception containing private storage text."""
+        raise RuntimeError("PIN 2468 /private/config/.storage/registry")
+
+    monkeypatch.setattr(
+        protected_store, "async_delete_issue", fail_with_sensitive_detail
+    )
+    monkeypatch.setattr(protected_store, "async_create", fail_with_sensitive_detail)
+    monkeypatch.setattr(
+        protected_store, "async_create_issue", fail_with_sensitive_detail
+    )
+    store._report_unknown("scan_failed")
+    store._dismiss_status()
+
+    assert "2468" not in caplog.text
+    assert "/private/config" not in caplog.text
+    assert "Unable to publish protected registry status" in caplog.text
+    assert "Unable to clear protected registry repair guidance" in caplog.text

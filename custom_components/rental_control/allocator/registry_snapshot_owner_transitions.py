@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Owner-location transitions for dormant protected registry snapshots."""
+"""Owner-location transitions for protected registry snapshots."""
 
 from __future__ import annotations
 
@@ -167,13 +167,15 @@ def resolve_released_owner_fences(
     target_data["pending_fences"] = remaining
 
 
-def ledger_owner_references(data: dict[str, Any]) -> dict[str, tuple[str, str, int]]:
+def ledger_owner_references(
+    data: dict[str, Any],
+) -> dict[str, tuple[str, str, int | None]]:
     """Map exact serialized owner references to their current ledger location."""
     ledger = data.get("ledger")
     records = ledger.get("records") if isinstance(ledger, dict) else None
     if not isinstance(records, list):
         raise ValueError("invalid ledger")
-    owners: dict[str, tuple[str, str, int]] = {}
+    owners: dict[str, tuple[str, str, int | None]] = {}
     for record in records:
         if not isinstance(record, dict) or not isinstance(record.get("owners"), list):
             raise ValueError("invalid ledger owner")
@@ -182,13 +184,19 @@ def ledger_owner_references(data: dict[str, Any]) -> dict[str, tuple[str, str, i
                 raise ValueError("invalid ledger owner")
             reference = ledger_owner_reference(data, record, owner)
             slot = owner.get("slot")
+            lockname = owner.get("lockname")
+            valid_slot = (slot is None and lockname is None) or (
+                isinstance(slot, int)
+                and not isinstance(slot, bool)
+                and slot > 0
+                and isinstance(lockname, str)
+            )
             if (
                 reference is None
                 or reference in owners
                 or not isinstance(owner.get("entry_id"), str)
                 or not isinstance(owner.get("identity_key"), str)
-                or not isinstance(slot, int)
-                or isinstance(slot, bool)
+                or not valid_slot
             ):
                 raise ValueError("invalid ledger owner reference")
             owners[reference] = (

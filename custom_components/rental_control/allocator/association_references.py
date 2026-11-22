@@ -4,14 +4,183 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import StrEnum
 import hashlib
 import hmac
 import json
 from typing import Any
 
 from .association_evidence import AssociationRebindHold
+from .association_transactions import valid_association_sections
 from .code_codec import code_ref_for
 from .code_codec import decode_code
+from .registry_safety_models import valid_fence_section
+from .registry_safety_models import valid_tombstone_section
+
+
+class OriginalEntryEvidenceState(StrEnum):
+    """Typed result for immutable original-entry provenance."""
+
+    ABSENT = "absent"
+    UNIQUE = "unique"
+    AMBIGUOUS = "ambiguous"
+    INCOMPLETE = "incomplete"
+    INVALID = "invalid"
+
+
+@dataclass(frozen=True, slots=True)
+class OriginalEntryEvidence:
+    """One typed provenance result without collapsing unsafe states to absence."""
+
+    state: OriginalEntryEvidenceState
+    keymaster_entry_id: str | None = None
+
+
+def original_keymaster_entry_evidence(
+    data: dict[str, Any],
+    rc_entry_id: str,
+    references: tuple[str, ...],
+    *,
+    require_complete_snapshot: bool = True,
+) -> OriginalEntryEvidence:
+    """Classify exact source evidence; only a clean no-record result is absent."""
+    validated = _validate_original_entry_snapshot(
+        data,
+        rc_entry_id,
+        references,
+        require_complete_snapshot=require_complete_snapshot,
+    )
+    if isinstance(validated, OriginalEntryEvidence):
+        return validated
+    target_references, fences, tombstones, salt = validated
+    collected = _collect_original_entry_sources(
+        rc_entry_id,
+        target_references,
+        fences,
+        tombstones,
+        salt,
+    )
+    if collected is None:
+        return OriginalEntryEvidence(OriginalEntryEvidenceState.INVALID)
+    known_by_reference = collected
+    return _classify_original_entry_sources(
+        target_references,
+        known_by_reference,
+    )
+
+
+def _validate_original_entry_snapshot(
+    data: dict[str, Any],
+    rc_entry_id: str,
+    references: tuple[str, ...],
+    *,
+    require_complete_snapshot: bool,
+) -> (
+    tuple[
+        set[str],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        str,
+    ]
+    | OriginalEntryEvidence
+):
+    """Validate all sections before absence can become an attestation fallback."""
+    if not references or len(set(references)) != len(references):
+        return OriginalEntryEvidence(OriginalEntryEvidenceState.INVALID)
+    if any(not isinstance(reference, str) or not reference for reference in references):
+        return OriginalEntryEvidence(OriginalEntryEvidenceState.INVALID)
+    expected = association_references_for_snapshot(data, rc_entry_id)
+    if expected is None:
+        return OriginalEntryEvidence(OriginalEntryEvidenceState.INVALID)
+    target_references = set(references)
+    expected_references = set(expected)
+    if not target_references.issubset(expected_references) or (
+        require_complete_snapshot and target_references != expected_references
+    ):
+        return OriginalEntryEvidence(OriginalEntryEvidenceState.INCOMPLETE)
+    if not valid_association_sections(
+        data.get("associations"),
+        data.get("attestations"),
+        data.get("pending_config"),
+        data.get("holds"),
+    ):
+        return OriginalEntryEvidence(OriginalEntryEvidenceState.INVALID)
+
+    fences = data.get("pending_fences")
+    tombstones = data.get("tombstones")
+    holds = data.get("holds")
+    if (
+        not isinstance(fences, list)
+        or not isinstance(tombstones, list)
+        or not isinstance(holds, list)
+        or not valid_fence_section(fences)
+        or not valid_tombstone_section(tombstones)
+        or not _holds_are_typed(holds)
+    ):
+        return OriginalEntryEvidence(OriginalEntryEvidenceState.INVALID)
+    salt = _code_reference_salt(data)
+    if salt is None:
+        return OriginalEntryEvidence(OriginalEntryEvidenceState.INVALID)
+    return target_references, fences, tombstones, salt
+
+
+def _holds_are_typed(holds: list[Any]) -> bool:
+    """Require every retained hold to have a recognized typed shape."""
+    return all(
+        isinstance(hold, dict)
+        and hold.get("kind") == "association_rebind"
+        and AssociationRebindHold.from_record(hold) is not None
+        for hold in holds
+    )
+
+
+def _collect_original_entry_sources(
+    rc_entry_id: str,
+    target_references: set[str],
+    fences: list[dict[str, Any]],
+    tombstones: list[dict[str, Any]],
+    salt: str,
+) -> dict[str, set[str]] | None:
+    """Collect recognized exact-reference origins from validated safety rows."""
+    known: dict[str, set[str]] = {}
+    for section, records in (
+        ("pending_fences", fences),
+        ("tombstones", tombstones),
+    ):
+        for record in records:
+            if record["rc_entry_id"] != rc_entry_id:
+                continue
+            proven = _original_proven_references(section, record, rc_entry_id, salt)
+            if proven is None:
+                return None
+            for reference, entry_id in proven.items():
+                if reference in target_references:
+                    known.setdefault(reference, set()).add(entry_id)
+    return known
+
+
+def _classify_original_entry_sources(
+    target_references: set[str],
+    known_by_reference: dict[str, set[str]],
+) -> OriginalEntryEvidence:
+    """Distinguish a unique origin, conflict, partial proof, and clean absence."""
+    if any(len(entries) > 1 for entries in known_by_reference.values()):
+        return OriginalEntryEvidence(OriginalEntryEvidenceState.AMBIGUOUS)
+    known_references = set(known_by_reference)
+    known_entries = {
+        next(iter(entries)) for entries in known_by_reference.values() if entries
+    }
+    if len(known_entries) > 1:
+        return OriginalEntryEvidence(OriginalEntryEvidenceState.AMBIGUOUS)
+    if known_references and known_references != target_references:
+        return OriginalEntryEvidence(OriginalEntryEvidenceState.INCOMPLETE)
+    if known_references == target_references:
+        return OriginalEntryEvidence(
+            OriginalEntryEvidenceState.UNIQUE,
+            next(iter(known_entries)),
+        )
+    return OriginalEntryEvidence(OriginalEntryEvidenceState.ABSENT)
 
 
 def association_references_for_snapshot(

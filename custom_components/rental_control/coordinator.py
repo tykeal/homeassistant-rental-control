@@ -49,6 +49,8 @@ from .coordinator_helpers.models import (
 )
 from .coordinator_helpers.models import normalize_event_override_update
 from .helpers import OperationResult
+from .keymaster_lifecycle import get_keymaster_lifecycle
+from .keymaster_operations import protected_registry_active
 from .reconciliation import DesiredPlan as _DesiredPlan
 from .reconciliation import ManagedSlot as _ManagedSlot
 from .reconciliation import Reservation as _Reservation
@@ -298,6 +300,32 @@ class RentalControlCoordinator(
 
     def _observed_pin(self, slot_number: int) -> str | None:
         """Return the PIN the lock currently reports for a slot."""
+        config_entry = getattr(self, "config_entry", None)
+        entry_id = getattr(config_entry, "entry_id", None) or getattr(
+            self, "_entry_id", None
+        )
+        lifecycle = (
+            get_keymaster_lifecycle(self.hass, entry_id)
+            if isinstance(entry_id, str)
+            else None
+        )
+        if lifecycle is not None:
+            resolution = lifecycle.current.get(f"text.code_slots:{slot_number}.pin")
+            if (
+                resolution is None
+                or not resolution.ready
+                or resolution.identity is None
+                or resolution.identity.slot != slot_number
+                or resolution.identity.keymaster_entry_id
+                != lifecycle.keymaster_entry_id
+                or resolution.identity.generation != lifecycle.generation
+                or resolution.entity_id is None
+            ):
+                return None
+            state = self.hass.states.get(resolution.entity_id)
+            return state.state if state is not None else None
+        if protected_registry_active(self.hass):
+            return None
         state = self.hass.states.get(
             f"text.{self.lockname}_code_slot_{slot_number}_pin"
         )

@@ -23,6 +23,7 @@ from .const import UNSUB_LISTENERS
 from .keymaster_identity import CapabilityRegistryIndex
 from .keymaster_identity import resolve_capability_identity
 from .keymaster_lifecycle import get_keymaster_lifecycle
+from .keymaster_operations import protected_registry_active
 from .startup_readability import async_arm_startup_readability_refresh
 from .util import get_entry_data
 from .util import handle_state_change
@@ -178,6 +179,8 @@ def _verified_listener_binding(lifecycle: Any, expected_generation: int | None):
 
 def _legacy_listener_entities(coordinator: Any, lockname: str | None):
     """Build legacy addresses only when no verified lifecycle is active."""
+    if protected_registry_active(coordinator.hass):
+        return []
     if not lockname:
         return None
     entities: list[str] = []

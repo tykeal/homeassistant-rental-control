@@ -1,198 +1,53 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Dormant verified Keymaster operation intents and dispatch guards."""
+"""Verified Keymaster operation intents and dispatch guards."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
-from dataclasses import field
-from datetime import UTC
-from datetime import datetime
-import hashlib
-import json
-import secrets
+import copy
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 
+from .allocator.association_evidence import AssociationAttestation
+from .allocator.association_evidence import AssociationRebindHold
+from .allocator.association_references import OriginalEntryEvidenceState
 from .allocator.association_references import ledger_allocation_references
-from .allocator.associations import AssociationMode
-from .allocator.associations import AssociationTuple
-from .allocator.models import ProtectionAuthorizationState
-from .allocator.models import ProtectionCommitToken
-from .allocator.models import ProtectionLoadResult
-from .allocator.models import ProtectionLoadState
+from .allocator.association_references import original_keymaster_entry_evidence
+from .allocator.models import CycleObservation
 from .allocator.registry_safety_models import validate_pending_fence
 from .const import DOMAIN
 from .const import PROTECTED_REGISTRY_STORE
-from .helpers import get_entry_data
-from .keymaster_identity import CapabilityResolution
-from .keymaster_identity import CapabilityStatus
-from .keymaster_identity import resolve_capability
 from .keymaster_lifecycle import get_keymaster_lifecycle
-
-_FENCE_TYPES = frozenset({"allocation", "pending_clear"})
-_PHYSICAL_LOCK_ENTITY_KEY = "lock_entity_id"
-_SERVICE_ALLOWLIST = {
-    "button": frozenset({"press"}),
-    "datetime": frozenset({"set_value"}),
-    "switch": frozenset({"turn_off", "turn_on"}),
-    "text": frozenset({"set_value"}),
-}
-_SET_REQUIRED_PROPERTIES = frozenset(
-    {
-        "switch.code_slots:{slot}.enabled",
-        "switch.code_slots:{slot}.accesslimit_date_range_enabled",
-        "datetime.code_slots:{slot}.accesslimit_date_range_start",
-        "datetime.code_slots:{slot}.accesslimit_date_range_end",
-        "text.code_slots:{slot}.pin",
-        "text.code_slots:{slot}.name",
-    }
+from .keymaster_operation_fences import (
+    _async_acknowledge_fence as _async_acknowledge_fence,
 )
+from .keymaster_operation_fences import (
+    _current_exclusion_snapshot as _current_exclusion_snapshot,
+)
+from .keymaster_operation_fences import (
+    async_resolve_verified_clear_fence as async_resolve_verified_clear_fence,
+)
+from .keymaster_operation_models import _FENCE_TYPES
+from .keymaster_operation_models import VerifiedOperationIntent
+from .keymaster_operation_models import (
+    VerifiedOperationRejected as VerifiedOperationRejected,
+)
+from .keymaster_operation_models import _FenceRequest
+from .keymaster_operation_validation import _authorization_inputs
+from .keymaster_operation_validation import _intent_is_current as _intent_is_current
+from .keymaster_operation_validation import _matching_fence
+from .keymaster_operation_validation import _native_empty_text_policy
+from .keymaster_operation_validation import _resolve_required_capabilities
 
-
-@dataclass(frozen=True, slots=True)
-class _AuthorizationInputs:
-    """Validated current entry, lifecycle, store, association and token."""
-
-    config_entry: Any = field(repr=False)
-    lifecycle: Any = field(repr=False)
-    store: Any = field(repr=False)
-    association: AssociationTuple
-    loaded: Any = field(repr=False)
-    token: ProtectionCommitToken = field(repr=False)
-    keymaster_entry: Any = field(repr=False)
-    physical_lock_entity_id: str = field(repr=False)
-
-
-@dataclass(frozen=True, slots=True)
-class _CurrentIntentInputs:
-    """Current lifecycle, association, store snapshot, and selected entry."""
-
-    lifecycle: Any = field(repr=False)
-    store: Any = field(repr=False)
-    association: AssociationTuple
-    loaded: Any = field(repr=False)
-    keymaster_entry: Any = field(repr=False)
-
-
-@dataclass(frozen=True, slots=True)
-class _FenceRequest:
-    """Exact owner and target identity needed to acknowledge one fence."""
-
-    rc_entry_id: str
-    slot: int
-    owner_identity_key: str
-    owner_reference: str
-    allocation_reference: str
-    fence_type: str
-    allow_native_empty_text: bool
-    initial: _AuthorizationInputs = field(repr=False)
-    required_properties: tuple[str, ...] = field(repr=False)
-
-
-class VerifiedOperationRejected(Exception):
-    """A fixed-code rejection that must never trigger legacy fallback."""
-
-
-@dataclass(frozen=True, slots=True)
-class VerifiedOperationIntent:
-    """Bind one hardware operation to exact identity, fence, and generations.
-
-    An intent is an authorization snapshot, not a long-lived capability.
-    Consumers must call :meth:`async_call` for each individual side effect;
-    it waits for protected writes to settle and revalidates the association,
-    selected entry, capability addresses, lifecycle generation, and exact
-    durable owner/fence references before and after each service call.
-    """
-
-    hass: HomeAssistant = field(repr=False, compare=False)
-    rc_entry_id: str = field(repr=False)
-    keymaster_entry_id: str = field(repr=False)
-    physical_lock_entity_id: str = field(repr=False)
-    slot: int
-    owner_identity_key: str = field(repr=False)
-    association_generation: int
-    lifecycle_generation: int
-    protection_token: ProtectionCommitToken = field(repr=False)
-    fence_id: str = field(repr=False)
-    fence_type: str
-    allow_native_empty_text: bool
-    owner_reference: str = field(repr=False)
-    allocation_reference: str = field(repr=False)
-    capabilities: tuple[CapabilityResolution, ...] = field(repr=False)
-
-    def entity_id(self, property_key: str) -> str:
-        """Return a previously authorized exact address without dispatching.
-
-        This is a read-only address lookup. Every side effect and positive
-        confirmation must separately pass ``async_is_current`` so an unrelated
-        protected write can settle before authorization is re-evaluated.
-        """
-        for capability in self.capabilities:
-            if (
-                capability.identity is not None
-                and capability.identity.property_key == property_key
-                and capability.entity_id is not None
-            ):
-                return capability.entity_id
-        raise VerifiedOperationRejected("capability_not_authorized")
-
-    async def async_call(
-        self,
-        property_key: str,
-        service: str,
-        service_data: dict[str, Any] | None = None,
-    ) -> None:
-        """Dispatch one exact-entity call with point-in-time revalidation."""
-        if not await self.async_is_current():
-            raise VerifiedOperationRejected("operation_not_current")
-        entity_id = self.entity_id(property_key)
-        domain = property_key.split(".", maxsplit=1)[0]
-        if service not in _SERVICE_ALLOWLIST.get(domain, frozenset()):
-            raise VerifiedOperationRejected("service_not_authorized")
-        if not await self.async_is_current():
-            raise VerifiedOperationRejected("operation_not_current")
-        await self.hass.services.async_call(
-            domain=domain,
-            service=service,
-            target={"entity_id": entity_id},
-            service_data=service_data or {},
-            blocking=True,
-        )
-        if not await self.async_is_current(allow_native_empty_text=True):
-            # The side effect may have completed. The durable fence remains;
-            # callers must report unconfirmed and must not retry by name.
-            raise VerifiedOperationRejected("operation_invalidated_after_dispatch")
-
-    async def async_is_current(self, *, allow_native_empty_text: bool = False) -> bool:
-        """Wait for any protected write, then validate its acknowledged state."""
-        domain_data = self.hass.data.get(DOMAIN)
-        store = (
-            domain_data.get(PROTECTED_REGISTRY_STORE)
-            if isinstance(domain_data, dict)
-            else None
-        )
-        waiter = getattr(store, "async_wait_for_commit_completion", None)
-        if not callable(waiter):
-            return False
-        try:
-            if not await waiter():
-                return False
-        except Exception:
-            return False
-        return self.is_current(allow_native_empty_text=allow_native_empty_text)
-
-    def is_current(self, *, allow_native_empty_text: bool = False) -> bool:
-        """Revalidate every authorization input on the HA event-loop thread."""
-        return _intent_is_current(
-            self,
-            allow_native_empty_text=(
-                allow_native_empty_text or self.allow_native_empty_text
-            ),
-        )
+_REFENCE_REQUIRED_PROPERTIES = (
+    "switch.code_slots:{slot}.enabled",
+    "switch.code_slots:{slot}.accesslimit_date_range_enabled",
+    "datetime.code_slots:{slot}.accesslimit_date_range_start",
+    "datetime.code_slots:{slot}.accesslimit_date_range_end",
+    "text.code_slots:{slot}.pin",
+    "text.code_slots:{slot}.name",
+)
 
 
 def create_verified_operation_intent(
@@ -296,9 +151,10 @@ async def async_prepare_verified_operation_intent(
     """Acknowledge an exact owner fence before returning a dispatch intent.
 
     The storage snapshot is committed only through the injected protected
-    store and allocator's shared lock. This path remains dormant unless an
-    explicitly verified lifecycle, protected store, and loaded allocator are
-    present; it never falls back to a constructed entity ID.
+    store and allocator's shared lock. This path is available only when an
+    explicitly verified lifecycle,
+    protected store, and loaded allocator are present; it never falls back to
+    a constructed entity ID.
     """
     native_empty_allowed = _native_empty_text_policy(
         fence_type, slot, required_properties, allow_native_empty_text
@@ -344,22 +200,21 @@ async def async_prepare_verified_operation_intent(
     )
     if fence_type == "allocation" and pending_clear_exists:
         return None
-    if fence is None:
-        if not await _async_acknowledge_fence(
-            hass,
-            _FenceRequest(
-                rc_entry_id=rc_entry_id,
-                slot=slot,
-                owner_identity_key=owner_identity_key,
-                owner_reference=owner_reference,
-                allocation_reference=allocation_reference,
-                fence_type=fence_type,
-                allow_native_empty_text=native_empty_allowed,
-                initial=initial,
-                required_properties=required_properties,
-            ),
-        ):
-            return None
+    if fence is None and not await _async_acknowledge_fence(
+        hass,
+        _FenceRequest(
+            rc_entry_id=rc_entry_id,
+            slot=slot,
+            owner_identity_key=owner_identity_key,
+            owner_reference=owner_reference,
+            allocation_reference=allocation_reference,
+            fence_type=fence_type,
+            allow_native_empty_text=native_empty_allowed,
+            initial=initial,
+            required_properties=required_properties,
+        ),
+    ):
+        return None
     return create_verified_operation_intent(
         hass,
         rc_entry_id,
@@ -371,147 +226,179 @@ async def async_prepare_verified_operation_intent(
     )
 
 
-async def _async_acknowledge_fence(
-    hass: HomeAssistant,
-    request: _FenceRequest,
-) -> bool:
-    """Commit one current-generation fence with a locked live preflight."""
-    from .allocator.registry_safety_models import PendingSlotFence
-    from .allocator.registry_snapshot import SnapshotCommitHooks
-    from .allocator.registry_snapshot import async_commit_registry_snapshot
-    from .allocator.registry_snapshot import serialize_exclusion_snapshots
+async def async_refence_observed_legacy_owners(
+    hass: HomeAssistant, observation: CycleObservation
+) -> None:
+    """Re-fence matching legacy owners before a cycle may release ownership.
+
+    An intact v1 ledger can contain a lock-backed owner without the v2
+    allocation fence. Re-fencing is allowed only after the current selected
+    Keymaster lifecycle observes that exact ledger code in that owner's slot,
+    and either immutable safety history or a scoped legacy attestation binds
+    the owner to the selected Keymaster entry. This writes no hardware state.
+    """
+    if observation.lockname is None or observation.keymaster_entry_id is None:
+        return
+    inputs = _authorization_inputs(hass, observation.entry_id)
+    if (
+        inputs is None
+        or inputs.keymaster_entry.entry_id != observation.keymaster_entry_id
+        or inputs.lifecycle.generation != observation.keymaster_generation
+    ):
+        return
     from .allocator.singleton import get_allocator
 
-    domain_data = hass.data.get(DOMAIN)
     allocator = get_allocator(hass)
+    if allocator is None:
+        return
+    async with allocator._lock:
+        registry = copy.deepcopy(allocator._registry)
+    data = inputs.loaded.data
+    if not isinstance(data, dict):
+        return
+    selected_entry_id = inputs.keymaster_entry.entry_id
+    evidence = _refence_evidence(data, observation.entry_id, selected_entry_id)
+    if evidence is None:
+        return
+    records, attested_references, retained_references = evidence
+
+    for record, owner in _observed_allocation_owners(registry, observation):
+        slot = owner.slot
+        assert slot is not None
+        if owner.entry_id != observation.entry_id:
+            continue
+        if owner.lockname != observation.lockname or not owner.lock_observed:
+            continue
+        if slot not in observation.managed_slots:
+            continue
+        if observation.observed_codes.get(record.code) != slot:
+            continue
+        references = ledger_allocation_references(
+            data, observation.entry_id, owner.identity_key
+        )
+        if references is None:
+            continue
+        owner_reference, allocation_reference, persisted_slot = references
+        if persisted_slot != slot or owner_reference in retained_references:
+            continue
+        if _has_matching_allocation_fence(
+            records,
+            selected_entry_id,
+            observation.entry_id,
+            slot,
+            owner_reference,
+            allocation_reference,
+        ):
+            continue
+        if not _original_entry_authorizes_refence(
+            data,
+            observation.entry_id,
+            selected_entry_id,
+            owner_reference,
+            attested_references,
+        ):
+            continue
+        await async_prepare_verified_operation_intent(
+            hass,
+            observation.entry_id,
+            slot=slot,
+            owner_identity_key=owner.identity_key,
+            required_properties=tuple(
+                property_key.format(slot=slot)
+                for property_key in _REFENCE_REQUIRED_PROPERTIES
+            ),
+            fence_type="allocation",
+            allow_native_empty_text=True,
+        )
+
+
+def _refence_evidence(
+    data: dict[str, Any],
+    rc_entry_id: str,
+    selected_entry_id: str,
+) -> tuple[list[dict[str, Any]], set[str], set[str]] | None:
+    """Return validated fence, attestation, and hold evidence for re-fencing."""
+    records = data.get("pending_fences")
+    holds = data.get("holds")
+    attestations = data.get("attestations")
     if (
-        not isinstance(domain_data, dict)
-        or allocator is None
-        or not request.initial.store.uses_async_lock(allocator._lock)
+        not isinstance(records, list)
+        or not isinstance(holds, list)
+        or not isinstance(attestations, list)
     ):
-        return False
-    exclusion_generation, exclusions = _current_exclusion_snapshot(
-        hass, serialize_exclusion_snapshots
-    )
-
-    def safety_transition(
-        _candidate: Any,
-        data: dict[str, Any],
-        transaction_id: str,
-        generation: int,
-    ) -> None:
-        """Append only a fence whose serialized owner matches the request."""
-        target_references = ledger_allocation_references(
-            data, request.rc_entry_id, request.owner_identity_key
-        )
-        if target_references != (
-            request.owner_reference,
-            request.allocation_reference,
-            request.slot,
-        ):
-            raise ValueError("owner_changed")
-        records = data.get("pending_fences")
-        if not isinstance(records, list) or not all(
-            validate_pending_fence(record) for record in records
-        ):
-            raise ValueError("invalid_fences")
-        same_slot_clear = any(
-            record["original_km_entry_id"] == request.initial.keymaster_entry.entry_id
-            and record["slot"] == request.slot
-            and record["fence_type"] == "pending_clear"
-            for record in records
-        )
-        if request.fence_type == "allocation" and same_slot_clear:
-            raise ValueError("pending_clear")
-        if request.fence_type == "pending_clear" and any(
-            record["original_km_entry_id"] == request.initial.keymaster_entry.entry_id
-            and record["slot"] == request.slot
-            and record["fence_type"] == "pending_clear"
-            and (
-                record["rc_entry_id"] != request.rc_entry_id
-                or record["owner_ref"] != request.owner_reference
-                or record["allocation_ref"] != request.allocation_reference
-            )
-            for record in records
-        ):
-            raise ValueError("ambiguous_pending_clear")
-        records.append(
-            PendingSlotFence(
-                fence_id=secrets.token_hex(16),
-                original_km_entry_id=request.initial.keymaster_entry.entry_id,
-                slot=request.slot,
-                rc_entry_id=request.rc_entry_id,
-                owner_ref=request.owner_reference,
-                allocation_ref=request.allocation_reference,
-                created_transaction_id=transaction_id,
-                created_generation=generation,
-                fence_type=request.fence_type,
-            ).to_record()
-        )
-
-    def event_loop_preflight() -> ProtectionLoadResult | None:
-        """Revalidate selected identity and store token before any file I/O."""
-        current = _authorization_inputs(hass, request.rc_entry_id)
-        if (
-            current is None
-            or current.lifecycle is not request.initial.lifecycle
-            or current.lifecycle.generation != request.initial.lifecycle.generation
-            or current.keymaster_entry.entry_id
-            != request.initial.keymaster_entry.entry_id
-            or current.association != request.initial.association
-            or current.token != request.initial.token
-            or ledger_allocation_references(
-                current.loaded.data, request.rc_entry_id, request.owner_identity_key
-            )
-            != (
-                request.owner_reference,
-                request.allocation_reference,
-                request.slot,
-            )
-            or _resolve_required_capabilities(
-                hass,
-                current,
-                request.slot,
-                request.required_properties,
-                allow_native_empty_text=request.allow_native_empty_text,
-            )
-            is None
-        ):
-            return ProtectionLoadResult(
-                ProtectionLoadState.UNAVAILABLE,
-                failure_code="operation_not_current",
-            )
         return None
+    attested: set[str] = set()
+    for raw in attestations:
+        attestation = AssociationAttestation.from_record(raw)
+        if (
+            attestation is not None
+            and attestation.rc_entry_id == rc_entry_id
+            and attestation.selected_keymaster_entry_id == selected_entry_id
+        ):
+            attested.update(attestation.legacy_reference_ids)
+    retained: set[str] = set()
+    for raw in holds:
+        hold = AssociationRebindHold.from_record(raw)
+        if hold is not None and hold.rc_entry_id == rc_entry_id:
+            retained.update(hold.claim_references)
+    return records, attested, retained
 
-    result = await async_commit_registry_snapshot(
-        allocator,
-        request.initial.store,
-        lambda _registry: None,
-        exclusions,
-        lambda: _current_exclusion_snapshot(hass, serialize_exclusion_snapshots),
-        hooks=SnapshotCommitHooks(
-            safety_transition=safety_transition,
-            event_loop_preflight=event_loop_preflight,
-        ),
+
+def _observed_allocation_owners(
+    registry: Any, observation: CycleObservation
+) -> list[tuple[Any, Any]]:
+    """Select owners whose exact code is observed in their claimed slot."""
+    return [
+        (record, owner)
+        for record in registry.records.values()
+        for owner in record.owners
+        if owner.slot is not None
+        and owner.slot in observation.managed_slots
+        and observation.observed_codes.get(record.code) == owner.slot
+    ]
+
+
+def _has_matching_allocation_fence(
+    fences: list[dict[str, Any]],
+    selected_entry_id: str,
+    rc_entry_id: str,
+    slot: int,
+    owner_reference: str,
+    allocation_reference: str,
+) -> bool:
+    """Return whether the exact owner already has its original allocation fence."""
+    return any(
+        validate_pending_fence(fence)
+        and fence["original_km_entry_id"] == selected_entry_id
+        and fence["slot"] == slot
+        and fence["rc_entry_id"] == rc_entry_id
+        and fence["owner_ref"] == owner_reference
+        and fence["allocation_ref"] == allocation_reference
+        and fence["fence_type"] == "allocation"
+        for fence in fences
     )
-    return result.state is ProtectionLoadState.VALID_V2
 
 
-def _current_exclusion_snapshot(
-    hass: HomeAssistant,
-    serialize: Any,
-) -> tuple[int, list[dict[str, Any]]]:
-    """Capture complete exclusions and a stable digest on the HA event loop."""
-    entries = hass.config_entries.async_entries(DOMAIN)
-    exclusions = serialize(entries)
-    encoded = json.dumps(
-        exclusions,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    generation = int.from_bytes(hashlib.sha256(encoded).digest()[:8], "big")
-    return generation, exclusions
+def _original_entry_authorizes_refence(
+    data: dict[str, Any],
+    rc_entry_id: str,
+    selected_entry_id: str,
+    owner_reference: str,
+    attested_references: set[str],
+) -> bool:
+    """Never use an attestation to override known original-entry evidence."""
+    evidence = original_keymaster_entry_evidence(
+        data,
+        rc_entry_id,
+        (owner_reference,),
+        require_complete_snapshot=False,
+    )
+    if evidence.state is OriginalEntryEvidenceState.UNIQUE:
+        return evidence.keymaster_entry_id == selected_entry_id
+    return (
+        evidence.state is OriginalEntryEvidenceState.ABSENT
+        and owner_reference in attested_references
+    )
 
 
 def verified_lifecycle_active(coordinator: Any) -> bool:
@@ -527,6 +414,15 @@ def verified_lifecycle_active(coordinator: Any) -> bool:
         and hass is not None
         and get_keymaster_lifecycle(hass, entry_id) is not None
     )
+
+
+def protected_registry_active(hass: Any) -> bool:
+    """Return whether the production protected registry is registered."""
+    data = getattr(hass, "data", None)
+    if not isinstance(data, dict):
+        return False
+    domain_data = data.get(DOMAIN)
+    return isinstance(domain_data, dict) and PROTECTED_REGISTRY_STORE in domain_data
 
 
 def persisted_owner_identity_for_slot(coordinator: Any, slot: int) -> str | None:
@@ -576,479 +472,3 @@ async def prepare_verified_intent(
         )
     except Exception:
         return None
-
-
-async def async_resolve_verified_clear_fence(
-    intent: VerifiedOperationIntent,
-) -> bool:
-    """Tombstone a confirmed pending-clear fence before local slot release."""
-    if intent.fence_type != "pending_clear" or not await intent.async_is_current(
-        allow_native_empty_text=True
-    ):
-        return False
-    from .allocator.registry_safety_models import resolve_fence_to_tombstone
-    from .allocator.registry_snapshot import SnapshotCommitHooks
-    from .allocator.registry_snapshot import async_commit_registry_snapshot
-    from .allocator.registry_snapshot import serialize_exclusion_snapshots
-    from .allocator.singleton import get_allocator
-
-    hass = intent.hass
-    inputs = _authorization_inputs(hass, intent.rc_entry_id)
-    allocator = get_allocator(hass)
-    if (
-        inputs is None
-        or allocator is None
-        or not inputs.store.uses_async_lock(allocator._lock)
-    ):
-        return False
-    _generation, exclusions = _current_exclusion_snapshot(
-        hass, serialize_exclusion_snapshots
-    )
-
-    def safety_transition(
-        _candidate: Any,
-        data: dict[str, Any],
-        transaction_id: str,
-        generation: int,
-    ) -> None:
-        """Resolve only this exact fence and retain its original identity."""
-        fences = data.get("pending_fences")
-        tombstones = data.get("tombstones")
-        if not isinstance(fences, list) or not isinstance(tombstones, list):
-            raise ValueError("invalid_safety_history")
-        matches = [
-            fence
-            for fence in fences
-            if validate_pending_fence(fence)
-            and fence["fence_id"] == intent.fence_id
-            and fence["fence_type"] == "pending_clear"
-            and fence["rc_entry_id"] == intent.rc_entry_id
-            and fence["original_km_entry_id"] == intent.keymaster_entry_id
-            and fence["slot"] == intent.slot
-            and fence["owner_ref"] == intent.owner_reference
-            and fence["allocation_ref"] == intent.allocation_reference
-        ]
-        if len(matches) != 1:
-            raise ValueError("clear_fence_changed")
-        fence = matches[0]
-        fences.remove(fence)
-        tombstones.append(
-            resolve_fence_to_tombstone(
-                fence,
-                tombstone_id=secrets.token_hex(16),
-                resolved_transaction_id=transaction_id,
-                resolved_generation=generation,
-                resolution_kind="clear_confirmed",
-                retained_at=datetime.now(UTC).isoformat(),
-            )
-        )
-
-    result = await async_commit_registry_snapshot(
-        allocator,
-        inputs.store,
-        lambda _registry: None,
-        exclusions,
-        lambda: _current_exclusion_snapshot(hass, serialize_exclusion_snapshots),
-        hooks=SnapshotCommitHooks(
-            safety_transition=safety_transition,
-            event_loop_preflight=lambda: (
-                None
-                if intent.is_current(allow_native_empty_text=True)
-                else ProtectionLoadResult(
-                    ProtectionLoadState.UNAVAILABLE,
-                    failure_code="operation_not_current",
-                )
-            ),
-        ),
-    )
-    return result.state is ProtectionLoadState.VALID_V2
-
-
-def _authorization_inputs(
-    hass: HomeAssistant, rc_entry_id: str
-) -> _AuthorizationInputs | None:
-    """Capture one selected association and current protected snapshot."""
-    if get_entry_data(hass, rc_entry_id) is None:
-        return None
-    lifecycle = get_keymaster_lifecycle(hass, rc_entry_id)
-    config_entry = hass.config_entries.async_get_entry(rc_entry_id)
-    domain_data = hass.data.get(DOMAIN)
-    if lifecycle is None or config_entry is None or not isinstance(domain_data, dict):
-        return None
-    store = domain_data.get(PROTECTED_REGISTRY_STORE)
-    if store is None or not _is_config_entry(config_entry):
-        return None
-    association = AssociationTuple.from_config(config_entry.data)
-    if (
-        association is None
-        or association.mode is not AssociationMode.VERIFIED
-        or association.verified_keymaster_entry_id != lifecycle.keymaster_entry_id
-        or association.association_generation < 1
-    ):
-        return None
-    try:
-        if store.authorization_state is not ProtectionAuthorizationState.READY:
-            return None
-        if store.association_for_entry(rc_entry_id) != association:
-            return None
-        loaded = store.loaded_result
-        if (
-            loaded is None
-            or loaded.state is not ProtectionLoadState.VALID_V2
-            or loaded.data is None
-            or loaded.transaction_id is None
-            or loaded.generation is None
-        ):
-            return None
-        token = ProtectionCommitToken(loaded.transaction_id, loaded.generation)
-        if not store.is_current_commit_token(token):
-            return None
-    except Exception:
-        return None
-    keymaster_entry = hass.config_entries.async_get_entry(
-        association.verified_keymaster_entry_id
-    )
-    if keymaster_entry is None or keymaster_entry.state is not ConfigEntryState.LOADED:
-        return None
-    physical_lock_entity_id = keymaster_entry.data.get(_PHYSICAL_LOCK_ENTITY_KEY)
-    if (
-        not isinstance(physical_lock_entity_id, str)
-        or not physical_lock_entity_id
-        or "." not in physical_lock_entity_id
-    ):
-        return None
-    return _AuthorizationInputs(
-        config_entry,
-        lifecycle,
-        store,
-        association,
-        loaded,
-        token,
-        keymaster_entry,
-        physical_lock_entity_id,
-    )
-
-
-def _native_empty_text_policy(
-    fence_type: str,
-    slot: int,
-    required_properties: tuple[str, ...],
-    requested: bool,
-) -> bool | None:
-    """Scope native-empty text to clear evidence or the exact verified set."""
-    if fence_type == "pending_clear":
-        return True
-    if not requested:
-        return False
-    expected_set_properties = {
-        property_key.format(slot=slot) for property_key in _SET_REQUIRED_PROPERTIES
-    }
-    if (
-        fence_type != "allocation"
-        or set(required_properties) != expected_set_properties
-    ):
-        return None
-    return True
-
-
-def _resolve_required_capabilities(
-    hass: HomeAssistant,
-    inputs: _AuthorizationInputs,
-    slot: int,
-    required_properties: tuple[str, ...],
-    *,
-    allow_native_empty_text: bool = False,
-) -> tuple[CapabilityResolution, ...] | None:
-    """Resolve and cross-check every same-slot live property."""
-    generation = inputs.lifecycle.generation
-    current = inputs.lifecycle.current
-    capabilities: list[CapabilityResolution] = []
-    for property_key in required_properties:
-        resolution = current.get(property_key)
-        identity = resolution.identity if resolution is not None else None
-        if (
-            resolution is None
-            or (
-                not resolution.ready
-                and not _native_empty_text_capability(
-                    resolution,
-                    slot=slot,
-                    keymaster_entry_id=inputs.keymaster_entry.entry_id,
-                    generation=generation,
-                    allow_native_empty_text=allow_native_empty_text,
-                )
-            )
-            or identity is None
-            or identity.slot != slot
-            or identity.keymaster_entry_id != inputs.keymaster_entry.entry_id
-            or identity.generation != generation
-            or resolution.entity_id is None
-        ):
-            return None
-        fresh = resolve_capability(
-            hass,
-            inputs.keymaster_entry.entry_id,
-            property_key,
-            generation=generation,
-        )
-        if (
-            not fresh.ready
-            and not _native_empty_text_capability(
-                fresh,
-                slot=slot,
-                keymaster_entry_id=inputs.keymaster_entry.entry_id,
-                generation=generation,
-                allow_native_empty_text=allow_native_empty_text,
-            )
-        ) or fresh.entity_id != resolution.entity_id:
-            return None
-        capabilities.append(fresh)
-    return tuple(capabilities)
-
-
-def _native_empty_text_capability(
-    resolution: CapabilityResolution,
-    *,
-    slot: int,
-    keymaster_entry_id: str,
-    generation: int,
-    allow_native_empty_text: bool,
-) -> bool:
-    """Permit live native ``None`` text only while preparing a clear fence."""
-    identity = resolution.identity
-    return bool(
-        allow_native_empty_text
-        and resolution.status is CapabilityStatus.UNKNOWN_STATE
-        and identity is not None
-        and identity.domain == "text"
-        and identity.property_key.rsplit(".", maxsplit=1)[-1] in {"name", "pin"}
-        and identity.slot == slot
-        and identity.keymaster_entry_id == keymaster_entry_id
-        and identity.generation == generation
-        and resolution.entity_id is not None
-    )
-
-
-def _matching_fence(
-    inputs: _AuthorizationInputs,
-    rc_entry_id: str,
-    slot: int,
-    owner_reference: str,
-    allocation_reference: str,
-    fence_type: str,
-) -> dict[str, Any] | None:
-    """Return one exact durable fence, refusing missing or duplicate matches."""
-    fences = inputs.loaded.data.get("pending_fences")
-    if not isinstance(fences, list):
-        return None
-    matches = [
-        fence
-        for fence in fences
-        if validate_pending_fence(fence)
-        and fence["fence_type"] == fence_type
-        and fence["rc_entry_id"] == rc_entry_id
-        and fence["original_km_entry_id"] == inputs.keymaster_entry.entry_id
-        and fence["slot"] == slot
-        and fence["owner_ref"] == owner_reference
-        and fence["allocation_ref"] == allocation_reference
-    ]
-    return matches[0] if len(matches) == 1 else None
-
-
-def _intent_is_current(
-    intent: VerifiedOperationIntent, *, allow_native_empty_text: bool = False
-) -> bool:
-    """Return whether the exact protected identity snapshot still holds."""
-    inputs = _current_intent_inputs(intent)
-    if inputs is None:
-        return False
-    return (
-        _current_store_snapshot_matches(intent, inputs)
-        and _current_selected_entry_matches(intent, inputs)
-        and _current_capabilities_match(
-            intent,
-            inputs.lifecycle,
-            allow_native_empty_text=allow_native_empty_text,
-        )
-        and _current_owner_fence_matches(intent, inputs.loaded.data)
-    )
-
-
-def _current_intent_inputs(
-    intent: VerifiedOperationIntent,
-) -> _CurrentIntentInputs | None:
-    """Validate current entry and association before inspecting the store."""
-    hass = intent.hass
-    entry_data = get_entry_data(hass, intent.rc_entry_id)
-    lifecycle = get_keymaster_lifecycle(hass, intent.rc_entry_id)
-    config_entry = hass.config_entries.async_get_entry(intent.rc_entry_id)
-    domain_data = hass.data.get(DOMAIN)
-    if (
-        entry_data is None
-        or lifecycle is None
-        or config_entry is None
-        or lifecycle.generation != intent.lifecycle_generation
-        or not isinstance(domain_data, dict)
-    ):
-        return None
-    if not _is_config_entry(config_entry):
-        return None
-    association = AssociationTuple.from_config(config_entry.data)
-    if (
-        association is None
-        or association.mode is not AssociationMode.VERIFIED
-        or association.verified_keymaster_entry_id != intent.keymaster_entry_id
-        or association.association_generation != intent.association_generation
-    ):
-        return None
-    store = domain_data.get(PROTECTED_REGISTRY_STORE)
-    if store is None:
-        return None
-    try:
-        loaded = store.loaded_result
-    except Exception:
-        return None
-    if (
-        loaded is None
-        or loaded.state is not ProtectionLoadState.VALID_V2
-        or loaded.data is None
-    ):
-        return None
-    keymaster_entry = hass.config_entries.async_get_entry(intent.keymaster_entry_id)
-    if keymaster_entry is None:
-        return None
-    return _CurrentIntentInputs(
-        lifecycle,
-        store,
-        association,
-        loaded,
-        keymaster_entry,
-    )
-
-
-def _current_store_snapshot_matches(
-    intent: VerifiedOperationIntent, inputs: _CurrentIntentInputs
-) -> bool:
-    """Require a settled READY snapshot retaining this exact association."""
-    try:
-        return (
-            inputs.store.authorization_state is ProtectionAuthorizationState.READY
-            and inputs.store.operation_snapshot_ready()
-            and inputs.store.association_for_entry(intent.rc_entry_id)
-            == inputs.association
-        )
-    except Exception:
-        return False
-
-
-def _current_selected_entry_matches(
-    intent: VerifiedOperationIntent, inputs: _CurrentIntentInputs
-) -> bool:
-    """Require the selected Keymaster entry and physical lock to remain live."""
-    keymaster_entry = inputs.keymaster_entry
-    if (
-        keymaster_entry.state is not ConfigEntryState.LOADED
-        or keymaster_entry.data.get(_PHYSICAL_LOCK_ENTITY_KEY)
-        != intent.physical_lock_entity_id
-    ):
-        return False
-    return True
-
-
-def _current_capabilities_match(
-    intent: VerifiedOperationIntent,
-    lifecycle: Any,
-    *,
-    allow_native_empty_text: bool,
-) -> bool:
-    """Require every same-slot address to remain freshly resolved."""
-    current = lifecycle.current
-    for previous in intent.capabilities:
-        identity = previous.identity
-        if identity is None or identity.generation != intent.lifecycle_generation:
-            return False
-        resolution = current.get(identity.property_key)
-        if (
-            resolution is None
-            or (
-                not resolution.ready
-                and not _native_empty_text_is_current(
-                    intent, resolution, allow_native_empty_text
-                )
-            )
-            or resolution.entity_id != previous.entity_id
-            or resolution.identity != identity
-        ):
-            return False
-        fresh = resolve_capability(
-            intent.hass,
-            intent.keymaster_entry_id,
-            identity.property_key,
-            generation=intent.lifecycle_generation,
-        )
-        if (
-            not fresh.ready
-            and not _native_empty_text_is_current(
-                intent, fresh, allow_native_empty_text
-            )
-        ) or fresh.entity_id != previous.entity_id:
-            return False
-    return True
-
-
-def _native_empty_text_is_current(
-    intent: VerifiedOperationIntent,
-    resolution: CapabilityResolution,
-    allow_native_empty_text: bool,
-) -> bool:
-    """Accept only exact live native-empty text for set or clear purposes."""
-    identity = resolution.identity
-    permitted_fence = (
-        intent.fence_type == "allocation" and intent.allow_native_empty_text
-    ) or (intent.fence_type == "pending_clear" and allow_native_empty_text)
-    return bool(
-        permitted_fence
-        and resolution.status is CapabilityStatus.UNKNOWN_STATE
-        and identity is not None
-        and identity.domain == "text"
-        and identity.property_key.rsplit(".", maxsplit=1)[-1] in {"name", "pin"}
-        and identity.slot == intent.slot
-        and identity.keymaster_entry_id == intent.keymaster_entry_id
-        and identity.generation == intent.lifecycle_generation
-    )
-
-
-def _current_owner_fence_matches(intent: VerifiedOperationIntent, data: Any) -> bool:
-    """Require the exact owner allocation and durable fence to remain present."""
-    owner_references = ledger_allocation_references(
-        data, intent.rc_entry_id, intent.owner_identity_key
-    )
-    if owner_references != (
-        intent.owner_reference,
-        intent.allocation_reference,
-        intent.slot,
-    ):
-        return False
-    fences = data.get("pending_fences")
-    if not isinstance(fences, list):
-        return False
-    return any(
-        validate_pending_fence(fence)
-        and fence["fence_id"] == intent.fence_id
-        and fence["fence_type"] == intent.fence_type
-        and fence["rc_entry_id"] == intent.rc_entry_id
-        and fence["original_km_entry_id"] == intent.keymaster_entry_id
-        and fence["slot"] == intent.slot
-        and fence["owner_ref"] == intent.owner_reference
-        and fence["allocation_ref"] == intent.allocation_reference
-        for fence in fences
-    )
-
-
-def _is_config_entry(value: object) -> bool:
-    """Recognize the narrow config-entry shape used by this internal guard."""
-    return (
-        value is not None
-        and isinstance(getattr(value, "entry_id", None), str)
-        and isinstance(getattr(value, "data", None), Mapping)
-    )

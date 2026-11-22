@@ -593,7 +593,7 @@ async def test_options_flow_init(hass: HomeAssistant) -> None:
     assert CONF_URL in schema_keys
     assert CONF_REFRESH_FREQUENCY in schema_keys
     assert CONF_MAX_EVENTS in schema_keys
-    assert CONF_ASSOCIATION_ENTRY_CHOICE not in schema_keys
+    assert CONF_ASSOCIATION_ENTRY_CHOICE in schema_keys
 
 
 async def test_options_flow_update(hass: HomeAssistant) -> None:
@@ -677,33 +677,6 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
                 CONF_VERIFY_SSL: True,
                 CONF_IGNORE_NON_RESERVED: True,
                 CONF_LOCK_ENTRY: "Front Door",
-                CONF_REFRESH_FREQUENCY: 30,  # Changed from 15
-                CONF_TIMEZONE: "America/Chicago",  # Changed from UTC
-                CONF_EVENT_PREFIX: "Vacation",  # Changed from empty
-                CONF_CHECKIN: DEFAULT_CHECKIN,
-                CONF_CHECKOUT: DEFAULT_CHECKOUT,
-                CONF_DAYS: DEFAULT_DAYS,
-                CONF_MAX_EVENTS: 10,  # Changed from 5
-                CONF_START_SLOT: DEFAULT_START_SLOT,
-                CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
-                CONF_CODE_GENERATION: "Start/End Date",
-                CONF_SHOULD_UPDATE_CODE: True,
-                CONF_ASSOCIATION_ENTRY_CHOICE: "crafted-unprotected-target",
-            },
-        )
-        assert result["type"] == FlowResultType.FORM
-        assert _errors(result) == {
-            CONF_ASSOCIATION_ENTRY_CHOICE: "association_unavailable"
-        }
-
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            user_input={
-                CONF_NAME: "Updated Rental",
-                CONF_URL: test_url,
-                CONF_VERIFY_SSL: True,
-                CONF_IGNORE_NON_RESERVED: True,
-                CONF_LOCK_ENTRY: "Front Door",
                 CONF_REFRESH_FREQUENCY: 30,
                 CONF_TIMEZONE: "America/Chicago",
                 CONF_EVENT_PREFIX: "Vacation",
@@ -715,10 +688,7 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
                 CONF_CODE_LENGTH: DEFAULT_CODE_LENGTH,
                 CONF_CODE_GENERATION: "Start/End Date",
                 CONF_SHOULD_UPDATE_CODE: True,
-                CONF_ASSOCIATION_MODE: "verified",
-                CONF_VERIFIED_KEYMASTER_ENTRY_ID: "crafted-km-entry",
-                CONF_ASSOCIATION_GENERATION: 999,
-                CONF_ASSOCIATION_TRANSACTION_ID: "e" * 32,
+                CONF_ASSOCIATION_ENTRY_CHOICE: "",
             },
         )
 
@@ -732,10 +702,10 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
     assert updated_entry.data[CONF_MAX_EVENTS] == 10
     assert updated_entry.data[CONF_LOCK_ENTRY] == "lock.front_door"
     assert CONF_EXCLUDED_SLOTS not in updated_entry.data
-    assert CONF_ASSOCIATION_MODE not in updated_entry.data
-    assert CONF_VERIFIED_KEYMASTER_ENTRY_ID not in updated_entry.data
-    assert CONF_ASSOCIATION_GENERATION not in updated_entry.data
-    assert CONF_ASSOCIATION_TRANSACTION_ID not in updated_entry.data
+    assert updated_entry.data[CONF_ASSOCIATION_MODE] == "legacy_unresolved"
+    assert updated_entry.data.get(CONF_VERIFIED_KEYMASTER_ENTRY_ID) is None
+    assert updated_entry.data[CONF_ASSOCIATION_GENERATION] >= 1
+    assert isinstance(updated_entry.data[CONF_ASSOCIATION_TRANSACTION_ID], str)
 
 
 async def test_config_flow_duplicate_detection(hass: HomeAssistant) -> None:

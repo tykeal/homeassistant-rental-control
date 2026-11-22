@@ -27,6 +27,7 @@ from custom_components.rental_control.const import CONF_ASSOCIATION_MODE
 from custom_components.rental_control.const import CONF_ASSOCIATION_TRANSACTION_ID
 from custom_components.rental_control.const import CONF_CODE_LENGTH
 from custom_components.rental_control.const import CONF_CREATION_DATETIME
+from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
 from custom_components.rental_control.const import CONF_GENERATE
 from custom_components.rental_control.const import CONF_HONOR_EVENT_TIMES
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
@@ -41,6 +42,9 @@ from custom_components.rental_control.const import DEFAULT_CODE_LENGTH
 from custom_components.rental_control.const import DEFAULT_GENERATE
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import UNSUB_LISTENERS
+from custom_components.rental_control.startup_readability import (
+    _STARTUP_READABILITY_WATCHER,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -127,7 +131,7 @@ async def test_healthy_startup_does_not_arm_watcher(
     hass: HomeAssistant,
     mock_aiohttp_session,
 ) -> None:
-    """Verify readable Keymaster slots only register normal listeners."""
+    """Unverified legacy selection does not subscribe to guessed slot IDs."""
     entry = _lock_config_entry("healthy_startup_entry")
     entry.add_to_hass(hass)
     _set_slot_readability_states(hass, STATE_UNKNOWN)
@@ -142,14 +146,14 @@ async def test_healthy_startup_does_not_arm_watcher(
     await hass.async_block_till_done()
 
     listeners = hass.data[DOMAIN][entry.entry_id][UNSUB_LISTENERS]
-    assert len(listeners) == 2
+    assert len(listeners) == 1
 
 
-async def test_startup_readability_watcher_unloads_cleanly(
+async def test_unverified_startup_does_not_arm_constructed_watcher(
     hass: HomeAssistant,
     mock_aiohttp_session,
 ) -> None:
-    """Verify the startup readability watcher is removed on unload."""
+    """Unavailable guessed IDs cannot arm a startup refresh watcher."""
     entry = _lock_config_entry("unreadable_startup_entry")
     entry.add_to_hass(hass)
     _set_slot_readability_states(hass, STATE_UNAVAILABLE)
@@ -164,7 +168,8 @@ async def test_startup_readability_watcher_unloads_cleanly(
     await hass.async_block_till_done()
 
     listeners = hass.data[DOMAIN][entry.entry_id][UNSUB_LISTENERS]
-    assert len(listeners) == 3
+    assert len(listeners) == 1
+    assert _STARTUP_READABILITY_WATCHER not in hass.data[DOMAIN][entry.entry_id]
     coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
     refresh_mock = AsyncMock()
     coordinator.async_refresh = refresh_mock
@@ -343,7 +348,14 @@ async def test_update_listener_present_data_updates_config_and_listeners(
 ) -> None:
     """Verify update_listener preserves loaded-entry update behavior."""
     mock_config_entry.add_to_hass(hass)
-    updated_options = dict(mock_config_entry.data)
+    persisted_exclusions = dict(mock_config_entry.data)
+    persisted_exclusions[CONF_EXCLUDED_SLOTS] = [{"slot": 11, "reason": "unreadable"}]
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data=persisted_exclusions,
+    )
+    updated_options = dict(persisted_exclusions)
+    updated_options.pop(CONF_EXCLUDED_SLOTS)
     updated_options[CONF_NAME] = "Updated Rental"
     updated_options["refresh_frequency"] = 12
     hass.config_entries.async_update_entry(
@@ -375,6 +387,7 @@ async def test_update_listener_present_data_updates_config_and_listeners(
         await update_listener(hass, mock_config_entry)
 
     assert mock_config_entry.data[CONF_NAME] == "Updated Rental"
+    assert CONF_EXCLUDED_SLOTS not in mock_config_entry.data
     assert mock_config_entry.data[CONF_CREATION_DATETIME] == coordinator.created
     assert mock_config_entry.options == {}
     coordinator.update_config.assert_awaited_once()

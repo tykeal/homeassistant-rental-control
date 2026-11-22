@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_registry import RegistryEntryDisabler
+import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.allocator.associations import AssociationMode
@@ -238,6 +239,87 @@ async def test_late_state_and_selected_entry_state_hooks(hass) -> None:
     await hass.async_block_till_done()
     assert lifecycle.current[_NAME].status is CapabilityStatus.READY
     assert len({generation for generation, _ in updates}) >= 4
+    lifecycle.stop()
+
+
+@pytest.mark.parametrize(
+    ("provider_state", "attributes", "expected_status"),
+    [
+        ("unavailable", {}, CapabilityStatus.UNAVAILABLE),
+        ("[redacted]", {}, CapabilityStatus.MASKED),
+        ("ready", {"restored": True}, CapabilityStatus.RESTORED),
+    ],
+)
+async def test_transient_provider_errors_revoke_and_restore_current_capability(
+    hass,
+    provider_state: str,
+    attributes: dict[str, Any],
+    expected_status: CapabilityStatus,
+) -> None:
+    """Unusable live updates revoke authorization until a fresh state recovers."""
+    entry = _entry(hass)
+    entity_id = _create_property(hass, entry, _NAME)
+    updates: list[tuple[int, dict[str, Any]]] = []
+    lifecycle = _lifecycle(hass, entry.entry_id, updates)
+    lifecycle.start()
+    await hass.async_block_till_done()
+    initial_generation = lifecycle.generation
+    assert lifecycle.current[_NAME].ready
+
+    unrelated = er.async_get(hass).async_get_or_create(
+        "sensor",
+        "keymaster",
+        "unrelated-provider-diagnostic",
+        suggested_object_id="unrelated_provider_diagnostic",
+        config_entry=entry,
+    )
+    hass.states.async_set(unrelated.entity_id, "ready")
+    await hass.async_block_till_done()
+    assert lifecycle.generation == initial_generation
+    assert lifecycle.current[_NAME].ready
+
+    hass.states.async_set(entity_id, provider_state, attributes)
+    await hass.async_block_till_done()
+
+    assert lifecycle.generation > initial_generation
+    assert lifecycle.current[_NAME].status is expected_status
+    assert not lifecycle.current[_NAME].ready
+
+    recovered_generation = lifecycle.generation
+    hass.states.async_set(entity_id, "ready")
+    await hass.async_block_till_done()
+
+    assert lifecycle.generation > recovered_generation
+    assert lifecycle.current[_NAME].status is CapabilityStatus.READY
+    assert lifecycle.current[_NAME].entity_id == entity_id
+    lifecycle.stop()
+
+
+async def test_native_empty_text_refreshes_without_rebinding_other_properties(
+    hass,
+) -> None:
+    """The provider's exact native empty text remains live and generation-stable."""
+    entry = _entry(hass)
+    entity_id = _create_property(hass, entry, _NAME)
+    updates: list[tuple[int, dict[str, Any]]] = []
+    lifecycle = _lifecycle(hass, entry.entry_id, updates)
+    lifecycle.start()
+    await hass.async_block_till_done()
+    initial_generation = lifecycle.generation
+
+    hass.states.async_set(entity_id, "unknown")
+    await hass.async_block_till_done()
+
+    assert lifecycle.generation == initial_generation
+    assert lifecycle.current[_NAME].status is CapabilityStatus.UNKNOWN_STATE
+    assert lifecycle.current[_NAME].entity_id == entity_id
+
+    hass.states.async_set(entity_id, "Guest")
+    await hass.async_block_till_done()
+
+    assert lifecycle.generation == initial_generation
+    assert lifecycle.current[_NAME].status is CapabilityStatus.READY
+    assert lifecycle.current[_NAME].entity_id == entity_id
     lifecycle.stop()
 
 

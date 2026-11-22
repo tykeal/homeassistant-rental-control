@@ -166,3 +166,62 @@ async def test_lifecycle_callback_rebinds_only_its_current_generation(
     await hass.async_block_till_done()
     start_listener.assert_awaited_once()
     arm_readability.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_verified_listener_unsubscribes_when_registry_address_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A registry rename during subscription cannot publish stale feedback."""
+    hass = MagicMock()
+    entry = MagicMock(entry_id="rc-entry", unique_id="public-id")
+    coordinator = SimpleNamespace(lockname=None)
+    entry_data = {COORDINATOR: coordinator, UNSUB_LISTENERS: []}
+    hass.data = {DOMAIN: {entry.entry_id: entry_data}}
+    lifecycle = SimpleNamespace(generation=7, request_refresh=MagicMock())
+    identity = build_capability_identity(
+        "km-entry", "text.code_slots:21.name", generation=7
+    )
+    lifecycle.current = {
+        "text.code_slots:21.name": CapabilityResolution(
+            identity, CapabilityStatus.READY, "text.original_name"
+        )
+    }
+    monkeypatch.setattr(
+        keymaster_feedback_listener,
+        "get_keymaster_lifecycle",
+        lambda *_args: lifecycle,
+    )
+    monkeypatch.setattr(
+        keymaster_feedback_listener.CapabilityRegistryIndex,
+        "build",
+        lambda _hass: object(),
+    )
+    monkeypatch.setattr(
+        keymaster_feedback_listener,
+        "resolve_capability_identity",
+        lambda *_args, **_kwargs: CapabilityResolution(
+            identity,
+            CapabilityStatus.READY,
+            "text.renamed_name",
+        ),
+    )
+    unsubscribe_calls: list[bool] = []
+    monkeypatch.setattr(
+        keymaster_feedback_listener,
+        "async_track_state_change_event",
+        lambda *_args: lambda: unsubscribe_calls.append(True),
+    )
+
+    await keymaster_feedback_listener.async_start_listener(
+        hass,
+        entry,
+        expected_coordinator=coordinator,
+        expected_lifecycle=lifecycle,
+        expected_generation=7,
+    )
+
+    assert unsubscribe_calls == [True]
+    assert entry_data[UNSUB_LISTENERS] == []
+    assert "keymaster_state_listener_unsub" not in entry_data
+    lifecycle.request_refresh.assert_called_once_with()

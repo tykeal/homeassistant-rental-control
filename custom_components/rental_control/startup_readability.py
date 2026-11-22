@@ -24,6 +24,7 @@ from .const import COORDINATOR
 from .const import DOMAIN
 from .const import UNSUB_LISTENERS
 from .keymaster_lifecycle import get_keymaster_lifecycle
+from .keymaster_operations import protected_registry_active
 from .util import get_entry_data
 
 if TYPE_CHECKING:
@@ -67,6 +68,8 @@ def _managed_slot_readability_entity_ids(
                     return []
                 verified_entities.append(resolution.entity_id)
         return verified_entities
+    if protected_registry_active(coordinator.hass):
+        return []
     if not coordinator.lockname:
         return []
 

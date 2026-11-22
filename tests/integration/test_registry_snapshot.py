@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Verify dormant staged allocator snapshots commit before publication."""
+"""Verify staged allocator snapshots commit before publication."""
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 import copy
 import json
 from pathlib import Path
@@ -19,6 +20,9 @@ from custom_components.rental_control.allocator import registry_commit
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.association_commit import (
     add_association_transaction_to_envelope,
+)
+from custom_components.rental_control.allocator.association_references import (
+    ledger_allocation_references,
 )
 from custom_components.rental_control.allocator.association_references import (
     ledger_owner_reference,
@@ -50,6 +54,12 @@ from custom_components.rental_control.allocator.registry_safety_models import (
     resolve_fence_to_tombstone,
 )
 from custom_components.rental_control.allocator.registry_safety_transitions import (
+    authorize_snapshot_owner_transition,
+)
+from custom_components.rental_control.allocator.registry_safety_transitions import (
+    snapshot_requires_owner_authorization,
+)
+from custom_components.rental_control.allocator.registry_safety_transitions import (
     validate_snapshot_transition,
 )
 from custom_components.rental_control.allocator.registry_snapshot import (
@@ -61,11 +71,22 @@ from custom_components.rental_control.allocator.registry_snapshot import (
 from custom_components.rental_control.allocator.registry_snapshot import (
     serialize_exclusion_snapshots,
 )
+from custom_components.rental_control.allocator.registry_snapshot_owner_transitions import (
+    OwnerTransitionLock,
+)
+from custom_components.rental_control.allocator.registry_snapshot_owner_transitions import (
+    owner_transition_slots,
+)
 from custom_components.rental_control.allocator.release_guard import (
     release_guard_reason,
 )
+from custom_components.rental_control.allocator.store import code_ref_for
 from custom_components.rental_control.allocator.store import serialize_registry_ledger
 from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
+from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.keymaster_slot_operations import (
+    async_keymaster_slot_operation,
+)
 
 _BASE_TX = "a" * 32
 
@@ -125,6 +146,73 @@ def _snapshot_provider(exclusions: list[dict[str, Any]], generation: int = 1):
         return generation, copy.deepcopy(snapshot)
 
     return current_snapshot
+
+
+def test_exclusion_snapshot_serializer_requires_unique_bounded_slot_records() -> None:
+    """Every selected entry contributes one canonical, sorted exclusion snapshot."""
+    entries = [
+        SimpleNamespace(
+            entry_id="rc-b",
+            data={
+                CONF_EXCLUDED_SLOTS: [
+                    {"slot": 12},
+                    {"slot": 10, "reason": "hold"},
+                ]
+            },
+        ),
+        SimpleNamespace(
+            entry_id="rc-a",
+            data={CONF_EXCLUDED_SLOTS: [{"slot": 3, "reason": None}]},
+        ),
+        SimpleNamespace(entry_id="rc-empty", data={CONF_EXCLUDED_SLOTS: []}),
+    ]
+    assert serialize_exclusion_snapshots(entries) == [
+        {"rc_entry_id": "rc-a", "slots": [{"slot": 3, "reason": None}]},
+        {
+            "rc_entry_id": "rc-b",
+            "slots": [
+                {"slot": 10, "reason": "hold"},
+                {"slot": 12, "reason": None},
+            ],
+        },
+    ]
+
+    malformed_entries = (
+        [SimpleNamespace(entry_id="", data={})],
+        [SimpleNamespace(entry_id="rc", data=None)],
+        [SimpleNamespace(entry_id="rc", data={CONF_EXCLUDED_SLOTS: None})],
+        [
+            SimpleNamespace(entry_id="rc", data={}),
+            SimpleNamespace(entry_id="rc", data={}),
+        ],
+        [
+            SimpleNamespace(
+                entry_id="rc",
+                data={CONF_EXCLUDED_SLOTS: [{"slot": True}]},
+            )
+        ],
+        [
+            SimpleNamespace(
+                entry_id="rc",
+                data={CONF_EXCLUDED_SLOTS: [{"slot": 1}, {"slot": 1}]},
+            )
+        ],
+        [
+            SimpleNamespace(
+                entry_id="rc",
+                data={CONF_EXCLUDED_SLOTS: [{"slot": 1, "reason": 2}]},
+            )
+        ],
+        [
+            SimpleNamespace(
+                entry_id="rc",
+                data={CONF_EXCLUDED_SLOTS: [{"slot": 1, "unknown": "ignored"}]},
+            )
+        ],
+    )
+    for malformed in malformed_entries:
+        with pytest.raises(ValueError):
+            serialize_exclusion_snapshots(malformed)
 
 
 async def _ready_store(
@@ -849,6 +937,351 @@ async def test_transition_allows_exclusions_but_rejects_unproven_owner_loss(
     assert store.loaded_result.data["exclusions"] == []
 
 
+@pytest.mark.parametrize(
+    ("failure", "failure_code"),
+    (
+        ("lock_mismatch", "allocator_lock_mismatch"),
+        ("invalid_exclusions", "snapshot_invalid"),
+        ("provider_raises", "snapshot_exclusions_changed"),
+        ("mutation_raises", "snapshot_precondition_failed"),
+        ("event_loop_preflight_raises", "snapshot_precondition_failed"),
+    ),
+)
+async def test_snapshot_preconditions_fail_closed_without_publishing(
+    hass,
+    tmp_path: Path,
+    failure: str,
+    failure_code: str,
+) -> None:
+    """Broken snapshot inputs and callback failures leave the baseline intact."""
+    store, lock = await _ready_store(hass, tmp_path / ".storage")
+    allocator = SimpleNamespace(
+        hass=hass,
+        _lock=lock,
+        _registry=AllocationRegistry(code_ref_salt="persisted-code-reference-salt"),
+    )
+    baseline = copy.deepcopy(allocator._registry)
+    original = store.loaded_result
+    assert original is not None
+    current_snapshot = _snapshot_provider([])
+    exclusions: list[dict[str, Any]] = []
+    hooks = SnapshotCommitHooks()
+
+    def no_mutation(_candidate: AllocationRegistry) -> None:
+        """Leave the staged registry unchanged."""
+
+    mutate_callback: Callable[[AllocationRegistry], None] = no_mutation
+    commit_store = store
+
+    if failure == "lock_mismatch":
+        commit_store = ProtectedRegistryStore(
+            hass,
+            asyncio.Lock(),
+            storage_dir=tmp_path / ".storage",
+        )
+    elif failure == "invalid_exclusions":
+        exclusions = [{}]
+    elif failure == "provider_raises":
+
+        def current_snapshot() -> tuple[int, list[dict[str, Any]]]:
+            """Model an unavailable exclusion provider."""
+            raise RuntimeError("private exclusion provider details")
+    elif failure == "mutation_raises":
+
+        def fail_mutation(_candidate: AllocationRegistry) -> None:
+            """Model an exception before a staged owner can be committed."""
+            raise RuntimeError("private mutation failure")
+
+        mutate_callback = fail_mutation
+    elif failure == "event_loop_preflight_raises":
+        hooks = SnapshotCommitHooks(
+            event_loop_preflight=lambda: (_ for _ in ()).throw(
+                RuntimeError("private event-loop evidence")
+            )
+        )
+
+    result = await async_commit_registry_snapshot(
+        allocator,
+        commit_store,
+        mutate_callback,
+        exclusions,
+        current_snapshot,
+        hooks=hooks,
+    )
+
+    assert result.state is ProtectionLoadState.UNAVAILABLE
+    assert result.failure_code == failure_code
+    assert allocator._registry == baseline
+    assert store.loaded_result is original
+
+
+async def test_exclusion_change_after_staging_prevents_snapshot_commit(
+    hass,
+    tmp_path: Path,
+) -> None:
+    """A changed config epoch between staging and commit is not published."""
+    store, lock = await _ready_store(hass, tmp_path / ".storage")
+    allocator = SimpleNamespace(
+        hass=hass,
+        _lock=lock,
+        _registry=AllocationRegistry(code_ref_salt="persisted-code-reference-salt"),
+    )
+    original = store.loaded_result
+    assert original is not None
+    calls = 0
+
+    def current_snapshot() -> tuple[int, list[dict[str, Any]]]:
+        """Change the config generation after initial staging."""
+        nonlocal calls
+        calls += 1
+        return (1 if calls < 3 else 2), []
+
+    result = await async_commit_registry_snapshot(
+        allocator,
+        store,
+        lambda _candidate: None,
+        [],
+        current_snapshot,
+    )
+
+    assert calls == 3
+    assert result.state is ProtectionLoadState.UNAVAILABLE
+    assert result.failure_code == "snapshot_exclusions_changed"
+    assert allocator._registry.code_ref_salt == "persisted-code-reference-salt"
+    assert store.loaded_result is original
+
+
+def test_snapshot_owner_guard_fails_closed_for_malformed_and_raised_callbacks() -> None:
+    """Malformed owner indexes and exceptions cannot bypass release authorization."""
+    empty: dict[str, Any] = {"ledger": {"records": []}}
+    malformed = {"ledger": {"records": [{"owners": [None]}]}}
+
+    assert snapshot_requires_owner_authorization(None, empty) is False
+    assert not snapshot_requires_owner_authorization(empty, empty)
+    assert snapshot_requires_owner_authorization(malformed, empty)
+    assert authorize_snapshot_owner_transition(None, empty, None)
+    assert authorize_snapshot_owner_transition(empty, empty, None)
+    assert not authorize_snapshot_owner_transition(malformed, empty, None)
+    assert authorize_snapshot_owner_transition(malformed, empty, lambda: True)
+    assert not authorize_snapshot_owner_transition(
+        malformed,
+        empty,
+        lambda: (_ for _ in ()).throw(RuntimeError("private guard error")),
+    )
+
+
+async def test_snapshot_transition_rejects_changed_code_salt_and_owner_provenance(
+    hass,
+    tmp_path: Path,
+) -> None:
+    """Neither ledger salt nor immutable owner provenance may change in place."""
+    storage = tmp_path / ".storage"
+    store, lock = await _ready_store(hass, storage)
+    allocator = SimpleNamespace(
+        _lock=lock,
+        _registry=AllocationRegistry(code_ref_salt="persisted-code-reference-salt"),
+    )
+    owner = _owner("rc-a", "booking-provenance", slot=4)
+
+    def add_owner(candidate: AllocationRegistry) -> None:
+        """Stage a new owner whose authorization is deliberately refused."""
+        candidate.records["4729"] = AllocationRecord(
+            code="4729",
+            code_ref="opaque-code-ref",
+            encoding_salt_value="rc-a",
+            owners=[copy.deepcopy(owner)],
+            created_at="2026-11-21T00:00:00+00:00",
+            updated_at="2026-11-21T00:00:00+00:00",
+        )
+
+    committed = await async_commit_registry_snapshot(
+        allocator,
+        store,
+        add_owner,
+        [],
+        current_exclusion_snapshot=_snapshot_provider([]),
+    )
+    assert committed.state is ProtectionLoadState.VALID_V2
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    prior = loaded.data
+
+    changed_salt = copy.deepcopy(prior)
+    changed_salt["ledger"]["code_ref_salt"] = "different-persisted-salt"
+    assert not validate_snapshot_transition(prior, changed_salt)
+
+    changed_origin = copy.deepcopy(prior)
+    changed_origin["ledger"]["records"][0]["owners"][0]["origin"] = (
+        AllocationOrigin.PREFERRED.value
+    )
+    assert not validate_snapshot_transition(prior, changed_origin)
+
+    changed_first_seen = copy.deepcopy(prior)
+    changed_first_seen["ledger"]["records"][0]["owners"][0]["first_seen"] = (
+        "2026-11-22T00:00:00+00:00"
+    )
+    assert not validate_snapshot_transition(prior, changed_first_seen)
+
+
+async def test_slot_held_consumer_and_sweep_transition_do_not_deadlock(
+    hass,
+    tmp_path: Path,
+) -> None:
+    """A contended sweep rejects quickly; slot-held commit and fresh retry proceed."""
+    storage = tmp_path / ".storage"
+    store, lock = await _ready_store(hass, storage)
+    allocator = SimpleNamespace(
+        hass=hass,
+        _lock=lock,
+        _mutation_lock=asyncio.Lock(),
+        _registry=AllocationRegistry(code_ref_salt="persisted-code-reference-salt"),
+    )
+    owner = _owner("rc-a", "booking-release", slot=10)
+    owner_record = AllocationRecord(
+        code="4729",
+        code_ref=code_ref_for("4729", allocator._registry.code_ref_salt),
+        encoding_salt_value=owner.entry_id,
+        code_length=4,
+        owners=[owner],
+        created_at="2026-11-21T00:00:00+00:00",
+        updated_at="2026-11-21T00:00:00+00:00",
+    )
+    pending: dict[int, int] = {}
+    hass.data.setdefault(DOMAIN, {})["rc-a"] = {
+        "coordinator": SimpleNamespace(
+            event_overrides=SimpleNamespace(_slot_operations_pending=pending)
+        )
+    }
+
+    def add_owner_and_fence(
+        candidate: AllocationRegistry,
+        data: dict[str, Any],
+        transaction_id: str,
+        generation: int,
+    ) -> None:
+        """Stage one exact owner and its original Keymaster slot fence."""
+        candidate.records[owner_record.code] = copy.deepcopy(owner_record)
+        references = ledger_allocation_references(
+            data, owner.entry_id, owner.identity_key
+        )
+        assert references is not None
+        data["pending_fences"].append(
+            PendingSlotFence(
+                fence_id="1" * 32,
+                original_km_entry_id="km-a",
+                slot=10,
+                rc_entry_id=owner.entry_id,
+                owner_ref=references[0],
+                allocation_ref=references[1],
+                created_transaction_id=transaction_id,
+                created_generation=generation,
+                fence_type="allocation",
+            ).to_record()
+        )
+
+    initial = await async_commit_registry_snapshot(
+        allocator,
+        store,
+        lambda candidate: candidate.records.update(
+            {owner_record.code: copy.deepcopy(owner_record)}
+        ),
+        [],
+        current_exclusion_snapshot=_snapshot_provider([]),
+        hooks=SnapshotCommitHooks(safety_transition=add_owner_and_fence),
+    )
+    assert initial.state is ProtectionLoadState.VALID_V2
+
+    slot_held = asyncio.Event()
+    allow_slot_commit = asyncio.Event()
+    apply_results: list[ProtectionLoadResult] = []
+
+    async def slot_held_consumer() -> None:
+        """Model a verified apply pipeline through its protected commit."""
+        async with async_keymaster_slot_operation(hass, "km-a", 10):
+            slot_held.set()
+            await allow_slot_commit.wait()
+
+            def add_lockless_owner(candidate: AllocationRegistry) -> None:
+                """Commit unrelated state while the consumer owns its slot."""
+                lockless = AllocationOwner(
+                    entry_id="rc-lockless",
+                    identity_key="lockless-booking",
+                    origin=AllocationOrigin.PREFERRED,
+                    lockname=None,
+                    slot=None,
+                    lock_observed=False,
+                    first_seen="2026-11-21T00:00:00+00:00",
+                    last_seen="2026-11-21T00:00:00+00:00",
+                )
+                candidate.records["6731"] = AllocationRecord(
+                    code="6731",
+                    code_ref=code_ref_for("6731", allocator._registry.code_ref_salt),
+                    encoding_salt_value="rc-lockless",
+                    code_length=4,
+                    owners=[lockless],
+                    created_at="2026-11-21T00:00:00+00:00",
+                    updated_at="2026-11-21T00:00:00+00:00",
+                )
+
+            apply_results.append(
+                await async_commit_registry_snapshot(
+                    allocator,
+                    store,
+                    add_lockless_owner,
+                    [],
+                    current_exclusion_snapshot=_snapshot_provider([]),
+                )
+            )
+
+    apply_task = asyncio.create_task(slot_held_consumer())
+    await asyncio.wait_for(slot_held.wait(), timeout=1)
+
+    def remove_protected_owner(candidate: AllocationRegistry) -> None:
+        """Stage the sweep's attempted owner release."""
+        candidate.records.pop(owner_record.code)
+
+    sweep_result = await asyncio.wait_for(
+        async_commit_registry_snapshot(
+            allocator,
+            store,
+            remove_protected_owner,
+            [],
+            current_exclusion_snapshot=_snapshot_provider([]),
+            hooks=SnapshotCommitHooks(
+                authorize_owner_transition=lambda _before, _after: True
+            ),
+        ),
+        timeout=1,
+    )
+    assert sweep_result.state is ProtectionLoadState.UNAVAILABLE
+    assert sweep_result.failure_code == "slot_operation_busy"
+    assert pending == {}
+    assert allocator._registry.records[owner_record.code].owners == [owner]
+
+    allow_slot_commit.set()
+    await asyncio.wait_for(apply_task, timeout=1)
+    assert len(apply_results) == 1
+    assert apply_results[0].state is ProtectionLoadState.VALID_V2
+    assert "6731" in allocator._registry.records
+
+    retried = await asyncio.wait_for(
+        async_commit_registry_snapshot(
+            allocator,
+            store,
+            remove_protected_owner,
+            [],
+            current_exclusion_snapshot=_snapshot_provider([]),
+            hooks=SnapshotCommitHooks(
+                authorize_owner_transition=lambda _before, _after: True
+            ),
+        ),
+        timeout=1,
+    )
+    assert retried.state is ProtectionLoadState.VALID_V2
+    assert "4729" not in allocator._registry.records
+    assert "6731" in allocator._registry.records
+
+
 async def test_guarded_slot_move_and_release_require_current_tombstones(
     hass,
     tmp_path: Path,
@@ -1046,6 +1479,42 @@ async def test_guarded_slot_move_and_release_require_current_tombstones(
     assert allocator._registry.record_for_identity(owner.identity_key) is not None
     moved_result = store.loaded_result
     assert moved_result is not None and moved_result.data is not None
+    transition_locks = owner_transition_slots(
+        SimpleNamespace(hass=hass),
+        original.data,
+        moved_result.data,
+    )
+    assert transition_locks == [
+        OwnerTransitionLock("rc-a", 4, "km-a"),
+        OwnerTransitionLock("rc-a", 5, "km-a"),
+    ]
+    hass.data[DOMAIN] = {
+        "rc-a": {
+            "coordinator": SimpleNamespace(
+                event_overrides=SimpleNamespace(_slot_operations_pending=[])
+            )
+        }
+    }
+    unavailable_locks = owner_transition_slots(
+        SimpleNamespace(hass=hass),
+        original.data,
+        moved_result.data,
+    )
+    assert isinstance(unavailable_locks, ProtectionLoadResult)
+    assert unavailable_locks.failure_code == "operation_failed"
+    hass.data.pop(DOMAIN)
+    unfenced_move = copy.deepcopy(moved_result.data)
+    unfenced_move["pending_fences"] = []
+    assert original.data is not None
+    assert not validate_snapshot_transition(original.data, unfenced_move)
+
+    changed_replacement_provenance = copy.deepcopy(moved_result.data)
+    moved_ledger = changed_replacement_provenance["ledger"]
+    assert isinstance(moved_ledger, dict)
+    moved_ledger["records"][0]["owners"][0]["first_seen"] = "2026-11-22T00:00:00+00:00"
+    assert not validate_snapshot_transition(
+        original.data, changed_replacement_provenance
+    )
     prior_fence = moved_result.data["pending_fences"][0]
 
     def release_owner(candidate: AllocationRegistry) -> None:

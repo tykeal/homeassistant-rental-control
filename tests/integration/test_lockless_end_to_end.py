@@ -13,6 +13,7 @@ allocator that withholds a code is visible (issue #849).
 from __future__ import annotations
 
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,7 @@ import homeassistant.util.dt as dt_util
 import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
+from custom_components.rental_control.allocator import registry_commit
 from custom_components.rental_control.allocator.registry import AllocationRegistry
 from custom_components.rental_control.allocator.singleton import get_allocator
 from custom_components.rental_control.codegen import generate_date_based_code
@@ -30,6 +32,7 @@ from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_OUT
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 
 from tests.integration.helpers import FROZEN_START_OF_DAY
 from tests.integration.helpers import FROZEN_TIME
@@ -168,6 +171,44 @@ async def test_no_lock_entry_publishes_its_date_based_code(
     assert _event_sensor_code(hass, entry) == _expected_code()
 
 
+async def test_no_lock_calendar_remains_available_under_protective_unknown(
+    hass: HomeAssistant,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Protected-store failure withholds access, not calendar-only tracking."""
+    monkeypatch.setattr(
+        hass.config,
+        "path",
+        lambda *parts: str(tmp_path.joinpath(*parts)),
+    )
+    Path(hass.config.path(".storage")).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        registry_commit,
+        "_atomic_write_acknowledged",
+        lambda _path, _data, _maximum: False,
+    )
+    entry = _entry("lockless_protective_unknown")
+
+    await _setup(hass, entry)
+
+    allocator = get_allocator(hass)
+    assert allocator is not None
+    store = hass.data[DOMAIN][PROTECTED_REGISTRY_STORE]
+    assert store.authorization_state.value == "protective_unknown"
+    coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+    assert coordinator.last_update_success is True
+    assert coordinator.lockname is None
+    assert coordinator._latest_res_by_key
+    assert _event_sensor_code(hass, entry) is None
+
+    await _refresh(hass, entry)
+
+    assert coordinator._latest_res_by_key
+    assert _event_sensor_code(hass, entry) is None
+    assert coordinator.last_update_success is True
+
+
 async def test_no_lock_entry_keeps_its_code_across_refreshes(
     hass: HomeAssistant,
 ) -> None:
@@ -182,14 +223,14 @@ async def test_no_lock_entry_keeps_its_code_across_refreshes(
     assert _event_sensor_code(hass, entry) == first
 
 
-async def test_no_lock_entry_republishes_after_registry_loss(
+async def test_no_lock_entry_withholds_code_when_protected_snapshot_is_lost(
     hass: HomeAssistant,
 ) -> None:
-    """Losing the shared registry does not blank a no-lock entry's codes.
+    """A missing in-memory baseline cannot be used to issue a protected code.
 
-    This is the user-visible shape of issue #845: the entry has already
-    published a code, the shared registry then goes away, and there is no
-    lock whose contents could be adopted to rebuild it.
+    This simulates lost in-memory state while the durable snapshot still
+    exists. The lockless calendar remains trackable, but the mismatch prevents
+    a new protected allocation from being acknowledged.
     """
     entry = _entry("lockless_recovery")
 
@@ -204,8 +245,11 @@ async def test_no_lock_entry_republishes_after_registry_loss(
 
     await _refresh(hass, entry)
 
-    assert _event_sensor_code(hass, entry) == _expected_code()
-    assert allocator._registry_lost is False
+    assert _event_sensor_code(hass, entry) is None
+    assert allocator._registry_lost is True
+    coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+    assert coordinator._latest_res_by_key
+    assert coordinator.last_update_success is True
 
 
 async def test_no_lock_entry_keeps_a_checked_out_code_through_checkout_day(

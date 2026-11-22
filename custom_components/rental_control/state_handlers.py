@@ -17,6 +17,7 @@ from homeassistant.util import dt
 from .const import COORDINATOR
 from .const import DOMAIN
 from .keymaster_lifecycle import get_keymaster_lifecycle
+from .keymaster_operations import protected_registry_active
 from .state_handler_models import VERIFIED_FEEDBACK_PROPERTIES
 from .state_handler_models import SlotStateSnapshot
 from .state_handler_models import StateChangeContext
@@ -81,6 +82,8 @@ def _resolve_context(
     deps.logger.debug("Handling Keymaster capability feedback")
     entry_id = config_entry_id or coordinator.config_entry.entry_id
     lifecycle = get_keymaster_lifecycle(hass, entry_id)
+    if lifecycle is None and protected_registry_active(hass):
+        return None
     property_key: str | None = None
     capability_entity_ids: dict[str, str] | None = None
     lifecycle_generation: int | None = None

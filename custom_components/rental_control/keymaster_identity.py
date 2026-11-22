@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Dormant identity and capability checks for supported Keymaster entities."""
+"""Identity and capability checks for supported Keymaster entities."""
 
 from __future__ import annotations
 

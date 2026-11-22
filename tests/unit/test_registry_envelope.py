@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Andrew Grimberg <tykeal@bardicgrove.org>
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the dormant protected registry envelope primitives."""
+"""Tests for the protected registry envelope primitives."""
 
 from __future__ import annotations
 
@@ -350,6 +350,29 @@ def test_v2_envelope_rejects_boolean_generation_and_non_object_sections() -> Non
     assert not store_module.validate_v2_envelope_shape(envelope)
 
 
+def test_v2_envelope_rejects_extra_owner_fields_and_non_json_history() -> None:
+    """Persisted v2 rows reject secret-shaped and non-JSON data."""
+    envelope = _v2_envelope()
+    ledger = _v1_payload_with_record()
+    envelope["data"]["ledger"] = {
+        **ledger,
+        "updated_at": "2026-01-01T00:00:00+00:00",
+        "announced_conflicts": {},
+    }
+    assert store_module.validate_v2_envelope_shape(envelope)
+
+    envelope["data"]["ledger"]["records"][0]["owners"][0]["pin"] = "2468"
+    assert not store_module.validate_v2_envelope_shape(envelope)
+
+    envelope = _v2_envelope()
+    envelope["data"]["pending_config"] = [{"generation": float("nan")}]
+    assert not store_module.validate_v2_envelope_shape(envelope)
+
+    envelope = _v2_envelope()
+    envelope["data"]["ledger"]["announced_conflicts"] = {"": []}
+    assert not store_module.validate_v2_envelope_shape(envelope)
+
+
 def test_v2_requires_typed_original_slot_fences_and_resolution_tombstones() -> None:
     """Safety rows retain explicit original identity and transaction fences."""
     fence = PendingSlotFence(
@@ -661,6 +684,54 @@ def test_v1_classifier_validates_real_record_and_preserves_legacy_fields() -> No
     for field, invalid_value in invalid_cases:
         damaged = _v1_payload_with_record()
         damaged["records"][0][field] = invalid_value
+        raw = store_module.prepare_exact_json_bytes(
+            {"version": 1, "data": damaged}
+        ).data
+        assert raw is not None
+        rejected = store_module.classify_registry_file(
+            store_module.RawFileRead(store_module.RawFileState.PRESENT, raw)
+        )
+        assert rejected.state == "protective_unknown"
+        assert rejected.failure_code == "legacy_invalid"
+
+    malformed_payloads: list[dict[str, Any]] = []
+    malformed = _v1_payload_with_record()
+    malformed["records"] = [None]
+    malformed_payloads.append(malformed)
+
+    malformed = _v1_payload_with_record()
+    malformed["records"][0]["owners"] = [None]
+    malformed_payloads.append(malformed)
+
+    malformed = _v1_payload_with_record()
+    malformed["records"][0]["owners"][0]["origin"] = "unrecognized"
+    malformed_payloads.append(malformed)
+
+    malformed = _v1_payload_with_record()
+    malformed["records"][0]["owners"][0]["slot"] = True
+    malformed_payloads.append(malformed)
+
+    malformed = _v1_payload_with_record()
+    malformed["records"][0]["owners"][0]["slot"] = None
+    malformed_payloads.append(malformed)
+
+    malformed = _v1_payload_with_record()
+    malformed["records"][0]["owners"].append(
+        copy.deepcopy(malformed["records"][0]["owners"][0])
+    )
+    malformed_payloads.append(malformed)
+
+    malformed = _v1_payload_with_record()
+    malformed["records"].append(copy.deepcopy(malformed["records"][0]))
+    malformed_payloads.append(malformed)
+
+    malformed = _v1_payload_with_record()
+    malformed["records"][0]["encoded_code"] = store_module.encode_code(
+        "ABCD", "entry-salt"
+    )
+    malformed_payloads.append(malformed)
+
+    for damaged in malformed_payloads:
         raw = store_module.prepare_exact_json_bytes(
             {"version": 1, "data": damaged}
         ).data

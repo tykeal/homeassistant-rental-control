@@ -4,15 +4,20 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+from datetime import datetime
 from typing import TYPE_CHECKING
 from typing import Any
 
 from ..const import CONF_EXCLUDED_SLOTS
 from ..const import COORDINATOR
 from ..const import DOMAIN
+from ..const import PROTECTED_REGISTRY_STORE
 from . import recovery
 from . import reissue
 from .exclusions import parse_excluded_slots
+from .models import ProtectionLoadState
+from .registry_safety_models import tombstone_pressure
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
@@ -27,6 +32,7 @@ def allocator_diagnostics(allocator: DoorCodeAllocator) -> dict[str, Any]:
     forced_holds = _forced_release_holds(allocator)
     return {
         "record_count": len(allocator._registry.records),
+        "retained_resolution_pressure": _retained_resolution_pressure(allocator),
         "owner_count": sum(
             len(record.owners) for record in allocator._registry.records.values()
         ),
@@ -71,6 +77,33 @@ def allocator_diagnostics(allocator: DoorCodeAllocator) -> dict[str, Any]:
         "registry_lost": allocator._registry_lost,
         "registry_missing": allocator._registry_missing,
         "unobserved_lock_entries": sorted(recovery.unobserved_lock_entries(allocator)),
+    }
+
+
+def _retained_resolution_pressure(
+    allocator: DoorCodeAllocator,
+) -> dict[str, int] | None:
+    """Return only retained tombstone count and age from a validated v2 load."""
+    domain_data = allocator.hass.data.get(DOMAIN)
+    if not isinstance(domain_data, dict):
+        return None
+    store = domain_data.get(PROTECTED_REGISTRY_STORE)
+    loaded = getattr(store, "loaded_result", None)
+    if (
+        loaded is None
+        or getattr(loaded, "state", None) is not ProtectionLoadState.VALID_V2
+        or not isinstance(getattr(loaded, "data", None), dict)
+    ):
+        return None
+    tombstones = loaded.data.get("tombstones")
+    if not isinstance(tombstones, list):
+        return None
+    pressure = tombstone_pressure(tombstones, now=datetime.now(UTC))
+    if pressure.oldest_age_seconds is None:
+        return {"count": pressure.count}
+    return {
+        "count": pressure.count,
+        "oldest_age_seconds": pressure.oldest_age_seconds,
     }
 
 

@@ -11,13 +11,18 @@ from ..const import DOMAIN
 from ..const import PROTECTED_REGISTRY_STORE
 from . import orphans
 from . import reissue
+from .allocator_protocol import AllocatorState
 from .models import AllocationResult
 from .models import CycleRequest
 from .models import CycleResult
 from .models import OrphanCleanupReport
+from .models import ProtectionLoadState
 from .models import ReissuePreview
 from .models import ReissuePreviewRequest
 from .models import ReleaseReport
+from .registry_mutation import async_commit_staged_registry
+from .registry_mutation import clone_allocator
+from .registry_mutation import owner_transition_authorizer
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
@@ -25,17 +30,20 @@ if TYPE_CHECKING:
 _INVALID_PROTECTED_STATE = object()
 
 
-def _protected_store(allocator: DoorCodeAllocator) -> object | None:
-    """Return the optional dormant protected store from integration state."""
+def _protected_store(allocator: AllocatorState) -> object | None:
+    """Return the protected store from integration state when required."""
     domain_data = allocator.hass.data.get(DOMAIN)
     if domain_data is None:
-        return None
+        return _INVALID_PROTECTED_STATE if allocator._protection_required else None
     if not isinstance(domain_data, dict):
         return _INVALID_PROTECTED_STATE
-    return domain_data.get(PROTECTED_REGISTRY_STORE)
+    store = domain_data.get(PROTECTED_REGISTRY_STORE)
+    if store is None and allocator._protection_required:
+        return _INVALID_PROTECTED_STATE
+    return store
 
 
-def snapshot_ready(allocator: DoorCodeAllocator) -> bool:
+def snapshot_ready(allocator: AllocatorState) -> bool:
     """Require a READY acknowledged snapshot when a protected store exists."""
     store = _protected_store(allocator)
     if store is None:
@@ -49,7 +57,7 @@ def snapshot_ready(allocator: DoorCodeAllocator) -> bool:
         return False
 
 
-async def async_operation_ready(allocator: DoorCodeAllocator) -> bool:
+async def async_operation_ready(allocator: AllocatorState) -> bool:
     """Wait for protected commits and fail closed on missing readiness APIs."""
     store = _protected_store(allocator)
     if store is None:
@@ -83,6 +91,28 @@ async def async_rekey(allocator: DoorCodeAllocator, old_key: str, new_key: str) 
     """Move an allocation identity only while protected state is READY."""
     if not await async_operation_ready(allocator):
         return False
+    if allocator._protection_required:
+        import copy
+
+        async with allocator._mutation_lock:
+            async with allocator._lock:
+                if not snapshot_ready(allocator):
+                    return False
+                baseline = copy.deepcopy(allocator._registry)
+                staged = clone_allocator(allocator)
+                changed = staged._rekey_unlocked(old_key, new_key)
+            if not changed:
+                return False
+            result = await async_commit_staged_registry(
+                allocator,
+                baseline,
+                staged,
+                authorize_owner_transition=owner_transition_authorizer(
+                    allocator, [], rekeys=((old_key, new_key),)
+                ),
+                operation_lock_held=True,
+            )
+            return result.state is ProtectionLoadState.VALID_V2
     async with allocator._lock:
         if not snapshot_ready(allocator):
             return False
@@ -112,7 +142,7 @@ def protective_unknown_cycle_result(request: CycleRequest) -> CycleResult:
 
 
 def retention_report(
-    allocator: DoorCodeAllocator, entry_id: str | None = None
+    allocator: AllocatorState, entry_id: str | None = None
 ) -> ReleaseReport:
     """Describe retained owners without mutating allocator state."""
     retained = [
@@ -125,7 +155,7 @@ def retention_report(
 
 
 async def async_retention_report(
-    allocator: DoorCodeAllocator, entry_id: str | None = None
+    allocator: AllocatorState, entry_id: str | None = None
 ) -> ReleaseReport:
     """Snapshot retained owners without racing allocator mutations."""
     async with allocator._lock:
@@ -133,7 +163,7 @@ async def async_retention_report(
 
 
 async def async_cleanup_report(
-    allocator: DoorCodeAllocator, dry_run: bool
+    allocator: AllocatorState, dry_run: bool
 ) -> OrphanCleanupReport:
     """Return a non-mutating cleanup result while protection is unknown."""
     report = await async_retention_report(allocator)

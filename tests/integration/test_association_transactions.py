@@ -25,10 +25,25 @@ from custom_components.rental_control.allocator.association_evidence import (
     AssociationRebindHold,
 )
 from custom_components.rental_control.allocator.association_references import (
+    OriginalEntryEvidenceState,
+)
+from custom_components.rental_control.allocator.association_references import (
     association_references_for_snapshot,
 )
 from custom_components.rental_control.allocator.association_references import (
+    has_known_original_safety_record,
+)
+from custom_components.rental_control.allocator.association_references import (
+    ledger_allocation_references,
+)
+from custom_components.rental_control.allocator.association_references import (
     ledger_owner_reference,
+)
+from custom_components.rental_control.allocator.association_references import (
+    original_keymaster_entry_evidence,
+)
+from custom_components.rental_control.allocator.association_references import (
+    original_keymaster_entry_for_references,
 )
 from custom_components.rental_control.allocator.association_transactions import (
     AssociationReplayState,
@@ -60,6 +75,18 @@ from custom_components.rental_control.allocator.protected_registry import (
 from custom_components.rental_control.allocator.protected_store import (
     ProtectedRegistryStore,
 )
+from custom_components.rental_control.allocator.registry_association_transitions import (
+    same_slot_alias_transfer_is_safe,
+)
+from custom_components.rental_control.allocator.registry_association_transitions import (
+    validate_association_history,
+)
+from custom_components.rental_control.allocator.registry_association_transitions import (
+    validate_association_history_evidence,
+)
+from custom_components.rental_control.allocator.registry_safety_models import (
+    PendingSlotFence,
+)
 from custom_components.rental_control.allocator.registry_safety_models import (
     resolve_fence_to_tombstone,
 )
@@ -86,6 +113,9 @@ from custom_components.rental_control.coordinator_helpers.config_update import (
 )
 from custom_components.rental_control.coordinator_helpers.config_update import (
     replay_pending_association_transactions,
+)
+from custom_components.rental_control.keymaster_operations import (
+    _original_entry_authorizes_refence,
 )
 
 _TX1 = "a" * 32
@@ -600,6 +630,111 @@ def test_envelope_association_sections_are_cross_record_validated() -> None:
     assert not validate_v2_envelope_shape(envelope)
 
 
+def test_transaction_record_parser_rejects_incomplete_payloads() -> None:
+    """No malformed pending record is partially replayed as an association."""
+    transaction = AssociationTransaction(
+        _TX1,
+        1,
+        None,
+        (AssociationChange("rc-1", _legacy(), _verified(_TX1)),),
+    )
+    valid = transaction.to_record()
+    malformed: list[object] = [
+        None,
+        [],
+        {**valid, "unexpected": True},
+        {**valid, "kind": "other"},
+        {**valid, "changes": "not-a-list"},
+        {**valid, "attestations": "not-a-list"},
+        {**valid, "retained_holds": "not-a-list"},
+        {**valid, "changes": [None]},
+        {**valid, "attestations": [None]},
+        {**valid, "retained_holds": [None]},
+        {**valid, "transaction_id": "not-an-opaque-id"},
+        {**valid, "generation": True},
+    ]
+
+    for payload in malformed:
+        assert AssociationTransaction.from_record(payload) is None
+
+    section_cases: tuple[tuple[object, ...], ...] = (
+        ("not-a-list", [], []),
+        ([], "not-a-list", []),
+        ([], [], "not-a-list"),
+        ([], [], [], "not-a-list"),
+    )
+    for section_values in section_cases:
+        assert not valid_association_sections(*section_values)
+
+
+def test_transaction_identity_and_attestation_scope_are_exact() -> None:
+    """Wrong transaction linkage and out-of-scope attestations are rejected."""
+    wrong_tuple_transaction = AssociationChange("rc-1", _legacy(), _verified(_TX2))
+    with pytest.raises(ValueError, match="association tuple transaction mismatch"):
+        AssociationTransaction(_TX1, 1, None, (wrong_tuple_transaction,))
+
+    change = AssociationChange(
+        "rc-1",
+        _legacy(),
+        _verified(_TX1, entry_id="km-recreated"),
+        ("legacy-reference",),
+    )
+    out_of_scope = AssociationAttestation(
+        _ATTESTATION_ID,
+        "rc-1",
+        "km-recreated",
+        ("legacy-reference",),
+        _TX2,
+    )
+    with pytest.raises(ValueError, match="attestation transaction scope mismatch"):
+        AssociationTransaction(_TX1, 1, None, (change,), (out_of_scope,))
+
+    incomplete = AssociationAttestation(
+        "f" * 32,
+        "rc-1",
+        "km-other",
+        ("different-reference",),
+        _TX1,
+    )
+    with pytest.raises(
+        ValueError, match="attestation does not cover legacy transition"
+    ):
+        AssociationTransaction(_TX1, 1, None, (change,), (incomplete,))
+
+
+def test_association_sections_reject_duplicate_and_stale_cross_records() -> None:
+    """Persisted tuples and transactions must have unique, latest provenance."""
+    change = AssociationChange("rc-1", _legacy(), _verified(_TX1))
+    transaction = AssociationTransaction(_TX1, 1, None, (change,))
+    association = association_storage_record("rc-1", change.new)
+    transaction_record = transaction.to_record()
+
+    assert not valid_association_sections(
+        [association, association], [], [transaction_record]
+    )
+    assert not valid_association_sections(
+        [association], [], [transaction_record, transaction_record]
+    )
+    assert not valid_association_sections([association], [], [None])
+    assert not valid_association_sections([association], [None], [transaction_record])
+    assert not valid_association_sections(
+        [association], [], [transaction_record], [None]
+    )
+
+    chain = AssociationChange("rc-2", _legacy(), _verified(_TX2))
+    assert replay_association_chain(change.old, (change, chain)) == (
+        AssociationReplayState.UNKNOWN,
+        None,
+    )
+    broken_link = AssociationChange(
+        "rc-1", _verified(_TX3, generation=3), _verified(_TX2, generation=4)
+    )
+    assert replay_association_chain(change.old, (change, broken_link)) == (
+        AssociationReplayState.UNKNOWN,
+        None,
+    )
+
+
 class _FakeProtectedStore:
     """Deterministic acknowledgement boundary for association transactions."""
 
@@ -1005,6 +1140,1062 @@ def test_safety_references_require_persisted_salt_and_domain_separation() -> Non
     missing_salt = copy.deepcopy(data)
     del missing_salt["ledger"]["code_ref_salt"]
     assert association_references_for_snapshot(missing_salt, "rc-1") is None
+
+
+def test_known_original_safety_record_and_complete_proof_are_attributable() -> None:
+    """Scoped physical history retains only opaque, exact original-entry proof."""
+    data = _association_history_data()
+    data["pending_fences"] = [
+        {
+            "fence_id": "f" * 32,
+            "rc_entry_id": "rc-1",
+            "original_km_entry_id": "km-original",
+            "slot": 10,
+            "owner_ref": "owner-reference",
+            "allocation_ref": "allocation-reference",
+            "created_transaction_id": _PREVIOUS_TX,
+            "created_generation": 4,
+            "fence_type": "allocation",
+        }
+    ]
+
+    references = association_references_for_snapshot(data, "rc-1")
+
+    assert references
+    assert has_known_original_safety_record(data, "rc-1") is True
+    assert has_known_original_safety_record(data, "other-entry") is False
+    assert (
+        original_keymaster_entry_for_references(data, "rc-1", references)
+        == "km-original"
+    )
+    assert (
+        original_keymaster_entry_for_references(
+            data,
+            "rc-1",
+            references,
+            require_complete_snapshot=False,
+        )
+        == "km-original"
+    )
+    assert "km-original" not in repr(references)
+
+
+def _association_history_data(
+    *,
+    pending_fences: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a minimal predecessor snapshot for association-chain checks."""
+    return {
+        "transaction_id": _PREVIOUS_TX,
+        "generation": 4,
+        "associations": [association_storage_record("rc-1", _legacy())],
+        "attestations": [],
+        "pending_config": [],
+        "holds": [],
+        "ledger": {
+            "code_ref_salt": "persisted-reference-salt",
+            "records": [],
+        },
+        "pending_fences": pending_fences or [],
+        "tombstones": [],
+    }
+
+
+def _association_history_target(
+    prior: dict[str, Any], transaction: AssociationTransaction
+) -> dict[str, Any]:
+    """Build the exact append-only envelope under validation."""
+    envelope = {
+        "version": 2,
+        "minor_version": 1,
+        "key": "rental_control.code_registry",
+        "data": copy.deepcopy(prior),
+    }
+    target = add_association_transaction_to_envelope(envelope, transaction)
+    assert target is not None
+    data = target.get("data")
+    assert isinstance(data, dict)
+    return data
+
+
+def test_association_envelope_commit_rejects_malformed_predecessors() -> None:
+    """Malformed or duplicate durable sections never produce a next envelope."""
+    transaction = _transaction(
+        generation=5,
+        predecessor=_PREVIOUS_TX,
+        old=_legacy(),
+        affected_references=("legacy-claim",),
+    )
+    base = _association_history_data()
+    envelope = {
+        "version": 2,
+        "minor_version": 1,
+        "key": "rental_control.code_registry",
+        "data": base,
+    }
+
+    assert add_association_transaction_to_envelope(None, transaction) is None
+    assert add_association_transaction_to_envelope({}, transaction) is None
+    assert (
+        add_association_transaction_to_envelope({**envelope, "data": []}, transaction)
+        is None
+    )
+
+    invalid_link = copy.deepcopy(envelope)
+    invalid_data = invalid_link["data"]
+    assert isinstance(invalid_data, dict)
+    invalid_data["generation"] = True
+    assert add_association_transaction_to_envelope(invalid_link, transaction) is None
+    invalid_link = copy.deepcopy(envelope)
+    invalid_data = invalid_link["data"]
+    assert isinstance(invalid_data, dict)
+    invalid_data["transaction_id"] = "f" * 32
+    assert add_association_transaction_to_envelope(invalid_link, transaction) is None
+
+    malformed_sections: tuple[tuple[str, object], ...] = (
+        ("associations", None),
+        ("associations", [{"rc_entry_id": "rc-1"}]),
+        (
+            "associations",
+            [
+                association_storage_record("rc-1", _legacy()),
+                association_storage_record("rc-1", _legacy()),
+            ],
+        ),
+        ("attestations", None),
+        ("attestations", [{"attestation_id": "invalid"}]),
+        ("attestations", [transaction.attestations[0].to_record()]),
+        ("pending_config", None),
+        ("pending_config", [{"transaction_id": "invalid"}]),
+        ("pending_config", [transaction.to_record()]),
+        ("holds", None),
+        ("holds", [{"kind": "association_rebind"}]),
+    )
+    for section, records in malformed_sections:
+        invalid = copy.deepcopy(envelope)
+        invalid_data = invalid["data"]
+        assert isinstance(invalid_data, dict)
+        invalid_data[section] = records
+        assert add_association_transaction_to_envelope(invalid, transaction) is None
+
+    wrong_old = _transaction(
+        generation=5,
+        predecessor=_PREVIOUS_TX,
+        old=_verified(_PREVIOUS_TX),
+    )
+    assert add_association_transaction_to_envelope(envelope, wrong_old) is None
+
+
+def test_association_envelope_commit_appends_a_scoped_original_entry_hold() -> None:
+    """Known-entry reassignment preserves its exact original claim in the hold."""
+    prior = _association_history_data()
+    old = _verified(_PREVIOUS_TX)
+    prior["associations"] = [association_storage_record("rc-1", old)]
+    change = AssociationChange(
+        "rc-1",
+        old,
+        _verified(_TX1, generation=2, entry_id="km-B"),
+        ("owner-claim",),
+    )
+    hold = AssociationRebindHold(
+        "f" * 32,
+        "rc-1",
+        "km-A",
+        "km-B",
+        ("owner-claim",),
+        _TX1,
+        5,
+    )
+    transaction = AssociationTransaction(
+        _TX1,
+        5,
+        _PREVIOUS_TX,
+        (change,),
+        retained_holds=(hold,),
+    )
+    envelope = {
+        "version": 2,
+        "minor_version": 1,
+        "key": "rental_control.code_registry",
+        "data": prior,
+    }
+
+    target = add_association_transaction_to_envelope(envelope, transaction)
+
+    assert target is not None
+    assert target["data"]["holds"] == [hold.to_record()]
+    assert target["data"]["pending_config"] == [transaction.to_record()]
+    assert target["data"]["associations"] == [
+        association_storage_record("rc-1", change.new)
+    ]
+
+
+def test_association_history_requires_exact_transaction_and_append_only_records() -> (
+    None
+):
+    """A tuple rewrite or deletion of transaction history cannot validate."""
+    prior = _association_history_data()
+    transaction = _transaction(
+        generation=5,
+        predecessor=_PREVIOUS_TX,
+        old=_legacy(),
+    )
+    target = _association_history_target(prior, transaction)
+    assert validate_association_history(prior, target)
+    assert validate_association_history_evidence(target)
+
+    changed_tuple = copy.deepcopy(target)
+    changed_tuple["associations"][0] = association_storage_record(
+        "rc-1", _verified(_TX2, entry_id="km-B")
+    )
+    assert not validate_association_history(prior, changed_tuple)
+
+    deleted_history = copy.deepcopy(target)
+    deleted_history["pending_config"].clear()
+    assert not validate_association_history(prior, deleted_history)
+    assert not validate_association_history_evidence(
+        {**target, "pending_config": [{"malformed": True}]}
+    )
+
+
+def test_legacy_association_upgrade_accepts_exact_attestation_or_original_proof() -> (
+    None
+):
+    """Legacy claims need complete attestation or independently proven origin."""
+    fence = {
+        "fence_id": "f" * 32,
+        "rc_entry_id": "rc-1",
+        "original_km_entry_id": "km-original",
+        "slot": 10,
+        "owner_ref": "owner-reference",
+        "allocation_ref": "allocation-reference",
+        "created_transaction_id": _PREVIOUS_TX,
+        "created_generation": 4,
+        "fence_type": "allocation",
+    }
+    prior = _association_history_data(pending_fences=[fence])
+    references = association_references_for_snapshot(prior, "rc-1")
+    assert references
+    assert has_known_original_safety_record(prior, "rc-1") is True
+
+    attested = _transaction(
+        generation=5,
+        predecessor=_PREVIOUS_TX,
+        old=_legacy(),
+        affected_references=references,
+    )
+    attested_target = _association_history_target(prior, attested)
+    assert validate_association_history(prior, attested_target)
+
+    independent_change = AssociationChange(
+        "rc-1",
+        _legacy(),
+        _verified(_TX2, entry_id="km-original"),
+        references,
+        "km-original",
+        references,
+    )
+    independent = AssociationTransaction(
+        _TX2,
+        5,
+        _PREVIOUS_TX,
+        (independent_change,),
+    )
+    independent_target = _association_history_target(prior, independent)
+    assert validate_association_history(prior, independent_target)
+
+    changed_source = copy.deepcopy(prior)
+    changed_source["pending_fences"][0]["original_km_entry_id"] = "km-other"
+    assert not validate_association_history(changed_source, independent_target)
+    assert (
+        has_known_original_safety_record(
+            {
+                "ledger": prior["ledger"],
+                "holds": [{}],
+                "pending_fences": [],
+                "tombstones": [],
+            },
+            "rc-1",
+        )
+        is None
+    )
+
+
+def test_same_slot_alias_replacement_requires_exact_same_keymaster_fence() -> None:
+    """Same-code transfer is allowed only with matching physical provenance."""
+    source_owner = {
+        "entry_id": "rc-source",
+        "identity_key": "source-reservation",
+        "slot": 10,
+        "lock_observed": True,
+    }
+    source_record = {
+        "encoded_code": encode_code("4729", "encoding-salt"),
+        "encoding_salt_value": "encoding-salt",
+        "code_length": 4,
+        "owners": [source_owner],
+    }
+    prior: dict[str, Any] = {
+        "ledger": {
+            "code_ref_salt": "persisted-reference-salt",
+            "records": [source_record],
+        },
+        "associations": [
+            association_storage_record(
+                "rc-source", _verified(_TX1, entry_id="km-physical")
+            )
+        ],
+        "pending_fences": [],
+    }
+    target_owner = {
+        "entry_id": "rc-target",
+        "identity_key": "target-reservation",
+        "slot": 10,
+        "lock_observed": True,
+    }
+    target_record = {**source_record, "owners": [target_owner]}
+    target: dict[str, Any] = {
+        "ledger": {
+            "code_ref_salt": "persisted-reference-salt",
+            "records": [target_record],
+        },
+        "associations": [
+            association_storage_record(
+                "rc-target", _verified(_TX2, entry_id="km-physical")
+            )
+        ],
+        "pending_fences": [],
+    }
+    target_owner_ref = ledger_owner_reference(target, target_record, target_owner)
+    assert target_owner_ref is not None
+    target["pending_fences"].append(
+        {
+            "rc_entry_id": "rc-target",
+            "owner_ref": target_owner_ref,
+            "original_km_entry_id": "km-physical",
+            "slot": 10,
+        }
+    )
+    assert same_slot_alias_transfer_is_safe(prior, target, source_record, source_owner)
+
+    target["pending_fences"].clear()
+    assert (
+        same_slot_alias_transfer_is_safe(prior, target, source_record, source_owner)
+        is False
+    )
+    target["ledger"]["records"] = []
+    assert (
+        same_slot_alias_transfer_is_safe(prior, target, source_record, source_owner)
+        is None
+    )
+
+
+def test_tombstone_proves_original_entry_and_rebind_hold_withdraws_reference() -> None:
+    """A retained tombstone proves origin but never reopens its held claim."""
+    tombstone = {
+        "fence_id": "f" * 32,
+        "original_km_entry_id": "km-original",
+        "slot": 10,
+        "rc_entry_id": "rc-1",
+        "owner_ref": "owner-reference",
+        "allocation_ref": "allocation-reference",
+        "created_transaction_id": _PREVIOUS_TX,
+        "created_generation": 4,
+        "fence_type": "allocation",
+    }
+    data = _association_history_data()
+    data["tombstones"] = [tombstone]
+    references = association_references_for_snapshot(data, "rc-1")
+    assert references
+    assert original_keymaster_entry_for_references(data, "rc-1", references) == (
+        "km-original"
+    )
+    assert has_known_original_safety_record(data, "rc-1") is True
+
+    hold = AssociationRebindHold(
+        "a" * 32,
+        "rc-1",
+        "km-original",
+        "km-selected",
+        references,
+        _TX1,
+        5,
+    )
+    data["holds"] = [hold.to_record()]
+    assert association_references_for_snapshot(data, "rc-1") == ()
+    assert has_known_original_safety_record(data, "rc-1") is False
+
+
+def test_ledger_allocation_reference_rejects_ambiguous_or_invalid_owners() -> None:
+    """A fence reference requires one decodable, well-formed owner location."""
+    owner = {
+        "entry_id": "rc-1",
+        "identity_key": "owner-identity",
+        "lockname": "lock.front_door",
+        "slot": 10,
+    }
+    record = {
+        "encoded_code": encode_code("4729", "encoding-salt"),
+        "encoding_salt_value": "encoding-salt",
+        "owners": [owner],
+    }
+    data: dict[str, Any] = {
+        "ledger": {
+            "code_ref_salt": "persisted-reference-salt",
+            "records": [record],
+        }
+    }
+    reference = ledger_allocation_references(data, "rc-1", "owner-identity")
+    assert reference is not None
+    assert reference[2] == 10
+    assert "4729" not in repr(reference)
+
+    ambiguous = copy.deepcopy(data)
+    ambiguous["ledger"]["records"].append(copy.deepcopy(record))
+    assert ledger_allocation_references(ambiguous, "rc-1", "owner-identity") is None
+
+    invalid_slot = copy.deepcopy(data)
+    invalid_slot["ledger"]["records"][0]["owners"][0]["slot"] = True
+    assert ledger_allocation_references(invalid_slot, "rc-1", "owner-identity") is None
+
+
+def test_ledger_reference_readers_reject_corrupt_rows_without_partial_proof() -> None:
+    """Malformed encoding or owner rows cannot produce a partial reference set."""
+    valid_record = {
+        "encoded_code": encode_code("4729", "encoding-salt"),
+        "encoding_salt_value": "encoding-salt",
+        "owners": [
+            {
+                "entry_id": "rc-1",
+                "identity_key": "owner-identity",
+                "lockname": "lock.front_door",
+                "slot": 10,
+            }
+        ],
+    }
+    valid: dict[str, Any] = {
+        "ledger": {
+            "code_ref_salt": "persisted-reference-salt",
+            "records": [valid_record],
+        },
+        "pending_fences": [],
+        "holds": [],
+        "tombstones": [],
+    }
+    assert ledger_allocation_references(valid, "rc-1", "owner-identity") is not None
+
+    malformed_ledgers: list[dict[str, Any]] = []
+    replacements: tuple[dict[str, Any] | list[Any], ...] = (
+        [],
+        {"code_ref_salt": "", "records": [valid_record]},
+        {"code_ref_salt": "salt", "records": "not-a-list"},
+        {"code_ref_salt": "salt", "records": [None]},
+        {
+            "code_ref_salt": "salt",
+            "records": [
+                {"owners": [], "encoded_code": 4, "encoding_salt_value": "salt"}
+            ],
+        },
+        {
+            "code_ref_salt": "salt",
+            "records": [
+                {
+                    **valid_record,
+                    "owners": [{"entry_id": "rc-1", "identity_key": ""}],
+                }
+            ],
+        },
+        {
+            "code_ref_salt": "salt",
+            "records": [
+                {
+                    **valid_record,
+                    "encoded_code": "not-valid-encoded-data",
+                }
+            ],
+        },
+    )
+    for replacement in replacements:
+        damaged = copy.deepcopy(valid)
+        damaged["ledger"] = replacement
+        malformed_ledgers.append(damaged)
+
+    for damaged in malformed_ledgers:
+        assert association_references_for_snapshot(damaged, "rc-1") is None
+        assert ledger_allocation_references(damaged, "rc-1", "owner-identity") is None
+
+
+def test_retained_holds_and_tombstones_require_exact_original_provenance() -> None:
+    """Invalid retained claims or conflicting originals never prove history."""
+    fence = {
+        "fence_id": "f" * 32,
+        "rc_entry_id": "rc-1",
+        "original_km_entry_id": "km-original",
+        "slot": 10,
+        "owner_ref": "owner-reference",
+        "allocation_ref": "allocation-reference",
+        "created_transaction_id": _PREVIOUS_TX,
+        "created_generation": 4,
+        "fence_type": "allocation",
+    }
+    data = _association_history_data(pending_fences=[fence])
+    references = association_references_for_snapshot(data, "rc-1")
+    assert references
+    assert original_keymaster_entry_for_references(data, "rc-1", references) == (
+        "km-original"
+    )
+
+    malformed_hold = copy.deepcopy(data)
+    malformed_hold["holds"] = [{"kind": "association_rebind"}]
+    assert association_references_for_snapshot(malformed_hold, "rc-1") is None
+    assert has_known_original_safety_record(malformed_hold, "rc-1") is None
+
+    partial_tombstone = copy.deepcopy(data)
+    partial_tombstone["pending_fences"] = []
+    partial_tombstone["tombstones"] = [
+        {
+            "rc_entry_id": "rc-1",
+            "original_km_entry_id": "km-original",
+            "fence_id": "f" * 32,
+        }
+    ]
+    partial_references = association_references_for_snapshot(partial_tombstone, "rc-1")
+    assert partial_references
+    assert (
+        original_keymaster_entry_for_references(
+            partial_tombstone, "rc-1", partial_references
+        )
+        == "km-original"
+    )
+
+    conflicting = copy.deepcopy(data)
+    conflicting["pending_fences"].append(
+        {**fence, "fence_id": "e" * 32, "original_km_entry_id": "km-other"}
+    )
+    conflicting_references = association_references_for_snapshot(conflicting, "rc-1")
+    assert conflicting_references
+    assert (
+        original_keymaster_entry_for_references(
+            conflicting, "rc-1", conflicting_references
+        )
+        is None
+    )
+
+
+def test_safety_reference_status_and_original_proof_fail_closed() -> None:
+    """Unscoped, malformed, and partial safety evidence never proves an owner."""
+    data = _association_history_data(
+        pending_fences=[
+            {
+                "fence_id": "f" * 32,
+                "rc_entry_id": "rc-1",
+                "original_km_entry_id": "km-original",
+                "slot": 10,
+                "owner_ref": "owner-reference",
+                "allocation_ref": "allocation-reference",
+                "created_transaction_id": _PREVIOUS_TX,
+                "created_generation": 4,
+                "fence_type": "allocation",
+            }
+        ]
+    )
+    references = association_references_for_snapshot(data, "rc-1")
+    assert references
+    assert has_known_original_safety_record(data, "rc-1") is True
+    assert (
+        original_keymaster_entry_for_references(data, "rc-1", references)
+        == "km-original"
+    )
+
+    unrelated_record = copy.deepcopy(data)
+    unrelated_record["pending_fences"].append(
+        {
+            "fence_id": "9" * 32,
+            "rc_entry_id": "another-entry",
+            "original_km_entry_id": "km-other",
+        }
+    )
+    assert (
+        original_keymaster_entry_for_references(
+            unrelated_record,
+            "rc-1",
+            association_references_for_snapshot(unrelated_record, "rc-1") or (),
+        )
+        == "km-original"
+    )
+
+    no_original = copy.deepcopy(data)
+    no_original["pending_fences"][0]["original_km_entry_id"] = ""
+    incomplete_references = association_references_for_snapshot(no_original, "rc-1")
+    assert incomplete_references
+    assert (
+        original_keymaster_entry_for_references(
+            no_original, "rc-1", incomplete_references
+        )
+        is None
+    )
+
+    assert (
+        original_keymaster_entry_for_references(
+            data, "rc-1", (references[0], references[0])
+        )
+        is None
+    )
+    assert (
+        original_keymaster_entry_for_references(
+            data, "rc-1", ("not-a-reference",), require_complete_snapshot=False
+        )
+        is None
+    )
+
+    unrelated = copy.deepcopy(data)
+    unrelated["pending_fences"] = [{"rc_entry_id": "another-entry"}]
+    assert has_known_original_safety_record(unrelated, "rc-1") is False
+    assert (
+        original_keymaster_entry_for_references(unrelated, "rc-1", references) is None
+    )
+
+    for section in ("pending_fences", "holds", "tombstones"):
+        malformed = copy.deepcopy(data)
+        malformed["pending_fences"] = []
+        malformed["holds"] = []
+        malformed["tombstones"] = []
+        malformed[section] = "unreadable"
+        assert has_known_original_safety_record(malformed, "rc-1") is None
+        assert association_references_for_snapshot(malformed, "rc-1") is None
+        assert (
+            original_keymaster_entry_for_references(malformed, "rc-1", references)
+            is None
+        )
+
+    malformed_rows = copy.deepcopy(data)
+    malformed_rows["pending_fences"] = []
+    malformed_rows["tombstones"] = [None]
+    assert has_known_original_safety_record(malformed_rows, "rc-1") is None
+    assert (
+        original_keymaster_entry_for_references(malformed_rows, "rc-1", references)
+        is None
+    )
+
+    unscoped_hold = copy.deepcopy(data)
+    unscoped_hold["pending_fences"] = []
+    unscoped_hold["holds"] = [{"kind": "operator_hold"}]
+    assert has_known_original_safety_record(unscoped_hold, "rc-1") is None
+    assert association_references_for_snapshot(unscoped_hold, "rc-1") is None
+
+    safety_reference = references[0]
+    held = copy.deepcopy(data)
+    held["holds"] = [
+        AssociationRebindHold(
+            "1" * 32,
+            "rc-1",
+            "km-original",
+            "km-current",
+            (safety_reference,),
+            _TX1,
+            5,
+        ).to_record()
+    ]
+    assert association_references_for_snapshot(held, "rc-1") == ()
+    assert has_known_original_safety_record(held, "rc-1") is False
+
+    overlapping_holds = copy.deepcopy(held)
+    overlapping_holds["holds"].append(
+        AssociationRebindHold(
+            "2" * 32,
+            "rc-1",
+            "km-original",
+            "km-current",
+            (safety_reference,),
+            _TX2,
+            6,
+        ).to_record()
+    )
+    assert association_references_for_snapshot(overlapping_holds, "rc-1") is None
+
+
+def test_ledger_owner_reference_rejects_malformed_pin_encodings() -> None:
+    """Ledger owner digests require a valid persisted salt and encoded code."""
+    data: dict[str, Any] = {
+        "ledger": {"code_ref_salt": "reference-salt", "records": []},
+        "pending_fences": [],
+        "holds": [],
+        "tombstones": [],
+    }
+    valid_record = {
+        "encoded_code": encode_code("4729", "encoding-salt"),
+        "encoding_salt_value": "encoding-salt",
+    }
+    valid_owner = {"entry_id": "rc-1", "identity_key": "owner-identity"}
+    assert ledger_owner_reference(data, valid_record, valid_owner)
+
+    assert ledger_owner_reference({}, valid_record, valid_owner) is None
+    assert (
+        ledger_owner_reference(
+            data, {**valid_record, "encoded_code": "bad encoding"}, valid_owner
+        )
+        is None
+    )
+    assert (
+        ledger_owner_reference(
+            data, valid_record, {"entry_id": "rc-1", "identity_key": 4}
+        )
+        is None
+    )
+
+    invalid_slot = copy.deepcopy(data)
+    invalid_slot["ledger"]["records"] = [
+        {
+            **valid_record,
+            "owners": [
+                {
+                    **valid_owner,
+                    "slot": True,
+                }
+            ],
+        }
+    ]
+    assert ledger_allocation_references(invalid_slot, "rc-1", "owner-identity") is None
+    malformed_owner = copy.deepcopy(data)
+    malformed_owner["ledger"]["records"] = [{**valid_record, "owners": [None]}]
+    assert (
+        ledger_allocation_references(malformed_owner, "rc-1", "owner-identity") is None
+    )
+
+
+def test_association_reference_projections_fail_closed_on_malformed_sections() -> None:
+    """Every persisted reference section must be parseable before attribution."""
+    for section in ("pending_fences", "holds", "tombstones"):
+        malformed = _association_history_data()
+        malformed[section] = ["not-a-record"]
+        assert association_references_for_snapshot(malformed, "rc-1") is None
+        assert has_known_original_safety_record(malformed, "rc-1") is None
+
+    malformed_salt = _association_history_data()
+    malformed_salt["ledger"]["code_ref_salt"] = ""
+    assert association_references_for_snapshot(malformed_salt, "rc-1") is None
+    assert has_known_original_safety_record(malformed_salt, "rc-1") is None
+
+    malformed_ledger_records = _association_history_data()
+    malformed_ledger_records["ledger"]["records"] = [{"owners": "not-a-list"}]
+    assert association_references_for_snapshot(malformed_ledger_records, "rc-1") is None
+
+    malformed_unscoped_hold = _association_history_data()
+    malformed_unscoped_hold["holds"] = [{"kind": "operator-hold"}]
+    assert association_references_for_snapshot(malformed_unscoped_hold, "rc-1") is None
+    assert has_known_original_safety_record(malformed_unscoped_hold, "rc-1") is None
+
+
+def test_original_entry_proof_requires_complete_unique_references() -> None:
+    """No partial, duplicated, conflicting, or unscoped proof is accepted."""
+    data = _association_history_data()
+    data["pending_fences"] = [
+        {
+            "fence_id": "f" * 32,
+            "rc_entry_id": "rc-1",
+            "original_km_entry_id": "km-original",
+            "slot": 10,
+            "owner_ref": "owner-reference",
+            "allocation_ref": "allocation-reference",
+            "created_transaction_id": _PREVIOUS_TX,
+            "created_generation": 4,
+            "fence_type": "allocation",
+        }
+    ]
+    references = association_references_for_snapshot(data, "rc-1")
+    assert references
+    assert original_keymaster_entry_for_references(data, "rc-1", ()) is None
+    assert (
+        original_keymaster_entry_for_references(
+            data, "rc-1", (*references, references[0])
+        )
+        is None
+    )
+    assert (
+        original_keymaster_entry_for_references(data, "rc-1", ("not-a-reference",))
+        is None
+    )
+    assert (
+        original_keymaster_entry_for_references(
+            {**data, "tombstones": ["not-a-record"]}, "rc-1", references
+        )
+        is None
+    )
+    assert (
+        original_keymaster_entry_for_references(
+            data, "rc-1", ("not-a-reference",), require_complete_snapshot=False
+        )
+        is None
+    )
+
+
+def test_refence_attestation_only_resolves_clean_legacy_unknown_provenance() -> None:
+    """Attestation never overrules known, conflicting, or incomplete history."""
+    data = _association_history_data()
+    owner = {
+        "entry_id": "rc-1",
+        "identity_key": "legacy-owner",
+        "lockname": "lock.front",
+        "slot": 10,
+    }
+    data["ledger"]["records"] = [
+        {
+            "encoded_code": encode_code("4729", "legacy-owner-salt"),
+            "encoding_salt_value": "legacy-owner-salt",
+            "owners": [owner],
+        }
+    ]
+    references = ledger_allocation_references(data, "rc-1", "legacy-owner")
+    assert references is not None
+    owner_reference = references[0]
+    scoped_attestation = AssociationAttestation(
+        "f" * 32,
+        "rc-1",
+        "km-b",
+        (owner_reference,),
+        _TX1,
+    )
+    data["attestations"] = [scoped_attestation.to_record()]
+
+    absent = original_keymaster_entry_evidence(
+        data,
+        "rc-1",
+        (owner_reference,),
+        require_complete_snapshot=False,
+    )
+    assert absent.state is OriginalEntryEvidenceState.ABSENT
+    assert _original_entry_authorizes_refence(
+        data, "rc-1", "km-b", owner_reference, {owner_reference}
+    )
+
+    def fence(fence_id: str, original_entry: str) -> dict[str, Any]:
+        """Create one validated original-entry allocation fence."""
+        return PendingSlotFence(
+            fence_id=fence_id * 32,
+            original_km_entry_id=original_entry,
+            slot=10,
+            rc_entry_id="rc-1",
+            owner_ref=owner_reference,
+            allocation_ref=references[1],
+            created_transaction_id=_PREVIOUS_TX,
+            created_generation=4,
+            fence_type="allocation",
+        ).to_record()
+
+    data["pending_fences"] = [fence("a", "km-a")]
+    known_a = original_keymaster_entry_evidence(
+        data, "rc-1", (owner_reference,), require_complete_snapshot=False
+    )
+    assert known_a.state is OriginalEntryEvidenceState.UNIQUE
+    assert known_a.keymaster_entry_id == "km-a"
+    assert not _original_entry_authorizes_refence(
+        data, "rc-1", "km-b", owner_reference, {owner_reference}
+    )
+
+    data["pending_fences"].append(fence("b", "km-b"))
+    conflicting = original_keymaster_entry_evidence(
+        data, "rc-1", (owner_reference,), require_complete_snapshot=False
+    )
+    assert conflicting.state is OriginalEntryEvidenceState.AMBIGUOUS
+    assert not _original_entry_authorizes_refence(
+        data, "rc-1", "km-b", owner_reference, {owner_reference}
+    )
+
+    malformed = copy.deepcopy(data)
+    malformed["pending_fences"][0]["slot"] = True
+    invalid = original_keymaster_entry_evidence(
+        malformed, "rc-1", (owner_reference,), require_complete_snapshot=False
+    )
+    assert invalid.state is OriginalEntryEvidenceState.INVALID
+    assert not _original_entry_authorizes_refence(
+        malformed, "rc-1", "km-b", owner_reference, {owner_reference}
+    )
+
+
+def test_refence_attestation_rejects_partial_and_invalid_provenance() -> None:
+    """Only validated exact-reference absence permits legacy attestation."""
+    data = _association_history_data()
+    owner = {
+        "entry_id": "rc-1",
+        "identity_key": "legacy-owner",
+        "lockname": "lock.front",
+        "slot": 10,
+    }
+    data["ledger"]["records"] = [
+        {
+            "encoded_code": encode_code("4729", "legacy-owner-salt"),
+            "encoding_salt_value": "legacy-owner-salt",
+            "owners": [owner],
+        }
+    ]
+    references = ledger_allocation_references(data, "rc-1", "legacy-owner")
+    assert references is not None
+    owner_reference = references[0]
+    data["attestations"] = [
+        AssociationAttestation(
+            "f" * 32,
+            "rc-1",
+            "km-b",
+            (owner_reference,),
+            _TX1,
+        ).to_record()
+    ]
+
+    assert (
+        original_keymaster_entry_evidence(
+            data, "rc-1", (), require_complete_snapshot=False
+        ).state
+        is OriginalEntryEvidenceState.INVALID
+    )
+    assert (
+        original_keymaster_entry_evidence(
+            data,
+            "rc-1",
+            (owner_reference, owner_reference),
+            require_complete_snapshot=False,
+        ).state
+        is OriginalEntryEvidenceState.INVALID
+    )
+    assert (
+        original_keymaster_entry_evidence(
+            data,
+            "rc-1",
+            (owner_reference, "not-in-the-validated-snapshot"),
+            require_complete_snapshot=False,
+        ).state
+        is OriginalEntryEvidenceState.INCOMPLETE
+    )
+
+    incomplete_hold = AssociationRebindHold(
+        "e" * 32,
+        "rc-1",
+        "km-a",
+        "km-b",
+        (owner_reference,),
+        _TX1,
+        1,
+    ).to_record()
+    with_hold = copy.deepcopy(data)
+    with_hold["holds"] = [incomplete_hold]
+    evidence = original_keymaster_entry_evidence(
+        with_hold,
+        "rc-1",
+        (owner_reference,),
+        require_complete_snapshot=False,
+    )
+    assert evidence.state is OriginalEntryEvidenceState.INCOMPLETE
+    assert not _original_entry_authorizes_refence(
+        with_hold, "rc-1", "km-b", owner_reference, {owner_reference}
+    )
+
+    malformed_sections = copy.deepcopy(data)
+    malformed_sections["holds"] = [{"kind": "unrecognized"}]
+    invalid_hold = original_keymaster_entry_evidence(
+        malformed_sections,
+        "rc-1",
+        (owner_reference,),
+        require_complete_snapshot=False,
+    )
+    assert invalid_hold.state is OriginalEntryEvidenceState.INVALID
+    assert not _original_entry_authorizes_refence(
+        malformed_sections, "rc-1", "km-b", owner_reference, {owner_reference}
+    )
+
+    missing_salt = copy.deepcopy(data)
+    missing_salt["ledger"]["code_ref_salt"] = ""
+    invalid_ledger = original_keymaster_entry_evidence(
+        missing_salt,
+        "rc-1",
+        (owner_reference,),
+        require_complete_snapshot=False,
+    )
+    assert invalid_ledger.state is OriginalEntryEvidenceState.INVALID
+
+
+def test_original_entry_provenance_marks_mixed_known_and_legacy_refs_incomplete() -> (
+    None
+):
+    """A partial history cannot be mistaken for an all-legacy-unknown snapshot."""
+    data = _association_history_data()
+    owner_a = {
+        "entry_id": "rc-1",
+        "identity_key": "owner-a",
+        "lockname": "lock.front",
+        "slot": 10,
+    }
+    owner_b = {
+        "entry_id": "rc-1",
+        "identity_key": "owner-b",
+        "lockname": "lock.back",
+        "slot": 11,
+    }
+    data["ledger"]["records"] = [
+        {
+            "encoded_code": encode_code("4729", "legacy-owner-salt"),
+            "encoding_salt_value": "legacy-owner-salt",
+            "owners": [owner_a, owner_b],
+        }
+    ]
+    refs_a = ledger_allocation_references(data, "rc-1", "owner-a")
+    refs_b = ledger_allocation_references(data, "rc-1", "owner-b")
+    assert refs_a is not None
+    assert refs_b is not None
+    data["pending_fences"] = [
+        PendingSlotFence(
+            fence_id="a" * 32,
+            original_km_entry_id="km-a",
+            slot=10,
+            rc_entry_id="rc-1",
+            owner_ref=refs_a[0],
+            allocation_ref=refs_a[1],
+            created_transaction_id=_PREVIOUS_TX,
+            created_generation=4,
+            fence_type="allocation",
+        ).to_record()
+    ]
+    data["pending_fences"].append(
+        PendingSlotFence(
+            fence_id="c" * 32,
+            original_km_entry_id="km-c",
+            slot=12,
+            rc_entry_id="other-rc",
+            owner_ref="other-owner-ref",
+            allocation_ref="other-allocation-ref",
+            created_transaction_id=_PREVIOUS_TX,
+            created_generation=4,
+            fence_type="allocation",
+        ).to_record()
+    )
+
+    evidence = original_keymaster_entry_evidence(
+        data,
+        "rc-1",
+        (refs_a[0], refs_b[0]),
+        require_complete_snapshot=False,
+    )
+    assert evidence.state is OriginalEntryEvidenceState.INCOMPLETE
+
+    complete_but_conflicting = copy.deepcopy(data)
+    complete_but_conflicting["pending_fences"].append(
+        PendingSlotFence(
+            fence_id="b" * 32,
+            original_km_entry_id="km-b",
+            slot=11,
+            rc_entry_id="rc-1",
+            owner_ref=refs_b[0],
+            allocation_ref=refs_b[1],
+            created_transaction_id=_PREVIOUS_TX,
+            created_generation=4,
+            fence_type="allocation",
+        ).to_record()
+    )
+    conflicting_origins = original_keymaster_entry_evidence(
+        complete_but_conflicting,
+        "rc-1",
+        (refs_a[0], refs_b[0]),
+        require_complete_snapshot=False,
+    )
+    assert conflicting_origins.state is OriginalEntryEvidenceState.AMBIGUOUS
 
 
 async def test_config_projection_follows_ack_and_preserves_concurrent_options(

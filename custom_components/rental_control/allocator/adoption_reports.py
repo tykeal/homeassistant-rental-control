@@ -31,6 +31,7 @@ from .models import AllocationRecord
 from .registry import SlotKey
 from .registry import issuance_owners
 from .registry import physical_slots
+from .registry_mutation import after_commit
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
@@ -287,4 +288,7 @@ def _notify(allocator: DoorCodeAllocator, message: str, **kwargs: str) -> None:
         "custom_components.rental_control.allocator.allocator"
     )
     create = getattr(allocator_module, "async_create", async_create)
-    create(allocator.hass, message, **kwargs)
+    after_commit(
+        allocator,
+        lambda: create(allocator.hass, message, **kwargs),
+    )

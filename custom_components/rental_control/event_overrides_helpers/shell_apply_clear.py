@@ -8,6 +8,7 @@ from typing import Any
 
 from ..keymaster_operations import async_resolve_verified_clear_fence
 from ..keymaster_operations import prepare_verified_intent
+from ..keymaster_operations import protected_registry_active
 from ..keymaster_operations import verified_lifecycle_active
 from ..keymaster_slot_operations import async_slot_operation
 from .apply_clear import decide_clear_result_mutation
@@ -44,6 +45,8 @@ async def _apply_clear_locked(
     operation_id = str(self._module.uuid.uuid4())
     expected_name = self.get_slot_name(slot) or None
     verified = verified_lifecycle_active(coordinator)
+    if not verified and protected_registry_active(coordinator.hass):
+        return self._operation_result_type(kind="clear", slot=slot, unconfirmed=True)
     intent = await _prepare_clear_intent(
         coordinator, slot, owner_identity_key, verified
     )

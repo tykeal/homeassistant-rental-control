@@ -173,7 +173,11 @@ def _owner_release_is_proven(
     owner_reference: str,
     owner: dict[str, Any],
 ) -> bool:
-    """Require an exact current tombstone for a prior owner's allocation fence."""
+    """Require exact physical proof unless the owner has no lock or slot."""
+    if owner.get("lockname") is None and owner.get("slot") is None:
+        # A lockless reservation never addresses a Keymaster slot, so there is
+        # no physical allocation fence to resolve before releasing its owner.
+        return True
     prior_fences = {
         fence["fence_id"]: fence
         for fence in prior_data["pending_fences"]

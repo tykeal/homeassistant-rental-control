@@ -58,6 +58,7 @@ from ..event_overrides import EventOverrides
 from ..helpers import configured_lock_slug
 from ..keymaster_operations import persisted_owner_identity_for_slot
 from ..keymaster_operations import prepare_verified_intent
+from ..keymaster_operations import protected_registry_active
 from ..keymaster_operations import verified_lifecycle_active
 from ..keymaster_slot_operations import async_slot_operation
 from ..util import apply_buffer
@@ -198,6 +199,13 @@ class CoordinatorConfigMixin:
             if verified:
                 await _async_update_verified_buffer_slot(
                     self, slot, override, old_before, old_after
+                )
+                continue
+            if protected_registry_active(self.hass):
+                _LOGGER.warning(
+                    "Date update skipped for slot %s because verified "
+                    "Keymaster identity is unavailable",
+                    slot,
                 )
                 continue
             await _async_update_legacy_buffer_slot(

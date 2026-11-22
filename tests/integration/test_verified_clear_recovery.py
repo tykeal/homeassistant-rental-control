@@ -365,6 +365,7 @@ async def test_reused_entity_ids_cannot_resolve_original_entry_fence(
 @pytest.mark.parametrize(
     "interruption",
     (
+        "before_provider_dispatch",
         "during_provider_call",
         "after_provider_before_confirmation",
         "after_local_confirmation_before_resolution",
@@ -400,6 +401,7 @@ async def test_interrupted_clear_never_replays_restored_intent(
     hass.services.async_remove("button", "press")
     provider_entered = asyncio.Event()
     confirmation_sleep_entered = asyncio.Event()
+    dispatch_entered = asyncio.Event()
 
     async def interruptible_provider(call) -> None:
         """Hold actual verified dispatch at the requested failure boundary."""
@@ -426,6 +428,18 @@ async def test_interrupted_clear_never_replays_restored_intent(
 
     hass.services.async_register("button", "press", interruptible_provider)
     original_deps = util._keymaster_deps
+    if interruption == "before_provider_dispatch":
+
+        async def pause_before_dispatch(*_args, **_kwargs):
+            """Pause after durable fencing but before the provider call begins."""
+            dispatch_entered.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            coordinator.event_overrides._module,
+            "async_fire_clear_code",
+            pause_before_dispatch,
+        )
 
     async def pause_confirmation(_delay: float) -> None:
         """Pause after successful provider return but before local resolution."""
@@ -474,9 +488,13 @@ async def test_interrupted_clear_never_replays_restored_intent(
             owner_identity_key=_OWNER_IDENTITY,
         )
     )
-    await provider_entered.wait()
+    if interruption == "before_provider_dispatch":
+        await dispatch_entered.wait()
+    else:
+        await provider_entered.wait()
     if interruption != "during_provider_call":
-        await confirmation_sleep_entered.wait()
+        if interruption != "before_provider_dispatch":
+            await confirmation_sleep_entered.wait()
     clear_task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await clear_task
@@ -489,7 +507,8 @@ async def test_interrupted_clear_never_replays_restored_intent(
         and fence["slot"] == _SLOT
         for fence in loaded.data["pending_fences"]
     )
-    assert len(events) == 1
+    expected_provider_calls = int(interruption != "before_provider_dispatch")
+    assert len(events) == expected_provider_calls
 
     restarted_store = ProtectedRegistryStore(
         hass, allocator._lock, storage_dir=tmp_path / ".storage"
@@ -500,7 +519,7 @@ async def test_interrupted_clear_never_replays_restored_intent(
     stop_keymaster_lifecycle(hass, _RC_ENTRY_ID)
     start_keymaster_lifecycle(hass, coordinator.config_entry, coordinator)
     await hass.async_block_till_done()
-    assert len(events) == 1
+    assert len(events) == expected_provider_calls
     restarted_result = restarted_store.loaded_result
     assert restarted_result is not None and restarted_result.data is not None
     assert any(

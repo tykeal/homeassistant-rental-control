@@ -46,7 +46,7 @@ def release_guard_reason(
     for owner in owners:
         if owner.identity_key in shadowed:
             continue
-        if required_keymaster_identities is not None:
+        if required_keymaster_identities is not None and owner.lockname is not None:
             required = required_keymaster_identities.get(
                 (owner.entry_id, owner.identity_key)
             )

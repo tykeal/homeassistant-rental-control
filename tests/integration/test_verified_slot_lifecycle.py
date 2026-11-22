@@ -50,6 +50,11 @@ from custom_components.rental_control.allocator.registry_safety_models import (
 )
 from custom_components.rental_control.allocator.store import code_ref_for
 from custom_components.rental_control.allocator.store import serialize_registry_ledger
+from custom_components.rental_control.const import CONF_ASSOCIATION_GENERATION
+from custom_components.rental_control.const import CONF_ASSOCIATION_MODE
+from custom_components.rental_control.const import CONF_ASSOCIATION_TRANSACTION_ID
+from custom_components.rental_control.const import CONF_LOCK_ENTRY
+from custom_components.rental_control.const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 from custom_components.rental_control.coordinator_helpers import keymaster_version_issue
@@ -794,6 +799,53 @@ async def test_setup_unload_entry_tracks_selected_keymaster_version_issue(
     selected._async_set_state(hass, ConfigEntryState.NOT_LOADED, None)
     hass.data[loader.DATA_INTEGRATIONS].pop("keymaster", None)
     await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+async def test_ready_v2_legacy_keymaster_entry_gets_actionable_repair_issue(
+    hass,
+    tmp_path: Path,
+) -> None:
+    """A migrated lock-backed legacy tuple prompts until selection is verified."""
+    coordinator, _store, _entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.1"
+    )
+    entry = coordinator.config_entry
+    entry._async_set_state(hass, ConfigEntryState.LOADED, None)
+    verified = AssociationTuple.from_config(entry.data)
+    assert verified is not None
+    legacy_data = dict(entry.data)
+    for key in (
+        CONF_ASSOCIATION_GENERATION,
+        CONF_ASSOCIATION_MODE,
+        CONF_ASSOCIATION_TRANSACTION_ID,
+        CONF_VERIFIED_KEYMASTER_ENTRY_ID,
+    ):
+        legacy_data.pop(key, None)
+    legacy_data[CONF_LOCK_ENTRY] = "lock.consumer"
+    hass.config_entries.async_update_entry(entry, data=legacy_data)
+
+    issue_registry = async_get_issue_registry(hass)
+    issue_id = f"keymaster_association_repair_{entry.entry_id}"
+    keymaster_version_issue.register_keymaster_version_tracking(hass, entry.entry_id)
+    try:
+        issue = issue_registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.translation_key == "keymaster_association_repair"
+        assert issue.config_entry_id == entry.entry_id
+
+        hass.config_entries.async_update_entry(
+            entry, data=verified.merge_into_config(legacy_data)
+        )
+        await hass.async_block_till_done()
+        assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
+    finally:
+        keymaster_version_issue.unregister_keymaster_version_tracking(
+            hass, entry.entry_id
+        )
+        entry._async_set_state(hass, ConfigEntryState.NOT_LOADED, None)
+        stop_keymaster_lifecycle(hass, entry.entry_id)
+        await hass.async_block_till_done()
 
 
 @pytest.mark.asyncio
