@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
@@ -677,6 +679,58 @@ class TestAsyncCheckOverrides:
         ) as mock_fire:
             await eo.async_check_overrides(coordinator)
             mock_fire.assert_called_once()
+
+    async def test_stale_clear_does_not_reset_reassigned_slot(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A clear decision waiting on the slot lock cannot reset its successor."""
+        from custom_components.rental_control.event_overrides_helpers import (
+            shell_cleanup,
+        )
+
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        old_start = _make_dt(2025, 7, 1)
+        old_end = _make_dt(2025, 7, 5)
+        eo.update(1, "1234", "Departed Guest", old_start, old_end)
+        coordinator = _make_coordinator(calendar_events=[])
+        waiting_for_slot = asyncio.Event()
+        release_slot = asyncio.Event()
+
+        @asynccontextmanager
+        async def blocked_slot_operation(_coordinator, _slot):
+            """Pause cleanup after its decision but before it acquires the slot."""
+            waiting_for_slot.set()
+            await release_slot.wait()
+            yield
+
+        monkeypatch.setattr(
+            shell_cleanup, "async_slot_operation", blocked_slot_operation
+        )
+        dispatch = AsyncMock(
+            return_value=OperationResult(kind="clear", slot=1, confirmed=True)
+        )
+        monkeypatch.setattr(shell_cleanup, "_dispatch_cleanup_clear", dispatch)
+
+        cleanup = asyncio.create_task(
+            eo.async_check_overrides(coordinator, calendar=[])
+        )
+        await waiting_for_slot.wait()
+        replacement_start = _make_dt(2025, 8, 1)
+        replacement_end = _make_dt(2025, 8, 5)
+        assert await eo.async_update(
+            1, "5678", "Replacement Guest", replacement_start, replacement_end
+        )
+
+        release_slot.set()
+        await cleanup
+
+        dispatch.assert_not_awaited()
+        replacement = eo.overrides[1]
+        assert replacement is not None
+        assert replacement["slot_name"] == "Replacement Guest"
+        assert replacement["slot_code"] == "5678"
+        assert replacement["start_time"] == replacement_start
+        assert replacement["end_time"] == replacement_end
 
     async def test_clears_when_start_after_end(self) -> None:
         """Verify slot is cleared when start_date > end_date."""
