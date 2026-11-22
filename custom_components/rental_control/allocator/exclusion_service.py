@@ -16,10 +16,14 @@ from homeassistant.helpers import config_validation as cv
 import probatio
 
 from ..const import DOMAIN
+from ..const import PROTECTED_REGISTRY_STORE
 from ..coordinator_helpers import exclusion_targets
 from ..coordinator_helpers import slot_exclusions
 from . import issuance
+from .associations import AssociationMode
+from .associations import AssociationTuple
 from .exclusions import refusal_for_exclusion
+from .models import ProtectionAuthorizationState
 
 SERVICE_SET_SLOT_EXCLUSION = "set_slot_exclusion"
 ATTR_LOCKNAME = "lockname"
@@ -119,6 +123,9 @@ async def _handle_set_slot_exclusion_call(
         return _response(request, refusal or "missing_target", None, [])
     stored = slot_exclusions.load(hass, target.entry_id)
     if request.excluded:
+        association_refusal = _verified_association_refusal(hass, target)
+        if association_refusal is not None:
+            return _response(request, association_refusal, target, sorted(stored))
         guard = await _guard_refusal(hass, target, request.slot)
         if guard is not None:
             return _response(request, guard, target, sorted(stored))
@@ -130,6 +137,7 @@ async def _handle_set_slot_exclusion_call(
     changed = resulting != stored
     if request.dry_run:
         return _response(request, None, target, sorted(resulting), changed=changed)
+
     if changed:
         slot_exclusions.persist_excluded_slots(hass, target.entry_id, resulting)
         _LOGGER.info(
@@ -143,21 +151,79 @@ async def _handle_set_slot_exclusion_call(
     return _response(request, None, target, sorted(resulting), changed=changed)
 
 
+def _verified_association_refusal(
+    hass: HomeAssistant, target: exclusion_targets.ExclusionTarget
+) -> str | None:
+    """Require the active protected backend's exact association for creation.
+
+    The historical allocator remains untouched while protected storage is
+    absent. Once the protected backend is present, a missing, stale, or
+    unresolved tuple cannot authorize a new exclusion.
+    """
+    domain_data = hass.data.get(DOMAIN)
+    if not isinstance(domain_data, dict):
+        return "association_unavailable"
+    store = domain_data.get(PROTECTED_REGISTRY_STORE)
+    if store is None:
+        return None
+    if (
+        getattr(store, "authorization_state", None)
+        is not ProtectionAuthorizationState.READY
+    ):
+        return "association_unavailable"
+    entry = hass.config_entries.async_get_entry(target.entry_id)
+    if entry is None:
+        return "association_unverified"
+    configured = AssociationTuple.from_config(entry.data)
+    try:
+        acknowledged = store.association_for_entry(target.entry_id)
+    except Exception:
+        return "association_unavailable"
+    if (
+        configured is None
+        or configured != acknowledged
+        or configured.mode is not AssociationMode.VERIFIED
+        or configured.verified_keymaster_entry_id is None
+    ):
+        return "association_unverified"
+    from ..keymaster_lifecycle import get_keymaster_lifecycle
+
+    lifecycle = get_keymaster_lifecycle(hass, target.entry_id)
+    if (
+        lifecycle is None
+        or lifecycle.keymaster_entry_id != configured.verified_keymaster_entry_id
+        or not lifecycle.current
+    ):
+        return "association_unavailable"
+    return None
+
+
 async def _guard_refusal(
     hass: HomeAssistant, target: exclusion_targets.ExclusionTarget, slot: int
 ) -> str | None:
     """Return why this slot may not be excluded, or None when it may."""
     from ..coordinator_helpers.cycle_requests import build_cycle_observation
+    from ..coordinator_helpers.cycle_requests import verified_observation_identity
     from .reissue_preview import observe_managed_slots_without_mutation
     from .singleton import async_get_or_create_allocator
 
     coordinator = target.coordinator
-    observation = build_cycle_observation(
-        target.entry_id,
-        target.lockname,
+    identity = verified_observation_identity(hass, target.entry_id)
+    managed_slots = (
         observe_managed_slots_without_mutation(coordinator)
         if target.lockname is not None
-        else [],
+        else []
+    )
+    observation = (
+        build_cycle_observation(target.entry_id, target.lockname, managed_slots)
+        if identity is None
+        else build_cycle_observation(
+            target.entry_id,
+            target.lockname,
+            managed_slots,
+            keymaster_entry_id=identity[0],
+            keymaster_generation=identity[1],
+        )
     )
     allocator = await async_get_or_create_allocator(hass)
     claimed = (

@@ -165,7 +165,9 @@ async def _fresh_slot_text_states(
     pin_state = hass.states.get(pin_entity)
     if name_state is None or pin_state is None:
         return None
-    if intent is not None and not await intent.async_is_current():
+    if intent is not None and not await intent.async_is_current(
+        allow_native_empty_text=True
+    ):
         return None
     return name_state.state, pin_state.state
 

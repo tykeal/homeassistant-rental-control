@@ -140,7 +140,9 @@ async def _apply_clear_result(
 ) -> Any:
     """Apply clear evidence while retaining the pending fence on uncertainty."""
     async with self._lock:
-        if intent is not None and not await intent.async_is_current():
+        if intent is not None and not await intent.async_is_current(
+            allow_native_empty_text=True
+        ):
             return self._operation_result_type(
                 kind="clear", slot=slot, unconfirmed=True
             )

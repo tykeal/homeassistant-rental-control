@@ -29,6 +29,7 @@ from .const import DOMAIN
 from .const import PROTECTED_REGISTRY_STORE
 from .helpers import get_entry_data
 from .keymaster_identity import CapabilityResolution
+from .keymaster_identity import CapabilityStatus
 from .keymaster_identity import resolve_capability
 from .keymaster_lifecycle import get_keymaster_lifecycle
 
@@ -40,6 +41,16 @@ _SERVICE_ALLOWLIST = {
     "switch": frozenset({"turn_off", "turn_on"}),
     "text": frozenset({"set_value"}),
 }
+_SET_REQUIRED_PROPERTIES = frozenset(
+    {
+        "switch.code_slots:{slot}.enabled",
+        "switch.code_slots:{slot}.accesslimit_date_range_enabled",
+        "datetime.code_slots:{slot}.accesslimit_date_range_start",
+        "datetime.code_slots:{slot}.accesslimit_date_range_end",
+        "text.code_slots:{slot}.pin",
+        "text.code_slots:{slot}.name",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +88,7 @@ class _FenceRequest:
     owner_reference: str
     allocation_reference: str
     fence_type: str
+    allow_native_empty_text: bool
     initial: _AuthorizationInputs = field(repr=False)
     required_properties: tuple[str, ...] = field(repr=False)
 
@@ -107,6 +119,7 @@ class VerifiedOperationIntent:
     protection_token: ProtectionCommitToken = field(repr=False)
     fence_id: str = field(repr=False)
     fence_type: str
+    allow_native_empty_text: bool
     owner_reference: str = field(repr=False)
     allocation_reference: str = field(repr=False)
     capabilities: tuple[CapabilityResolution, ...] = field(repr=False)
@@ -149,12 +162,12 @@ class VerifiedOperationIntent:
             service_data=service_data or {},
             blocking=True,
         )
-        if not await self.async_is_current():
+        if not await self.async_is_current(allow_native_empty_text=True):
             # The side effect may have completed. The durable fence remains;
             # callers must report unconfirmed and must not retry by name.
             raise VerifiedOperationRejected("operation_invalidated_after_dispatch")
 
-    async def async_is_current(self) -> bool:
+    async def async_is_current(self, *, allow_native_empty_text: bool = False) -> bool:
         """Wait for any protected write, then validate its acknowledged state."""
         domain_data = self.hass.data.get(DOMAIN)
         store = (
@@ -170,11 +183,16 @@ class VerifiedOperationIntent:
                 return False
         except Exception:
             return False
-        return self.is_current()
+        return self.is_current(allow_native_empty_text=allow_native_empty_text)
 
-    def is_current(self) -> bool:
+    def is_current(self, *, allow_native_empty_text: bool = False) -> bool:
         """Revalidate every authorization input on the HA event-loop thread."""
-        return _intent_is_current(self)
+        return _intent_is_current(
+            self,
+            allow_native_empty_text=(
+                allow_native_empty_text or self.allow_native_empty_text
+            ),
+        )
 
 
 def create_verified_operation_intent(
@@ -185,6 +203,7 @@ def create_verified_operation_intent(
     owner_identity_key: str,
     required_properties: tuple[str, ...],
     fence_type: str = "allocation",
+    allow_native_empty_text: bool = False,
 ) -> VerifiedOperationIntent | None:
     """Create an intent only from an acknowledged exact owner fence.
 
@@ -206,11 +225,20 @@ def create_verified_operation_intent(
         or len(set(required_properties)) != len(required_properties)
     ):
         return None
+    native_empty_allowed = _native_empty_text_policy(
+        fence_type, slot, required_properties, allow_native_empty_text
+    )
+    if native_empty_allowed is None:
+        return None
     inputs = _authorization_inputs(hass, rc_entry_id)
     if inputs is None:
         return None
     capabilities = _resolve_required_capabilities(
-        hass, inputs, slot, required_properties
+        hass,
+        inputs,
+        slot,
+        required_properties,
+        allow_native_empty_text=native_empty_allowed,
     )
     if capabilities is None:
         return None
@@ -243,11 +271,16 @@ def create_verified_operation_intent(
         protection_token=inputs.token,
         fence_id=fence["fence_id"],
         fence_type=fence_type,
+        allow_native_empty_text=native_empty_allowed,
         owner_reference=owner_reference,
         allocation_reference=allocation_reference,
         capabilities=capabilities,
     )
-    return intent if _intent_is_current(intent) else None
+    return (
+        intent
+        if _intent_is_current(intent, allow_native_empty_text=native_empty_allowed)
+        else None
+    )
 
 
 async def async_prepare_verified_operation_intent(
@@ -258,6 +291,7 @@ async def async_prepare_verified_operation_intent(
     owner_identity_key: str,
     required_properties: tuple[str, ...],
     fence_type: str = "allocation",
+    allow_native_empty_text: bool = False,
 ) -> VerifiedOperationIntent | None:
     """Acknowledge an exact owner fence before returning a dispatch intent.
 
@@ -266,6 +300,11 @@ async def async_prepare_verified_operation_intent(
     explicitly verified lifecycle, protected store, and loaded allocator are
     present; it never falls back to a constructed entity ID.
     """
+    native_empty_allowed = _native_empty_text_policy(
+        fence_type, slot, required_properties, allow_native_empty_text
+    )
+    if native_empty_allowed is None:
+        return None
     initial = _authorization_inputs(hass, rc_entry_id)
     if initial is None:
         return None
@@ -277,8 +316,6 @@ async def async_prepare_verified_operation_intent(
     owner_reference, allocation_reference, owner_slot = references
     if owner_slot != slot:
         return None
-    if _resolve_required_capabilities(hass, initial, slot, required_properties) is None:
-        return None
     fence = _matching_fence(
         initial,
         rc_entry_id,
@@ -287,6 +324,17 @@ async def async_prepare_verified_operation_intent(
         allocation_reference,
         fence_type,
     )
+    if (
+        _resolve_required_capabilities(
+            hass,
+            initial,
+            slot,
+            required_properties,
+            allow_native_empty_text=native_empty_allowed,
+        )
+        is None
+    ):
+        return None
     pending_clear_exists = any(
         validate_pending_fence(record)
         and record["original_km_entry_id"] == initial.keymaster_entry.entry_id
@@ -306,6 +354,7 @@ async def async_prepare_verified_operation_intent(
                 owner_reference=owner_reference,
                 allocation_reference=allocation_reference,
                 fence_type=fence_type,
+                allow_native_empty_text=native_empty_allowed,
                 initial=initial,
                 required_properties=required_properties,
             ),
@@ -318,6 +367,7 @@ async def async_prepare_verified_operation_intent(
         owner_identity_key=owner_identity_key,
         required_properties=required_properties,
         fence_type=fence_type,
+        allow_native_empty_text=native_empty_allowed,
     )
 
 
@@ -419,7 +469,11 @@ async def _async_acknowledge_fence(
                 request.slot,
             )
             or _resolve_required_capabilities(
-                hass, current, request.slot, request.required_properties
+                hass,
+                current,
+                request.slot,
+                request.required_properties,
+                allow_native_empty_text=request.allow_native_empty_text,
             )
             is None
         ):
@@ -500,6 +554,8 @@ async def prepare_verified_intent(
     owner_identity_key: str,
     properties: tuple[str, ...],
     fence_type: str,
+    *,
+    allow_native_empty_text: bool = False,
 ) -> VerifiedOperationIntent | None:
     """Create or acknowledge an exact protective fence before dispatch."""
     config_entry = getattr(coordinator, "config_entry", None)
@@ -516,6 +572,7 @@ async def prepare_verified_intent(
             owner_identity_key=owner_identity_key,
             required_properties=tuple(prop.format(slot=slot) for prop in properties),
             fence_type=fence_type,
+            allow_native_empty_text=allow_native_empty_text,
         )
     except Exception:
         return None
@@ -525,7 +582,9 @@ async def async_resolve_verified_clear_fence(
     intent: VerifiedOperationIntent,
 ) -> bool:
     """Tombstone a confirmed pending-clear fence before local slot release."""
-    if intent.fence_type != "pending_clear" or not await intent.async_is_current():
+    if intent.fence_type != "pending_clear" or not await intent.async_is_current(
+        allow_native_empty_text=True
+    ):
         return False
     from .allocator.registry_safety_models import resolve_fence_to_tombstone
     from .allocator.registry_snapshot import SnapshotCommitHooks
@@ -594,7 +653,7 @@ async def async_resolve_verified_clear_fence(
             safety_transition=safety_transition,
             event_loop_preflight=lambda: (
                 None
-                if intent.is_current()
+                if intent.is_current(allow_native_empty_text=True)
                 else ProtectionLoadResult(
                     ProtectionLoadState.UNAVAILABLE,
                     failure_code="operation_not_current",
@@ -670,11 +729,35 @@ def _authorization_inputs(
     )
 
 
+def _native_empty_text_policy(
+    fence_type: str,
+    slot: int,
+    required_properties: tuple[str, ...],
+    requested: bool,
+) -> bool | None:
+    """Scope native-empty text to clear evidence or the exact verified set."""
+    if fence_type == "pending_clear":
+        return True
+    if not requested:
+        return False
+    expected_set_properties = {
+        property_key.format(slot=slot) for property_key in _SET_REQUIRED_PROPERTIES
+    }
+    if (
+        fence_type != "allocation"
+        or set(required_properties) != expected_set_properties
+    ):
+        return None
+    return True
+
+
 def _resolve_required_capabilities(
     hass: HomeAssistant,
     inputs: _AuthorizationInputs,
     slot: int,
     required_properties: tuple[str, ...],
+    *,
+    allow_native_empty_text: bool = False,
 ) -> tuple[CapabilityResolution, ...] | None:
     """Resolve and cross-check every same-slot live property."""
     generation = inputs.lifecycle.generation
@@ -685,7 +768,16 @@ def _resolve_required_capabilities(
         identity = resolution.identity if resolution is not None else None
         if (
             resolution is None
-            or not resolution.ready
+            or (
+                not resolution.ready
+                and not _native_empty_text_capability(
+                    resolution,
+                    slot=slot,
+                    keymaster_entry_id=inputs.keymaster_entry.entry_id,
+                    generation=generation,
+                    allow_native_empty_text=allow_native_empty_text,
+                )
+            )
             or identity is None
             or identity.slot != slot
             or identity.keymaster_entry_id != inputs.keymaster_entry.entry_id
@@ -699,10 +791,42 @@ def _resolve_required_capabilities(
             property_key,
             generation=generation,
         )
-        if not fresh.ready or fresh.entity_id != resolution.entity_id:
+        if (
+            not fresh.ready
+            and not _native_empty_text_capability(
+                fresh,
+                slot=slot,
+                keymaster_entry_id=inputs.keymaster_entry.entry_id,
+                generation=generation,
+                allow_native_empty_text=allow_native_empty_text,
+            )
+        ) or fresh.entity_id != resolution.entity_id:
             return None
         capabilities.append(fresh)
     return tuple(capabilities)
+
+
+def _native_empty_text_capability(
+    resolution: CapabilityResolution,
+    *,
+    slot: int,
+    keymaster_entry_id: str,
+    generation: int,
+    allow_native_empty_text: bool,
+) -> bool:
+    """Permit live native ``None`` text only while preparing a clear fence."""
+    identity = resolution.identity
+    return bool(
+        allow_native_empty_text
+        and resolution.status is CapabilityStatus.UNKNOWN_STATE
+        and identity is not None
+        and identity.domain == "text"
+        and identity.property_key.rsplit(".", maxsplit=1)[-1] in {"name", "pin"}
+        and identity.slot == slot
+        and identity.keymaster_entry_id == keymaster_entry_id
+        and identity.generation == generation
+        and resolution.entity_id is not None
+    )
 
 
 def _matching_fence(
@@ -731,7 +855,9 @@ def _matching_fence(
     return matches[0] if len(matches) == 1 else None
 
 
-def _intent_is_current(intent: VerifiedOperationIntent) -> bool:
+def _intent_is_current(
+    intent: VerifiedOperationIntent, *, allow_native_empty_text: bool = False
+) -> bool:
     """Return whether the exact protected identity snapshot still holds."""
     inputs = _current_intent_inputs(intent)
     if inputs is None:
@@ -739,7 +865,11 @@ def _intent_is_current(intent: VerifiedOperationIntent) -> bool:
     return (
         _current_store_snapshot_matches(intent, inputs)
         and _current_selected_entry_matches(intent, inputs)
-        and _current_capabilities_match(intent, inputs.lifecycle)
+        and _current_capabilities_match(
+            intent,
+            inputs.lifecycle,
+            allow_native_empty_text=allow_native_empty_text,
+        )
         and _current_owner_fence_matches(intent, inputs.loaded.data)
     )
 
@@ -826,7 +956,10 @@ def _current_selected_entry_matches(
 
 
 def _current_capabilities_match(
-    intent: VerifiedOperationIntent, lifecycle: Any
+    intent: VerifiedOperationIntent,
+    lifecycle: Any,
+    *,
+    allow_native_empty_text: bool,
 ) -> bool:
     """Require every same-slot address to remain freshly resolved."""
     current = lifecycle.current
@@ -837,7 +970,12 @@ def _current_capabilities_match(
         resolution = current.get(identity.property_key)
         if (
             resolution is None
-            or not resolution.ready
+            or (
+                not resolution.ready
+                and not _native_empty_text_is_current(
+                    intent, resolution, allow_native_empty_text
+                )
+            )
             or resolution.entity_id != previous.entity_id
             or resolution.identity != identity
         ):
@@ -848,9 +986,36 @@ def _current_capabilities_match(
             identity.property_key,
             generation=intent.lifecycle_generation,
         )
-        if not fresh.ready or fresh.entity_id != previous.entity_id:
+        if (
+            not fresh.ready
+            and not _native_empty_text_is_current(
+                intent, fresh, allow_native_empty_text
+            )
+        ) or fresh.entity_id != previous.entity_id:
             return False
     return True
+
+
+def _native_empty_text_is_current(
+    intent: VerifiedOperationIntent,
+    resolution: CapabilityResolution,
+    allow_native_empty_text: bool,
+) -> bool:
+    """Accept only exact live native-empty text for set or clear purposes."""
+    identity = resolution.identity
+    permitted_fence = (
+        intent.fence_type == "allocation" and intent.allow_native_empty_text
+    ) or (intent.fence_type == "pending_clear" and allow_native_empty_text)
+    return bool(
+        permitted_fence
+        and resolution.status is CapabilityStatus.UNKNOWN_STATE
+        and identity is not None
+        and identity.domain == "text"
+        and identity.property_key.rsplit(".", maxsplit=1)[-1] in {"name", "pin"}
+        and identity.slot == intent.slot
+        and identity.keymaster_entry_id == intent.keymaster_entry_id
+        and identity.generation == intent.lifecycle_generation
+    )
 
 
 def _current_owner_fence_matches(intent: VerifiedOperationIntent, data: Any) -> bool:

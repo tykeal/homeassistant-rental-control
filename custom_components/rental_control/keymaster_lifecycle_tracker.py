@@ -203,26 +203,69 @@ class KeymasterEntityLifecycle:
             None,
         )
         new_state = event.data.get("new_state")
-        if current is None or not current.ready or new_state is None:
+        if current is None or new_state is None:
             self._invalidate_and_schedule()
             return
         state_value = str(getattr(new_state, "state", "")).casefold()
         attributes = getattr(new_state, "attributes", {})
+        identity = current.identity
+        is_slot_text = bool(
+            identity is not None
+            and identity.domain == "text"
+            and identity.property_key.startswith("text.code_slots:")
+            and identity.property_key.rsplit(".", maxsplit=1)[-1] in {"name", "pin"}
+        )
+        current_native_empty = (
+            is_slot_text and current.status is CapabilityStatus.UNKNOWN_STATE
+        )
+        if not current.ready and not current_native_empty:
+            self._invalidate_and_schedule()
+            return
+        native_empty_text = is_slot_text and state_value == "unknown"
         if (
-            current.identity is not None
-            and current.identity.property_key.endswith(".override_parent")
+            identity is not None
+            and identity.property_key.endswith(".override_parent")
             and current.boolean_state != (state_value == "on")
         ):
             self._invalidate_and_schedule()
             return
-        if state_value in {
-            "unknown",
-            "unavailable",
-            "[redacted]",
-            "masked",
-            "****",
-        } or (isinstance(attributes, Mapping) and attributes.get("restored") is True):
+        unusable_state = (
+            state_value
+            in {
+                "unknown",
+                "unavailable",
+                "[redacted]",
+                "masked",
+                "****",
+            }
+            and not native_empty_text
+        )
+        restored_state = (
+            isinstance(attributes, Mapping) and attributes.get("restored") is True
+        )
+        if unusable_state or restored_state:
             self._invalidate_and_schedule()
+            return
+        if is_slot_text and (current_native_empty or native_empty_text):
+            self._refresh_native_text_resolution(current)
+
+    @callback
+    def _refresh_native_text_resolution(self, current: CapabilityResolution) -> None:
+        """Refresh only an exact live name/PIN empty-value transition in place."""
+        identity = current.identity
+        if identity is None:
+            self._invalidate_and_schedule()
+            return
+        fresh = resolve_capability_identity(self._hass, identity)
+        if fresh.entity_id != current.entity_id or fresh.status not in {
+            CapabilityStatus.READY,
+            CapabilityStatus.UNKNOWN_STATE,
+        }:
+            self._invalidate_and_schedule()
+            return
+        resolutions = dict(self._resolutions)
+        resolutions[identity.property_key] = fresh
+        self._resolutions = MappingProxyType(resolutions)
 
     @callback
     def request_refresh(self) -> None:

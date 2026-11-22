@@ -167,34 +167,13 @@ async def _async_fire_clear_code_locked(
     deps.logger.debug(
         "In async_fire_clear_code - slot: %s, name: %s", slot, coordinator.name
     )
+    reset_entity = _clear_entity_targets(
+        coordinator, slot, expected_name, deps, verified_intent
+    )
+    if reset_entity is None:
+        return OperationResult(kind="clear", slot=slot, unconfirmed=True)
     hass = coordinator.hass
-    if verified_intent is None:
-        try:
-            _require_legacy_address(coordinator)
-        except VerifiedOperationRejected:
-            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
-    if verified_intent is None:
-        reset_entity = f"{BUTTON}.{coordinator.lockname}_code_slot_{slot}_reset"
-    else:
-        try:
-            if verified_intent.slot != slot:
-                raise VerifiedOperationRejected("operation_not_current")
-            reset_entity = verified_intent.entity_id(f"button.code_slots:{slot}.reset")
-            verified_intent.entity_id(f"text.code_slots:{slot}.name")
-            verified_intent.entity_id(f"text.code_slots:{slot}.pin")
-        except VerifiedOperationRejected:
-            return OperationResult(kind="clear", slot=slot, unconfirmed=True)
-    if verified_intent is None and not coordinator.lockname:
-        return OperationResult(kind="clear", slot=slot, unconfirmed=True)
-    if (
-        expected_name is not None
-        and not coordinator.event_overrides.verify_slot_ownership(slot, expected_name)
-    ):
-        deps.logger.warning(
-            "Slot %d ownership verification failed; aborting clear_code",
-            slot,
-        )
-        return OperationResult(kind="clear", slot=slot, unconfirmed=True)
+
     try:
         if verified_intent is None:
             await hass.services.async_call(
@@ -215,7 +194,9 @@ async def _async_fire_clear_code_locked(
     except Exception as exc:
         return _operation_failure_result(coordinator, slot, "clear", exc, deps)
     await deps.sleep(0.5)
-    if verified_intent is not None and not await verified_intent.async_is_current():
+    if verified_intent is not None and not await verified_intent.async_is_current(
+        allow_native_empty_text=True
+    ):
         return OperationResult(kind="clear", slot=slot, unconfirmed=True)
     unconfirmed, lingering_name = await _classify_name_after_reset(
         coordinator, slot, deps, intent=verified_intent
@@ -231,6 +212,42 @@ async def _async_fire_clear_code_locked(
         lingering_pin,
         deps,
     )
+
+
+def _clear_entity_targets(
+    coordinator,
+    slot: int,
+    expected_name: str | None,
+    deps: KeymasterServiceDeps,
+    intent: VerifiedOperationIntent | None,
+) -> str | None:
+    """Resolve the exact reset entity before dispatch."""
+    if intent is None:
+        try:
+            _require_legacy_address(coordinator)
+        except VerifiedOperationRejected:
+            return None
+        if not coordinator.lockname:
+            return None
+        reset_entity = f"{BUTTON}.{coordinator.lockname}_code_slot_{slot}_reset"
+    else:
+        if intent.slot != slot:
+            return None
+        try:
+            reset_entity = intent.entity_id(f"button.code_slots:{slot}.reset")
+            intent.entity_id(f"text.code_slots:{slot}.name")
+            intent.entity_id(f"text.code_slots:{slot}.pin")
+        except VerifiedOperationRejected:
+            return None
+    if (
+        expected_name is not None
+        and not coordinator.event_overrides.verify_slot_ownership(slot, expected_name)
+    ):
+        deps.logger.warning(
+            "Slot %d ownership verification failed; aborting clear_code", slot
+        )
+        return None
+    return reset_entity
 
 
 async def _classify_name_after_reset(

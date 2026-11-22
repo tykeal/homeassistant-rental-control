@@ -22,6 +22,9 @@ from custom_components.rental_control.allocator.protected_registry import (
 from custom_components.rental_control.allocator.protected_registry import (
     async_recover_protection_files,
 )
+from custom_components.rental_control.allocator.registry_safety_models import (
+    resolve_fence_to_tombstone,
+)
 from custom_components.rental_control.allocator.registry_validation import (
     prepare_exact_json_bytes,
 )
@@ -160,3 +163,85 @@ async def test_restart_rolls_back_later_intent_without_losing_prior_fence(
     finalized = json.loads(marker_path.read_bytes())
     assert finalized["state"] == "finalized"
     assert finalized["committed_transaction_id"] == "1" * 32
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failed_write", "expected_transaction", "expected_fence_count"),
+    [
+        (1, "1" * 32, 1),
+        (2, "1" * 32, 1),
+        (3, "2" * 32, 0),
+    ],
+)
+async def test_pending_clear_resolution_recovers_exactly_at_each_write_boundary(
+    hass: HomeAssistant,
+    isolated_storage: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_write: int,
+    expected_transaction: str,
+    expected_fence_count: int,
+) -> None:
+    """A failed resolution write retains the fence or its exact tombstone."""
+    from custom_components.rental_control.allocator import registry_commit
+
+    storage = isolated_storage
+    registry_path = storage / "rental_control.code_registry"
+    marker_path = storage / "rental_control.code_registry_protection"
+    fence = _fence()
+    initial = await async_commit_protection_transaction(
+        asyncio.Lock(),
+        storage,
+        _envelope("1" * 32, 1, [fence]),
+    )
+    assert initial.state is ProtectionLoadState.VALID_V2
+
+    target_transaction = "2" * 32
+    tombstone = resolve_fence_to_tombstone(
+        fence,
+        tombstone_id="a" * 32,
+        resolved_transaction_id=target_transaction,
+        resolved_generation=2,
+        resolution_kind="clear_confirmed",
+        retained_at="2026-11-21T00:01:00+00:00",
+    )
+    target = _envelope(target_transaction, 2, [])
+    target["data"]["tombstones"] = [tombstone]
+
+    original_write = registry_commit._atomic_write_acknowledged
+    writes = 0
+
+    def fail_one_boundary(path: Path, data: bytes, maximum: int) -> bool:
+        """Fail exactly one of the marker/envelope/final-marker writes."""
+        nonlocal writes
+        writes += 1
+        if writes == failed_write:
+            return False
+        return original_write(path, data, maximum)
+
+    monkeypatch.setattr(
+        registry_commit, "_atomic_write_acknowledged", fail_one_boundary
+    )
+    interrupted = await async_commit_protection_transaction(
+        asyncio.Lock(), storage, target
+    )
+    assert interrupted.state is ProtectionLoadState.PROTECTIVE_UNKNOWN
+
+    # Recovery is a fresh runtime operation. It must use actual disk bytes,
+    # not cached transaction state or the failed writer's in-memory intent.
+    monkeypatch.setattr(registry_commit, "_atomic_write_acknowledged", original_write)
+    recovered = await async_recover_protection_files(asyncio.Lock(), storage)
+
+    assert recovered.state is ProtectionLoadState.VALID_V2
+    assert recovered.transaction_id == expected_transaction
+    data = json.loads(registry_path.read_bytes())["data"]
+    assert len(data["pending_fences"]) == expected_fence_count
+    if expected_fence_count:
+        assert data["pending_fences"] == [fence]
+        assert data["tombstones"] == []
+    else:
+        assert data["pending_fences"] == []
+        assert data["tombstones"] == [tombstone]
+    marker = json.loads(marker_path.read_bytes())
+    assert marker["state"] == "finalized"
+    assert marker["committed_transaction_id"] == expected_transaction

@@ -237,6 +237,8 @@ class CycleObservation:
     managed_slots: frozenset[int]
     observed_codes: dict[str, int]
     unreadable_slots: frozenset[int]
+    keymaster_entry_id: str | None = None
+    keymaster_generation: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -101,6 +101,7 @@ def _loaded_entry_ids(hass: HomeAssistant) -> set[str]:
 def _collect_observations(hass: HomeAssistant) -> list[CycleObservation]:
     """Return current observations from loaded Rental Control coordinators."""
     from ..coordinator_helpers.cycle_requests import build_cycle_observation
+    from ..coordinator_helpers.cycle_requests import verified_observation_identity
 
     observations: list[CycleObservation] = []
     for entry_id, entry_data in hass.data.get(DOMAIN, {}).items():
@@ -110,9 +111,19 @@ def _collect_observations(hass: HomeAssistant) -> list[CycleObservation]:
         if coordinator is None or getattr(coordinator, "lockname", None) is None:
             continue
         slots = coordinator._observe_managed_slots()
-        observations.append(
+        identity = verified_observation_identity(hass, entry_id)
+        observation = (
             build_cycle_observation(entry_id, coordinator.lockname, slots)
+            if identity is None
+            else build_cycle_observation(
+                entry_id,
+                coordinator.lockname,
+                slots,
+                keymaster_entry_id=identity[0],
+                keymaster_generation=identity[1],
+            )
         )
+        observations.append(observation)
     return observations
 
 

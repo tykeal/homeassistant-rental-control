@@ -56,7 +56,10 @@ async def async_resolve_codes(
         for directive in request.forced_reissues
     )
     observation = cycle_requests.build_cycle_observation(
-        request.entry_id, request.lockname, request.managed_slots
+        request.entry_id,
+        request.lockname,
+        request.managed_slots,
+        **_observation_identity(request),
     )
     request = _with_revalidated_exclusions(request, observation)
     allocator = get_allocator(request.hass)
@@ -71,6 +74,19 @@ async def async_resolve_codes(
     return CodeResolutionResult(
         observation, getattr(result, "reissues", ()), consumed_target_keys
     )
+
+
+def _observation_identity(request: CodeResolutionRequest) -> dict[str, Any]:
+    """Bind the physical observation to the acknowledged selected lifecycle."""
+    identity = cycle_requests.verified_observation_identity(
+        request.hass, request.entry_id
+    )
+    if identity is None:
+        return {}
+    return {
+        "keymaster_entry_id": identity[0],
+        "keymaster_generation": identity[1],
+    }
 
 
 def _with_revalidated_exclusions(

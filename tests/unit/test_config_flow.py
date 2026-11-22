@@ -33,6 +33,7 @@ from custom_components.rental_control.const import (
     CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
 )
 from custom_components.rental_control.const import CONF_EVENT_PREFIX
+from custom_components.rental_control.const import CONF_EXCLUDED_SLOTS
 from custom_components.rental_control.const import CONF_HONOR_EVENT_TIMES
 from custom_components.rental_control.const import CONF_IGNORE_NON_RESERVED
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
@@ -644,6 +645,13 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
     entry = config_result["result"]
 
     # Now update via options flow
+    hass.config_entries.async_update_entry(
+        entry,
+        data={
+            **entry.data,
+            CONF_EXCLUDED_SLOTS: [{"slot": 99, "reason": "unreadable"}],
+        },
+    )
     hass.data[LOCK_MANAGER] = {}
     MockConfigEntry(
         domain=LOCK_MANAGER,
@@ -723,6 +731,7 @@ async def test_options_flow_update(hass: HomeAssistant) -> None:
     assert updated_entry.data[CONF_EVENT_PREFIX] == "Vacation"
     assert updated_entry.data[CONF_MAX_EVENTS] == 10
     assert updated_entry.data[CONF_LOCK_ENTRY] == "lock.front_door"
+    assert CONF_EXCLUDED_SLOTS not in updated_entry.data
     assert CONF_ASSOCIATION_MODE not in updated_entry.data
     assert CONF_VERIFIED_KEYMASTER_ENTRY_ID not in updated_entry.data
     assert CONF_ASSOCIATION_GENERATION not in updated_entry.data

@@ -18,6 +18,7 @@ from homeassistant.core import HomeAssistant
 
 from ..const import DOMAIN
 from ..const import NAME
+from ..const import PROTECTED_REGISTRY_STORE
 from . import adoption
 from . import adoption_reports
 from . import diagnostics
@@ -28,6 +29,7 @@ from . import recovery
 from . import reissue
 from . import release_guard
 from . import services
+from .association_references import ledger_allocation_references
 from .associations import AssociationTuple
 from .models import AdoptionRequest
 from .models import AllocationOwner
@@ -43,6 +45,7 @@ from .models import ReissuePreview
 from .models import ReissuePreviewRequest
 from .models import ReleaseReport
 from .registry import AllocationRegistry
+from .registry_safety_models import validate_pending_fence
 from .store import RegistryStore
 from .store import code_ref_for
 
@@ -418,6 +421,7 @@ class DoorCodeAllocator:
         releasing: Collection[str] = (),
     ) -> str | None:
         """Return why owners must be retained, or None when safe to release."""
+        required_keymaster_identities = self._required_keymaster_identities(owners)
         return release_guard.release_guard_reason(
             record,
             owners,
@@ -425,7 +429,71 @@ class DoorCodeAllocator:
             refresh_observed=refresh_observed,
             forced_release=forced_release,
             releasing=releasing,
+            required_keymaster_identities=required_keymaster_identities,
         )
+
+    def _required_keymaster_identities(
+        self, owners: list[AllocationOwner]
+    ) -> dict[tuple[str, str], tuple[str, int] | None] | None:
+        """Bind protected-owner release evidence to its acknowledged KM epoch.
+
+        A missing protected store means the legacy allocator path is still in
+        use. Once protected state exists, every owner must have one exact
+        allocation fence and a live observation from that fence's original
+        selected Keymaster lifecycle.
+        """
+        domain_data = self.hass.data.get(DOMAIN)
+        store = (
+            domain_data.get(PROTECTED_REGISTRY_STORE)
+            if isinstance(domain_data, dict)
+            else None
+        )
+        if store is None:
+            return None
+
+        from ..coordinator_helpers.cycle_requests import verified_observation_identity
+        from .models import ProtectionAuthorizationState
+        from .models import ProtectionLoadState
+
+        loaded = getattr(store, "loaded_result", None)
+        required: dict[tuple[str, str], tuple[str, int] | None] = {}
+        if (
+            getattr(store, "authorization_state", None)
+            is not ProtectionAuthorizationState.READY
+            or loaded is None
+            or loaded.state is not ProtectionLoadState.VALID_V2
+            or loaded.data is None
+        ):
+            return {(owner.entry_id, owner.identity_key): None for owner in owners}
+
+        for owner in owners:
+            key = (owner.entry_id, owner.identity_key)
+            references = ledger_allocation_references(
+                loaded.data, owner.entry_id, owner.identity_key
+            )
+            if references is None or references[2] != owner.slot:
+                required[key] = None
+                continue
+            owner_reference = references[0]
+            fences = [
+                fence
+                for fence in loaded.data.get("pending_fences", [])
+                if validate_pending_fence(fence)
+                and fence["fence_type"] == "allocation"
+                and fence["rc_entry_id"] == owner.entry_id
+                and fence["owner_ref"] == owner_reference
+                and fence["slot"] == owner.slot
+            ]
+            identity = verified_observation_identity(self.hass, owner.entry_id)
+            if (
+                len(fences) != 1
+                or identity is None
+                or fences[0]["original_km_entry_id"] != identity[0]
+            ):
+                required[key] = None
+                continue
+            required[key] = identity
+        return required
 
     def _refresh_owner_observed(
         self,

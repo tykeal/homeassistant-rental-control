@@ -109,7 +109,10 @@ async def preview_request_and_result(
     if target.identity_key is not None and request.preferred_code is None:
         return request, ReissuePreview(reason="no_existing_allocation")
     observation = cycle_requests.build_cycle_observation(
-        target.entry_id, target.lockname, observed_slots
+        target.entry_id,
+        target.lockname,
+        observed_slots,
+        **_observation_identity(coordinator.hass, target.entry_id),
     )
     excluded = frozenset(slot_exclusions.load(coordinator.hass, target.entry_id))
     if observation.unreadable_slots - excluded:
@@ -262,6 +265,17 @@ def observe_managed_slots_without_mutation(coordinator: Any) -> list[Any]:
         )
         slots.append(managed_slot)
     return slots
+
+
+def _observation_identity(hass: Any, entry_id: str) -> dict[str, Any]:
+    """Bind preview evidence to the current acknowledged Keymaster lifecycle."""
+    identity = cycle_requests.verified_observation_identity(hass, entry_id)
+    if identity is None:
+        return {}
+    return {
+        "keymaster_entry_id": identity[0],
+        "keymaster_generation": identity[1],
+    }
 
 
 def hydrate_reservations_from_mappings(

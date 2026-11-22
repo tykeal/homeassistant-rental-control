@@ -171,6 +171,7 @@ async def _apply_set_locked(self, coordinator: Any, slot: int, res, plan_id: str
                 f"text.code_slots:{slot}.name",
             ),
             "allocation",
+            allow_native_empty_text=True,
         )
         if intent is None:
             return self._operation_result_type(kind="set", slot=slot, unconfirmed=True)
