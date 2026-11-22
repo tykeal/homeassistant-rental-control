@@ -49,6 +49,7 @@ from .coordinator_helpers.models import (
 )
 from .coordinator_helpers.models import normalize_event_override_update
 from .helpers import OperationResult
+from .keymaster_identity import resolve_capability
 from .keymaster_lifecycle import get_keymaster_lifecycle
 from .keymaster_operations import protected_registry_active
 from .reconciliation import DesiredPlan as _DesiredPlan
@@ -321,6 +322,14 @@ class RentalControlCoordinator(
                 or resolution.identity.generation != lifecycle.generation
                 or resolution.entity_id is None
             ):
+                return None
+            fresh = resolve_capability(
+                self.hass,
+                lifecycle.keymaster_entry_id,
+                f"text.code_slots:{slot_number}.pin",
+                generation=lifecycle.generation,
+            )
+            if not fresh.ready or fresh.entity_id != resolution.entity_id:
                 return None
             state = self.hass.states.get(resolution.entity_id)
             return state.state if state is not None else None

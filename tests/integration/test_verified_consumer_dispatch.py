@@ -55,6 +55,7 @@ from custom_components.rental_control.allocator.store import serialize_registry_
 from custom_components.rental_control.const import ALLOCATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
+from custom_components.rental_control.coordinator import RentalControlCoordinator
 from custom_components.rental_control.coordinator_helpers.coordinator_config_shell import (
     CoordinatorConfigMixin,
 )
@@ -2563,6 +2564,72 @@ async def test_renamed_capability_rejects_consumer_without_legacy_fallback(
     loaded = store.loaded_result
     assert loaded is not None and loaded.data is not None
     assert loaded.data["pending_fences"] == []
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_reused_old_pin_entity_id_cannot_confirm_written_pin(
+    hass,
+    tmp_path: Path,
+    release: str,
+) -> None:
+    """A reused old PIN address cannot confirm a write before lifecycle rebinding."""
+    coordinator, _, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    property_key = f"text.code_slots:{_SLOT}.pin"
+    old_entity_id = entity_ids[property_key]
+    lifecycle = get_keymaster_lifecycle(hass, _RC_ENTRY_ID)
+    assert lifecycle is not None
+    stale_resolution = lifecycle.current.get(property_key)
+    assert stale_resolution is not None
+    assert stale_resolution.entity_id == old_entity_id
+    assert stale_resolution.identity is not None
+    coordinator._observed_slot_codes = {}
+    coordinator._observed_pin = lambda slot: RentalControlCoordinator._observed_pin(
+        coordinator, slot
+    )
+    hass.states.async_set(old_entity_id, _CODE)
+    assert RentalControlCoordinator._observed_pin(coordinator, _SLOT) == _CODE
+    RentalControlCoordinator._cache_confirmed_set(
+        coordinator, _OWNER_IDENTITY, _SLOT, _CODE
+    )
+    assert coordinator._observed_slot_codes == {_OWNER_IDENTITY: (_SLOT, _CODE)}
+
+    # Hold the lifecycle's registry and state invalidations to model the turn
+    # after registry mutation but before its queued callbacks are processed.
+    lifecycle._unsubscribers[0]()
+    lifecycle._unsubscribers[0] = lambda: None
+    assert lifecycle._unsub_state_change is not None
+    lifecycle._unsub_state_change()
+    lifecycle._unsub_state_change = None
+
+    new_entity_id = "text.manually_renamed_keymaster_slot_pin"
+    registry = er.async_get(hass)
+    registry.async_update_entity(old_entity_id, new_entity_id=new_entity_id)
+    hass.states.async_remove(old_entity_id)
+    hass.states.async_set(new_entity_id, "different-pin")
+    unrelated = registry.async_get_or_create(
+        "text",
+        "keymaster",
+        "unrelated_keymaster_pin_identity",
+        suggested_object_id=old_entity_id.split(".", maxsplit=1)[1],
+        config_entry=hass.config_entries.async_get_entry(_KM_ENTRY_ID),
+    )
+    assert unrelated.entity_id == old_entity_id
+    assert unrelated.unique_id != stale_resolution.identity.unique_id
+    hass.states.async_set(unrelated.entity_id, _CODE)
+
+    assert lifecycle.current[property_key] == stale_resolution
+    assert hass.states.get(old_entity_id) is not None
+    assert hass.states.get(old_entity_id).state == _CODE
+
+    assert RentalControlCoordinator._observed_pin(coordinator, _SLOT) is None
+    RentalControlCoordinator._cache_confirmed_set(
+        coordinator, _OWNER_IDENTITY, _SLOT, _CODE
+    )
+    assert coordinator._observed_slot_codes == {}
+
+    stop_keymaster_lifecycle(hass, _RC_ENTRY_ID)
 
 
 @pytest.mark.parametrize("release", _RELEASES)
