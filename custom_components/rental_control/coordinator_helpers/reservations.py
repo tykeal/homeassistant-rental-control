@@ -313,12 +313,7 @@ def _new_reservation(
             phone_last_four=phone_last_four,
         )
     except ValueError:
-        _LOGGER.warning(
-            "Skipping invalid reservation for %s: start=%s >= end=%s",
-            event.summary,
-            stay.start,
-            stay.end,
-        )
+        _LOGGER.warning("Skipping reservation with invalid time boundaries")
         return None
     res.sensor_lookup_keys.update({identity_key, *(uid_aliases or set())})
     return res

@@ -18,6 +18,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import slugify
 
+from .keymaster_version import KeymasterVersionDiagnosis as KeymasterVersionDiagnosis
+from .keymaster_version import KeymasterVersionStatus as KeymasterVersionStatus
+from .keymaster_version import diagnose_keymaster_version as diagnose_keymaster_version
+
 _KEYMASTER_DOMAIN: Final = "keymaster"
 _PARENT_ENTRY_ID: Final = "parent_entry_id"
 _MASKED_STATES: Final = frozenset({"[redacted]", "masked", "****"})

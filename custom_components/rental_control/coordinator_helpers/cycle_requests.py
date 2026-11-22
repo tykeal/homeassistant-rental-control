@@ -141,9 +141,8 @@ def build_adoption_requests(
             continue
         if reservation.code_rotation_pending:
             _LOGGER.info(
-                "Skipping adoption for %s in slot %d because its date-based "
+                "Skipping adoption in slot %d because its date-based "
                 "code must rotate for the updated booking window",
-                reservation.identity_key,
                 slot.slot,
             )
             requests.suppressed_slots.add(slot.slot)
@@ -151,9 +150,8 @@ def build_adoption_requests(
             continue
         if not slot.actual_code.isdecimal() or len(slot.actual_code) != code_length:
             _LOGGER.warning(
-                "Skipping adoption for %s in slot %d because the observed code "
+                "Skipping adoption in slot %d because the observed code "
                 "does not match the configured code length",
-                reservation.identity_key,
                 slot.slot,
             )
             requests.suppressed_slots.add(slot.slot)

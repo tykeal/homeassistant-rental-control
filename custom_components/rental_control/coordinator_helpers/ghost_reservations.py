@@ -119,7 +119,7 @@ def _build_one_ghost(
         mapping["operation_id"] = None
         mapping["operation_kind"] = OPERATION_KIND_CLEAR
         _LOGGER.debug(
-            "Pending-set ghost %s missed %d cycles; marking pending-clear", key, new_mc
+            "Pending-set ghost missed %d cycles; marking pending-clear", new_mc
         )
         return None
 
@@ -151,12 +151,8 @@ def _ghost_from_mapping(
         actual_name, slot_name, prefix, observed_mapping_keys, key, ctx
     ):
         _LOGGER.debug(
-            "Ghost reservation %s: physical name %r differs from "
-            "persisted identity %r; preserving slot as unmatched with "
-            "missing_count=%d",
-            key,
-            actual_name,
-            slot_name,
+            "Ghost reservation physical name mismatch; preserving slot as "
+            "unmatched with missing_count=%d",
             new_mc,
         )
         return None
@@ -189,9 +185,9 @@ def _ghost_from_mapping(
             issued_origin=issued_origin(mapping),
         )
     except ValueError:
-        _LOGGER.debug("Ghost reservation %s: invalid Reservation fields; skipping", key)
+        _LOGGER.debug("Ghost reservation has invalid fields; skipping")
         return None
-    _LOGGER.debug("Ghost reservation %s created with missing_count=%d", key, new_mc)
+    _LOGGER.debug("Ghost reservation retained with missing_count=%d", new_mc)
     return ghost
 
 
@@ -219,9 +215,8 @@ def _ghost_stay(
     end_raw = last_actual.get("end_state")
     if not slot_name or start_raw is None or end_raw is None:
         _LOGGER.debug(
-            "Ghost reservation %s: missing slot_name or dates; slot remains "
+            "Ghost reservation is missing identity or date evidence; slot remains "
             "fenced with missing_count=%d",
-            key,
             new_mc,
         )
         return None
@@ -234,11 +229,8 @@ def _ghost_stay(
         end_dt = end_dt.replace(tzinfo=timezone)
     if start_dt is None or end_dt is None or start_dt >= end_dt:
         _LOGGER.debug(
-            "Ghost reservation %s: invalid dates (start=%s end=%s); "
-            "slot remains fenced with missing_count=%d",
-            key,
-            start_raw,
-            end_raw,
+            "Ghost reservation has invalid date evidence; slot remains fenced "
+            "with missing_count=%d",
             new_mc,
         )
         return None

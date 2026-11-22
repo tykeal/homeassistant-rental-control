@@ -183,9 +183,18 @@ async def _wait_for_match(ctx: _WaitContext, deps: KeymasterServiceDeps) -> bool
 
 
 def operation_failure_result(
-    coordinator, slot: int, kind: str, exc: Exception, deps: KeymasterServiceDeps
+    coordinator, slot: int, kind: str, _exc: Exception, deps: KeymasterServiceDeps
 ) -> OperationResult:
     """Record a service operation failure and return its result."""
+    capability = "reset" if kind == "clear" else "slot write"
+    deps.logger.warning(
+        "Selected Keymaster entry %s capability service dispatch failed "
+        "(failure category service_operation_failed) for managed slot %d; the "
+        "verified operation remains unconfirmed. Verify the physical slot and "
+        "service availability, then retry.",
+        capability,
+        slot,
+    )
     escalated = coordinator.event_overrides.record_retry_failure(slot)
     if escalated:
         notification_id = f"rental_control_slot_{slot}_failure"
@@ -198,7 +207,12 @@ def operation_failure_result(
             title="Rental Control: Lock Command Failure",
             notification_id=notification_id,
         )
-    return OperationResult(kind=kind, slot=slot, failed=True, error=str(exc))
+    return OperationResult(
+        kind=kind,
+        slot=slot,
+        failed=True,
+        error="service_operation_failed",
+    )
 
 
 async def run_gathered(coro: list[Coroutine], deps: KeymasterServiceDeps) -> None:
@@ -365,7 +379,7 @@ async def force_clear_name(
     except VerifiedOperationRejected:
         raise
     except Exception:
-        deps.logger.exception("Failed to force-clear name for slot %d", slot)
+        deps.logger.warning("Failed to clear the Keymaster name for slot %d", slot)
 
 
 def _require_legacy_address(coordinator: Any) -> None:

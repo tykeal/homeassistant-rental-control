@@ -78,7 +78,7 @@ def _resolve_context(
         getattr(event_new_state, "state", None) if event_new_state is not None else None
     )
     event_has_new_value = event_new_value is not None
-    deps.logger.debug("Handling state change for %s in %s", entity_id, lockname)
+    deps.logger.debug("Handling Keymaster capability feedback")
     entry_id = config_entry_id or coordinator.config_entry.entry_id
     lifecycle = get_keymaster_lifecycle(hass, entry_id)
     property_key: str | None = None
@@ -117,9 +117,7 @@ def _resolve_context(
     else:
         slot_match = re.search(r"_code_slot_(\d+)_", entity_id)
         if slot_match is None:
-            deps.logger.warning(
-                "Could not extract slot number from entity_id: %s", entity_id
-            )
+            deps.logger.warning("Could not identify the slot for Keymaster feedback")
             return None
         slot_num = int(slot_match.group(1))
     existing_override: dict[str, Any] | None = None
@@ -190,9 +188,7 @@ async def _handle_reset_entity(
             return True
     elif "_reset" not in context.entity_id:
         return False
-    deps.logger.debug(
-        "Resetting overrides %s for %s.", context.slot_num, context.lockname
-    )
+    deps.logger.debug("Resetting overrides for slot %s.", context.slot_num)
     await context.coordinator.event_overrides.async_update(
         context.slot_num,
         "",
@@ -215,8 +211,7 @@ def _should_ignore_suppressed_feedback(
     ):
         return False
     deps.logger.debug(
-        "Ignoring coordinator feedback for %s slot %s.",
-        context.lockname,
+        "Ignoring coordinator feedback for slot %s.",
         context.slot_num,
     )
     return True
@@ -245,9 +240,7 @@ def _read_slot_state_snapshot(
         else slot_state.state
     )
     if slot_enabled_state != "on":
-        deps.logger.debug(
-            "Slot %s is not enabled, skipping update for %s.", slot, lockname
-        )
+        deps.logger.debug("Slot %s is not enabled; skipping feedback update.", slot)
         return None
     return _read_enabled_slot_states(context, deps)
 
@@ -342,8 +335,7 @@ async def _dispatch_override_update(
     """Dispatch the final override update without launching reconciliation."""
     slot_code_value, slot_name_value, start_time, end_time = update
     deps.logger.debug(
-        "Updating overrides for %s slot %s from state feedback.",
-        context.lockname,
+        "Updating overrides for slot %s from state feedback.",
         context.slot_num,
     )
     if not _context_is_current(context):

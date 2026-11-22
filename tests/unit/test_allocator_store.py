@@ -169,13 +169,16 @@ async def test_missing_and_corrupt_payloads_yield_empty_registry(
     assert result.registry.records == {}
     assert result.registry_lost is True
     assert result.registry_missing is registry_missing
-    assert message in caplog.text
     if registry_missing:
+        assert "No prior code registry was found" in caplog.text
         assert patch_store.created == []
         assert store_module._NOTIFICATION_ID in patch_store.dismissed
     else:
+        assert "Stored code registry could not be read" in caplog.text
+        assert message not in caplog.text
         assert len(patch_store.created) == 1
-        assert message in patch_store.created[0]
+        assert message not in patch_store.created[0]
+        assert "Raw storage and parsing details are withheld" in patch_store.created[0]
         assert patch_store.dismissed == []
 
 
@@ -212,7 +215,43 @@ async def test_corrupt_payload_notification_states_consequence(
     message = patch_store.created[0]
     assert "could not be read" in message
     assert "re-adopted from the locks" in message
-    assert "schema_version" in message
+    assert "schema_version" not in message
+
+
+async def test_corrupt_storage_details_do_not_reach_logs_or_notifications(
+    caplog: pytest.LogCaptureFixture,
+    patch_store: NotificationCalls,
+) -> None:
+    """Untrusted persisted data cannot be echoed through operator surfaces."""
+    secret = "Guest Example PIN 9384"
+    caplog.set_level(logging.INFO)
+    FakeStore.payload = {
+        "schema_version": 99,
+        "guest_name": secret,
+        "pin": secret,
+        "records": [],
+    }
+
+    await RegistryStore(as_hass(SimpleNamespace())).async_load()
+
+    assert secret not in caplog.text
+    assert len(patch_store.created) == 1
+    assert secret not in patch_store.created[0]
+
+
+async def test_load_exception_details_are_not_chained(
+    patch_store: NotificationCalls,
+) -> None:
+    """Storage exceptions with private text are not exposed as causes."""
+    secret = "Guest Example PIN 9384"
+    FakeStore.load_error = OSError(secret)
+
+    with pytest.raises(ConfigEntryNotReady) as raised:
+        await RegistryStore(as_hass(SimpleNamespace())).async_load()
+
+    assert secret not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__ is True
 
 
 async def test_successful_load_dismisses_stale_notification(

@@ -39,18 +39,7 @@ class CoordinatorRefreshMixin(CoordinatorAllocationMixin):
         cal_data: list[CalendarEvent] | None = self.data
         if cal_data and len(cal_data) > 0:
             for event in cal_data:
-                _LOGGER.debug(
-                    "Checking if event %s has start %s and end %s "
-                    "within in the limit: %s and %s",
-                    event.summary,
-                    event.start,
-                    event.end,
-                    start_date,
-                    end_date,
-                )
-
                 if event.start < end_date and event.end > start_date:
-                    _LOGGER.debug("... and it has")
                     events.append(event)
         return events
 
@@ -63,20 +52,17 @@ class CoordinatorRefreshMixin(CoordinatorAllocationMixin):
                 try:
                     if response.status != 200:
                         raise UpdateFailed(
-                            f"Calendar fetch failed for {self._name}: "
-                            f"HTTP {response.status} - {response.reason}"
+                            f"Calendar fetch failed (HTTP {response.status})"
                         )
                     text = await response.text()
                 finally:
                     response.release()
-        except TimeoutError as err:
-            raise UpdateFailed(f"Calendar fetch timed out for {self._name}") from err
+        except TimeoutError:
+            raise UpdateFailed("Calendar fetch timed out") from None
         except UpdateFailed:
             raise
-        except Exception as err:
-            raise UpdateFailed(
-                f"Calendar fetch failed for {self._name}: {err}"
-            ) from err
+        except Exception:
+            raise UpdateFailed("Calendar fetch failed") from None
 
         try:
             # Some calendars are filled with NULL-bytes that break
@@ -97,29 +83,21 @@ class CoordinatorRefreshMixin(CoordinatorAllocationMixin):
             end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
 
             return await self._ical_parser(event_list, start_of_events, end_of_events)
-        except Exception as err:
-            raise UpdateFailed(
-                f"Failed to parse calendar for {self._name}: {err}"
-            ) from err
+        except Exception:
+            raise UpdateFailed("Calendar parse failed") from None
 
     async def _async_update_data(self) -> list[CalendarEvent]:
         """Fetch and parse calendar data."""
-        _LOGGER.debug(
-            "Running RentalControl _async_update_data for %s",
-            self._name,
-        )
+        _LOGGER.debug("Running Rental Control calendar update")
 
         is_fresh_data = True
 
         try:
             new_calendar = await self._async_fetch_calendar()
-        except UpdateFailed as err:
+        except UpdateFailed:
             if self.data is not None:
                 _LOGGER.warning(
-                    "Calendar fetch/parse failed for %s: %s; "
-                    "using cached data (%d events)",
-                    self._name,
-                    err,
+                    "Calendar fetch or parse failed; using cached data (%d events)",
                     len(self.data),
                 )
                 new_calendar = list(self.data)
@@ -139,8 +117,7 @@ class CoordinatorRefreshMixin(CoordinatorAllocationMixin):
             ):
                 self.num_misses += 1
                 _LOGGER.warning(
-                    "No events found in calendar %s, but %d in previous. Miss %d of %d",
-                    self._name,
+                    "No events found, but %d were previously available. Miss %d of %d",
                     len(previous),
                     self.num_misses,
                     self.max_misses,
@@ -148,9 +125,8 @@ class CoordinatorRefreshMixin(CoordinatorAllocationMixin):
                 new_calendar = list(previous)
             else:
                 _LOGGER.debug(
-                    "Found %d events in calendar %s",
+                    "Found %d calendar events",
                     len(new_calendar),
-                    self._name,
                 )
                 self.num_misses = 0
 
@@ -159,11 +135,7 @@ class CoordinatorRefreshMixin(CoordinatorAllocationMixin):
         if len(new_calendar) > 0:
             for event in new_calendar:
                 if event.end > dt.now():
-                    _LOGGER.debug(
-                        "Event %s is the first event with end in the future: %s",
-                        event.summary,
-                        event.end,
-                    )
+                    _LOGGER.debug("Found the next upcoming calendar event")
                     self.event = event
                     break
 
@@ -191,9 +163,8 @@ class CoordinatorRefreshMixin(CoordinatorAllocationMixin):
         self._child_locknames = self._discover_child_locks()
         if self._child_locknames != previous_children:
             _LOGGER.info(
-                "Child locknames updated for %s: %s",
-                self.lockname,
-                self._child_locknames or "(none)",
+                "Child lock discovery updated (%d related entries)",
+                len(self._child_locknames),
             )
 
     async def _ical_parser(

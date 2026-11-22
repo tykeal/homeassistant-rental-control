@@ -14,6 +14,9 @@ from typing import Callable
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.persistent_notification import async_dismiss
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.issue_registry import IssueSeverity
+from homeassistant.helpers.issue_registry import async_create_issue
+from homeassistant.helpers.issue_registry import async_delete_issue
 
 from ..const import DOMAIN
 from ..const import NAME
@@ -32,18 +35,47 @@ _LOGGER = logging.getLogger(__name__)
 _NOTIFICATION_ID = f"{DOMAIN}_protected_code_registry"
 _GENERAL_WARNING = (
     "Rental Control could not verify the shared door-code registry history. "
-    "Preserve the current registry, protection marker, and any quarantine "
-    "evidence. Do not restore or edit these files. External recovery and an "
-    "operator override are not supported in this release. Shared code "
-    "issuance, reuse, and release remain blocked. This does not establish "
-    "whether any unverified code is present, absent, visible, or reusable."
+    "No independently verified, sufficiently complete marker-bearing backup "
+    "has been established; a markerless v1 backup alone cannot prove "
+    "completeness. Preserve the current registry, protection marker, and any "
+    "quarantine evidence without editing or restoring files. This release "
+    "has no supported external restore or override. Issuance, reuse, and "
+    "release may remain blocked indefinitely, including on installations "
+    "that never activated v2. This does not establish whether an unverified "
+    "code is present, absent, visible, or reusable."
 )
 _SCAN_WARNING = (
     "Rental Control could not complete its bounded storage evidence scan. "
+    "The incomplete scan cannot establish that quarantine evidence is absent. "
     "Preserve the current registry, protection marker, and any quarantine "
-    "evidence, and inspect the storage directory with Home Assistant stopped. "
-    "External recovery and an operator override are not supported in this "
-    "release. Shared code issuance, reuse, and release remain blocked."
+    "evidence. With Home Assistant stopped, resolve the storage scan problem "
+    "without editing or restoring files, then reload Rental Control. This "
+    "release has no supported external restore or override. Issuance, reuse, "
+    "and release remain blocked until history can be verified."
+)
+_GENERAL_WARNING_FR = (
+    "Rental Control n’a pas pu vérifier l’historique du registre partagé des "
+    "codes de porte. Aucune sauvegarde indépendante, suffisamment complète "
+    "et accompagnée d’un marqueur de protection vérifié n’a été établie ; "
+    "une sauvegarde v1 sans marqueur ne prouve pas l’exhaustivité. Préservez "
+    "le registre actuel, le marqueur de protection et toute preuve de mise en "
+    "quarantaine, sans modifier ni restaurer ces fichiers. Cette version ne "
+    "propose aucune restauration externe ni dérogation prise en charge. "
+    "L’émission, la réutilisation et la libération peuvent rester bloquées "
+    "indéfiniment, y compris sur les installations n’ayant jamais activé v2. "
+    "Cet état ne permet pas de conclure qu’un code non vérifié est présent, "
+    "absent, visible ou réutilisable."
+)
+_SCAN_WARNING_FR = (
+    "Rental Control n’a pas pu terminer l’analyse limitée des preuves de "
+    "stockage. L’analyse incomplète ne permet pas d’établir l’absence de "
+    "preuves de mise en quarantaine. Préservez le registre actuel, le marqueur "
+    "de protection et toute preuve de mise en quarantaine. Lorsque Home "
+    "Assistant est arrêté, corrigez le problème d’analyse sans modifier ni "
+    "restaurer les fichiers, puis rechargez Rental Control. Cette version ne "
+    "propose aucune restauration externe ni dérogation prise en charge. "
+    "L’émission, la réutilisation et la libération restent bloquées tant que "
+    "l’historique ne peut pas être vérifié."
 )
 
 
@@ -344,11 +376,28 @@ class ProtectedRegistryStore:
 
     def _report_unknown(self, failure_code: str | None) -> None:
         """Persist only fixed guidance and never include failure details."""
+        scan_incomplete = failure_code in {"scan_limit", "scan_failed"}
+        is_french = self._hass.config.language.lower().split("-", maxsplit=1)[0] == "fr"
         message = (
-            _SCAN_WARNING
-            if failure_code in {"scan_limit", "scan_failed"}
-            else _GENERAL_WARNING
+            (_SCAN_WARNING_FR if scan_incomplete else _GENERAL_WARNING_FR)
+            if is_french
+            else (_SCAN_WARNING if scan_incomplete else _GENERAL_WARNING)
         )
+        issue_id = (
+            "protected_registry_scan_incomplete"
+            if scan_incomplete
+            else "protected_registry_unknown"
+        )
+        stale_issue_id = (
+            "protected_registry_unknown"
+            if scan_incomplete
+            else "protected_registry_scan_incomplete"
+        )
+        try:
+            async_delete_issue(self._hass, DOMAIN, stale_issue_id)
+        except Exception:
+            _LOGGER.warning("Unable to clear stale protected registry guidance")
+        translation_key = issue_id
         try:
             async_create(
                 self._hass,
@@ -358,6 +407,19 @@ class ProtectedRegistryStore:
             )
         except Exception:
             _LOGGER.warning("Unable to publish protected registry status")
+        try:
+            async_create_issue(
+                self._hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                is_persistent=True,
+                issue_domain=DOMAIN,
+                severity=IssueSeverity.WARNING,
+                translation_key=translation_key,
+            )
+        except Exception:
+            _LOGGER.warning("Unable to publish protected registry repair guidance")
 
     def _dismiss_status(self) -> None:
         """Dismiss stale warning without changing an unavailable/busy result."""
@@ -365,3 +427,11 @@ class ProtectedRegistryStore:
             async_dismiss(self._hass, _NOTIFICATION_ID)
         except Exception:
             _LOGGER.warning("Unable to clear protected registry status")
+        for issue_id in (
+            "protected_registry_unknown",
+            "protected_registry_scan_incomplete",
+        ):
+            try:
+                async_delete_issue(self._hass, DOMAIN, issue_id)
+            except Exception:
+                _LOGGER.warning("Unable to clear protected registry repair guidance")

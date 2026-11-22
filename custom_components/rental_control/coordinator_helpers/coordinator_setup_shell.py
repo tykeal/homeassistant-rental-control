@@ -15,10 +15,8 @@ import logging
 from typing import Any
 from zoneinfo import ZoneInfo  # noreorder
 
-from homeassistant.components.button import DOMAIN as BUTTON
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.components.datetime import DOMAIN as DATETIME
-from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.switch import DOMAIN as SWITCH
 from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
@@ -27,7 +25,6 @@ from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt
@@ -109,9 +106,12 @@ class CoordinatorSetupMixin:
             if decision.force_clear:
                 try:
                     await _coordinator_module().async_fire_clear_code(self, i)
-                except Exception:
-                    _LOGGER.exception(
-                        "Failed to force-reset partially-cleared slot %d", i
+                except Exception as err:
+                    _LOGGER.error(
+                        "Failed to force-reset partially-cleared slot %d "
+                        "(failure category %s)",
+                        i,
+                        type(err).__name__,
                     )
             update = decision.override_update
             if update is None:
@@ -198,7 +198,7 @@ class CoordinatorSetupMixin:
         self._checkin_restore_pending = False
 
     def _register_keymaster_device(self, hass: HomeAssistant) -> None:
-        """Register the device and warn on incompatible Keymaster versions."""
+        """Register the Rental Control device."""
         device_registry = dr.async_get(hass)
         device_registry.async_get_or_create(
             config_entry_id=self._entry_id,
@@ -206,22 +206,6 @@ class CoordinatorSetupMixin:
             name=self.name,
             sw_version=self.version,
         )
-
-        entity_registry = er.async_get(hass)
-        if self.lockname:
-            reset_entity = f"{BUTTON}.{self.lockname}_code_slot_{self.start_slot}_reset"
-            has_reset = entity_registry.async_get(reset_entity)
-            if has_reset is None:
-                error_msg = """
-    The version of Keymaster is incompatible with this version of Rental Control.
-    Please update Keymaster to at least v0.1.0-b0
-    """
-                _LOGGER.error(error_msg)
-                async_create(
-                    hass,
-                    error_msg,
-                    title="Keymaster Incompatible Version",
-                )
 
     def _find_parent_entry_id(self) -> str | None:
         """Find the exact selected Keymaster entry, without name inference.

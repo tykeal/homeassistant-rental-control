@@ -264,10 +264,7 @@ async def test_watchdog_expiry_removes_watcher(
 
     coordinator.async_refresh.assert_not_awaited()
     assert hass.data[DOMAIN][entry.entry_id][UNSUB_LISTENERS] == []
-    assert (
-        "Startup readability watcher expired for watchdog_entry before slots settled"
-        in caplog.text
-    )
+    assert "Startup readability watcher expired before slots settled" in caplog.text
 
 
 async def test_missing_entry_data_skips_refresh(
@@ -302,7 +299,7 @@ async def test_refresh_exception_is_logged(
     coordinator.async_refresh.side_effect = RuntimeError("boom")
     _prepare_entry(hass, entry, coordinator)
     _set_slot_readability_states(hass)
-    caplog.set_level(logging.ERROR, logger="custom_components.rental_control")
+    caplog.set_level(logging.WARNING, logger="custom_components.rental_control")
 
     async_arm_startup_readability_refresh(
         hass,
@@ -314,9 +311,7 @@ async def test_refresh_exception_is_logged(
     await hass.async_block_till_done()
 
     coordinator.async_refresh.assert_awaited_once()
-    assert (
-        "Startup readability refresh failed for refresh_exception_entry" in caplog.text
-    )
+    assert "Startup readability refresh failed for the selected entry" in caplog.text
 
 
 async def test_old_watcher_teardown_cannot_clear_replacement_generation(

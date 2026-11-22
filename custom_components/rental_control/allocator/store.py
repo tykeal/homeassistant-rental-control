@@ -65,10 +65,10 @@ class RegistryStore:
         """Load and validate the registry, fail-closed on corruption."""
         try:
             payload = await self._store.async_load()
-        except Exception as err:
-            raise ConfigEntryNotReady("Unable to load shared code registry") from err
+        except Exception:
+            raise ConfigEntryNotReady("Unable to load shared code registry") from None
         if payload is None:
-            self._note_absent("code registry store is absent")
+            self._note_absent()
             return RegistryLoadResult(
                 self._empty_registry(),
                 registry_lost=True,
@@ -76,8 +76,8 @@ class RegistryStore:
             )
         try:
             registry = self._registry_from_payload(payload)
-        except ValueError as err:
-            self._warn_corrupt(f"invalid code registry payload: {err}")
+        except ValueError:
+            self._warn_corrupt()
             return RegistryLoadResult(self._empty_registry(), registry_lost=True)
         self._dismiss_warning()
         return RegistryLoadResult(registry, registry_lost=False)
@@ -91,25 +91,25 @@ class RegistryStore:
         """Return an empty registry with a fresh diagnostic salt."""
         return AllocationRegistry(code_ref_salt=secrets.token_hex(8))
 
-    def _note_absent(self, message: str) -> None:
+    def _note_absent(self) -> None:
         """Log that no registry exists yet, the expected first-run state."""
         _LOGGER.info(
-            "Starting with an empty code registry: %s; this is expected on a "
-            "first run or first upgrade and existing door codes are adopted "
-            "from the locks",
-            message,
+            "No prior code registry was found; startup adoption will reconcile "
+            "existing lock codes"
         )
         self._dismiss_warning()
 
-    def _warn_corrupt(self, message: str) -> None:
+    def _warn_corrupt(self) -> None:
         """Log and notify that a stored registry could not be read."""
-        _LOGGER.warning("Starting with an empty code registry: %s", message)
+        _LOGGER.warning(
+            "Stored code registry could not be read; startup adoption is required"
+        )
         async_create(
             self._hass,
             "The stored shared code registry could not be read and has been "
             "reset. Existing door codes will be re-adopted from the locks; "
-            "please check your locks for unexpected code changes. "
-            f"Details: {message}",
+            "please check your locks for unexpected code changes. Raw storage "
+            "and parsing details are withheld from notifications.",
             title=f"{NAME} code registry warning",
             notification_id=_NOTIFICATION_ID,
         )

@@ -185,14 +185,11 @@ def _log_clear_not_confirmed(self: Any, slot: int, result: Any) -> None:
     """Log the original failed or lingering clear messages."""
     if result.failed:
         self._logger.warning(
-            "Clear failed for slot %d (error: %s); slot remains pending-clear",
+            "Clear failed for slot %d; slot remains pending-clear",
             slot,
-            result.error,
         )
         return
     self._logger.warning(
-        "Clear not fully confirmed for slot %d (lingering_name=%s, lingering_pin=%s); slot remains pending-clear",
+        "Clear not fully confirmed for slot %d; slot remains pending-clear",
         slot,
-        result.lingering_name,
-        result.lingering_pin,
     )

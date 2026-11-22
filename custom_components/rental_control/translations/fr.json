@@ -43,6 +43,24 @@
         "data_description": {
           "bookings_only_feed": "À activer uniquement si ce calendrier ne publie jamais de dates bloquées ou indisponibles. Booking.com n'identifie plus les clients dans son flux, ce qui rend cette option nécessaire pour les calendriers Booking.com n'exportant que les dates réservées. L'activer sur un calendrier publiant des dates bloquées créera des codes de porte pour ces blocages.",
           "cleaning_window": "Heures de maintien du statut de départ avant le retour à aucune réservation (0,5–48)"
+        },
+        "issues": {
+          "keymaster_version_outside_support": {
+            "title": "La version de Keymaster est hors du support testé",
+            "description": "La version de Keymaster déjà chargée ({version}) est inférieure au niveau de support testé de Rental Control ({support_floor}). Il s’agit uniquement d’un diagnostic de support : la version seule ne bloque ni n’autorise les opérations sur les serrures. Vérifiez l’entrée Keymaster sélectionnée et les capacités actuelles de ses créneaux ; mettez Keymaster à jour si possible."
+          },
+          "keymaster_version_unknown": {
+            "title": "La version de Keymaster n’a pas pu être classée",
+            "description": "Rental Control n’a pas pu classer de manière fiable la version de Keymaster déjà chargée. Vérifiez les métadonnées de l’intégration installée et l’entrée sélectionnée. La version seule ne bloque ni n’autorise les opérations sur les serrures ; chaque opération exige toujours la vérification actuelle de l’identité, des capacités, de l’état et de la protection. Le support testé des versions stables commence à {support_floor}."
+          },
+          "protected_registry_unknown": {
+            "title": "L’historique du registre partagé des codes est invérifiable",
+            "description": "Aucune sauvegarde indépendante, suffisamment complète et accompagnée d’un marqueur de protection vérifié n’a été établie ; une sauvegarde v1 sans marqueur ne prouve pas l’exhaustivité. Préservez le registre actuel, le marqueur de protection et toute preuve de mise en quarantaine sans modifier ni restaurer les fichiers. Cette version ne propose aucune restauration externe ni dérogation prise en charge. L’émission, la réutilisation et la libération peuvent rester bloquées indéfiniment, y compris sur les installations n’ayant jamais activé v2. Cet état ne permet pas de conclure qu’un code non vérifié est présent, absent, visible ou réutilisable."
+          },
+          "protected_registry_scan_incomplete": {
+            "title": "L’analyse des preuves du registre protégé est incomplète",
+            "description": "L’analyse limitée des preuves est incomplète ou a dépassé sa limite ; elle ne permet pas d’établir l’absence de preuves de mise en quarantaine. Préservez le registre actuel, le marqueur de protection et toute preuve de mise en quarantaine. Lorsque Home Assistant est arrêté, corrigez le problème d’analyse sans modifier ni restaurer les fichiers, puis rechargez Rental Control. Cette version ne propose aucune restauration externe ni dérogation prise en charge. L’émission, la réutilisation et la libération restent bloquées tant que l’historique ne peut pas être vérifié."
+          }
         }
       }
     }

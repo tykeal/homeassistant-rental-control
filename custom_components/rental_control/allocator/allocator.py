@@ -57,7 +57,9 @@ _REGISTRY_LOST_NOTICE = (
     "only once every entry with a lock has read its whole slot range "
     "again. A lock that cannot be reached keeps codes withheld until it "
     "is back online; exclude a permanently dead slot with the "
-    "rental_control.set_slot_exclusion action."
+    "rental_control.set_slot_exclusion action. Enable disabled entries so "
+    "their locks can be read, or clear their codes from the lock before "
+    "deleting an entry."
 )
 
 
@@ -224,12 +226,7 @@ class DoorCodeAllocator:
             record.updated_at = datetime.now(UTC).isoformat()
             self._registry.by_identity.pop(old_key, None)
             self._registry.by_identity[new_key] = record.code
-            _LOGGER.info(
-                "Re-keyed shared allocation code_ref %s from %s to %s",
-                record.code_ref,
-                old_key,
-                new_key,
-            )
+            _LOGGER.info("Re-keyed shared allocation ownership")
             return True
         return False
 
@@ -268,28 +265,22 @@ class DoorCodeAllocator:
             or monotonic() < self._gate_deadline
         ):
             return
-        pending = ", ".join(
-            recovery.describe_pending_entry(self, entry_id)
-            for entry_id in sorted(self._pending_adoption)
-        )
+        pending_count = len(self._pending_adoption)
         _LOGGER.warning(
             "Shared code allocator is still waiting for adoption from "
-            "entries: %s. New code issuance remains disabled.",
-            pending,
-        )
-        named = ", ".join(
-            recovery.describe_pending_entry(self, entry_id, friendly=True)
-            for entry_id in sorted(self._pending_adoption)
+            "%d entries. New code issuance remains disabled.",
+            pending_count,
         )
         async_create(
             self.hass,
             (
                 "Rental Control is still waiting to read the door codes "
-                f"already programmed for: {named}. Those entries issue no "
-                "new door codes until that finishes. While any of their "
+                f"already programmed in {pending_count} entries. Those entries "
+                "issue no new door codes until that finishes. While any of their "
                 "locks still has a slot that has not been read, no other "
                 "entry issues new door codes either, because every entry "
-                "shares one door code space."
+                "shares one door code space. Review the Keymaster readiness "
+                "status for affected entries."
                 + (_REGISTRY_LOST_NOTICE if self._registry_lost else "")
             ),
             title=f"{NAME} code adoption pending",
@@ -338,12 +329,7 @@ class DoorCodeAllocator:
                 if reason is None:
                     self._registry.release(owner.identity_key)
                     released.append(outcome)
-                    _LOGGER.info(
-                        "Released shared allocation code_ref %s for %s:%s",
-                        record.code_ref,
-                        owner.entry_id,
-                        owner.identity_key,
-                    )
+                    _LOGGER.info("Released shared allocation ownership")
                 else:
                     retained.append(outcome)
         return ReleaseReport(released=released, retained=retained)

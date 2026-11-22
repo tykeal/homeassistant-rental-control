@@ -85,15 +85,14 @@ class CoordinatorAllocationMixin:
             res_by_key: dict[str, _Reservation] = {
                 reservation.identity_key: reservation for reservation in reservations
             }
-            for violation in plan.validate(res_by_key):
-                _LOGGER.warning("Plan %s invariant violation: %s", plan_id, violation)
+            for _violation in plan.validate(res_by_key):
+                _LOGGER.warning("Reconciliation plan invariant violation")
 
             self._record_observed_slot_codes(plan, res_by_key, observed_slots)
             if self._must_defer_for_checkin_restore(reservations, observed_slots):
                 _LOGGER.info(
-                    "Deferring reconciliation for %s until check-in state is "
+                    "Deferring reconciliation until check-in state is "
                     "available; same-name physical slot has missing date state",
-                    self._name,
                 )
                 operation_results: list[OperationResult] = []
             else:
@@ -106,9 +105,7 @@ class CoordinatorAllocationMixin:
             self._latest_plan = plan
             self._latest_res_by_key = res_by_key
             _LOGGER.debug(
-                "Reconciliation for %s: plan=%s selected=%d overflow=%d actions=%d",
-                self._name,
-                plan_id,
+                "Reconciliation completed: selected=%d overflow=%d actions=%d",
                 len(plan.selected),
                 len(plan.overflow),
                 len(plan.actions),
@@ -116,8 +113,9 @@ class CoordinatorAllocationMixin:
         except asyncio.CancelledError:
             raise
         except Exception as err:
-            _LOGGER.exception(
-                "Reconciliation failed for %s; skipping cycle", self._name
+            _LOGGER.error(
+                "Reconciliation failed; skipping cycle (failure category %s)",
+                type(err).__name__,
             )
             allocation_failure.report(
                 self.hass,
@@ -173,8 +171,9 @@ class CoordinatorAllocationMixin:
         except asyncio.CancelledError:
             raise
         except Exception as err:
-            _LOGGER.exception(
-                "Lockless allocation failed for %s; skipping cycle", self._name
+            _LOGGER.error(
+                "Lockless allocation failed; skipping cycle (failure category %s)",
+                type(err).__name__,
             )
             allocation_failure.report(self.hass, self._entry_id, self._name, err)
         else:

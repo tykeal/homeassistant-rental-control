@@ -109,13 +109,8 @@ def finalize_forced_reissue_outcomes(
         if result.code is not None:
             reissue_state.discard_removed_records(allocator, stage)
             _LOGGER.info(
-                "Forced re-issue replacement entry=%s identity=%s "
-                "lock=%s slot=%s replacement_code_ref=%s origin=%s",
-                outcome.entry_id,
-                outcome.identity_key,
-                outcome.lockname,
+                "Forced re-issue replacement recorded for slot=%s origin=%s",
                 outcome.slot,
-                replacement_ref,
                 result.origin,
             )
         finalized.append(
@@ -171,14 +166,9 @@ def rollback_blocked_reissues(
                 reason=reason,
             )
         _LOGGER.info(
-            "Forced re-issue replaced-code disposition entry=%s identity=%s "
-            "lock=%s slot=%s replaced_code_ref=%s disposition=failed "
+            "Forced re-issue replacement was not completed for slot=%s "
             "retention_reason=%s",
-            stage.entry_id,
-            stage.identity_key,
-            stage.lockname,
             stage.slot,
-            stage.replaced_code_ref,
             reason,
         )
         rolled_back.append(

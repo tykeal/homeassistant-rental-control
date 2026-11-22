@@ -54,8 +54,7 @@ def _validate_checkout_allowed(entity: Any, force: bool) -> None:
         raise ServiceValidationError("Checkout requires known reservation boundaries")
     if entity._tracked_event_start is None or end is None:
         _LOGGER.warning(
-            "Force checkout: reservation boundaries unknown for %s, proceeding anyway",
-            entity.coordinator.name,
+            "Force checkout: reservation boundaries unknown, proceeding anyway"
         )
         return
     _validate_checkout_day(entity, end, force)
@@ -73,12 +72,7 @@ def _validate_checkout_day(entity: Any, end: datetime, force: bool) -> None:
             f"or later (current: {local_now.date().isoformat()}, "
             f"checkout day: {local_end.date().isoformat()})"
         )
-    _LOGGER.warning(
-        "Force checkout: overriding last-day guard for %s (current: %s, checkout day: %s)",
-        entity.coordinator.name,
-        local_now.date().isoformat(),
-        local_end.date().isoformat(),
-    )
+    _LOGGER.warning("Force checkout: overriding the reservation last-day guard")
 
 
 async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
@@ -90,12 +84,7 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
     new_end = compute_early_expiry_time(now, entity._tracked_event_end)
     if new_end >= entity._tracked_event_end:
         return
-    _LOGGER.info(
-        "Early checkout expiry: shortening end time from %s to %s for %s",
-        entity._tracked_event_end,
-        new_end,
-        entity._tracked_event_summary,
-    )
+    _LOGGER.info("Early checkout expiry: shortening the active lock-code window")
     previous_end = entity._tracked_event_end
     entity._tracked_event_end = new_end
     updated = await async_update_lock_code_expiry(
@@ -153,10 +142,8 @@ def handle_keymaster_unlock(
     if _unlock_slot_mismatch(entity, code_slot_num):
         return
     _LOGGER.info(
-        "Keymaster unlock detected for slot %d (lock=%s), transitioning to checked_in for %s",
+        "Keymaster unlock detected for managed slot %d; transitioning to checked_in",
         code_slot_num,
-        lock_name or entity.coordinator.lockname,
-        entity._tracked_event_summary,
     )
     entity._transition_to_checked_in(source="keymaster", lock_name=lock_name)
 
@@ -204,10 +191,8 @@ def _unlock_slot_mismatch(entity: Any, code_slot_num: int) -> bool:
     if incoming_slot_name == entity._tracked_event_slot_name:
         return False
     _LOGGER.debug(
-        "Ignoring keymaster unlock: slot %d belongs to '%s' but tracked event is for '%s'",
+        "Ignoring keymaster unlock because slot %d does not match the tracked reservation",
         code_slot_num,
-        incoming_slot_name,
-        entity._tracked_event_slot_name,
     )
     return True
 
@@ -289,7 +274,7 @@ def apply_silent_checked_out(
 
 def transition_to_awaiting(entity: Any, event: Any) -> None:
     """Transition to awaiting_checkin state."""
-    _LOGGER.debug("Transitioning to awaiting_checkin for event: %s", event.summary)
+    _LOGGER.debug("Transitioning to awaiting_checkin")
     entity._state = CHECKIN_STATE_AWAITING
     entity._tracked_event_summary = event.summary
     entity._tracked_event_start = event.start
@@ -325,10 +310,8 @@ def checkin_payload(entity: Any, source: str) -> dict[str, Any]:
 def transition_to_checked_in(entity: Any, source: str, lock_name: str = "") -> None:
     """Transition to checked_in state and fire the check-in event."""
     _LOGGER.debug(
-        "Transitioning to checked_in (source=%s, lock=%s) for event: %s",
+        "Transitioning to checked_in (source=%s)",
         source,
-        lock_name or "(none)",
-        entity._tracked_event_summary,
     )
     entity._state = CHECKIN_STATE_CHECKED_IN
     entity._checkin_source = source
@@ -350,9 +333,8 @@ def transition_to_checked_out(
 ) -> None:
     """Transition to checked_out state."""
     _LOGGER.debug(
-        "Transitioning to checked_out (source=%s) for event: %s",
+        "Transitioning to checked_out (source=%s)",
         source,
-        entity._tracked_event_summary,
     )
     entity._state = CHECKIN_STATE_CHECKED_OUT
     entity._checkout_source = source

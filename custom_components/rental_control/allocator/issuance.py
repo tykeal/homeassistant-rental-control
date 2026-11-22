@@ -103,21 +103,12 @@ def allocate_request(
     )
     if continuity and origin is not AllocationOrigin.PREFERRED:
         _LOGGER.warning(
-            "Declined recovery for generator-only entry %s:%s: its preferred "
-            "code is already taken, so re-issuing would hand the guest a "
-            "code they have never been given",
-            request.entry_id,
-            request.identity_key,
+            "Declined generator-only recovery because the preferred code "
+            "is already taken"
         )
         return AllocationResult(code=None, reason="recovery_fail_closed")
     if code is None or origin is None:
-        preferred_ref = allocator.code_ref(request.preferred_code)
-        _LOGGER.warning(
-            "Exhausted shared code space for %s:%s; preferred code_ref %s",
-            request.entry_id,
-            request.identity_key,
-            preferred_ref,
-        )
+        _LOGGER.warning("Exhausted shared code space for one allocation")
         return AllocationResult(code=None, reason="exhausted")
     record = allocator._registry.allocate(
         request,
@@ -127,21 +118,9 @@ def allocate_request(
         datetime.now(UTC).isoformat(),
     )
     if origin is AllocationOrigin.PREFERRED:
-        _LOGGER.info(
-            "Allocated preferred shared code_ref %s for %s:%s",
-            record.code_ref,
-            request.entry_id,
-            request.identity_key,
-        )
+        _LOGGER.info("Allocated a preferred shared code")
     else:
-        _LOGGER.info(
-            "Allocated collision-resolved shared code_ref %s for %s:%s "
-            "after preferred code_ref %s was unavailable",
-            record.code_ref,
-            request.entry_id,
-            request.identity_key,
-            allocator.code_ref(request.preferred_code),
-        )
+        _LOGGER.info("Allocated a collision-resolved shared code")
     return AllocationResult(code=record.code, origin=origin)
 
 

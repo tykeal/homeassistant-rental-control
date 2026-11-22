@@ -35,9 +35,7 @@ async def async_setup_entry(
     hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities
 ) -> bool:
     """Set up the iCal Calendar platform."""
-    config = config_entry.data
     _LOGGER.debug("Running setup_platform for calendar")
-    _LOGGER.debug("Conf: %s", config)
 
     coordinator: RentalControlCoordinator = hass.data[DOMAIN][config_entry.entry_id][
         COORDINATOR

@@ -41,6 +41,12 @@ from .coordinator_helpers import allocation_failure
 from .coordinator_helpers import generator_divergence
 from .coordinator_helpers.adoption_gate import forget_entry as forget_gate_report
 from .coordinator_helpers.config_update import preserve_committed_association_tuple
+from .coordinator_helpers.keymaster_version_issue import (
+    register_keymaster_version_tracking,
+)
+from .coordinator_helpers.keymaster_version_issue import (
+    unregister_keymaster_version_tracking,
+)
 from .coordinator_helpers.slot_exclusions import dismiss_excluded_slots
 from .coordinator_helpers.unreadable_slots import dismiss_unreadable_slots
 from .helpers import configured_lock_entry
@@ -89,6 +95,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
         coordinator = await _async_prepare_coordinator(hass, config_entry)
         await _async_start_coordinator(hass, config_entry, coordinator)
+        register_keymaster_version_tracking(hass, config_entry.entry_id)
 
         remove_update_listener = config_entry.add_update_listener(update_listener)
 
@@ -208,6 +215,8 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     )
 
     if unload_ok:
+        unregister_keymaster_version_tracking(hass, config_entry.entry_id)
+
         # Remove all package files and the base folder if needed
         await hass.async_add_executor_job(delete_rc_and_base_folder, hass, config_entry)
 
@@ -245,6 +254,7 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
 async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Handle permanent removal of a Rental Control entry."""
+    unregister_keymaster_version_tracking(hass, config_entry.entry_id)
     dismiss_unreadable_slots(hass, config_entry.entry_id)
     dismiss_excluded_slots(hass, config_entry.entry_id)
     forget_gate_report(config_entry.entry_id)
@@ -270,6 +280,7 @@ async def _async_cleanup_entry_setup_failure(
     hass: HomeAssistant, config_entry: ConfigEntry
 ) -> None:
     """Release listeners and partially loaded platforms after setup failure."""
+    unregister_keymaster_version_tracking(hass, config_entry.entry_id)
     entry_data = hass.data[DOMAIN].get(config_entry.entry_id)
     if entry_data is None:
         return

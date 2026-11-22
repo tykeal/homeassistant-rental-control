@@ -95,4 +95,5 @@ def test_invalid_datetimes_log_warning(caplog) -> None:  # type: ignore[no-untyp
     restored = CheckinExtraStoredData.from_dict({"tracked_event_start": "not-a-date"})
 
     assert restored.tracked_event_start is None
-    assert "Failed to parse stored datetime" in caplog.text
+    assert "Failed to parse stored check-in datetime" in caplog.text
+    assert "not-a-date" not in caplog.text

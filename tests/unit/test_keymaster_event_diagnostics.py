@@ -120,12 +120,50 @@ class TestDiagnosticsBuffer:
         assert len(buf) == 1
         entry = buf[0]
         assert entry["disposition"] == "accepted"
-        assert entry["lockname"] == "Front Door"
-        assert entry["lockname_slug"] == "front_door"
+        assert entry["lockname_present"] is True
+        assert "lockname" not in entry
+        assert "lockname_slug" not in entry
         assert entry["state"] == "unlocked"
         assert entry["code_slot_num"] == 11
         # Timestamp is parseable as ISO-8601
         datetime.fromisoformat(entry["timestamp"])
+
+    async def test_event_diagnostics_ignore_unexpected_sensitive_fields(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Only fixed event metadata is retained or logged."""
+        secret = "pin-echo-731942"
+        _setup_entry(hass, mock_checkin_coordinator, mock_checkin_config_entry)
+        _set_diag(mock_checkin_config_entry, hass, True)
+        async_register_keymaster_listener(hass, mock_checkin_config_entry)
+
+        hass.bus.async_fire(
+            "keymaster_lock_state_changed",
+            {
+                "lockname": "front_door",
+                "state": "unlocked",
+                "code_slot_num": 11,
+                "pin": secret,
+                "unexpected": {"text": secret},
+            },
+        )
+        await hass.async_block_till_done()
+
+        entry = mock_checkin_coordinator.keymaster_event_diagnostics[0]
+        assert entry == {
+            "timestamp": entry["timestamp"],
+            "lockname_present": True,
+            "state": "unlocked",
+            "code_slot_num": 11,
+            "disposition": "accepted",
+        }
+        assert "Front Door" not in repr(entry)
+        assert secret not in repr(entry)
+        assert secret not in caplog.text
 
     @pytest.mark.parametrize(
         ("event_data", "expected"),
@@ -364,7 +402,7 @@ class TestDiagnosticsBuffer:
 
         buf = list(mock_checkin_coordinator.keymaster_event_diagnostics)
         assert len(buf) == 1
-        assert buf[0]["lockname"] == "front_door"
+        assert buf[0]["lockname_present"] is True
         assert buf[0]["disposition"] == "accepted"
 
     async def test_toggle_takes_effect_immediately(
@@ -513,8 +551,7 @@ class TestDiagnosticsAttribute:
         mock_checkin_coordinator.keymaster_event_diagnostics.append(
             {
                 "timestamp": "2026-05-15T13:08:11+00:00",
-                "lockname": "Front Door",
-                "lockname_slug": "front_door",
+                "lockname_present": True,
                 "state": "unlocked",
                 "code_slot_num": 11,
                 "disposition": "accepted",
@@ -543,8 +580,7 @@ class TestRedactionCompatibility:
         buf: deque = deque(maxlen=10)
         entry = {
             "timestamp": "2026-05-15T13:08:11+00:00",
-            "lockname": "Front Door",
-            "lockname_slug": "front_door",
+            "lockname_present": True,
             "state": "unlocked",
             "code_slot_num": 11,
             "disposition": "accepted",
@@ -556,14 +592,13 @@ class TestRedactionCompatibility:
             assert "code_value" not in item
 
     def test_keymaster_event_buffer_fields_are_non_sensitive(self) -> None:
-        """Accepted entries contain only lockname, state, slot num, disposition, timestamp."""
+        """Accepted entries contain only allowlisted event-status fields."""
         from collections import deque
 
         buf: deque = deque(maxlen=10)
         entry = {
             "timestamp": "2026-05-15T13:08:11+00:00",
-            "lockname": "Front Door",
-            "lockname_slug": "front_door",
+            "lockname_present": True,
             "state": "unlocked",
             "code_slot_num": 11,
             "disposition": "accepted",
@@ -571,8 +606,7 @@ class TestRedactionCompatibility:
         buf.append(entry)
         allowed_keys = {
             "timestamp",
-            "lockname",
-            "lockname_slug",
+            "lockname_present",
             "state",
             "code_slot_num",
             "disposition",

@@ -1322,11 +1322,11 @@ class TestManualDriftCorrection:
         # async_fire_set_code was called to restore desired state
         assert mock_set.called
 
-        # WARNING log contains slot number, field names, and identity
+        # WARNING log contains only the slot number and changed field names.
         log_text = " ".join(r.message for r in caplog.records)
         assert "slot 5" in log_text
         assert "name" in log_text
-        assert "r-drift-t072" in log_text
+        assert "r-drift-t072" not in log_text
 
         # Raw PIN never appears in WARNING (or above) log records
         for record in (r for r in caplog.records if r.levelno >= logging.WARNING):

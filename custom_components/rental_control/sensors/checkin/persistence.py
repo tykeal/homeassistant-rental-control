@@ -47,13 +47,13 @@ def _parse_dt(value: str | None) -> datetime | None:
     try:
         result: datetime | None = dt_util.parse_datetime(value)
     except TypeError:
-        _LOGGER.warning("Failed to parse stored datetime: %s", value)
+        _LOGGER.warning("Failed to parse stored check-in datetime")
         return None
     except ValueError:
-        _LOGGER.warning("Failed to parse stored datetime: %s", value)
+        _LOGGER.warning("Failed to parse stored check-in datetime")
         return None
     if result is None:
-        _LOGGER.warning("Failed to parse stored datetime: %s", value)
+        _LOGGER.warning("Failed to parse stored check-in datetime")
     return result
 
 

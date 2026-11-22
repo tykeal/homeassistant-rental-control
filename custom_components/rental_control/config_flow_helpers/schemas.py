@@ -116,24 +116,15 @@ def generator_convert(ident: str, to_type: bool = True) -> str:
 
 def lock_entry_convert(hass: HomeAssistant, entry: str, to_entity: bool = True) -> str:
     """Convert between name and entity for lock entries."""
-    _LOGGER.debug(
-        "In _lock_entry_convert, entry: '%s', to_entity: '%s'", entry, to_entity
-    )
-
     if to_entity:
-        _LOGGER.debug("to entity")
         for lock_entry in hass.config_entries.async_entries(LOCK_MANAGER):
             if entry == lock_entry.title:
-                _LOGGER.debug("'%s' becomes '%s'", entry, lock_entry.data["lockname"])
                 return str(lock_entry.data["lockname"])
     else:
-        _LOGGER.debug("from entity")
         for lock_entry in hass.config_entries.async_entries(LOCK_MANAGER):
             if entry == lock_entry.data["lockname"]:
-                _LOGGER.debug("'%s' becomes '%s'", entry, lock_entry.title)
                 return str(lock_entry.title)
 
-    _LOGGER.debug("no conversion done")
     return entry
 
 

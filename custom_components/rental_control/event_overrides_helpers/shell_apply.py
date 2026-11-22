@@ -86,7 +86,7 @@ def _codeless_action_warning(action: Any, res_by_key: dict[str, Any]) -> str | N
         return None
     return (
         f"{action.kind.value} action for slot {action.slot} targets "
-        f"codeless reservation {reservation.identity_key}; skipping"
+        "a reservation without an available code; skipping"
     )
 
 
@@ -214,15 +214,11 @@ async def _apply_set_locked(self, coordinator: Any, slot: int, res, plan_id: str
             return self._operation_result_type(kind="set", slot=slot, unconfirmed=True)
         self._pending_fences.pop(slot, None)
         if mutation["status"] == "confirmed":
-            self._logger.debug(
-                "Set confirmed for slot %d for reservation %s", slot, res.identity_key
-            )
+            self._logger.debug("Set confirmed for slot %d", slot)
             self._clear_slot_error(slot)
         elif mutation["revert"]:
             self._logger.warning(
-                "Set failed for slot %d (error: %s); reverting pre-assignment",
-                slot,
-                result.error,
+                "Set failed for slot %d; reverting pre-assignment", slot
             )
             self._clear_assignment(slot)
             self._record_slot_error(slot, mutation["record_error"])
@@ -312,16 +308,11 @@ async def _apply_overwrite_manual_change_locked(
     replaying the cycle see that the old code left the slot even when
     the replacement set is not confirmed.
     """
-    actual = self._actual_state_cache.get(slot) or {}
     self._logger.warning(
-        "Manual/external drift detected on managed slot %d (reservation %s, desired name %r): changed fields=%s, observed name=%r, observed classification=%s, observed has_code=%s; restoring desired state.",
+        "Manual/external drift detected on managed slot %d; changed fields=%s. "
+        "Restoring desired state.",
         slot,
-        res.identity_key,
-        res.display_slot_name,
         parse_drift_fields(action.reason),
-        actual.get("name_state") or "(unknown)",
-        actual.get("classification") or "(unknown)",
-        actual.get("has_code"),
     )
     clear_result = await self._apply_clear(
         coordinator,

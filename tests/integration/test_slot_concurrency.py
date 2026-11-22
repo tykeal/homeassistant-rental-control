@@ -460,8 +460,9 @@ class TestDedupRejection:
         # Slot 14 was NOT written (redirect took over)
         assert eo.overrides[14] is None
 
-        # Warning about redirect was logged
-        assert "Duplicate slot_name 'Alice'" in caplog.text
+        # Warning reports the redirect without exposing a guest name.
+        assert "Duplicate slot name detected in slot 12" in caplog.text
+        assert "Alice" not in caplog.text
         assert "redirecting write" in caplog.text
 
 

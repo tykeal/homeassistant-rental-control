@@ -99,13 +99,7 @@ async def _async_apply_clear_decision_locked(
         result = self._operation_result_type(kind="clear", slot=slot, unconfirmed=True)
     if not _clear_result_confirmed(result):
         self._logger.warning(
-            "Clear not confirmed for slot %d (failed=%s, unconfirmed=%s, "
-            "lingering_name=%s, lingering_pin=%s); slot remains occupied.",
-            slot,
-            result.failed,
-            result.unconfirmed,
-            result.lingering_name,
-            result.lingering_pin,
+            "Clear not confirmed for slot %d; slot remains occupied.", slot
         )
         return
     if intent is not None and not await async_resolve_verified_clear_fence(intent):
@@ -137,9 +131,10 @@ async def _dispatch_cleanup_clear(self: Any, coordinator: Any, slot: int, intent
     except asyncio.CancelledError:
         raise
     except Exception:
-        self._logger.exception(
-            "Unexpected error firing clear code for slot %d; slot remains "
-            "occupied to prevent double-assignment.",
+        self._logger.warning(
+            "Cleanup reset dispatch failed (failure category provider_error) "
+            "for slot %d; its protective fence and occupancy remain in place. "
+            "Verify the physical slot and service availability, then retry cleanup.",
             slot,
         )
         return None

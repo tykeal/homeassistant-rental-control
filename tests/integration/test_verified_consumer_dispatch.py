@@ -18,6 +18,8 @@ from typing import Any
 from typing import cast
 from unittest.mock import patch
 
+from awesomeversion import AwesomeVersion
+from homeassistant import loader
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import EntityPlatform
@@ -57,6 +59,9 @@ from custom_components.rental_control.coordinator_helpers.coordinator_config_she
 from custom_components.rental_control.coordinator_helpers.coordinator_setup_shell import (
     CoordinatorSetupMixin,
 )
+from custom_components.rental_control.diagnostics import (
+    async_get_config_entry_diagnostics,
+)
 from custom_components.rental_control.event_overrides import EventOverrides
 from custom_components.rental_control.keymaster_identity import (
     build_capability_identity,
@@ -73,6 +78,10 @@ from custom_components.rental_control.keymaster_lifecycle import (
 )
 from custom_components.rental_control.keymaster_slot_operations import (
     async_keymaster_slot_operation,
+)
+from custom_components.rental_control.keymaster_version import KeymasterVersionStatus
+from custom_components.rental_control.keymaster_version import (
+    diagnose_keymaster_version,
 )
 
 from tests.fixtures.keymaster_releases import artifact_paths
@@ -786,6 +795,182 @@ async def test_real_set_and_clear_consumers_acknowledge_before_exact_dispatch(
         fence["fence_type"] == "allocation" and fence["owner_ref"] == next_references[0]
         for fence in loaded.data["pending_fences"]
     )
+
+
+@pytest.mark.usefixtures("enable_custom_integrations")
+@pytest.mark.parametrize("release", _RELEASES)
+@pytest.mark.parametrize(
+    ("reported_version", "expected_status"),
+    [
+        ("v0.6.0", KeymasterVersionStatus.OUTSIDE_SUPPORT),
+        ("v0.6.1+local", KeymasterVersionStatus.UNKNOWN),
+    ],
+)
+async def test_version_diagnosis_alone_does_not_block_real_set_consumer(
+    hass,
+    tmp_path: Path,
+    release: str,
+    reported_version: str,
+    expected_status: KeymasterVersionStatus,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The actual supported package consumer still uses independent gates."""
+    from dataclasses import replace
+
+    from custom_components.rental_control import util
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    monkeypatch.setattr(
+        loader,
+        "async_get_loaded_integration",
+        lambda _hass, _domain: SimpleNamespace(
+            manifest={"version": reported_version},
+            version=AwesomeVersion(reported_version),
+        ),
+    )
+    assert diagnose_keymaster_version(hass).status is expected_status
+
+    original_deps = util._keymaster_deps
+
+    async def immediate_sleep(_delay: float) -> None:
+        """Skip retry delay in the real consumer test."""
+        return None
+
+    monkeypatch.setattr(
+        util,
+        "_keymaster_deps",
+        lambda: replace(original_deps(), sleep=immediate_sleep),
+    )
+    now = datetime.now(UTC)
+    reservation = SimpleNamespace(
+        identity_key=_OWNER_IDENTITY,
+        slot_name="Guest",
+        slot_code=_CODE,
+        start=now + timedelta(hours=1),
+        end=now + timedelta(hours=2),
+        buffered_start=now + timedelta(hours=1),
+        buffered_end=now + timedelta(hours=2),
+        display_slot_name="Guest",
+    )
+
+    result = await coordinator.event_overrides._apply_set(
+        coordinator, _SLOT, reservation, "version-diagnostic-only"
+    )
+
+    assert result.confirmed
+    assert events
+    assert all(event["entity_id"] in set(entity_ids.values()) for event in events)
+
+
+@pytest.mark.usefixtures("enable_custom_integrations")
+@pytest.mark.parametrize("release", _RELEASES)
+@pytest.mark.parametrize(
+    ("reported_version", "expected_status"),
+    [
+        ("v0.6.0", KeymasterVersionStatus.OUTSIDE_SUPPORT),
+        ("v0.6.1+local", KeymasterVersionStatus.UNKNOWN),
+    ],
+)
+async def test_version_diagnosis_cannot_bypass_protective_unknown(
+    hass,
+    tmp_path: Path,
+    release: str,
+    reported_version: str,
+    expected_status: KeymasterVersionStatus,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unverified store history blocks the real consumer at every version."""
+    monkeypatch.setattr(
+        loader,
+        "async_get_loaded_integration",
+        lambda _hass, _domain: SimpleNamespace(
+            manifest={"version": reported_version},
+            version=AwesomeVersion(reported_version),
+        ),
+    )
+    assert diagnose_keymaster_version(hass).status is expected_status
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    store._enter_protective_unknown(
+        ProtectionLoadResult(
+            ProtectionLoadState.PROTECTIVE_UNKNOWN,
+            failure_code="external_restore_suspected",
+        )
+    )
+    now = datetime.now(UTC)
+    reservation = SimpleNamespace(
+        identity_key=_OWNER_IDENTITY,
+        slot_name="Guest",
+        slot_code=_CODE,
+        start=now + timedelta(hours=1),
+        end=now + timedelta(hours=2),
+        buffered_start=now + timedelta(hours=1),
+        buffered_end=now + timedelta(hours=2),
+        display_slot_name="Guest",
+    )
+
+    result = await coordinator.event_overrides._apply_set(
+        coordinator, _SLOT, reservation, "unknown-protection"
+    )
+
+    assert not result.confirmed
+    assert not events
+
+
+@pytest.mark.usefixtures("enable_custom_integrations")
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_keymaster_diagnostics_separate_identity_capability_and_version(
+    hass,
+    tmp_path: Path,
+    release: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Diagnostics expose only status counts and actionable fixed guidance."""
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    monkeypatch.setattr(
+        loader,
+        "async_get_loaded_integration",
+        lambda _hass, _domain: SimpleNamespace(
+            manifest={"version": "v0.6.1+local"},
+            version=AwesomeVersion("v0.6.1+local"),
+        ),
+    )
+
+    ready = await async_get_config_entry_diagnostics(hass, coordinator.config_entry)
+    keymaster_status = ready["keymaster_status"]
+    assert keymaster_status["association"] == {
+        "status": "verified",
+        "next_step": "wait_for_keymaster_entities",
+    }
+    assert keymaster_status["capabilities"]["status_counts"]["ready"] > 0
+    assert keymaster_status["capabilities"]["next_step"] == "none"
+    assert keymaster_status["version"]["status"] == "unknown"
+    assert keymaster_status["version"]["informational_only"] is True
+    assert keymaster_status["protection"]["status"] == "ready"
+    assert _KM_ENTRY_ID not in repr(keymaster_status)
+    assert all(
+        entity_id not in repr(keymaster_status) for entity_id in entity_ids.values()
+    )
+
+    er.async_get(hass).async_update_entity(
+        entity_ids[f"text.code_slots:{_SLOT}.pin"],
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    await hass.async_block_till_done()
+    blocked = await async_get_config_entry_diagnostics(hass, coordinator.config_entry)
+    blocked_status = blocked["keymaster_status"]["capabilities"]
+    assert blocked_status["status_counts"]["disabled"] == 1
+    assert blocked_status["next_step"] == "enable_required_keymaster_entity"
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
@@ -2139,4 +2324,92 @@ async def test_calendar_cleanup_uses_acknowledged_exact_reset(
     assert any(
         tombstone["resolution_kind"] == "clear_confirmed"
         for tombstone in loaded.data["tombstones"]
+    )
+
+
+@pytest.mark.usefixtures("enable_custom_integrations")
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_greedy_cleanup_failure_logs_no_exception_payload(
+    hass,
+    tmp_path: Path,
+    release: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Actual cleanup retains its fence without logging provider error text."""
+    from dataclasses import replace
+
+    from custom_components.rental_control import util
+
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", release
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, _store, entity_ids, events)
+    original_deps = util._keymaster_deps
+
+    async def immediate_sleep(_delay: float) -> None:
+        """Skip retry delay in this real cleanup test."""
+        return None
+
+    monkeypatch.setattr(
+        util,
+        "_keymaster_deps",
+        lambda: replace(original_deps(), sleep=immediate_sleep),
+    )
+    guest = "Sensitive Guest"
+    secret = "service echoed pin 987654"
+    reservation = SimpleNamespace(
+        identity_key=_OWNER_IDENTITY,
+        slot_name=guest,
+        slot_code=_CODE,
+        start=datetime.now(UTC) - timedelta(hours=2),
+        end=datetime.now(UTC) + timedelta(hours=2),
+        buffered_start=datetime.now(UTC) - timedelta(hours=2),
+        buffered_end=datetime.now(UTC) + timedelta(hours=2),
+        display_slot_name=guest,
+    )
+    assert (
+        await coordinator.event_overrides._apply_set(
+            coordinator, _SLOT, reservation, "cleanup-privacy-set"
+        )
+    ).confirmed
+    coordinator._slot_mappings = {"mappings": {_OWNER_IDENTITY: {"slot": _SLOT}}}
+
+    async def fail_with_sensitive_provider_text(
+        _service_registry, *_args, **_kwargs
+    ) -> None:
+        """Simulate an upstream service error which echoes private payload."""
+        raise RuntimeError(f"{guest}: {secret}")
+
+    monkeypatch.setattr(
+        type(hass.services), "async_call", fail_with_sensitive_provider_text
+    )
+    with caplog.at_level(logging.DEBUG):
+        await coordinator.event_overrides.async_check_overrides(
+            coordinator, calendar=[]
+        )
+
+    assert secret not in caplog.text
+    assert guest not in caplog.text
+    records = [
+        record
+        for record in caplog.records
+        if "service dispatch failed" in record.getMessage()
+    ]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert "Selected Keymaster entry reset capability" in message
+    assert "failure category service_operation_failed" in message
+    assert f"slot {_SLOT}" in message
+    assert "verified operation remains unconfirmed" in message
+    assert "Verify the physical slot and service availability" in message
+    assert records[0].exc_info is None
+    assert records[0].exc_text is None
+    assert "RuntimeError" not in caplog.text
+    loaded = _store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    assert any(
+        fence["fence_type"] == "pending_clear"
+        for fence in loaded.data["pending_fences"]
     )

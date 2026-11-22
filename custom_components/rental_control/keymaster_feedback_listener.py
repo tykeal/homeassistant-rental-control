@@ -155,7 +155,7 @@ async def async_start_listener(
     if unsubscribe is not None:
         entry_data[_LISTENER_UNSUB_KEY] = unsubscribe
         entry_data[UNSUB_LISTENERS].append(unsubscribe)
-    _LOGGER.debug("entry_id = '%s'", config_entry.unique_id)
+    _LOGGER.debug("Registering Keymaster state feedback listener")
 
 
 def _verified_listener_binding(lifecycle: Any, expected_generation: int | None):

@@ -145,10 +145,9 @@ def check_gather_results(
             if not isinstance(result, Exception):
                 raise result
             logger.error(
-                "%s failed: %s",
+                "%s failed (exception type: %s)",
                 context,
-                result,
-                exc_info=(type(result), result, result.__traceback__),
+                type(result).__name__,
             )
 
 

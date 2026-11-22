@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from typing import Any
 from unittest.mock import Mock
 
+from homeassistant.helpers.issue_registry import async_get as async_get_issue_registry
 import pytest
 
 from custom_components.rental_control.allocator import protected_store
@@ -30,6 +31,7 @@ from custom_components.rental_control.allocator.models import ProtectionLoadStat
 from custom_components.rental_control.allocator.protected_store import (
     ProtectedRegistryStore,
 )
+from custom_components.rental_control.const import DOMAIN
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -145,9 +147,10 @@ async def test_corrupt_storage_persists_fixed_privacy_safe_status(
     assert result.state is ProtectionLoadState.PROTECTIVE_UNKNOWN
     assert registry.read_bytes().endswith(b'/private/path"}')
     assert len(notifications) == 1
-    assert "Preserve the current registry" in notifications[0]
-    assert "External recovery" in notifications[0]
-    assert "override" in notifications[0]
+    assert "markerless v1 backup alone cannot prove completeness" in notifications[0]
+    assert "no supported external restore or override" in notifications[0]
+    assert "blocked indefinitely" in notifications[0]
+    assert "never activated v2" in notifications[0]
     assert "2468" not in notifications[0]
     assert "/private/path" not in notifications[0]
 
@@ -202,8 +205,93 @@ async def test_incomplete_evidence_scan_has_actionable_persistent_status(
     assert result.failure_code == "scan_limit"
     message = notify.call_args.args[1]
     assert "bounded storage evidence scan" in message
-    assert "stopped" in message
-    assert "issuance, reuse, and release remain blocked" in message
+    assert "cannot establish that quarantine evidence is absent" in message
+    assert "Home Assistant stopped" in message
+    assert "reload Rental Control" in message
+    assert "markerless v1 backup alone cannot prove completeness" not in message
+
+
+@pytest.mark.asyncio
+async def test_protective_unknown_issues_transition_and_clear_stale_opposite(
+    hass: HomeAssistant,
+    isolated_storage: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep scan-incomplete distinct from unknown and clear the stale issue."""
+    monkeypatch.setattr(protected_store, "async_create", Mock())
+    monkeypatch.setattr(protected_store, "async_dismiss", Mock())
+    store = ProtectedRegistryStore(hass, asyncio.Lock(), storage_dir=isolated_storage)
+    issue_registry = async_get_issue_registry(hass)
+
+    store._report_unknown("scan_limit")
+    assert (
+        issue_registry.async_get_issue(DOMAIN, "protected_registry_scan_incomplete")
+        is not None
+    )
+    assert issue_registry.async_get_issue(DOMAIN, "protected_registry_unknown") is None
+
+    store._report_unknown("marker_mismatch")
+    unknown_issue = issue_registry.async_get_issue(DOMAIN, "protected_registry_unknown")
+    assert unknown_issue is not None
+    assert unknown_issue.translation_key == "protected_registry_unknown"
+    assert (
+        issue_registry.async_get_issue(DOMAIN, "protected_registry_scan_incomplete")
+        is None
+    )
+
+    store._dismiss_status()
+    assert issue_registry.async_get_issue(DOMAIN, "protected_registry_unknown") is None
+
+
+@pytest.mark.asyncio
+async def test_french_protective_unknown_notification_is_localized(
+    hass: HomeAssistant,
+    isolated_storage: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use the French safety guidance when Home Assistant is configured in French."""
+    hass.config.language = "fr"
+    notify = Mock()
+    monkeypatch.setattr(protected_store, "async_create", notify)
+    monkeypatch.setattr(protected_store, "async_dismiss", Mock())
+
+    ProtectedRegistryStore(
+        hass, asyncio.Lock(), storage_dir=isolated_storage
+    )._report_unknown("marker_mismatch")
+
+    message = notify.call_args.args[1]
+    assert "Aucune sauvegarde indépendante" in message
+    assert "indéfiniment" in message
+    assert "sans marqueur ne prouve pas l’exhaustivité" in message
+
+
+@pytest.mark.asyncio
+async def test_healthy_markerless_v1_does_not_create_protective_issue(
+    hass: HomeAssistant,
+    isolated_storage: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A healthy never-v2 legacy ledger remains an upgrade candidate, not an alert."""
+    registry = isolated_storage / "rental_control.code_registry"
+    registry.write_bytes(_v1_bytes())
+    notify = Mock()
+    dismissed = Mock()
+    monkeypatch.setattr(protected_store, "async_create", notify)
+    monkeypatch.setattr(protected_store, "async_dismiss", dismissed)
+
+    result = await ProtectedRegistryStore(
+        hass, asyncio.Lock(), storage_dir=isolated_storage
+    ).async_load()
+
+    assert result.state is ProtectionLoadState.LEGACY_V1
+    assert notify.call_count == 0
+    assert dismissed.call_count == 1
+    assert (
+        async_get_issue_registry(hass).async_get_issue(
+            DOMAIN, "protected_registry_unknown"
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio

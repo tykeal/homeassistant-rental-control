@@ -211,36 +211,27 @@ def _announce_conflict(
     withdrawn once it is explained or resolved; an untracked one, an
     alias or hold beside a booking, is announced as it forms.
     """
-    logged = ", ".join(
-        f"{owner.entry_id}:{owner.identity_key}@{owner.lockname}:{owner.slot}"
-        for owner in record.owners
-    )
     if explained:
         if track:
             conflict_notices.withdraw(allocator, record.code_ref)
         _LOGGER.info(
-            "Shared code_ref %s has multiple owners (%s), which is expected "
-            "under the last_four generator because the code is the guest's "
+            "Shared code_ref %s has %d owners, which is expected under the "
+            "last_four generator because the code is the guest's "
             "phone digits. No code was rotated and no notification was "
             "raised.",
             record.code_ref,
-            logged,
+            len(record.owners),
         )
         return
     if track and not conflict_notices.claim(
         allocator, record.code_ref, physical_slots(owners)
     ):
-        _LOGGER.debug(
-            "Shared code_ref %s conflict (%s) was already reported",
-            record.code_ref,
-            logged,
-        )
+        _LOGGER.debug("Shared code_ref conflict was already reported")
         return
     _LOGGER.warning(
-        "Shared code registry adoption conflict for code_ref %s: %s. "
+        "Shared code registry adoption conflict affecting %d owners. "
         "No code was rotated.",
-        record.code_ref,
-        logged,
+        len(record.owners),
     )
     places = "\n".join(
         f"- {line}" for line in conflict_notices.describe_slots(allocator, owners)
@@ -269,13 +260,10 @@ def report_identity_mismatch(
     if mismatch in allocator._reported_identity_mismatches:
         return
     allocator._reported_identity_mismatches.add(mismatch)
-    message = (
-        f"Shared code registry identity mismatch for {request.entry_id}:"
-        f"{request.identity_key}: registry code_ref {existing.code_ref}, "
-        f"observed code_ref {observed_ref}. The observed lock code was "
-        "retained and no code was rotated."
+    _LOGGER.warning(
+        "Shared code registry identity mismatch; observed lock code was "
+        "retained and no code was rotated"
     )
-    _LOGGER.warning(message)
     where = entry_info.describe_slot(
         allocator.hass, request.entry_id, request.lockname, request.slot
     )

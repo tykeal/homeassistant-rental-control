@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from aioresponses import aioresponses
@@ -12,6 +13,7 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
+import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
@@ -230,15 +232,20 @@ async def test_url_validation_error_parity(hass: "HomeAssistant") -> None:
     assert errors == {}
 
 
-async def test_url_response_error_parity(hass: "HomeAssistant") -> None:
+async def test_url_response_error_parity(
+    hass: "HomeAssistant", caplog: pytest.LogCaptureFixture
+) -> None:
     """Test non-200 and non-calendar response URL errors."""
     flow = _OptionsFlow(hass)
     with aioresponses() as mock_aiohttp:
-        url = "https://example.com/missing.ics"
-        mock_aiohttp.get(url, status=404, reason="Missing")
+        secret = "Guest Example PIN 9384"
+        url = f"https://example.com/missing.ics?token={secret}"
+        mock_aiohttp.get(url, status=404, reason=secret)
         errors: dict[str, str] = {}
+        caplog.set_level(logging.DEBUG)
         await validate_url(flow, _valid_input(url), errors)
     assert errors[CONF_URL] == "unknown"
+    assert secret not in caplog.text
 
     with aioresponses() as mock_aiohttp:
         url = "https://example.com/plain.txt"

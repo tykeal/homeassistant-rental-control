@@ -166,7 +166,6 @@ def parse_calendar(
 ) -> list[CalendarEvent]:
     """Return a sorted list of events from an icalendar object."""
     events: list[CalendarEvent] = []
-    _LOGGER.debug("In _ical_parser:: from_date: %s; to_date: %s", from_date, to_date)
     for event in calendar.walk("VEVENT"):
         cal_event = _parse_vevent(event, from_date, to_date, ctx)
         if cal_event is not None:
@@ -181,7 +180,7 @@ def _vevent_filtered(event: Any, ctx: Any) -> bool:
     """Return whether an event should be skipped before time selection."""
     summary = _event_summary(event)
     if "RRULE" in event:
-        _LOGGER.error("RRULE in event: %s", summary)
+        _LOGGER.error("Ignoring calendar item with an unsupported recurrence rule")
         return True
     if "Check-in" in summary or "Check-out" in summary:
         _LOGGER.debug("Smoobu extra event, ignoring")
@@ -247,7 +246,6 @@ def _parse_vevent(
 
     checkin, checkout = _select_event_times(event, override, ctx)
 
-    _LOGGER.debug("Checkin: %s, Checkout: %s", checkin, checkout)
     feed_datetimes = _selected_feed_datetimes(event, override, ctx)
     dtstart: datetime = _event_datetime(
         event["DTSTART"].dt,
@@ -394,5 +392,4 @@ def _build_calendar_event(
         start=start.astimezone(ctx.timezone),
         uid=normalize_uid(str(raw_uid) if raw_uid is not None else None),
     )
-    _LOGGER.debug("Event to add: %s", cal_event)
     return cal_event

@@ -115,12 +115,7 @@ def adopt_unlocked(
             allocator, request.entry_id, request.lockname, request.slot
         ):
             _LOGGER.info(
-                "Skipped observed code_ref %s for %s:%s at %s:%s while a "
-                "forced re-issue hold is pending",
-                allocator.code_ref(request.code),
-                request.entry_id,
-                request.identity_key,
-                request.lockname,
+                "Skipped an observed code during a forced re-issue hold for slot %d",
                 request.slot,
             )
             owner = next(
@@ -135,11 +130,8 @@ def adopt_unlocked(
             )
         observed_ref = allocator.code_ref(request.code)
         _LOGGER.warning(
-            "Identity %s already owns code_ref %s; observed code_ref %s "
-            "will be retained on the lock and not rotated",
-            request.identity_key,
-            existing.code_ref,
-            observed_ref,
+            "A reservation's recorded allocation differs from its observed "
+            "slot; the observed code will be retained and not rotated"
         )
         _record_mismatched_observed_owner(allocator, request, observed_ref, now)
         adoption_reports.report_identity_mismatch(
@@ -180,11 +172,7 @@ def adopt_unlocked(
     ):
         adoption_reports.report_adoption_conflict(allocator, record)
     _LOGGER.info(
-        "Adopted shared allocation code_ref %s for %s:%s at %s:%s",
-        record.code_ref,
-        request.entry_id,
-        request.identity_key,
-        request.lockname,
+        "Adopted a shared allocation for slot %s",
         request.slot,
     )
     return AllocationResult(code=request.code, origin=AllocationOrigin.ADOPTED)
@@ -235,7 +223,7 @@ def reserve_observed_code(
         first_seen=now,
         last_seen=now,
     )
-    reserved = allocator._registry.add_owner(
+    allocator._registry.add_owner(
         request.code,
         request.code_length,
         owner,
@@ -244,11 +232,7 @@ def reserve_observed_code(
     )
     if joining:
         _LOGGER.info(
-            "Reserved observed code_ref %s for %s at %s:%s because its "
-            "slot is exempt from adoption this cycle",
-            reserved.code_ref,
-            request.entry_id,
-            request.lockname,
+            "Reserved an observed code for excluded slot %s",
             request.slot,
         )
 

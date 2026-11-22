@@ -103,20 +103,16 @@ async def validate_url(
             resp = await session.get(user_input[CONF_URL])
         if resp.status != 200:
             _LOGGER.error(
-                "%s returned %s - %s",
-                user_input[CONF_URL],
+                "Calendar URL validation returned HTTP status %s",
                 resp.status,
-                resp.reason,
             )
             errors[CONF_URL] = "unknown"
-            return URLValidationResult(
-                error="unknown", status=resp.status, reason=resp.reason
-            )
+            return URLValidationResult(error="unknown", status=resp.status)
         if "text/calendar" not in resp.content_type:
             errors[CONF_URL] = "bad_ics"
             return URLValidationResult(error="bad_ics", content_type=resp.content_type)
-    except probatio.Invalid as err:
-        _LOGGER.exception(err.msg)
+    except probatio.Invalid:
+        _LOGGER.debug("Calendar URL validation rejected an invalid URL")
         errors[CONF_URL] = "invalid_url"
         return URLValidationResult(error="invalid_url")
     return URLValidationResult()
@@ -132,14 +128,12 @@ def validate_scalar_fields(user_input: dict[str, Any], errors: dict[str, str]) -
 
     try:
         cv.time(user_input[CONF_CHECKIN])
-    except probatio.Invalid as err:
-        _LOGGER.exception(err.msg)
+    except probatio.Invalid:
         errors[CONF_CHECKIN] = "bad_time"
 
     try:
         cv.time(user_input[CONF_CHECKOUT])
-    except probatio.Invalid as err:
-        _LOGGER.exception(err.msg)
+    except probatio.Invalid:
         errors[CONF_CHECKOUT] = "bad_time"
 
     if user_input[CONF_DAYS] < 1:

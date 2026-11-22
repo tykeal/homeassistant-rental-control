@@ -314,9 +314,8 @@ async def async_reserve_or_get_slot(
             return cast("ReserveResult", self._reserve_result(existing, False, changed))
         if self._next_slot is None:
             self._logger.warning(
-                "All %d override slots are occupied; reservation '%s' could not be assigned a slot",
+                "All %d override slots are occupied; reservation was not assigned",
                 self._max_slots,
-                slot_name,
             )
             return cast("ReserveResult", self._reserve_result(None, False, False))
         slot = self._next_slot
@@ -362,10 +361,8 @@ async def async_update(
             )
             if duplicate is not None:
                 self._logger.warning(
-                    "Duplicate slot_name '%s' detected in slot %d while writing slot %d; redirecting write",
-                    slot_name,
+                    "Duplicate slot name detected in slot %d; redirecting write",
                     duplicate,
-                    slot,
                 )
                 slot = duplicate
             self._overrides[slot] = self._override_dict(

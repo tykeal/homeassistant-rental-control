@@ -29,10 +29,7 @@ def compute_linger_timing(entity: Any, baseline: datetime | None = None) -> None
     if next_event is None:
         target = checkout_time + timedelta(hours=entity._get_cleaning_window())
         entity._schedule_linger_to_no_reservation(target, None)
-        _LOGGER.debug(
-            "FR-006b: No follow-on, transition to no_reservation at %s",
-            target.isoformat(),
-        )
+        _LOGGER.debug("FR-006b: No follow-on, transition to no_reservation")
         return
     entity._linger_followon_key = entity._event_key(
         next_event.summary, next_event.start
@@ -44,33 +41,27 @@ def compute_linger_timing(entity: Any, baseline: datetime | None = None) -> None
         target = checkout_time + ((next_event.start - checkout_time) / 2)
         entity._next_event_start_day = None
         entity._schedule_linger_to_awaiting(target)
-        _LOGGER.debug(
-            "FR-006a: Same-day turnover, transition to awaiting at %s",
-            target.isoformat(),
-        )
+        _LOGGER.debug("FR-006a: Same-day turnover, transition to awaiting")
         return
     midnight = dt_util.start_of_local_day(checkout_time + timedelta(days=1))
     entity._next_event_start_day = dt_util.start_of_local_day(next_event.start)
     entity._schedule_linger_to_no_reservation(midnight, entity._next_event_start_day)
     _LOGGER.debug(
         "FR-006c: Different-day follow-on, transition to no_reservation "
-        "at %s, follow-up awaiting at %s",
-        midnight.isoformat(),
-        entity._next_event_start_day.isoformat(),
+        "before follow-up awaiting"
     )
 
 
 def auto_checkin_callback(entity: Any, _now: datetime) -> None:
     """Run the automatic check-in callback."""
-    _LOGGER.debug("Auto check-in timer fired for %s", entity.coordinator.name)
+    _LOGGER.debug("Auto check-in timer fired")
     entity._timer_manager.clear_callback_handle()
     if entity._state != CHECKIN_STATE_AWAITING:
         return
     if entity._is_keymaster_monitoring_enabled():
         _LOGGER.debug(
             "Keymaster monitoring is on; staying in awaiting_checkin "
-            "until door code is used for %s",
-            entity.coordinator.name,
+            "until a managed door code is used"
         )
         entity._transition_target_time = None
         entity.async_write_ha_state()
@@ -80,7 +71,7 @@ def auto_checkin_callback(entity: Any, _now: datetime) -> None:
 
 def auto_checkout_callback(entity: Any, _now: datetime) -> None:
     """Run the automatic checkout callback."""
-    _LOGGER.debug("Auto check-out timer fired for %s", entity.coordinator.name)
+    _LOGGER.debug("Auto check-out timer fired")
     entity._timer_manager.clear_callback_handle()
     if entity._state == CHECKIN_STATE_CHECKED_IN:
         entity._transition_to_checked_out(source="automatic")
@@ -88,7 +79,7 @@ def auto_checkout_callback(entity: Any, _now: datetime) -> None:
 
 def linger_to_awaiting_callback(entity: Any, _now: datetime) -> None:
     """Run the same-day linger callback."""
-    _LOGGER.debug("Linger-to-awaiting timer fired for %s", entity.coordinator.name)
+    _LOGGER.debug("Linger-to-awaiting timer fired")
     entity._timer_manager.clear_callback_handle()
     if entity._state != CHECKIN_STATE_CHECKED_OUT:
         return
@@ -103,9 +94,7 @@ def linger_to_awaiting_callback(entity: Any, _now: datetime) -> None:
 
 def linger_to_no_reservation_callback(entity: Any, _now: datetime) -> None:
     """Run the linger expiry callback."""
-    _LOGGER.debug(
-        "Linger-to-no-reservation timer fired for %s", entity.coordinator.name
-    )
+    _LOGGER.debug("Linger-to-no-reservation timer fired")
     entity._timer_manager.clear_callback_handle()
     if entity._state != CHECKIN_STATE_CHECKED_OUT:
         return
@@ -115,16 +104,11 @@ def linger_to_no_reservation_callback(entity: Any, _now: datetime) -> None:
         return
     if followon_start_day > _now:
         entity._schedule_no_reservation_to_awaiting(followon_start_day)
-        _LOGGER.debug(
-            "FR-006c: Scheduled follow-up awaiting transition at %s for %s",
-            followon_start_day.isoformat(),
-            entity.coordinator.name,
-        )
+        _LOGGER.debug("FR-006c: Scheduled follow-up awaiting transition")
         entity.async_write_ha_state()
     else:
         _LOGGER.debug(
-            "FR-006c: Follow-on start day %s already passed, relying on coordinator update",
-            followon_start_day.isoformat(),
+            "FR-006c: Follow-on start day already passed; relying on coordinator update"
         )
 
 

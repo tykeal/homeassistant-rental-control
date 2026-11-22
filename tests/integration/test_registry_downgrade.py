@@ -16,13 +16,18 @@ from unittest.mock import AsyncMock
 
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.issue_registry import async_get as async_get_issue_registry
 from homeassistant.helpers.storage import STORAGE_MANAGER
 import pytest
 
 from custom_components.rental_control.allocator.models import ProtectionLoadState
+from custom_components.rental_control.allocator.protected_store import (
+    ProtectedRegistryStore,
+)
 from custom_components.rental_control.allocator.registry_transactions import (
     async_recover_protection_files,
 )
+from custom_components.rental_control.const import DOMAIN
 
 from tests.fixtures.keymaster_releases import artifact_paths
 from tests.fixtures.keymaster_releases import extract_legacy_rental_control
@@ -275,6 +280,17 @@ async def test_real_v403_quarantines_corrupt_json_then_new_reader_blocks_markerl
     result = await async_recover_protection_files(asyncio.Lock(), storage)
     assert result.state is ProtectionLoadState.PROTECTIVE_UNKNOWN
     assert result.failure_code in {"partial_history", "marker_mismatch"}
+
+    reader = ProtectedRegistryStore(hass, asyncio.Lock(), storage_dir=storage)
+    surfaced = await reader.async_load()
+    assert surfaced.state is ProtectionLoadState.PROTECTIVE_UNKNOWN
+    issue = async_get_issue_registry(hass).async_get_issue(
+        DOMAIN, "protected_registry_unknown"
+    )
+    assert issue is not None
+    assert issue.translation_key == "protected_registry_unknown"
+    assert marker_path.exists()
+    assert list(storage.glob(f"{_STORE_KEY}.corrupt.*"))
 
 
 @pytest.mark.asyncio

@@ -168,7 +168,8 @@ def test_last_four_sharing_logs_without_notifying(
 
     assert notifications.calls == []
     assert "expected under the last_four generator" in caplog.text
-    assert "entry_a-guest-3" in caplog.text
+    assert "entry_a-guest-3" not in caplog.text
+    assert "Adopted a shared allocation for slot" in caplog.text
 
 
 def test_phoneless_last_four_sharing_still_notifies(
@@ -276,7 +277,7 @@ def test_conflict_notification_id_is_per_code_ref(
 def test_conflict_notification_names_lock_and_slot(
     notifications: _Notifications, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The notification carries names; the log keeps the identifiers."""
+    """The notification stays actionable without logging guest identities."""
     caplog.set_level("INFO")
     allocator = _allocator(_hass(entry_a="date_based", entry_b="date_based"))
     _adopt(allocator, "entry_a", 3)
@@ -290,7 +291,7 @@ def test_conflict_notification_names_lock_and_slot(
     assert "slot 5" in message
     assert "entry_a-guest-3" not in message
     assert "entry_a:" not in message
-    assert "entry_a-guest-3" in caplog.text
+    assert "entry_a-guest-3" not in caplog.text
 
 
 def test_long_last_four_sharing_still_notifies(

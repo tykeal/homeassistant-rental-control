@@ -45,6 +45,24 @@
           "bookings_only_feed": "Enable only if this calendar never publishes blocked or unavailable dates. Booking.com no longer identifies guests in its feed, so this is required for Booking.com calendars that export booked dates only. Enabling this on a calendar that does publish blocked dates will issue door codes for those blocks.",
           "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)",
           "date_only": "Displays each reservation as a single all-day block. Guest arrival and departure times are hidden from the calendar."
+        },
+        "issues": {
+          "keymaster_version_outside_support": {
+            "title": "Keymaster version is outside tested support",
+            "description": "The loaded Keymaster version {version} is below Rental Control's tested support floor {support_floor}. This is a support diagnosis only: version status alone does not block or authorize lock operations. Verify the selected Keymaster entry and its current slot capabilities; update Keymaster where practical."
+          },
+          "keymaster_version_unknown": {
+            "title": "Keymaster version could not be classified",
+            "description": "Rental Control could not reliably classify the already-loaded Keymaster version. Verify the installed integration metadata and selected entry. Version status alone does not block or authorize lock operations; each operation still requires current identity, capability, state, and protection checks. Tested stable support begins at {support_floor}."
+          },
+          "protected_registry_unknown": {
+            "title": "Shared door-code registry history is unverified",
+            "description": "No independently verified, sufficiently complete marker-bearing backup has been established; a markerless v1 backup alone cannot prove completeness. Preserve the current registry, protection marker, and quarantine evidence without editing or restoring files. This release has no supported external restore or override. Issuance, reuse, and release may remain blocked indefinitely, including on installations that never activated v2. This does not establish whether an unverified code is present, absent, visible, or reusable."
+          },
+          "protected_registry_scan_incomplete": {
+            "title": "Protected registry evidence scan is incomplete",
+            "description": "The bounded evidence scan was incomplete or exceeded its limit; the incomplete scan cannot establish that quarantine evidence is absent. Preserve the current registry, protection marker, and quarantine evidence. With Home Assistant stopped, resolve the storage scan problem without editing or restoring files, then reload Rental Control. This release has no supported external restore or override. Issuance, reuse, and release remain blocked until history can be verified."
+          }
         }
       }
     }

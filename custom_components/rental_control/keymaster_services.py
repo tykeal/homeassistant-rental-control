@@ -89,8 +89,13 @@ async def _async_fire_set_code_locked(
         return OperationResult(kind="set", slot=slot, unconfirmed=True)
     try:
         window = _buffered_window(coordinator, event, deps, sanitize_buffers=True)
-    except (TypeError, ValueError) as exc:
-        return OperationResult(kind="set", slot=slot, failed=True, error=str(exc))
+    except TypeError, ValueError:
+        return OperationResult(
+            kind="set",
+            slot=slot,
+            failed=True,
+            error="invalid_date_window",
+        )
     try:
         await _disable_slot(coordinator, slot, lockname, deps, intent=verified_intent)
         await _enable_date_range(coordinator, slot, lockname, intent=verified_intent)
@@ -164,9 +169,7 @@ async def _async_fire_clear_code_locked(
     verified_intent: VerifiedOperationIntent | None = None,
 ) -> OperationResult:
     """Fire a clear_code signal."""
-    deps.logger.debug(
-        "In async_fire_clear_code - slot: %s, name: %s", slot, coordinator.name
-    )
+    deps.logger.debug("In async_fire_clear_code - slot: %s", slot)
     reset_entity = _clear_entity_targets(
         coordinator, slot, expected_name, deps, verified_intent
     )

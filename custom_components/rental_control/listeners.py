@@ -86,8 +86,7 @@ def async_register_keymaster_listener(
     unsub = hass.bus.async_listen("keymaster_lock_state_changed", _handle_event)
     hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(unsub)
     _LOGGER.debug(
-        "Registered keymaster event bus listener for monitored locknames=%s",
-        sorted(coordinator.monitored_locknames),
+        "Registered Keymaster event bus listener",
     )
 
 
@@ -220,13 +219,23 @@ def _record_keymaster_event_disposition(
     disposition: str,
 ) -> None:
     """Append a diagnostic entry and refresh the sensor state."""
+    event_state = context.event_data.get("state")
+    safe_state = (
+        event_state
+        if isinstance(event_state, str) and event_state in {"locked", "unlocked"}
+        else "other"
+    )
     context.coordinator.keymaster_event_diagnostics.append(
         {
             "timestamp": dt_util.utcnow().isoformat(),
-            "lockname": str(context.raw_lockname),
-            "lockname_slug": context.event_lockname,
-            "state": context.event_data.get("state"),
-            "code_slot_num": context.code_slot_num,
+            "lockname_present": bool(context.raw_lockname),
+            "state": safe_state,
+            "code_slot_num": (
+                context.code_slot_num
+                if isinstance(context.code_slot_num, int)
+                and not isinstance(context.code_slot_num, bool)
+                else None
+            ),
             "disposition": disposition,
         }
     )
@@ -265,9 +274,8 @@ def _forward_keymaster_unlock(context: _KeymasterEventContext) -> bool:
         return False
 
     _LOGGER.debug(
-        "Forwarding keymaster unlock (slot=%d, lock=%s) to checkin sensor",
+        "Forwarding Keymaster unlock for slot %d to check-in sensor",
         context.code_slot_num,
-        context.raw_lockname,
     )
     _record_if_enabled(context, "accepted")
     checkin_sensor.async_handle_keymaster_unlock(
@@ -281,10 +289,7 @@ def _entry_data_for_unlock(context: _KeymasterEventContext) -> dict[str, Any] | 
     """Return entry data for forwarding a Keymaster unlock."""
     entry_data = get_entry_data(context.hass, context.config_entry.entry_id)
     if entry_data is None:
-        _LOGGER.debug(
-            "Keymaster unlock event received but entry data not available for entry %s",
-            context.config_entry.entry_id,
-        )
+        _LOGGER.debug("Keymaster unlock event received but entry data is unavailable")
     return entry_data
 
 
@@ -298,9 +303,7 @@ def _checkin_sensor_for_unlock(
         return checkin_sensor
 
     _LOGGER.debug(
-        "Keymaster unlock event received but checkin sensor "
-        "not yet available for entry %s",
-        context.config_entry.entry_id,
+        "Keymaster unlock event received but checkin sensor is not yet available",
     )
     _record_if_enabled(context, "rejected_no_checkin_sensor")
     return None

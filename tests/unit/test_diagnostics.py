@@ -24,6 +24,9 @@ from custom_components.rental_control.allocator.allocator import DoorCodeAllocat
 from custom_components.rental_control.allocator.candidates import candidate_codes
 from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import ObservedLock
+from custom_components.rental_control.allocator.models import (
+    ProtectionAuthorizationState,
+)
 from custom_components.rental_control.codegen import generate_date_based_code
 from custom_components.rental_control.const import ALLOCATOR
 from custom_components.rental_control.const import COORDINATOR
@@ -221,7 +224,7 @@ async def test_diagnostics_report_allocator_and_slot_state(
 
     assert result["allocator"]["record_count"] == 1
     assert result["allocator"]["adopted_locks"] == {
-        "entry-diag": {"lockname": "front_door", "slots": [10]}
+        "entry-diag": {"lockname": REDACTED, "slots": [10]}
     }
     token = result["reservations"][0]["identity_key"]
     assert token == TOKEN_A
@@ -230,7 +233,8 @@ async def test_diagnostics_report_allocator_and_slot_state(
     assert result["config"]["start_slot"] == 10
     assert result["config"]["max_events"] == 3
     assert result["config"]["code_generation"] == "date_based"
-    assert result["config"]["lockname"] == "front_door"
+    assert result["config"]["name"] == REDACTED
+    assert result["config"]["lockname"] == REDACTED
     assert result["excluded_slots"] == [{"slot": 11, "reason_present": True}]
 
     slots = {row["slot"]: row for row in result["slots"]}
@@ -249,6 +253,21 @@ async def test_diagnostics_report_allocator_and_slot_state(
     assert slots[10]["retry_count"] == 2
     assert slots[11]["desired_identity_key"] is None
     assert slots[11]["retry_count"] == 0
+    keymaster_status = result["keymaster_status"]
+    assert keymaster_status["association"]["status"] == "legacy_unresolved"
+    assert keymaster_status["association"]["next_step"] == "select_keymaster_entry"
+    assert keymaster_status["capabilities"]["status_counts"] == {}
+    assert (
+        keymaster_status["capabilities"]["next_step"] == "wait_for_selected_keymaster"
+    )
+    assert keymaster_status["version"]["status"] == "unknown"
+    assert keymaster_status["version"]["support_floor"] == "v0.6.1"
+    assert keymaster_status["version"]["informational_only"] is True
+    assert keymaster_status["protection"]["status"] == "unavailable"
+    assert (
+        keymaster_status["protection"]["next_step"]
+        == "wait_for_registry_initialization"
+    )
 
     reservation = result["reservations"][0]
     assert reservation["identity_key"] == token
@@ -290,6 +309,27 @@ async def test_diagnostics_never_leak_codes_or_guest_names(
     assert "slot_code" not in serialized
     assert "2026-05-01" not in serialized
     assert "identity-a" not in serialized
+    assert "front_door" not in serialized
+    assert GUEST_NAME not in result["config"].values()
+
+
+async def test_protective_unknown_diagnostics_preserve_safe_guidance(
+    hass: HomeAssistant,
+) -> None:
+    """Unknown protection stays distinct and never suggests a restore override."""
+    from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
+
+    entry = _entry(hass)
+    hass.data.setdefault(DOMAIN, {})[PROTECTED_REGISTRY_STORE] = SimpleNamespace(
+        authorization_state=ProtectionAuthorizationState.PROTECTIVE_UNKNOWN
+    )
+
+    result = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert result["keymaster_status"]["protection"] == {
+        "status": "protective_unknown",
+        "next_step": "preserve_files_no_supported_restore_or_override",
+    }
 
 
 async def test_diagnostics_handle_missing_coordinator(hass: HomeAssistant) -> None:

@@ -18,45 +18,38 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def apply_adoption_results(
-    allocator: object,
-    entry_id: str,
+    _allocator: object,
+    _entry_id: str,
     reservations: list[Reservation],
     result: CycleResult,
 ) -> None:
     """Apply and log adoption results from a cycle."""
+    adopted_count = sum(item.code is not None for item in result.adopted.values())
+    if adopted_count:
+        _LOGGER.info("Adopted %d previously observed shared codes", adopted_count)
     for identity_key, adoption_result in result.adopted.items():
         if adoption_result.code is None:
             continue
-        _LOGGER.info(
-            "Adopted shared code_ref %s for entry %s identity %s",
-            _allocator_code_ref(allocator, adoption_result.code),
-            entry_id,
-            identity_key,
-        )
         _apply_result(reservations, identity_key, adoption_result)
 
 
 def apply_allocation_results(
-    allocator: object,
-    entry_id: str,
+    _allocator: object,
+    _entry_id: str,
     reservations: list[Reservation],
     result: CycleResult,
 ) -> bool:
     """Apply and log allocation results; return whether space exhausted."""
     exhausted = False
+    allocated_count = sum(item.code is not None for item in result.allocated.values())
+    if allocated_count:
+        _LOGGER.info("Allocated %d shared door codes", allocated_count)
     for identity_key, allocation_result in result.allocated.items():
         if identity_key in result.adopted:
             continue
         if allocation_result.code is None:
             exhausted = exhausted or allocation_result.reason == "exhausted"
             continue
-        _LOGGER.info(
-            "Resolved shared code_ref %s for entry %s identity %s origin %s",
-            _allocator_code_ref(allocator, allocation_result.code),
-            entry_id,
-            identity_key,
-            allocation_result.origin,
-        )
         _apply_result(reservations, identity_key, allocation_result)
     return exhausted
 
@@ -98,14 +91,6 @@ def _apply_result(
         else:
             reservation.code_source = "unallocated"
         return
-
-
-def _allocator_code_ref(allocator: object, code: str) -> str:
-    """Return a masked allocator code reference for logs."""
-    code_ref = getattr(allocator, "code_ref", None)
-    if callable(code_ref):
-        return str(code_ref(code))
-    return "<unavailable>"
 
 
 def withhold_codes(reservations: list[Reservation]) -> None:

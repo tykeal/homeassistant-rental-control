@@ -161,8 +161,7 @@ class _StartupReadabilityWatcher:
                 self.refresh_if_readable,
             )
         _LOGGER.debug(
-            "Armed startup readability refresh for %s watching %d entities",
-            self.config_entry.entry_id,
+            "Armed startup readability refresh watching %d entities",
             len(self.entity_ids),
         )
 
@@ -251,10 +250,7 @@ class _StartupReadabilityWatcher:
         try:
             await self.coordinator.async_refresh()
         except Exception:
-            _LOGGER.exception(
-                "Startup readability refresh failed for %s",
-                self.config_entry.entry_id,
-            )
+            _LOGGER.warning("Startup readability refresh failed for the selected entry")
 
     @callback
     def refresh_if_readable(self, _now) -> None:
@@ -273,7 +269,7 @@ class _StartupReadabilityWatcher:
         self.refresh_task = self.config_entry.async_create_task(
             self.hass,
             self.async_refresh_once(),
-            name=f"{DOMAIN} startup readability refresh {self.config_entry.entry_id}",
+            name=f"{DOMAIN} startup readability refresh",
         )
         self.refresh_task.add_done_callback(self.refresh_done)
 
@@ -307,10 +303,7 @@ class _StartupReadabilityWatcher:
     @callback
     def expire(self, _now) -> None:
         """Give up if Keymaster entities never become readable."""
-        _LOGGER.debug(
-            "Startup readability watcher expired for %s before slots settled",
-            self.config_entry.entry_id,
-        )
+        _LOGGER.debug("Startup readability watcher expired before slots settled")
         self.remove_self()
 
 

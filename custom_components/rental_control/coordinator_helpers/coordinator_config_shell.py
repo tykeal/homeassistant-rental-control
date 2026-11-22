@@ -174,10 +174,7 @@ class CoordinatorConfigMixin:
                 try:
                     self.event_overrides.load_persisted_mappings(persisted)
                 except ValueError:
-                    _LOGGER.exception(
-                        "Failed to load persisted slot mappings for %s",
-                        self._entry_id,
-                    )
+                    _LOGGER.warning("Failed to load persisted slot mappings")
         # Re-discover parent entry and children on lockname change
         if lockname_changed:
             self._parent_entry_id = self._find_parent_entry_id()

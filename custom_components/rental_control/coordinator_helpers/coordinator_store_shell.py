@@ -45,12 +45,8 @@ class CoordinatorStoreMixin:
         )
         try:
             raw: dict[str, Any] | None = await self._store.async_load()
-        except Exception as err:
-            _LOGGER.warning(
-                "Ignoring unreadable Rental Control slot cache for %s: %s",
-                self._entry_id,
-                err,
-            )
+        except Exception:
+            _LOGGER.warning("Ignoring unreadable Rental Control slot cache")
             self._slot_mappings = self._empty_slot_cache("cache_load_failed")
             return
         if raw is None:
@@ -87,12 +83,8 @@ class CoordinatorStoreMixin:
         data = store_sync.build_save_payload(self._slot_mappings, self._store_meta())
         try:
             await self._store.async_save(data)
-        except Exception as err:
-            _LOGGER.warning(
-                "Failed to save Rental Control slot cache for %s: %s",
-                self._entry_id,
-                err,
-            )
+        except Exception:
+            _LOGGER.warning("Failed to save Rental Control slot cache")
 
     def _adopt_observed_coded_slots(self, managed_slots: list[_ManagedSlot]) -> None:
         """Adopt readable coded slots that have no persisted mapping yet.
