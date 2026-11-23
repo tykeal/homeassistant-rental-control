@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from ..const import ICON
 from ..const import NAME
+from ..keymaster_runtime import coordinator_code_publication_allowed
 from ..reconciliation import make_reservation_fingerprint
 from ..util import gen_uuid
 from ..util import get_slot_name
@@ -148,6 +149,12 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
     def extra_state_attributes(self) -> dict:
         """Return the attributes of the event."""
         attrib = {**self._event_attributes, **self._parsed_attributes}
+        # Cached attributes survive failed refreshes; apply the same gate a
+        # fresh render would so a withheld code is never republished.
+        if attrib.get("slot_code") is not None and not (
+            coordinator_code_publication_allowed(self.coordinator)
+        ):
+            attrib["slot_code"] = None
         return attrib
 
     @property
@@ -168,10 +175,7 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        _LOGGER.debug(
-            "Running RentalControlCalSensor coordinator update for %s",
-            self.name,
-        )
+        _LOGGER.debug("Running RentalControl calendar sensor update")
         if not self.coordinator.last_update_success:
             self.async_write_ha_state()
             return
@@ -186,9 +190,8 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
     def _handle_no_reservation_update(self) -> None:
         """Apply the legacy no-reservation render result."""
         _LOGGER.debug(
-            "No events available for sensor %s, removing from calendar %s",
-            str(self._event_number),
-            self.name,
+            "No events available for calendar sensor %d",
+            self._event_number,
         )
         self._apply_render_result(
             render_state.render_no_reservation(self.coordinator.event_prefix)
@@ -197,12 +200,8 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
     def _handle_event_update(self, event: Any) -> None:
         """Apply the render result for a selected calendar event."""
         _LOGGER.debug(
-            "Adding event %s - Start %s - End %s - as event %s to calendar %s",
-            event.summary,
-            event.start,
-            event.end,
-            str(self._event_number),
-            self.name,
+            "Updating calendar sensor %d with reservation data",
+            self._event_number,
         )
         event_attributes = self._build_event_attributes(event)
         self._event_attributes.update(event_attributes)

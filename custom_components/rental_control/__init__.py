@@ -16,19 +16,13 @@
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 
-from homeassistant.components.button import DOMAIN as BUTTON
-from homeassistant.components.datetime import DOMAIN as DATETIME
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.persistent_notification import async_dismiss
-from homeassistant.components.switch import DOMAIN as SWITCH
-from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.event import async_track_state_change_event
 
 from .allocator import async_get_or_create_allocator
 from .allocator import code_origin
@@ -46,9 +40,24 @@ from .coordinator import RentalControlCoordinator
 from .coordinator_helpers import allocation_failure
 from .coordinator_helpers import generator_divergence
 from .coordinator_helpers.adoption_gate import forget_entry as forget_gate_report
+from .coordinator_helpers.config_update import preserve_committed_association_tuple
+from .coordinator_helpers.keymaster_version_issue import (
+    register_keymaster_version_tracking,
+)
+from .coordinator_helpers.keymaster_version_issue import (
+    unregister_keymaster_version_tracking,
+)
 from .coordinator_helpers.slot_exclusions import dismiss_excluded_slots
 from .coordinator_helpers.unreadable_slots import dismiss_unreadable_slots
 from .helpers import configured_lock_entry
+from .keymaster_feedback_listener import async_start_listener as async_start_listener
+from .keymaster_feedback_listener import (
+    lifecycle_listener_callback as _lifecycle_listener_callback,
+)
+from .keymaster_lifecycle import start_keymaster_lifecycle
+from .keymaster_lifecycle import stop_keymaster_lifecycle
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
+from .keymaster_runtime import explicitly_lockless
 from .listeners import (
     async_register_keymaster_listener as async_register_keymaster_listener,
 )
@@ -59,10 +68,10 @@ from .startup_readability import (
 from .startup_readability import (
     async_arm_startup_readability_refresh as async_arm_startup_readability_refresh,
 )
+from .startup_readability import reset_startup_readability_watcher
 from .util import async_reload_package_platforms
 from .util import delete_rc_and_base_folder
 from .util import get_entry_data
-from .util import handle_state_change
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,6 +97,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
         coordinator = await _async_prepare_coordinator(hass, config_entry)
         await _async_start_coordinator(hass, config_entry, coordinator)
+        register_keymaster_version_tracking(hass, config_entry.entry_id)
 
         remove_update_listener = config_entry.add_update_listener(update_listener)
 
@@ -154,6 +164,13 @@ async def _async_start_coordinator(
     }
     coordinator._checkin_restore_pending = True
 
+    start_keymaster_lifecycle(
+        hass,
+        config_entry,
+        coordinator,
+        on_resolved=_lifecycle_listener_callback(hass, config_entry, coordinator),
+    )
+
     # Perform first data refresh before platform setup to guarantee
     # coordinator.data is populated when entities are created
     await coordinator.async_config_entry_first_refresh()
@@ -173,7 +190,7 @@ async def _async_start_coordinator(
 
     # Register keymaster event bus listener after platform setup
     # so the checkin sensor reference is available (T024/T026)
-    if coordinator.lockname:
+    if coordinator_keymaster_runtime_enabled(coordinator) and coordinator.lockname:
         async_register_keymaster_listener(hass, config_entry)
 
 
@@ -200,10 +217,14 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     )
 
     if unload_ok:
+        unregister_keymaster_version_tracking(hass, config_entry.entry_id)
+
         # Remove all package files and the base folder if needed
         await hass.async_add_executor_job(delete_rc_and_base_folder, hass, config_entry)
 
         await async_reload_package_platforms(hass)
+
+        stop_keymaster_lifecycle(hass, config_entry.entry_id)
 
         # Unsubscribe from any listeners
         for unsub_listener in list(
@@ -235,6 +256,7 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
 async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Handle permanent removal of a Rental Control entry."""
+    unregister_keymaster_version_tracking(hass, config_entry.entry_id)
     dismiss_unreadable_slots(hass, config_entry.entry_id)
     dismiss_excluded_slots(hass, config_entry.entry_id)
     forget_gate_report(config_entry.entry_id)
@@ -260,6 +282,7 @@ async def _async_cleanup_entry_setup_failure(
     hass: HomeAssistant, config_entry: ConfigEntry
 ) -> None:
     """Release listeners and partially loaded platforms after setup failure."""
+    unregister_keymaster_version_tracking(hass, config_entry.entry_id)
     entry_data = hass.data[DOMAIN].get(config_entry.entry_id)
     if entry_data is None:
         return
@@ -278,6 +301,7 @@ async def _async_cleanup_entry_setup_failure(
     for unsub_listener in list(entry_data.get(UNSUB_LISTENERS, [])):
         unsub_listener()
     entry_data.get(UNSUB_LISTENERS, []).clear()
+    stop_keymaster_lifecycle(hass, config_entry.entry_id)
 
     hass.data[DOMAIN].pop(config_entry.entry_id, None)
 
@@ -293,7 +317,9 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     if entry_data is None:
         return
 
-    new_data = config_entry.options.copy()
+    new_data = preserve_committed_association_tuple(
+        config_entry.data, config_entry.options
+    )
     new_data.pop(CONF_GENERATE, None)
 
     coordinator = entry_data[COORDINATOR]
@@ -320,49 +346,29 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     if entry_data is None:
         return
     coordinator = entry_data[COORDINATOR]
+    reset_startup_readability_watcher(hass, config_entry.entry_id)
+    start_keymaster_lifecycle(
+        hass,
+        config_entry,
+        coordinator,
+        on_resolved=_lifecycle_listener_callback(hass, config_entry, coordinator),
+    )
 
     # Unsubscribe to any listeners so we can create new ones
     for unsub_listener in list(entry_data.get(UNSUB_LISTENERS, [])):
         unsub_listener()
     entry_data.get(UNSUB_LISTENERS, []).clear()
 
-    if coordinator.lockname:
+    if coordinator_keymaster_runtime_enabled(coordinator) and coordinator.lockname:
         await async_start_listener(hass, config_entry)
         async_register_keymaster_listener(hass, config_entry)
     else:
         _LOGGER.debug("Skipping re-adding listeners")
 
 
-async def async_start_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
-    """Start tracking updates to entities."""
-    entities: list[str] = []
-
-    _LOGGER.debug("entry_id = '%s'", config_entry.unique_id)
-
-    coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
-    lockname = coordinator.lockname
-
-    _LOGGER.debug("lockname = '%s'", lockname)
-
-    for i in range(
-        coordinator.start_slot, coordinator.start_slot + coordinator.max_events
-    ):
-        entities.append(f"{SWITCH}.{lockname}_code_slot_{i}_enabled")
-        entities.append(f"{TEXT}.{lockname}_code_slot_{i}_pin")
-        entities.append(f"{TEXT}.{lockname}_code_slot_{i}_name")
-        entities.append(f"{DATETIME}.{lockname}_code_slot_{i}_date_range_start")
-        entities.append(f"{DATETIME}.{lockname}_code_slot_{i}_date_range_end")
-        entities.append(f"{BUTTON}.{lockname}_code_slot_{i}_reset")
-
-    hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(
-        async_track_state_change_event(
-            hass,
-            list(entities),
-            functools.partial(handle_state_change, hass, config_entry),
-        )
-    )
-
-
 def _entry_has_lock(config_entry: ConfigEntry) -> bool:
     """Return whether a config entry should participate in code adoption."""
-    return configured_lock_entry(config_entry.data.get(CONF_LOCK_ENTRY)) is not None
+    return (
+        not explicitly_lockless(config_entry.data)
+        and configured_lock_entry(config_entry.data.get(CONF_LOCK_ENTRY)) is not None
+    )

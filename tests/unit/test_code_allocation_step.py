@@ -1608,10 +1608,10 @@ def test_dismiss_unreadable_slots_uses_entry_notification_id(
     assert dismissed == [f"{DOMAIN}_unreadable_slots_entry-a"]
 
 
-async def test_adoption_gate_message_names_blocking_slots(
+async def test_adoption_gate_message_uses_sanitized_readiness_guidance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The adoption gate warning reports the slots blocking each entry."""
+    """The adoption gate notification directs users to sanitized readiness."""
     notifications: list[str] = []
     monkeypatch.setattr(
         allocator_module,
@@ -1644,7 +1644,8 @@ async def test_adoption_gate_message_names_blocking_slots(
     allocator._warn_if_gate_expired()
 
     assert len(notifications) == 1
-    assert "unreadable slots 1, 2" in notifications[0]
+    assert "Review the Keymaster readiness status" in notifications[0]
+    assert "entry-a" not in notifications[0]
     assert "waiting to read the door codes" in notifications[0]
 
 

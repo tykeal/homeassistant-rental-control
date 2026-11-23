@@ -80,12 +80,10 @@ def require_owned_code_for_rotation(
             continue
         reservation.code_rotation_pending = False
         _LOGGER.warning(
-            "Keeping the existing door code for entry %s identity %s despite "
+            "Keeping the existing door code despite "
             "a booking date change because the shared code registry does not "
             "own the programmed code on this lock slot; use "
             "rental_control.force_reissue to change it",
-            target.entry_id,
-            reservation.identity_key,
         )
 
 

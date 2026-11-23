@@ -349,13 +349,9 @@ def _should_update_code(hass: Any, entry_id: str) -> bool:
 def _log(entry_id: str, divergence: Divergence) -> None:
     """Announce one divergence to the log exactly once per state."""
     _LOGGER.warning(
-        "Entry %s identity %s holds a door code its %s generator cannot "
-        "produce, because the calendar feed no longer supplies a phone "
-        "number and code generation has fallen back to %s. %s",
-        entry_id,
-        divergence.identity_key,
-        divergence.configured_generator,
-        divergence.effective_generator,
+        "A door-code generator no longer matches calendar input; "
+        "the affected code was retained or re-issued according to the "
+        "entry's rotation policy. %s",
         (
             "The code is being re-issued because the stay has not started "
             "and this entry updates codes."

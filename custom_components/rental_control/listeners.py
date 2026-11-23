@@ -24,6 +24,13 @@ from .const import DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from .const import DOMAIN
 from .const import KEYMASTER_MONITORING_SWITCH
 from .const import UNSUB_LISTENERS
+from .keymaster_operations import protected_registry_active
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
+from .keymaster_topology import association_is_verified
+from .keymaster_topology import association_requires_verified_routing
+from .keymaster_topology import event_name_matches_source
+from .keymaster_topology import event_slot_name_matches
+from .keymaster_topology import verified_event_sources
 from .util import get_entry_data
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,7 +69,13 @@ def async_register_keymaster_listener(
         hass: Home Assistant instance.
         config_entry: The integration config entry.
     """
+    if association_requires_verified_routing(
+        config_entry
+    ) and not association_is_verified(config_entry):
+        return
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
+    if not coordinator_keymaster_runtime_enabled(coordinator):
+        return
     start_slot = coordinator.start_slot
     max_events = coordinator.max_events
 
@@ -81,8 +94,7 @@ def async_register_keymaster_listener(
     unsub = hass.bus.async_listen("keymaster_lock_state_changed", _handle_event)
     hass.data[DOMAIN][config_entry.entry_id][UNSUB_LISTENERS].append(unsub)
     _LOGGER.debug(
-        "Registered keymaster event bus listener for monitored locknames=%s",
-        sorted(coordinator.monitored_locknames),
+        "Registered Keymaster event bus listener",
     )
 
 
@@ -95,6 +107,10 @@ def _handle_keymaster_event(
     max_events: int,
 ) -> None:
     """Handle a keymaster_lock_state_changed event."""
+    if not coordinator_keymaster_runtime_enabled(coordinator):
+        return
+    if protected_registry_active(hass) and not association_is_verified(config_entry):
+        return
     event_data = event.data
 
     raw_lockname, event_lockname = _normalized_event_lockname(event_data)
@@ -109,7 +125,8 @@ def _handle_keymaster_event(
     # disposition string is retained as a reserved value for
     # schema stability with downstream consumers but is no
     # longer emitted.
-    if event_lockname not in coordinator.monitored_locknames:
+    verified_route = association_requires_verified_routing(config_entry)
+    if not verified_route and event_lockname not in coordinator.monitored_locknames:
         return
 
     code_slot_num = event_data.get("code_slot_num")
@@ -134,8 +151,29 @@ def _handle_keymaster_event(
         max_events,
     ):
         return
+    if verified_route and (
+        not association_is_verified(config_entry)
+        or not _verified_event_matches_source(context)
+    ):
+        _record_if_enabled(context, "rejected_identity")
+        return
 
     _forward_keymaster_unlock(context)
+
+
+def _verified_event_matches_source(context: _KeymasterEventContext) -> bool:
+    """Require the current selected physical source and same-slot authority."""
+    slot = context.code_slot_num
+    if isinstance(slot, bool) or not isinstance(slot, int):
+        return False
+    return any(
+        context.event_data.get("entity_id") == source.lock_entity_id
+        and event_name_matches_source(context.raw_lockname, source)
+        and event_slot_name_matches(
+            context.hass, context.event_data.get("code_slot_name"), source
+        )
+        for source in verified_event_sources(context.hass, context.config_entry, slot)
+    )
 
 
 def _normalized_event_lockname(
@@ -159,7 +197,11 @@ def _event_should_be_rejected(
     if context.event_data.get("state") != "unlocked":
         disposition = "rejected_state"
     # FR-017: Ignore code_slot_num == 0
-    elif context.code_slot_num is None or context.code_slot_num == 0:
+    elif (
+        isinstance(context.code_slot_num, bool)
+        or not isinstance(context.code_slot_num, int)
+        or context.code_slot_num == 0
+    ):
         disposition = "rejected_slot_zero"
     elif not (start_slot <= context.code_slot_num < start_slot + max_events):
         disposition = "rejected_out_of_range"
@@ -185,13 +227,23 @@ def _record_keymaster_event_disposition(
     disposition: str,
 ) -> None:
     """Append a diagnostic entry and refresh the sensor state."""
+    event_state = context.event_data.get("state")
+    safe_state = (
+        event_state
+        if isinstance(event_state, str) and event_state in {"locked", "unlocked"}
+        else "other"
+    )
     context.coordinator.keymaster_event_diagnostics.append(
         {
             "timestamp": dt_util.utcnow().isoformat(),
-            "lockname": str(context.raw_lockname),
-            "lockname_slug": context.event_lockname,
-            "state": context.event_data.get("state"),
-            "code_slot_num": context.code_slot_num,
+            "lockname_present": bool(context.raw_lockname),
+            "state": safe_state,
+            "code_slot_num": (
+                context.code_slot_num
+                if isinstance(context.code_slot_num, int)
+                and not isinstance(context.code_slot_num, bool)
+                else None
+            ),
             "disposition": disposition,
         }
     )
@@ -230,9 +282,8 @@ def _forward_keymaster_unlock(context: _KeymasterEventContext) -> bool:
         return False
 
     _LOGGER.debug(
-        "Forwarding keymaster unlock (slot=%d, lock=%s) to checkin sensor",
+        "Forwarding Keymaster unlock for slot %d to check-in sensor",
         context.code_slot_num,
-        context.raw_lockname,
     )
     _record_if_enabled(context, "accepted")
     checkin_sensor.async_handle_keymaster_unlock(
@@ -246,10 +297,7 @@ def _entry_data_for_unlock(context: _KeymasterEventContext) -> dict[str, Any] | 
     """Return entry data for forwarding a Keymaster unlock."""
     entry_data = get_entry_data(context.hass, context.config_entry.entry_id)
     if entry_data is None:
-        _LOGGER.debug(
-            "Keymaster unlock event received but entry data not available for entry %s",
-            context.config_entry.entry_id,
-        )
+        _LOGGER.debug("Keymaster unlock event received but entry data is unavailable")
     return entry_data
 
 
@@ -263,9 +311,7 @@ def _checkin_sensor_for_unlock(
         return checkin_sensor
 
     _LOGGER.debug(
-        "Keymaster unlock event received but checkin sensor "
-        "not yet available for entry %s",
-        context.config_entry.entry_id,
+        "Keymaster unlock event received but checkin sensor is not yet available",
     )
     _record_if_enabled(context, "rejected_no_checkin_sensor")
     return None

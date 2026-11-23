@@ -197,11 +197,9 @@ def origin_proven(request: AllocationRequest) -> bool:
     if request.issued_origin is AllocationOrigin.PREFERRED:
         return True
     _LOGGER.warning(
-        "Declined recovery for generator-only entry %s:%s: the code it was "
+        "Declined recovery for a generator-only reservation: the code it was "
         "last issued is not recorded as its preferred code, so restoring "
         "the preference could change a code the guest already holds",
-        request.entry_id,
-        request.identity_key,
     )
     return False
 
@@ -366,11 +364,10 @@ def issuance_block(
     """
     if request.previously_published and not request.preferred_code_known:
         _LOGGER.warning(
-            "Withholding a code for %s:%s: it has been published before but "
+            "Withholding a code for a previously published reservation: "
+            "it has been published before but "
             "no code is recorded for it, so any code issued now would be one "
             "the guest has never been given",
-            request.entry_id,
-            request.identity_key,
         )
         return AllocationResult(code=None, reason="published_code_unknown"), False
     if not request.issuance_allowed:
@@ -384,17 +381,13 @@ def issuance_block(
         return None, False
     if not lockless_recovery_allowed(allocator, request, lockless_cycle=lockless_cycle):
         _LOGGER.warning(
-            "Declined allocation for %s:%s after registry loss",
-            request.entry_id,
-            request.identity_key,
+            "Declined allocation for a generator-only reservation after registry loss"
         )
         return AllocationResult(code=None, reason="recovery_fail_closed"), False
     _LOGGER.info(
-        "Re-issuing a code for generator-only entry %s:%s after registry "
+        "Re-issuing a code for a generator-only reservation after registry "
         "loss; this entry drives no lock, so there is nothing to adopt "
         "and no physical slot a re-issued code could collide with",
-        request.entry_id,
-        request.identity_key,
     )
     return None, True
 

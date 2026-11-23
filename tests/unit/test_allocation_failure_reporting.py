@@ -140,12 +140,12 @@ def _notifications(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Notifications]:
     yield recorder
 
 
-def _failing(message: str = "boom") -> Any:
+def _failing(message: str = "boom", error_type: type[Exception] = RuntimeError) -> Any:
     """Return an ``async_resolve_codes`` replacement that always raises."""
 
     async def _resolve(_request: Any) -> Any:
         """Raise the configured failure."""
-        raise RuntimeError(message)
+        raise error_type(message)
 
     return _resolve
 
@@ -166,11 +166,14 @@ async def _succeeding(request: Any) -> Any:
 
 
 async def test_failure_raises_one_notification_per_condition(
-    monkeypatch: pytest.MonkeyPatch, _notifications: _Notifications
+    monkeypatch: pytest.MonkeyPatch,
+    _notifications: _Notifications,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A repeating failure announces once rather than once per cycle."""
     coordinator = _LocklessCoordinator()
-    monkeypatch.setattr(code_allocation, "async_resolve_codes", _failing())
+    secret = "Guest Secret PIN 9876"
+    monkeypatch.setattr(code_allocation, "async_resolve_codes", _failing(secret))
 
     for _ in range(5):
         await coordinator._run_lockless_allocation([])
@@ -178,8 +181,10 @@ async def test_failure_raises_one_notification_per_condition(
     assert len(_notifications.created) == 1
     notification_id, message = _notifications.created[0]
     assert notification_id == allocation_failure.notification_id("entry-a")
-    assert "Entry A" in message
-    assert "RuntimeError: boom" in message
+    assert "this entry" in message
+    assert "RuntimeError" in message
+    assert secret not in message
+    assert secret not in caplog.text
 
 
 async def test_a_changed_failure_announces_again(
@@ -189,12 +194,18 @@ async def test_a_changed_failure_announces_again(
     coordinator = _LocklessCoordinator()
     monkeypatch.setattr(code_allocation, "async_resolve_codes", _failing("first"))
     await coordinator._run_lockless_allocation([])
-    monkeypatch.setattr(code_allocation, "async_resolve_codes", _failing("second"))
+    monkeypatch.setattr(
+        code_allocation,
+        "async_resolve_codes",
+        _failing("second", error_type=ValueError),
+    )
     await coordinator._run_lockless_allocation([])
 
     assert len(_notifications.created) == 2
-    assert "first" in _notifications.created[0][1]
-    assert "second" in _notifications.created[1][1]
+    assert "RuntimeError" in _notifications.created[0][1]
+    assert "ValueError" in _notifications.created[1][1]
+    assert "first" not in _notifications.created[0][1]
+    assert "second" not in _notifications.created[1][1]
 
 
 async def test_a_long_run_of_failures_escalates(
@@ -252,7 +263,7 @@ async def test_failure_state_reaches_diagnostics(
 
     assert allocation_failure.diagnostics("entry-a") == {
         "consecutive_failures": 2,
-        "last_error": "RuntimeError: boom",
+        "last_error": "RuntimeError",
     }
 
 
@@ -286,15 +297,20 @@ async def test_a_changed_failure_keeps_the_streak_running(
     for _ in range(9):
         await coordinator._run_lockless_allocation([])
 
-    monkeypatch.setattr(code_allocation, "async_resolve_codes", _failing("second"))
+    monkeypatch.setattr(
+        code_allocation,
+        "async_resolve_codes",
+        _failing("second", error_type=ValueError),
+    )
     await coordinator._run_lockless_allocation([])
 
     assert allocation_failure.diagnostics("entry-a") == {
         "consecutive_failures": 10,
-        "last_error": "RuntimeError: second",
+        "last_error": "ValueError",
     }
     assert "on 10 consecutive refresh cycles" in _notifications.created[-1][1]
-    assert "second" in _notifications.created[-1][1]
+    assert "ValueError" in _notifications.created[-1][1]
+    assert "second" not in _notifications.created[-1][1]
 
 
 async def test_gaining_a_lock_clears_a_lockless_failure(
@@ -335,11 +351,12 @@ async def test_reconciliation_failure_raises_one_notification(
         "entry-a", _RECONCILIATION
     )
     assert notification_id != allocation_failure.notification_id("entry-a")
-    assert "could not reconcile door codes for Entry A" in message
-    assert "RuntimeError: boom" in message
+    assert "could not reconcile door codes for this entry" in message
+    assert "RuntimeError" in message
+    assert "Entry A" not in message
     assert allocation_failure.diagnostics("entry-a", _RECONCILIATION) == {
         "consecutive_failures": 5,
-        "last_error": "RuntimeError: boom",
+        "last_error": "RuntimeError",
     }
     assert allocation_failure.diagnostics("entry-a") is None
 
@@ -391,7 +408,7 @@ async def test_failure_kinds_do_not_overwrite_each_other(
     assert allocation_failure.diagnostics("entry-a") is None
     assert allocation_failure.diagnostics("entry-a", _RECONCILIATION) == {
         "consecutive_failures": 1,
-        "last_error": "RuntimeError: reconcile",
+        "last_error": "RuntimeError",
     }
     assert _notifications.dismissed == [allocation_failure.notification_id("entry-a")]
 

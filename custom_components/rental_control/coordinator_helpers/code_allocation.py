@@ -56,7 +56,10 @@ async def async_resolve_codes(
         for directive in request.forced_reissues
     )
     observation = cycle_requests.build_cycle_observation(
-        request.entry_id, request.lockname, request.managed_slots
+        request.entry_id,
+        request.lockname,
+        request.managed_slots,
+        **_observation_identity(request),
     )
     request = _with_revalidated_exclusions(request, observation)
     allocator = get_allocator(request.hass)
@@ -71,6 +74,19 @@ async def async_resolve_codes(
     return CodeResolutionResult(
         observation, getattr(result, "reissues", ()), consumed_target_keys
     )
+
+
+def _observation_identity(request: CodeResolutionRequest) -> dict[str, Any]:
+    """Bind the physical observation to the acknowledged selected lifecycle."""
+    identity = cycle_requests.verified_observation_identity(
+        request.hass, request.entry_id
+    )
+    if identity is None:
+        return {}
+    return {
+        "keymaster_entry_id": identity[0],
+        "keymaster_generation": identity[1],
+    }
 
 
 def _with_revalidated_exclusions(
@@ -170,6 +186,13 @@ def _record_cycle_outcome(
     """Apply the cycle result to reservations and report what it withheld."""
     entry_id = request.entry_id
     reservations = request.reservations
+    blocked_reason = getattr(result, "blocked_reason", None)
+    if blocked_reason is not None:
+        _LOGGER.warning(
+            "Shared code allocator withheld the cycle for entry %s: %s",
+            entry_id,
+            blocked_reason,
+        )
     cycle_results.apply_adoption_results(allocator, entry_id, reservations, result)
     if result.unaccounted_slots:
         _LOGGER.warning(

@@ -153,8 +153,8 @@ not an assumption that HA Store already guarantees them:
    protection. On release failure after replacement, restart from actual disk
    bytes and prove tombstone recovery rechecks the original slot without
    losing any later valid owner.
-2. Crash/restart before/after pending marker, after pending but before
-   envelope replacement, after replacement but before final marker, after
+2. Exercise restart boundaries before/after pending marker, after pending but
+   before envelope replacement, after replacement but before final marker, after
    final marker, and before/during/after hardware call,
    after local confirmation, before/after envelope resolution, and at every
    migration/config-entry/cache update. Restart from actual disk bytes
@@ -222,6 +222,23 @@ not an assumption that HA Store already guarantees them:
    crash recovery under the protocol's writer, ordering and no-external-
    restore assumptions, retaining earlier fences and never inferring hardware
    completion from the marker.
+   These boundaries are deterministic injected-failure/restart tests, not
+   claims of power-loss or abrupt-process-crash testing. In particular, before
+   the first pending-marker rename, a surviving RC-owned temporary file with no
+   authoritative marker remains partial-history evidence and must stay
+   protective-unknown. Tests may construct that evidence directly; they must
+   not delete it or invoke cleanup to turn it into verified absence. A real
+   subprocess-crash test is required before claiming that abrupt termination
+   behavior was exercised.
+   A commit token check is point-in-time authorization, not a lease across
+   later work. A future consumer must serialize token validation with its
+   synchronous dispatch decision and must not await between the check and
+   enqueue/decision boundary. Revalidate at each later side-effect boundary;
+   if that check-to-dispatch interval cannot be serialized, the token does not
+   authorize the dispatch. Do not hold the allocator-wide storage lock across
+   Home Assistant service or hardware calls. Until those consumer boundaries
+   are implemented and tested, the storage token does not authorize identity
+   resolution or routing.
 3. Inject missing, corrupt and unsupported-version v1/v2 registry, read
    failure, size overflow, missing/invalid mandatory v2 safety sections,
    absent marker, marker/envelope generation or digest mismatch,
@@ -366,6 +383,91 @@ Capture normal and debug logs, notifications and diagnostics with synthetic
 PINs in an echoed exception and unexpected event field. Assert zero leakage,
 including on failure; sanitized context must still identify the entry, slot,
 capability and remedy.
+
+## Upstream fixture acquisition and re-pinning
+
+The upstream characterization tests require the pinned Keymaster v0.6.1 and
+v0.6.5 release/tagged-source archives, the v0.6.0 rejection-characterization
+archives, and the Rental Control v4.0.3 archive. Pytest never downloads them:
+it requires `RC_UPSTREAM_ARTIFACTS_DIR` and verifies every artifact before
+use. CI acquires into the runner's temporary directory before pytest and
+exports that variable only to the test step.
+
+For a local online run, acquire once and then use the same verified directory:
+
+```bash
+uv sync --extra test
+export RC_UPSTREAM_ARTIFACTS_DIR="${TMPDIR:-/tmp}/rc-025-upstream-artifacts"
+uv run --no-project --python 3.14 python tests/fixtures/keymaster_releases.py acquire \
+  --output-dir "$RC_UPSTREAM_ARTIFACTS_DIR"
+uv run --no-project --python 3.14 python tests/fixtures/keymaster_releases.py verify \
+  --directory "$RC_UPSTREAM_ARTIFACTS_DIR"
+uv run --extra test pytest --assert=plain tests/integration/test_upstream_artifacts.py
+```
+
+The authentic provider-import gate uses a separate disposable HA environment
+and a resolved, hash-pinned requirements lock. It does not modify the project
+environment or `uv.lock`. `keymaster_import_requirements.txt` remains the
+direct dependency list copied from the exact HA 2026.11.0 integration
+manifests; `keymaster_import_probe.lock` pins the complete transitive install.
+The lock is compiled for CPython 3.14.2/Linux x86_64 with uv 0.13.5. Its
+resolution uses the project test/development export as constraints, preserving
+all compatible versions already selected in `uv.lock`; newly required
+transitives are recorded with exact versions and SHA-256 hashes. Refresh only
+when intentionally updating this probe, then review the lock diff and rerun
+both fresh-process imports:
+
+```bash
+export RC_UPSTREAM_ARTIFACTS_DIR="${TMPDIR:-/tmp}/rc-025-upstream-artifacts"
+uv --version  # Must report uv 0.13.5
+uv run --no-project --python 3.14.2 python scripts/update_keymaster_import_probe_lock.py
+export UV_PROJECT_ENVIRONMENT="${TMPDIR:-/tmp}/rc-025-keymaster-import-env"
+uv venv --python 3.14.2 "$UV_PROJECT_ENVIRONMENT"
+uv pip sync --require-hashes --python "$UV_PROJECT_ENVIRONMENT/bin/python" \
+  tests/fixtures/keymaster_import_probe.lock
+uv pip sync --check --require-hashes --python "$UV_PROJECT_ENVIRONMENT/bin/python" \
+  tests/fixtures/keymaster_import_probe.lock
+"$UV_PROJECT_ENVIRONMENT/bin/python" -I \
+  tests/fixtures/keymaster_releases.py probe-import --release v0.6.1
+"$UV_PROJECT_ENVIRONMENT/bin/python" -I \
+  tests/fixtures/keymaster_releases.py probe-import --release v0.6.0
+```
+
+The optional requirements are the exact direct dependencies declared by HA
+2026.11.0's ZHA, Z-Wave JS, USB, hardware, and supervisor manifests. The first
+fresh process must import the authentic v0.6.1 package and its real providers;
+the second must identify v0.6.0's missing
+`LARGE_LOCK_ACK_STORE_VERSION`. Missing dependencies or any other import
+failure are test failures, not evidence against the support floor. This
+disposable environment does not modify `uv.lock`.
+
+`GH_TOKEN` is optional for public acquisition. When set, the downloader uses
+it only for requests whose exact origin is `https://api.github.com`; it
+refuses redirects for token-bearing requests. Release and codeload downloads
+remain unauthenticated. Do not put a token in a command-line argument.
+Acquisition allows at most two retries per request: transient failures use
+short exponential backoff, and GitHub `Retry-After`/primary rate-limit reset
+delays are honored only up to five seconds. Longer server delays and
+authentication, provenance or digest failures stop without fallback.
+
+For an offline test run, point `RC_UPSTREAM_ARTIFACTS_DIR` at an already
+acquired directory, run the `verify` command above, then run the desired
+pytest command. Verification and pytest do not access the network. Missing or
+changed files fail closed; there is no skip or latest-release fallback.
+
+GitHub-generated codeload ZIP bytes can change even when their source commit
+does not. Do not respond by weakening hash checks or blindly replacing a
+digest. For a deliberate source-archive re-pin, first confirm the pinned tag
+still resolves to the same full commit SHA, then compare the complete archive
+path set and every extracted file byte against that commit's tree, including
+the manifest and license. Only if the source tree is identical may the
+codeload archive's expected size and SHA-256 be updated; retain the commit-SHA
+URL and provenance check, document old/new digests and evidence in the review,
+and rerun clean acquisition, verification and characterization tests. A
+release-package asset mismatch is different: verify its exact release ID,
+asset ID, URL and published digest, and stop for upstream/review resolution
+if any differ. Never repin it to another asset or latest release as a
+workaround.
 
 ## Commands for the implementation stage
 

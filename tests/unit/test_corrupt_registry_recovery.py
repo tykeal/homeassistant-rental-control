@@ -117,7 +117,7 @@ async def test_excluded_slot_counts_as_read() -> None:
 async def test_unreachable_lock_withholds_codes_and_says_so(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A lock that cannot be read keeps issuance shut and is named."""
+    """An unreadable lock keeps issuance shut with sanitized guidance."""
     raised: list[str] = []
     monkeypatch.setattr(
         allocator_module,
@@ -140,14 +140,15 @@ async def test_unreachable_lock_withholds_codes_and_says_so(
     assert allocator._registry_lost is True
     allocator._gate_deadline = 1.0
     allocator._warn_if_gate_expired()
-    assert "lock unreachable" in raised[0]
+    assert "lock that cannot be reached" in raised[0]
+    assert "entry-lock" not in raised[0]
     assert "lost or found corrupt" in raised[0]
 
 
 async def test_lock_lost_after_adoption_returns_to_the_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An adopted lock that stops reading is named in the notification."""
+    """An adopted lock that stops reading gets sanitized guidance."""
     raised: list[str] = []
     monkeypatch.setattr(
         allocator_module,
@@ -182,7 +183,8 @@ async def test_lock_lost_after_adoption_returns_to_the_gate(
     assert allocator._gate_deadline > 0.0
     allocator._gate_deadline = 1.0
     allocator._warn_if_gate_expired()
-    assert "lock unreachable" in raised[0]
+    assert "lock that cannot be reached" in raised[0]
+    assert "entry-lock" not in raised[0]
 
 
 async def test_trusted_registry_saves_a_single_allocation() -> None:
@@ -205,7 +207,7 @@ async def test_trusted_registry_saves_a_single_allocation() -> None:
     assert allocator._registry_lost is False
 
 
-async def test_reopened_lock_is_named_after_an_earlier_notice(
+async def test_reopened_lock_uses_sanitized_earlier_notice(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A lock returning to the gate re-arms a notice already sent."""
@@ -235,7 +237,8 @@ async def test_reopened_lock_is_named_after_an_earlier_notice(
     allocator._warn_if_gate_expired()
 
     assert len(raised) == 2
-    assert "entry entry-lo" in raised[1]
+    assert "entry entry-lo" not in raised[1]
+    assert "issue no new door codes" in raised[1]
 
 
 async def test_trusted_cycle_saves_grants_beside_a_declined_recovery() -> None:

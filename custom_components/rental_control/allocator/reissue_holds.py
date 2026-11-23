@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from typing import Any
 
 from . import reissue_state
+from .allocator_protocol import AllocatorState
 from .models import AllocationOrigin
 from .models import AllocationOwner
 from .models import AllocationRecord
@@ -114,7 +115,7 @@ def forced_hold_matches_slot(
 
 
 def forced_hold_retention_reason(
-    allocator: DoorCodeAllocator,
+    allocator: AllocatorState,
     record: AllocationRecord,
     owner: AllocationOwner,
     observations: list[Any],

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection
+from collections.abc import Mapping
 
 from . import reissue
 from .models import AllocationOwner
@@ -21,6 +22,8 @@ def release_guard_reason(
     refresh_observed: bool = True,
     forced_release: reissue.ForcedReleaseExemption | None = None,
     releasing: Collection[str] = (),
+    required_keymaster_identities: Mapping[tuple[str, str], tuple[str, int] | None]
+    | None = None,
 ) -> str | None:
     """Return why owners must be retained, or None when safe to release.
 
@@ -43,10 +46,27 @@ def release_guard_reason(
     for owner in owners:
         if owner.identity_key in shadowed:
             continue
+        if required_keymaster_identities is not None and owner.lockname is not None:
+            required = required_keymaster_identities.get(
+                (owner.entry_id, owner.identity_key)
+            )
+            if required is None or not any(
+                observation.entry_id == owner.entry_id
+                and observation.lockname == owner.lockname
+                and owner.slot in observation.managed_slots
+                and observation.keymaster_entry_id == required[0]
+                and observation.keymaster_generation == required[1]
+                for observation in observations
+            ):
+                return "unverifiable_original_keymaster"
         covered_observations = [
             observation
             for observation in observations
-            if observation.lockname == owner.lockname
+            if (
+                required_keymaster_identities is None
+                or observation.entry_id == owner.entry_id
+            )
+            and observation.lockname == owner.lockname
             and owner.slot in observation.managed_slots
         ]
         if owner.lockname is not None and not covered_observations:

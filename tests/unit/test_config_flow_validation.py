@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from aioresponses import aioresponses
@@ -12,10 +13,18 @@ from homeassistant.const import CONF_NAME
 from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
+import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.models import AllocationRequest
+from custom_components.rental_control.allocator.models import (
+    ProtectionAuthorizationState,
+)
+from custom_components.rental_control.allocator.models import ProtectionLoadResult
+from custom_components.rental_control.allocator.models import ProtectionLoadState
+from custom_components.rental_control.config_flow import RentalControlOptionsFlow
+from custom_components.rental_control.config_flow import _handle_association_selection
 from custom_components.rental_control.config_flow import _start_config_flow
 from custom_components.rental_control.config_flow_helpers.models import (
     ConfigFormContext,
@@ -43,6 +52,11 @@ from custom_components.rental_control.config_flow_helpers.validation import (
 )
 from custom_components.rental_control.config_flow_helpers.validation import validate_url
 from custom_components.rental_control.const import ALLOCATOR
+from custom_components.rental_control.const import CONF_ASSOCIATION_ATTEST_SAME_LOCK
+from custom_components.rental_control.const import CONF_ASSOCIATION_ENTRY_CHOICE
+from custom_components.rental_control.const import CONF_ASSOCIATION_GENERATION
+from custom_components.rental_control.const import CONF_ASSOCIATION_MODE
+from custom_components.rental_control.const import CONF_ASSOCIATION_TRANSACTION_ID
 from custom_components.rental_control.const import CONF_CHECKIN
 from custom_components.rental_control.const import CONF_CHECKOUT
 from custom_components.rental_control.const import CONF_CODE_GENERATION
@@ -59,6 +73,7 @@ from custom_components.rental_control.const import CONF_SHOULD_UPDATE_CODE
 from custom_components.rental_control.const import CONF_START_SLOT
 from custom_components.rental_control.const import CONF_TIMEZONE
 from custom_components.rental_control.const import CONF_TRIM_NAMES
+from custom_components.rental_control.const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
 from custom_components.rental_control.const import DEFAULT_CHECKIN
 from custom_components.rental_control.const import DEFAULT_CHECKOUT
 from custom_components.rental_control.const import DEFAULT_CODE_LENGTH
@@ -69,6 +84,7 @@ from custom_components.rental_control.const import DEFAULT_START_SLOT
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import LOCK_MANAGER
 from custom_components.rental_control.const import MIN_NAME_LENGTH
+from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 
 from tests.fixtures import calendar_data
 
@@ -100,6 +116,54 @@ class _OptionsFlow(_Flow):
         """Initialize the options-flow stub."""
         self.hass = hass
         self.config_entry: Any = None
+
+
+class _AcknowledgedAssociationStore:
+    """Minimal durable-acknowledgement fake for options-flow ordering tests."""
+
+    authorization_state = ProtectionAuthorizationState.READY
+
+    def __init__(self) -> None:
+        """Initialize an empty, current v2 snapshot."""
+        self.envelopes: list[dict[str, Any]] = []
+        self.loaded_result = ProtectionLoadResult(
+            ProtectionLoadState.VALID_V2,
+            transaction_id="a" * 32,
+            generation=1,
+            data={
+                "transaction_id": "a" * 32,
+                "generation": 1,
+                "schema_version": 1,
+                "ledger": {
+                    "schema_version": 1,
+                    "updated_at": "2026-11-21T00:00:00+00:00",
+                    "code_ref_salt": "persisted-test-salt",
+                    "records": [],
+                    "announced_conflicts": {},
+                },
+                "associations": [],
+                "attestations": [],
+                "pending_fences": [],
+                "holds": [],
+                "tombstones": [],
+                "pending_config": [],
+            },
+        )
+
+    def association_references_for_entry(self, _entry_id: str) -> tuple[str, ...]:
+        """Report no legacy owners for this isolated first-association test."""
+        return ()
+
+    async def async_commit(self, envelope: dict[str, Any]) -> ProtectionLoadResult:
+        """Record the acknowledged target and return its exact transaction."""
+        self.envelopes.append(envelope)
+        data = envelope["data"]
+        return ProtectionLoadResult(
+            ProtectionLoadState.VALID_V2,
+            transaction_id=data["transaction_id"],
+            generation=data["generation"],
+            data=data,
+        )
 
 
 def _valid_input(url: str = "https://example.com/calendar.ics") -> dict[str, Any]:
@@ -168,15 +232,20 @@ async def test_url_validation_error_parity(hass: "HomeAssistant") -> None:
     assert errors == {}
 
 
-async def test_url_response_error_parity(hass: "HomeAssistant") -> None:
+async def test_url_response_error_parity(
+    hass: "HomeAssistant", caplog: pytest.LogCaptureFixture
+) -> None:
     """Test non-200 and non-calendar response URL errors."""
     flow = _OptionsFlow(hass)
     with aioresponses() as mock_aiohttp:
-        url = "https://example.com/missing.ics"
-        mock_aiohttp.get(url, status=404, reason="Missing")
+        secret = "Guest Example PIN 9384"
+        url = f"https://example.com/missing.ics?token={secret}"
+        mock_aiohttp.get(url, status=404, reason=secret)
         errors: dict[str, str] = {}
+        caplog.set_level(logging.DEBUG)
         await validate_url(flow, _valid_input(url), errors)
     assert errors[CONF_URL] == "unknown"
+    assert secret not in caplog.text
 
     with aioresponses() as mock_aiohttp:
         url = "https://example.com/plain.txt"
@@ -443,3 +512,256 @@ async def test_start_config_flow_options_create_entry(hass: "HomeAssistant") -> 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert CONF_CREATION_DATETIME not in result["data"]
     assert result["data"][CONF_CODE_GENERATION] == "date_based"
+
+
+async def test_options_association_waits_for_validation_and_strips_ui_fields(
+    hass: "HomeAssistant", monkeypatch: Any
+) -> None:
+    """Only valid options reach the association commit; selectors are UI-only."""
+    from custom_components.rental_control.const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
+
+    lock_entry = MockConfigEntry(
+        domain=LOCK_MANAGER,
+        title="Front Door",
+        data={"lockname": "lock.front_door"},
+        entry_id="km-options-flow",
+    )
+    lock_entry.add_to_hass(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Rental",
+        data={CONF_LOCK_ENTRY: "lock.front_door"},
+        entry_id="rc-options-flow",
+    )
+    entry.add_to_hass(hass)
+    flow = _OptionsFlow(hass)
+    flow.config_entry = entry
+    store = _AcknowledgedAssociationStore()
+    hass.data.setdefault(DOMAIN, {})[PROTECTED_REGISTRY_STORE] = store
+
+    def render_form(_flow: Any, context: ConfigFormContext) -> dict[str, Any]:
+        """Return validation errors without requiring a frontend."""
+        return {"type": FlowResultType.FORM, "errors": context.errors}
+
+    monkeypatch.setattr(
+        "custom_components.rental_control.config_flow._show_config_form", render_form
+    )
+    invalid_input = _valid_input()
+    invalid_input.update(
+        {
+            CONF_LOCK_ENTRY: "Front Door",
+            CONF_ASSOCIATION_ENTRY_CHOICE: lock_entry.entry_id,
+            CONF_ASSOCIATION_ATTEST_SAME_LOCK: False,
+            CONF_DAYS: 0,
+        }
+    )
+    with aioresponses() as mock_aiohttp:
+        mock_aiohttp.get(
+            "https://example.com/calendar.ics",
+            status=200,
+            body=calendar_data.AIRBNB_ICS_CALENDAR,
+            headers={"content-type": "text/calendar"},
+            repeat=True,
+        )
+        invalid_result = await _start_config_flow(
+            flow,
+            "init",
+            "",
+            invalid_input,
+            {},
+            entry.entry_id,
+            validated_input_handler=_handle_association_selection,
+        )
+        assert invalid_result["type"] == FlowResultType.FORM
+        assert not store.envelopes
+
+        valid_input = _valid_input()
+        valid_input.update(
+            {
+                CONF_LOCK_ENTRY: "Front Door",
+                CONF_ASSOCIATION_ENTRY_CHOICE: lock_entry.entry_id,
+                CONF_ASSOCIATION_ATTEST_SAME_LOCK: False,
+            }
+        )
+        result = await _start_config_flow(
+            flow,
+            "init",
+            "",
+            valid_input,
+            {},
+            entry.entry_id,
+            validated_input_handler=_handle_association_selection,
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert len(store.envelopes) == 1
+    assert CONF_ASSOCIATION_ENTRY_CHOICE not in result["data"]
+    assert CONF_ASSOCIATION_ATTEST_SAME_LOCK not in result["data"]
+    assert CONF_VERIFIED_KEYMASTER_ENTRY_ID not in result["data"]
+    assert result["data"][CONF_LOCK_ENTRY] == "lock.front_door"
+
+
+async def test_committed_selector_edit_requires_protected_repair(hass, monkeypatch):
+    """A missing backend cannot silently ignore edits to a committed tuple."""
+    from custom_components.rental_control.allocator.associations import AssociationMode
+
+    front = MockConfigEntry(
+        domain=LOCK_MANAGER,
+        title="Front Door",
+        data={"lockname": "lock.front_door"},
+        entry_id="km-front",
+    )
+    back = MockConfigEntry(
+        domain=LOCK_MANAGER,
+        title="Back Door",
+        data={"lockname": "lock.back_door"},
+        entry_id="km-back",
+    )
+    front.add_to_hass(hass)
+    back.add_to_hass(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Rental",
+        entry_id="rc-committed-association",
+        data={
+            CONF_LOCK_ENTRY: "lock.front_door",
+            CONF_VERIFIED_KEYMASTER_ENTRY_ID: front.entry_id,
+            CONF_ASSOCIATION_GENERATION: 3,
+            CONF_ASSOCIATION_TRANSACTION_ID: "c" * 32,
+            CONF_ASSOCIATION_MODE: AssociationMode.VERIFIED.value,
+        },
+    )
+    entry.add_to_hass(hass)
+    flow = _OptionsFlow(hass)
+    flow.config_entry = entry
+
+    async def dispatch_handler(
+        target_flow,
+        _step_id,
+        _title,
+        user_input,
+        _defaults,
+        _entry_id,
+        *,
+        validated_input_handler,
+    ):
+        """Exercise the actual options-flow handler selection."""
+        assert validated_input_handler is not None
+        return await validated_input_handler(target_flow, user_input)
+
+    monkeypatch.setattr(
+        "custom_components.rental_control.config_flow._start_config_flow",
+        dispatch_handler,
+    )
+
+    changed = await RentalControlOptionsFlow.async_step_init(
+        flow,
+        {
+            **_valid_input(),
+            CONF_LOCK_ENTRY: "Back Door",
+        },
+    )
+    assert changed == (
+        {
+            **_valid_input(),
+            CONF_LOCK_ENTRY: "Back Door",
+        },
+        {CONF_LOCK_ENTRY: "association_repair_required"},
+    )
+    assert entry.data[CONF_LOCK_ENTRY] == "lock.front_door"
+
+    unchanged = await RentalControlOptionsFlow.async_step_init(
+        flow,
+        {
+            **_valid_input(),
+            CONF_LOCK_ENTRY: "Front Door",
+        },
+    )
+    assert unchanged[1] == {}
+
+
+async def test_partial_association_without_backend_still_rejects_selector_edits(
+    hass, monkeypatch
+) -> None:
+    """Any partial tuple metadata prevents silent edits even without a store."""
+    _add_lock_manager(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Rental",
+        entry_id="rc-partial-association",
+        data={CONF_LOCK_ENTRY: "lock.front_door", CONF_ASSOCIATION_GENERATION: 3},
+    )
+    entry.add_to_hass(hass)
+    flow: Any = _OptionsFlow(hass)
+    flow.config_entry = entry
+
+    async def dispatch_handler(
+        target_flow,
+        _step_id,
+        _title,
+        user_input,
+        _defaults,
+        _entry_id,
+        *,
+        validated_input_handler,
+    ):
+        """Exercise the actual options-flow handler selection."""
+        assert validated_input_handler is not None
+        return await validated_input_handler(target_flow, user_input)
+
+    monkeypatch.setattr(
+        "custom_components.rental_control.config_flow._start_config_flow",
+        dispatch_handler,
+    )
+    unchanged = await RentalControlOptionsFlow.async_step_init(
+        flow, {**_valid_input(), CONF_LOCK_ENTRY: "Front Door"}
+    )
+    assert unchanged[1] == {}
+
+    changed = await RentalControlOptionsFlow.async_step_init(
+        flow, {**_valid_input(), CONF_LOCK_ENTRY: "(none)"}
+    )
+    assert changed[1] == {CONF_LOCK_ENTRY: "association_invalid_history"}
+    assert dict(entry.data) == {
+        CONF_LOCK_ENTRY: "lock.front_door",
+        CONF_ASSOCIATION_GENERATION: 3,
+    }
+
+
+@pytest.mark.parametrize("selector", [123, ["front"], {"lock": "front"}])
+async def test_malformed_legacy_selector_options_preserve_invalid_evidence(
+    hass, monkeypatch, selector: object
+) -> None:
+    """Omitting or replacing an invalid selector cannot silently make it lockless."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Rental",
+        entry_id="rc-invalid-legacy-selector",
+        data={CONF_LOCK_ENTRY: selector},
+    )
+    entry.add_to_hass(hass)
+    flow: Any = _OptionsFlow(hass)
+    flow.config_entry = entry
+
+    async def dispatch_handler(
+        target_flow,
+        _step_id,
+        _title,
+        user_input,
+        _defaults,
+        _entry_id,
+        *,
+        validated_input_handler,
+    ):
+        """Exercise handler routing without a protected backend."""
+        assert validated_input_handler is not None
+        return await validated_input_handler(target_flow, user_input)
+
+    monkeypatch.setattr(
+        "custom_components.rental_control.config_flow._start_config_flow",
+        dispatch_handler,
+    )
+    for submitted in ({}, {CONF_LOCK_ENTRY: "(none)"}):
+        result = await RentalControlOptionsFlow.async_step_init(flow, submitted)
+        assert result[1] == {CONF_LOCK_ENTRY: "association_invalid_history"}
+    assert dict(entry.data) == {CONF_LOCK_ENTRY: selector}

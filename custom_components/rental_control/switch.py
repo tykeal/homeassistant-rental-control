@@ -25,6 +25,7 @@ from .const import COORDINATOR
 from .const import DOMAIN
 from .const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from .const import KEYMASTER_MONITORING_SWITCH
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
 from .util import gen_uuid
 from .util import get_entry_data
 
@@ -55,7 +56,7 @@ async def async_setup_entry(
 
     entities: list[SwitchEntity] = []
 
-    if coordinator.lockname:
+    if coordinator_keymaster_runtime_enabled(coordinator) and coordinator.lockname:
         entities.append(KeymasterMonitoringSwitch(coordinator, config_entry))
         entities.append(EarlyCheckoutExpirySwitch(coordinator, config_entry))
 
@@ -134,19 +135,16 @@ class KeymasterMonitoringSwitch(SwitchEntity, RestoreEntity):
         entry_data = get_entry_data(self.hass, self._config_entry.entry_id)
         if entry_data is None:
             _LOGGER.debug(
-                "Keymaster monitoring switch restored without entry data: "
-                "is_on=%s, entity_id=%s",
+                "Keymaster monitoring switch restored without entry data: is_on=%s",
                 self._attr_is_on,
-                self.entity_id,
             )
             return
 
         entry_data[KEYMASTER_MONITORING_SWITCH] = self
 
         _LOGGER.debug(
-            "Keymaster monitoring switch restored: is_on=%s, entity_id=%s",
+            "Keymaster monitoring switch restored: is_on=%s",
             self._attr_is_on,
-            self.entity_id,
         )
 
     @callback
@@ -237,9 +235,8 @@ class EarlyCheckoutExpirySwitch(SwitchEntity, RestoreEntity):
         )[EARLY_CHECKOUT_EXPIRY_SWITCH] = self
 
         _LOGGER.debug(
-            "Early checkout expiry switch restored: is_on=%s, entity_id=%s",
+            "Early checkout expiry switch restored: is_on=%s",
             self._attr_is_on,
-            self.entity_id,
         )
 
     @callback

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import replace
 from datetime import UTC
 from datetime import datetime
@@ -12,21 +13,29 @@ from typing import TYPE_CHECKING
 
 from . import adoption
 from . import adoption_reports
+from . import protection_gate
 from . import recovery
 from . import reissue
 from . import services
 from .candidates import candidate_codes
+from .issuance_observation import account_for_observation as _account_for_observation
+from .issuance_observation import claimed_slots as claimed_slots
+from .issuance_observation import unaccounted_slots as unaccounted_slots
 from .models import AdoptionRequest
 from .models import AllocationOrigin
 from .models import AllocationRequest
 from .models import AllocationResult
-from .models import CycleObservation
 from .models import CycleRequest
 from .models import CycleResult
 from .models import ForcedReissueDirective
-from .models import ObservedLock
+from .models import ProtectionLoadState
 from .models import ReissueOutcome
 from .registry import AllocationRegistry
+from .registry_mutation import async_commit_staged_registry
+from .registry_mutation import clone_allocator
+from .registry_mutation import lockless_preflight
+from .registry_mutation import observation_preflight
+from .registry_mutation import owner_transition_authorizer
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
@@ -102,21 +111,12 @@ def allocate_request(
     )
     if continuity and origin is not AllocationOrigin.PREFERRED:
         _LOGGER.warning(
-            "Declined recovery for generator-only entry %s:%s: its preferred "
-            "code is already taken, so re-issuing would hand the guest a "
-            "code they have never been given",
-            request.entry_id,
-            request.identity_key,
+            "Declined generator-only recovery because the preferred code "
+            "is already taken"
         )
         return AllocationResult(code=None, reason="recovery_fail_closed")
     if code is None or origin is None:
-        preferred_ref = allocator.code_ref(request.preferred_code)
-        _LOGGER.warning(
-            "Exhausted shared code space for %s:%s; preferred code_ref %s",
-            request.entry_id,
-            request.identity_key,
-            preferred_ref,
-        )
+        _LOGGER.warning("Exhausted shared code space for one allocation")
         return AllocationResult(code=None, reason="exhausted")
     record = allocator._registry.allocate(
         request,
@@ -126,21 +126,9 @@ def allocate_request(
         datetime.now(UTC).isoformat(),
     )
     if origin is AllocationOrigin.PREFERRED:
-        _LOGGER.info(
-            "Allocated preferred shared code_ref %s for %s:%s",
-            record.code_ref,
-            request.entry_id,
-            request.identity_key,
-        )
+        _LOGGER.info("Allocated a preferred shared code")
     else:
-        _LOGGER.info(
-            "Allocated collision-resolved shared code_ref %s for %s:%s "
-            "after preferred code_ref %s was unavailable",
-            record.code_ref,
-            request.entry_id,
-            request.identity_key,
-            allocator.code_ref(request.preferred_code),
-        )
+        _LOGGER.info("Allocated a collision-resolved shared code")
     return AllocationResult(code=record.code, origin=origin)
 
 
@@ -164,55 +152,146 @@ async def resolve_cycle(
     allocator: DoorCodeAllocator, request: CycleRequest
 ) -> CycleResult:
     """Resolve one refresh cycle atomically under the allocator lock."""
+    if not await protection_gate.async_operation_ready(allocator):
+        return protection_gate.protective_unknown_cycle_result(request)
+    if allocator._protection_required:
+        return await _resolve_protected_cycle(allocator, request)
     async with allocator._lock:
-        reissue_outcomes, staged_reissues = _stage_forced_reissues(allocator, request)
-        adopted = _apply_adoptions(allocator, request)
+        if not protection_gate.snapshot_ready(allocator):
+            return protection_gate.protective_unknown_cycle_result(request)
+        return _resolve_cycle_unlocked(allocator, request, persist=True)
 
-        for old_key, new_key in request.rekeys:
-            allocator._rekey_unlocked(old_key, new_key)
 
-        for reservation in request.observed_reservations:
-            adoption.reserve_observed_code(allocator, reservation)
+async def _resolve_protected_cycle(
+    allocator: DoorCodeAllocator, request: CycleRequest
+) -> CycleResult:
+    """Stage allocator changes and acknowledge them before returning codes."""
+    from ..keymaster_operations import async_refence_observed_legacy_owners
 
-        unaccounted = _account_for_observation(allocator, request)
-        allocator._warn_if_gate_expired()
-        allocated = _allocate_cycle(
+    if not _request_matches_observation(request):
+        return protection_gate.protective_unknown_cycle_result(request)
+    await async_refence_observed_legacy_owners(allocator.hass, request.observation)
+    async with allocator._mutation_lock:
+        if not _request_matches_observation(request):
+            return protection_gate.protective_unknown_cycle_result(request)
+        if request.observation.lockname is None:
+            if lockless_preflight(allocator, request.observation.entry_id) is not None:
+                return protection_gate.protective_unknown_cycle_result(request)
+        async with allocator._lock:
+            if not protection_gate.snapshot_ready(allocator):
+                return protection_gate.protective_unknown_cycle_result(request)
+            if request.observation.lockname is not None:
+                try:
+                    if (
+                        observation_preflight(allocator, [request.observation])
+                        is not None
+                    ):
+                        return protection_gate.protective_unknown_cycle_result(request)
+                except Exception:
+                    return protection_gate.protective_unknown_cycle_result(request)
+            baseline = copy.deepcopy(allocator._registry)
+            staged = clone_allocator(allocator)
+            result = _resolve_cycle_unlocked(staged, request, persist=False)
+
+        authorization = owner_transition_authorizer(
             allocator,
-            request,
-            adopted=adopted,
-            staged_reissues=staged_reissues,
-            issuance_allowed=not unaccounted,
+            [request.observation],
+            rekeys=tuple(request.rekeys),
+            forced_release_identities=frozenset(
+                directive.identity_key
+                for directive in request.forced_reissues
+                if directive.identity_key is not None
+            ),
         )
-        rollbacks = reissue.rollback_blocked_reissues(
-            allocator, request, staged_reissues, allocated
-        )
-        if rollbacks:
-            reissue_outcomes = reissue.replace_rolled_back(reissue_outcomes, rollbacks)
-        reissue_outcomes = reissue.finalize_forced_reissue_outcomes(
-            allocator, reissue_outcomes, staged_reissues, allocated
-        )
-        released = allocator._sweep_unlocked(request.observation, request.active_keys)
-        adoption_reports.rejudge_conflicts(allocator, request.observation.entry_id)
-        reissue_outcomes = _release_and_report_holds(
-            allocator, request, reissue_outcomes
-        )
-        recovery_declined = any(
-            result.reason in ("recovery_fail_closed", "published_code_unknown")
-            for result in allocated.values()
-        )
-        _persist_registry(
+        committed = await async_commit_staged_registry(
             allocator,
-            request,
-            unaccounted=unaccounted,
-            recovery_declined=recovery_declined,
+            baseline,
+            staged,
+            authorize_owner_transition=authorization,
+            event_loop_preflight=lambda: (
+                lockless_preflight(allocator, request.observation.entry_id)
+                if request.observation.lockname is None
+                else observation_preflight(allocator, [request.observation])
+            ),
+            operation_lock_held=True,
         )
-        return CycleResult(
-            adopted=adopted,
-            allocated=allocated,
-            released=released,
-            unaccounted_slots=unaccounted,
-            reissues=tuple(reissue_outcomes),
-        )
+        if committed.state is not ProtectionLoadState.VALID_V2:
+            return protection_gate.protective_unknown_cycle_result(request)
+        return result
+
+
+def _request_matches_observation(request: CycleRequest) -> bool:
+    """Prevent a cycle from authorizing owners of a different observed lock."""
+    items: list[AdoptionRequest | AllocationRequest] = [
+        *request.adoptions,
+        *request.observed_reservations,
+        *request.allocations,
+    ]
+    return all(
+        item.entry_id == request.observation.entry_id
+        and item.lockname == request.observation.lockname
+        for item in items
+    ) and all(
+        directive.entry_id == request.observation.entry_id
+        and directive.lockname == request.observation.lockname
+        for directive in request.forced_reissues
+    )
+
+
+def _resolve_cycle_unlocked(
+    allocator: DoorCodeAllocator,
+    request: CycleRequest,
+    *,
+    persist: bool,
+) -> CycleResult:
+    """Calculate one cycle against an isolated registry while its lock is held."""
+    reissue_outcomes, staged_reissues = _stage_forced_reissues(allocator, request)
+    adopted = _apply_adoptions(allocator, request)
+
+    for old_key, new_key in request.rekeys:
+        allocator._rekey_unlocked(old_key, new_key)
+
+    for reservation in request.observed_reservations:
+        adoption.reserve_observed_code(allocator, reservation)
+
+    unaccounted = _account_for_observation(allocator, request)
+    allocator._warn_if_gate_expired()
+    allocated = _allocate_cycle(
+        allocator,
+        request,
+        adopted=adopted,
+        staged_reissues=staged_reissues,
+        issuance_allowed=not unaccounted,
+    )
+    rollbacks = reissue.rollback_blocked_reissues(
+        allocator, request, staged_reissues, allocated
+    )
+    if rollbacks:
+        reissue_outcomes = reissue.replace_rolled_back(reissue_outcomes, rollbacks)
+    reissue_outcomes = reissue.finalize_forced_reissue_outcomes(
+        allocator, reissue_outcomes, staged_reissues, allocated
+    )
+    released = allocator._sweep_unlocked(request.observation, request.active_keys)
+    adoption_reports.rejudge_conflicts(allocator, request.observation.entry_id)
+    reissue_outcomes = _release_and_report_holds(allocator, request, reissue_outcomes)
+    recovery_declined = any(
+        result.reason in ("recovery_fail_closed", "published_code_unknown")
+        for result in allocated.values()
+    )
+    _persist_registry(
+        allocator,
+        request,
+        unaccounted=unaccounted,
+        recovery_declined=recovery_declined,
+        persist=persist,
+    )
+    return CycleResult(
+        adopted=adopted,
+        allocated=allocated,
+        released=released,
+        unaccounted_slots=unaccounted,
+        reissues=tuple(reissue_outcomes),
+    )
 
 
 def _stage_forced_reissues(
@@ -223,23 +302,6 @@ def _stage_forced_reissues(
         return reissue.fail_closed_forced_reissues(request), []
     applied, staged_reissues = reissue.apply_forced_reissues(allocator, request)
     return list(applied), staged_reissues
-
-
-def _account_for_observation(
-    allocator: DoorCodeAllocator, request: CycleRequest
-) -> frozenset[int]:
-    """Record what this cycle read of the lock; return unaccounted slots."""
-    observation = request.observation
-    unaccounted = unaccounted_slots(
-        allocator, observation, excluded=request.excluded_slots
-    )
-    _track_pending_adoption_slots(
-        allocator,
-        observation.entry_id,
-        observation.unreadable_slots - request.excluded_slots,
-    )
-    _record_adoption(allocator, request, unaccounted=unaccounted)
-    return unaccounted
 
 
 def _allocate_cycle(
@@ -280,6 +342,7 @@ def _persist_registry(
     *,
     unaccounted: frozenset[int],
     recovery_declined: bool,
+    persist: bool = True,
 ) -> None:
     """Save the registry and clear recovery flags once the cycle is sound.
 
@@ -293,117 +356,19 @@ def _persist_registry(
     preference by ``continuity_required`` once they clear.
     """
     if not allocator._registry_lost:
-        allocator._store.async_save(allocator._registry)
+        if persist:
+            allocator._store.async_save(allocator._registry)
         return
     if (
         recovery.rebuilt_registry_trusted(allocator)
         and request.adoption_complete
         and not unaccounted
     ):
-        allocator._store.async_save(allocator._registry)
+        if persist:
+            allocator._store.async_save(allocator._registry)
         if not recovery_declined:
             allocator._registry_lost = False
             allocator._registry_missing = False
-
-
-def _record_adoption(
-    allocator: DoorCodeAllocator,
-    request: CycleRequest,
-    *,
-    unaccounted: frozenset[int],
-) -> None:
-    """Update what the allocator has observed of an entry's lock.
-
-    A complete cycle with nothing unaccounted records the lock and the
-    managed slots it read, which is what the recovery safeguards check
-    against the lock and slot range the entry is currently configured
-    for. An incomplete cycle withdraws
-    that record instead: it leaves a code in the lock that the registry
-    never saw, so the entry no longer vouches for it. Either way, what
-    was read of a lock whose entry stays pending is kept up to date.
-    """
-    entry_id = request.observation.entry_id
-    lockname = request.observation.lockname
-    sound = request.adoption_complete and not unaccounted
-    if lockname is not None and not sound:
-        allocator._adopted_locks.pop(entry_id, None)
-        if allocator._registry_lost:
-            recovery.reopen_adoption(allocator, entry_id)
-    if sound:
-        if lockname is not None:
-            allocator._adopted_locks[entry_id] = ObservedLock(
-                lockname, request.observation.managed_slots
-            )
-        allocator._pending_adoption.discard(entry_id)
-        if not allocator._pending_adoption:
-            allocator._gate_deadline = 0.0
-            allocator._gate_warning_sent = False
-    _track_read_pending_lock(allocator, request)
-
-
-def _track_read_pending_lock(
-    allocator: DoorCodeAllocator, request: CycleRequest
-) -> None:
-    """Remember the codes of a pending lock whose every slot was read.
-
-    Only a lock read in full while its entry is still pending is kept,
-    so that entry stops withholding issuance from unrelated entries
-    without letting them take a code it holds (#846).
-    """
-    observation = request.observation
-    entry_id = observation.entry_id
-    if (
-        observation.lockname is not None
-        and entry_id in allocator._pending_adoption
-        and not observation.unreadable_slots - request.excluded_slots
-    ):
-        allocator._read_pending_locks[entry_id] = (
-            ObservedLock(observation.lockname, observation.managed_slots),
-            frozenset(observation.observed_codes),
-            frozenset(observation.unreadable_slots),
-        )
-    else:
-        allocator._read_pending_locks.pop(entry_id, None)
-
-
-def _track_pending_adoption_slots(
-    allocator: DoorCodeAllocator, entry_id: str, unreadable: frozenset[int]
-) -> None:
-    """Record the unreadable slots blocking an entry's adoption, if any."""
-    tracked = getattr(allocator, "_pending_adoption_slots", None)
-    if tracked is None:
-        return
-    if unreadable:
-        tracked[entry_id] = unreadable
-    else:
-        tracked.pop(entry_id, None)
-
-
-def claimed_slots(
-    allocator: DoorCodeAllocator, entry_id: str, lockname: str
-) -> frozenset[int]:
-    """Return slots on one lock claimed by one entry's registry owners."""
-    return frozenset(
-        owner.slot
-        for record in allocator._registry.records.values()
-        for owner in record.owners
-        if owner.entry_id == entry_id
-        and owner.lockname == lockname
-        and owner.slot is not None
-    )
-
-
-def unaccounted_slots(
-    allocator: DoorCodeAllocator,
-    observation: CycleObservation,
-    *,
-    excluded: frozenset[int] = frozenset(),
-) -> frozenset[int]:
-    """Return unreadable slots not claimed by owners and not excluded."""
-    if observation.lockname is None:
-        return frozenset()
-    claimed = claimed_slots(allocator, observation.entry_id, observation.lockname)
-    return frozenset(observation.unreadable_slots - claimed - excluded)
 
 
 def _release_and_report_holds(

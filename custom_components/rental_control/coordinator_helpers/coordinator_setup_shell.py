@@ -15,10 +15,8 @@ import logging
 from typing import Any
 from zoneinfo import ZoneInfo  # noreorder
 
-from homeassistant.components.button import DOMAIN as BUTTON
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.components.datetime import DOMAIN as DATETIME
-from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.switch import DOMAIN as SWITCH
 from homeassistant.components.text import DOMAIN as TEXT
 from homeassistant.config_entries import ConfigEntry
@@ -27,7 +25,6 @@ from homeassistant.const import CONF_URL
 from homeassistant.const import CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt
@@ -66,6 +63,15 @@ from ..const import LOCK_MANAGER
 from ..const import VERSION
 from ..event_overrides import EventOverrides
 from ..helpers import configured_lock_slug
+from ..keymaster_identity import resolve_capability
+from ..keymaster_lifecycle import get_keymaster_lifecycle
+from ..keymaster_runtime import coordinator_code_publication_allowed
+from ..keymaster_runtime import coordinator_keymaster_runtime_enabled
+from ..keymaster_runtime import explicitly_lockless
+from ..keymaster_runtime import protected_legacy_unresolved
+from ..keymaster_topology import association_is_verified
+from ..keymaster_topology import association_requires_verified_routing
+from ..keymaster_topology import verified_association_entry
 from ..reconciliation import DesiredPlan as _DesiredPlan
 from ..reconciliation import Reservation as _Reservation
 from . import keymaster_bootstrap
@@ -87,7 +93,15 @@ class CoordinatorSetupMixin:
 
     async def _async_setup_keymaster_overrides_impl(self) -> None:
         """Bootstrap Keymaster slot overrides on first load."""
+        if association_requires_verified_routing(self.config_entry):
+            return
+        if protected_legacy_unresolved(self):
+            return
         if not self.lockname:
+            return
+        if get_keymaster_lifecycle(self.hass, self._entry_id) is not None:
+            # Bootstrap may clear partially populated slots using legacy IDs.
+            # Verified mode waits for converted, fenced consumers instead.
             return
 
         default_start = dt.start_of_local_day()
@@ -100,9 +114,12 @@ class CoordinatorSetupMixin:
             if decision.force_clear:
                 try:
                     await _coordinator_module().async_fire_clear_code(self, i)
-                except Exception:
-                    _LOGGER.exception(
-                        "Failed to force-reset partially-cleared slot %d", i
+                except Exception as err:
+                    _LOGGER.error(
+                        "Failed to force-reset partially-cleared slot %d "
+                        "(failure category %s)",
+                        i,
+                        type(err).__name__,
                     )
             update = decision.override_update
             if update is None:
@@ -134,7 +151,9 @@ class CoordinatorSetupMixin:
         self.checkout: time = cv.time(config.get(CONF_CHECKOUT))
         self.start_slot: int = int(str(config.get(CONF_START_SLOT)))
         lockname_raw = config.get(CONF_LOCK_ENTRY)
-        self.lockname: str | None = configured_lock_slug(lockname_raw)
+        self.lockname: str | None = (
+            None if explicitly_lockless(config) else configured_lock_slug(lockname_raw)
+        )
         self.max_events: int = int(str(config.get(CONF_MAX_EVENTS)))
         self.max_misses: int = DEFAULT_MAX_MISSES
         self.num_misses: int = 0
@@ -189,7 +208,7 @@ class CoordinatorSetupMixin:
         self._checkin_restore_pending = False
 
     def _register_keymaster_device(self, hass: HomeAssistant) -> None:
-        """Register the device and warn on incompatible Keymaster versions."""
+        """Register the Rental Control device."""
         device_registry = dr.async_get(hass)
         device_registry.async_get_or_create(
             config_entry_id=self._entry_id,
@@ -198,32 +217,26 @@ class CoordinatorSetupMixin:
             sw_version=self.version,
         )
 
-        entity_registry = er.async_get(hass)
-        if self.lockname:
-            reset_entity = f"{BUTTON}.{self.lockname}_code_slot_{self.start_slot}_reset"
-            has_reset = entity_registry.async_get(reset_entity)
-            if has_reset is None:
-                error_msg = """
-    The version of Keymaster is incompatible with this version of Rental Control.
-    Please update Keymaster to at least v0.1.0-b0
-    """
-                _LOGGER.error(error_msg)
-                async_create(
-                    hass,
-                    error_msg,
-                    title="Keymaster Incompatible Version",
-                )
-
     def _find_parent_entry_id(self) -> str | None:
-        """Find the keymaster config entry ID for the parent lock.
+        """Find the exact selected Keymaster entry, without name inference.
 
-        Iterates over keymaster config entries and returns the
-        ``entry_id`` whose slugified ``data["lockname"]`` matches
-        ``self.lockname``.
+        A committed verified association is authoritative. Legacy entries keep
+        their historic name-based monitoring until they are explicitly
+        associated; a malformed or unavailable verified selection never falls
+        back to a matching name.
 
         Returns:
-            The parent keymaster entry_id, or None if not found.
+            The associated Keymaster entry ID, or None when unresolved.
         """
+        if association_requires_verified_routing(self.config_entry):
+            if association_is_verified(self.config_entry):
+                selected = verified_association_entry(self.hass, self.config_entry)
+                return selected.entry_id if selected is not None else None
+            return None
+        return self._find_legacy_parent_entry_id()
+
+    def _find_legacy_parent_entry_id(self) -> str | None:
+        """Preserve pre-association name discovery for legacy monitoring."""
         for entry in self.hass.config_entries.async_entries(LOCK_MANAGER):
             raw = entry.data.get("lockname")
             if isinstance(raw, str) and raw.strip() and slugify(raw) == self.lockname:
@@ -244,6 +257,37 @@ class CoordinatorSetupMixin:
         if self._parent_entry_id is None:
             return set()
 
+        selected = self.hass.config_entries.async_get_entry(self._parent_entry_id)
+        if association_requires_verified_routing(self.config_entry):
+            if not association_is_verified(self.config_entry):
+                return set()
+            if selected is None or selected.domain != LOCK_MANAGER:
+                return set()
+            selected_lock = selected.data.get("lock_entity_id")
+            names: set[str] = set()
+            parent_id = selected.data.get("parent_entry_id")
+            if isinstance(parent_id, str):
+                parent = self.hass.config_entries.async_get_entry(parent_id)
+                if (
+                    parent is not None
+                    and parent.domain == LOCK_MANAGER
+                    and parent.data.get("lock_entity_id") == selected_lock
+                ):
+                    parent_name = parent.data.get("lockname")
+                    if isinstance(parent_name, str) and parent_name.strip():
+                        names.add(slugify(parent_name))
+            for entry in self.hass.config_entries.async_entries(LOCK_MANAGER):
+                if (
+                    entry.data.get("parent_entry_id") != selected.entry_id
+                    or entry.disabled_by is not None
+                    or entry.data.get("lock_entity_id") != selected_lock
+                ):
+                    continue
+                child_lockname = entry.data.get("lockname")
+                if isinstance(child_lockname, str) and child_lockname.strip():
+                    names.add(slugify(child_lockname))
+            return names
+
         children: set[str] = set()
         for entry in self.hass.config_entries.async_entries(LOCK_MANAGER):
             if entry.data.get("parent_entry_id") == self._parent_entry_id:
@@ -259,6 +303,15 @@ class CoordinatorSetupMixin:
 
     def _read_slot_snapshot(self, slot: int) -> KeymasterSlotSnapshot:
         """Read all Keymaster entity states for a slot into a snapshot."""
+        if not coordinator_keymaster_runtime_enabled(
+            self
+        ) or not coordinator_code_publication_allowed(self):
+            return KeymasterSlotSnapshot(slot=slot)
+        lifecycle = get_keymaster_lifecycle(self.hass, self._entry_id)
+        if lifecycle is not None:
+            return self._read_verified_slot_snapshot(slot, lifecycle)
+        if association_requires_verified_routing(self.config_entry):
+            return KeymasterSlotSnapshot(slot=slot)
         base = f"{self.lockname}_code_slot_{slot}"
         return KeymasterSlotSnapshot(
             slot=slot,
@@ -270,6 +323,47 @@ class CoordinatorSetupMixin:
             enabled_state=self._state_value(f"{SWITCH}.{base}_enabled"),
             start_state=self._state_value(f"{DATETIME}.{base}_date_range_start"),
             end_state=self._state_value(f"{DATETIME}.{base}_date_range_end"),
+        )
+
+    def _read_verified_slot_snapshot(
+        self, slot: int, lifecycle: Any
+    ) -> KeymasterSlotSnapshot:
+        """Read only live, same-slot properties from the selected identity."""
+
+        def state_for(domain: str, property_name: str) -> str | None:
+            """Return one exact property state only when its proof is current."""
+            resolution = lifecycle.current.get(
+                f"{domain}.code_slots:{slot}.{property_name}"
+            )
+            if (
+                resolution is None
+                or not resolution.ready
+                or resolution.identity is None
+                or resolution.identity.slot != slot
+                or resolution.identity.keymaster_entry_id
+                != lifecycle.keymaster_entry_id
+                or resolution.identity.generation != lifecycle.generation
+                or resolution.entity_id is None
+            ):
+                return None
+            fresh = resolve_capability(
+                self.hass,
+                lifecycle.keymaster_entry_id,
+                f"{domain}.code_slots:{slot}.{property_name}",
+                generation=lifecycle.generation,
+            )
+            if not fresh.ready or fresh.entity_id != resolution.entity_id:
+                return None
+            return self._state_value(resolution.entity_id)
+
+        return KeymasterSlotSnapshot(
+            slot=slot,
+            name_state=state_for("text", "name"),
+            pin_state=state_for("text", "pin"),
+            use_date_range_state=state_for("switch", "accesslimit_date_range_enabled"),
+            enabled_state=state_for("switch", "enabled"),
+            start_state=state_for("datetime", "accesslimit_date_range_start"),
+            end_state=state_for("datetime", "accesslimit_date_range_end"),
         )
 
     def _reservation_build_context(self) -> ReservationBuildContext:

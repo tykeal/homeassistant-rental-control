@@ -9,11 +9,9 @@ beside the encoded value and anyone with file access can recover the code.
 
 from __future__ import annotations
 
-import base64
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
-import hashlib
 import logging
 import secrets
 from typing import Any
@@ -28,6 +26,9 @@ from ..const import CODE_REGISTRY_SCHEMA_VERSION
 from ..const import DOMAIN
 from ..const import NAME
 from ..const import STORE_CODE_REGISTRY_KEY
+from .code_codec import code_ref_for
+from .code_codec import decode_code
+from .code_codec import encode_code
 from .models import AllocationOrigin
 from .models import AllocationOwner
 from .models import AllocationRecord
@@ -48,25 +49,6 @@ class RegistryLoadResult:
     registry_missing: bool = False
 
 
-def encode_code(code: str, salt: str) -> str:
-    """Obfuscate a door code with a salt prefix and base64 encoding."""
-    return base64.b64encode(salt.encode("utf-8") + code.encode("utf-8")).decode("utf-8")
-
-
-def decode_code(encoded_code: str, salt: str) -> str:
-    """Recover an obfuscated door code using its stored salt value."""
-    salt_bytes = salt.encode("utf-8")
-    raw = base64.b64decode(encoded_code, validate=True)
-    if not raw.startswith(salt_bytes):
-        raise ValueError("encoded code does not match stored salt")
-    return raw[len(salt_bytes) :].decode("utf-8")
-
-
-def code_ref_for(code: str, salt: str) -> str:
-    """Return the masked diagnostic reference for a plain code."""
-    return hashlib.sha256(f"{salt}{code}".encode("utf-8")).hexdigest()[:8]
-
-
 class RegistryStore:
     """Load and save the shared allocator registry in Home Assistant storage."""
 
@@ -83,10 +65,10 @@ class RegistryStore:
         """Load and validate the registry, fail-closed on corruption."""
         try:
             payload = await self._store.async_load()
-        except Exception as err:
-            raise ConfigEntryNotReady("Unable to load shared code registry") from err
+        except Exception:
+            raise ConfigEntryNotReady("Unable to load shared code registry") from None
         if payload is None:
-            self._note_absent("code registry store is absent")
+            self._note_absent()
             return RegistryLoadResult(
                 self._empty_registry(),
                 registry_lost=True,
@@ -94,8 +76,8 @@ class RegistryStore:
             )
         try:
             registry = self._registry_from_payload(payload)
-        except ValueError as err:
-            self._warn_corrupt(f"invalid code registry payload: {err}")
+        except ValueError:
+            self._warn_corrupt()
             return RegistryLoadResult(self._empty_registry(), registry_lost=True)
         self._dismiss_warning()
         return RegistryLoadResult(registry, registry_lost=False)
@@ -109,25 +91,25 @@ class RegistryStore:
         """Return an empty registry with a fresh diagnostic salt."""
         return AllocationRegistry(code_ref_salt=secrets.token_hex(8))
 
-    def _note_absent(self, message: str) -> None:
+    def _note_absent(self) -> None:
         """Log that no registry exists yet, the expected first-run state."""
         _LOGGER.info(
-            "Starting with an empty code registry: %s; this is expected on a "
-            "first run or first upgrade and existing door codes are adopted "
-            "from the locks",
-            message,
+            "No prior code registry was found; startup adoption will reconcile "
+            "existing lock codes"
         )
         self._dismiss_warning()
 
-    def _warn_corrupt(self, message: str) -> None:
+    def _warn_corrupt(self) -> None:
         """Log and notify that a stored registry could not be read."""
-        _LOGGER.warning("Starting with an empty code registry: %s", message)
+        _LOGGER.warning(
+            "Stored code registry could not be read; startup adoption is required"
+        )
         async_create(
             self._hass,
             "The stored shared code registry could not be read and has been "
             "reset. Existing door codes will be re-adopted from the locks; "
-            "please check your locks for unexpected code changes. "
-            f"Details: {message}",
+            "please check your locks for unexpected code changes. Raw storage "
+            "and parsing details are withheld from notifications.",
             title=f"{NAME} code registry warning",
             notification_id=_NOTIFICATION_ID,
         )
@@ -277,25 +259,12 @@ class RegistryStore:
 
     def _payload_from_registry(self, registry: AllocationRegistry) -> dict[str, Any]:
         """Convert a registry into the persisted storage payload."""
-        code_ref_salt = registry.code_ref_salt or secrets.token_hex(8)
-        registry.code_ref_salt = code_ref_salt
-        return {
-            "schema_version": CODE_REGISTRY_SCHEMA_VERSION,
-            "updated_at": datetime.now(UTC).isoformat(),
-            "code_ref_salt": code_ref_salt,
-            "records": [
-                self._record_to_payload(record)
-                for record in sorted(
-                    registry.records.values(), key=lambda item: item.code
-                )
-            ],
-            "announced_conflicts": {
-                code_ref: [list(slot) for slot in sorted(slots)]
-                for code_ref, slots in sorted(registry.announced_conflicts.items())
-            },
-        }
+        if not registry.code_ref_salt:
+            registry.code_ref_salt = secrets.token_hex(8)
+        return serialize_registry_ledger(registry)
 
-    def _record_to_payload(self, record: AllocationRecord) -> dict[str, Any]:
+    @staticmethod
+    def _record_to_payload(record: AllocationRecord) -> dict[str, Any]:
         """Convert one allocation record into the stored schema shape."""
         return {
             "encoded_code": encode_code(record.code, record.encoding_salt_value),
@@ -304,7 +273,9 @@ class RegistryStore:
             "code_length": record.code_length,
             "created_at": record.created_at,
             "updated_at": record.updated_at,
-            "owners": [self._owner_to_payload(owner) for owner in record.owners],
+            "owners": [
+                RegistryStore._owner_to_payload(owner) for owner in record.owners
+            ],
         }
 
     @staticmethod
@@ -320,3 +291,22 @@ class RegistryStore:
             "first_seen": owner.first_seen,
             "last_seen": owner.last_seen,
         }
+
+
+def serialize_registry_ledger(registry: AllocationRegistry) -> dict[str, Any]:
+    """Serialize a complete immutable v1 ledger without mutating its source."""
+    if not isinstance(registry.code_ref_salt, str) or not registry.code_ref_salt:
+        raise ValueError("registry code reference salt is missing")
+    return {
+        "schema_version": CODE_REGISTRY_SCHEMA_VERSION,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "code_ref_salt": registry.code_ref_salt,
+        "records": [
+            RegistryStore._record_to_payload(record)
+            for record in sorted(registry.records.values(), key=lambda item: item.code)
+        ],
+        "announced_conflicts": {
+            code_ref: [list(slot) for slot in sorted(slots)]
+            for code_ref, slots in sorted(registry.announced_conflicts.items())
+        },
+    }

@@ -35,6 +35,7 @@ from . import util as _util
 from .event_overrides_helpers import shell_apply as _shell_apply
 from .event_overrides_helpers import shell_cleanup as _shell_cleanup
 from .event_overrides_helpers import shell_compat as _shell_compat
+from .event_overrides_helpers import shell_feedback as _shell_feedback
 from .event_overrides_helpers import shell_slots as _shell_slots
 from .event_overrides_helpers.models import SlotReservationRequest
 from .event_overrides_helpers.models import SlotUpdateRequest
@@ -157,6 +158,11 @@ class EventOverrides:
     update_actual_state = _shell_compat.update_actual_state
     get_actual_state = _shell_compat.get_actual_state
     release_pending_clear_slot = _shell_compat.release_pending_clear_slot
+    _advance_feedback_generation = _shell_feedback.advance_feedback_generation
+    advance_feedback_generation = _shell_feedback.advance_feedback_generation
+    begin_feedback_event = _shell_feedback.begin_feedback_event
+    get_feedback_generation = _shell_feedback.get_feedback_generation
+    async_update_times = _shell_feedback.async_update_times
     _assign_next_slot = _shell_compat._assign_next_slot
     __assign_next_slot = _shell_compat._assign_next_slot
     _get_slots_with_values = _shell_compat._get_slots_with_values
@@ -198,12 +204,15 @@ class EventOverrides:
     def __init__(self, start_slot: int, max_slots: int) -> None:
         """Setup the overrides object."""
         self._escalated: dict[int, bool] = {}
+        self._feedback_generations: dict[int, int] = {}
+        self._feedback_event_versions: dict[tuple[int, str], int] = {}
         self._lock = asyncio.Lock()
         self._max_slots = max_slots
         self._next_slot: int | None = None
         self._overrides: dict[int, EventOverride | None] = {}
         self._ready = False
         self._retry_counts: dict[int, int] = {}
+        self._slot_operations_pending: dict[int, int] = {}
         self._slot_miss_counts: dict[int, int] = {}
         self._slot_uids: dict[int, str | None] = {}
         self._start_slot = start_slot

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC
 from datetime import datetime
 import logging
@@ -12,16 +13,93 @@ from typing import TYPE_CHECKING
 from . import adoption_reports
 from . import issuance
 from . import reissue
+from .associations import AssociationMode
+from .associations import AssociationTuple
 from .models import AdoptionRequest
 from .models import AllocationOrigin
 from .models import AllocationOwner
 from .models import AllocationRecord
 from .models import AllocationResult
+from .registry import is_observed_alias
 
 if TYPE_CHECKING:
     from .allocator import DoorCodeAllocator
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def associated_alias_candidates(
+    allocator: DoorCodeAllocator,
+    request: AdoptionRequest,
+    associations: Mapping[str, AssociationTuple],
+) -> tuple[str, ...]:
+    """Find observed aliases at this verified shared physical slot.
+
+    This is a read-only migration plan. Callers must still durably commit the
+    complete protected snapshot and revalidate the allocator generation before
+    removing any candidate alias.
+    """
+    target = associations.get(request.entry_id)
+    if (
+        target is None
+        or target.mode is not AssociationMode.VERIFIED
+        or target.verified_keymaster_entry_id is None
+        or request.slot is None
+        or not request.code.isdecimal()
+    ):
+        return ()
+    record = allocator._registry.records.get(request.code)
+    if record is None:
+        return ()
+
+    candidates: list[str] = []
+    for owner in record.owners:
+        if (
+            owner.entry_id == request.entry_id
+            or not is_observed_alias(owner.identity_key)
+            or not owner.lock_observed
+            or owner.slot != request.slot
+        ):
+            continue
+        association = associations.get(owner.entry_id)
+        if (
+            association is not None
+            and association.mode is AssociationMode.VERIFIED
+            and association.verified_keymaster_entry_id
+            == target.verified_keymaster_entry_id
+        ):
+            candidates.append(owner.identity_key)
+    return tuple(sorted(candidates))
+
+
+def adopt_associated_alias_unlocked(
+    allocator: DoorCodeAllocator,
+    request: AdoptionRequest,
+    associations: Mapping[str, AssociationTuple],
+) -> AllocationResult:
+    """Replace same-lock observed aliases with one real staged owner.
+
+    This helper is for an isolated registry candidate: callers must durably
+    acknowledge the complete protected snapshot before publishing it. It
+    never moves a known owner between Keymaster entries.
+    """
+    _coalesce_fingerprint_owner(allocator, request)
+    existing = allocator._registry.record_for_identity(request.identity_key)
+    if (
+        existing is not None and existing.code != request.code
+    ) or reissue.forced_hold_matches_slot(
+        allocator, request.entry_id, request.lockname, request.slot
+    ):
+        return adopt_unlocked(allocator, request)
+
+    aliases = associated_alias_candidates(allocator, request, associations)
+    if aliases and not allocator._registry.release_observed_aliases(
+        aliases,
+        request.code,
+        request.slot or 0,
+    ):
+        return AllocationResult(reason="association_alias_changed")
+    return adopt_unlocked(allocator, request)
 
 
 def adopt_unlocked(
@@ -37,12 +115,7 @@ def adopt_unlocked(
             allocator, request.entry_id, request.lockname, request.slot
         ):
             _LOGGER.info(
-                "Skipped observed code_ref %s for %s:%s at %s:%s while a "
-                "forced re-issue hold is pending",
-                allocator.code_ref(request.code),
-                request.entry_id,
-                request.identity_key,
-                request.lockname,
+                "Skipped an observed code during a forced re-issue hold for slot %d",
                 request.slot,
             )
             owner = next(
@@ -57,11 +130,8 @@ def adopt_unlocked(
             )
         observed_ref = allocator.code_ref(request.code)
         _LOGGER.warning(
-            "Identity %s already owns code_ref %s; observed code_ref %s "
-            "will be retained on the lock and not rotated",
-            request.identity_key,
-            existing.code_ref,
-            observed_ref,
+            "A reservation's recorded allocation differs from its observed "
+            "slot; the observed code will be retained and not rotated"
         )
         _record_mismatched_observed_owner(allocator, request, observed_ref, now)
         adoption_reports.report_identity_mismatch(
@@ -102,11 +172,7 @@ def adopt_unlocked(
     ):
         adoption_reports.report_adoption_conflict(allocator, record)
     _LOGGER.info(
-        "Adopted shared allocation code_ref %s for %s:%s at %s:%s",
-        record.code_ref,
-        request.entry_id,
-        request.identity_key,
-        request.lockname,
+        "Adopted a shared allocation for slot %s",
         request.slot,
     )
     return AllocationResult(code=request.code, origin=AllocationOrigin.ADOPTED)
@@ -157,7 +223,7 @@ def reserve_observed_code(
         first_seen=now,
         last_seen=now,
     )
-    reserved = allocator._registry.add_owner(
+    allocator._registry.add_owner(
         request.code,
         request.code_length,
         owner,
@@ -166,11 +232,7 @@ def reserve_observed_code(
     )
     if joining:
         _LOGGER.info(
-            "Reserved observed code_ref %s for %s at %s:%s because its "
-            "slot is exempt from adoption this cycle",
-            reserved.code_ref,
-            request.entry_id,
-            request.lockname,
+            "Reserved an observed code for excluded slot %s",
             request.slot,
         )
 

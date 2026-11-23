@@ -183,12 +183,58 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: 'Set up fixture acquisition Python'
+        # yamllint disable-line rule:line-length
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: '0.13.5'
+          enable-cache: false
+          python-version: '3.14.2'
+
+      - name: 'Acquire pinned upstream fixtures'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC_UPSTREAM_ARTIFACTS_DIR: "${{ runner.temp }}/rc-025-upstream-artifacts"
+        run: >-
+          uv run --no-project --python 3.14
+          python tests/fixtures/keymaster_releases.py acquire
+          --output-dir "$RC_UPSTREAM_ARTIFACTS_DIR"
+
+      - name: 'Prepare isolated authentic Keymaster import environment'
+        env:
+          UV_PROJECT_ENVIRONMENT: "${{ runner.temp }}/rc-025-keymaster-import-env"
+        run: uv venv --python 3.14.2 "$UV_PROJECT_ENVIRONMENT"
+
+      - name: 'Install hash-pinned authentic import environment'
+        env:
+          UV_PROJECT_ENVIRONMENT: "${{ runner.temp }}/rc-025-keymaster-import-env"
+        run: |
+          uv pip sync --require-hashes \
+            --python "$UV_PROJECT_ENVIRONMENT/bin/python" \
+            tests/fixtures/keymaster_import_probe.lock
+          uv pip sync --check --require-hashes \
+            --python "$UV_PROJECT_ENVIRONMENT/bin/python" \
+            tests/fixtures/keymaster_import_probe.lock
+
+      - name: 'Probe authentic Keymaster imports'
+        env:
+          UV_PROJECT_ENVIRONMENT: "${{ runner.temp }}/rc-025-keymaster-import-env"
+          RC_UPSTREAM_ARTIFACTS_DIR: "${{ runner.temp }}/rc-025-upstream-artifacts"
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -I \
+            tests/fixtures/keymaster_releases.py probe-import \
+            --release v0.6.1
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -I \
+            tests/fixtures/keymaster_releases.py probe-import \
+            --release v0.6.0
+
       - name: "Python tests [pytest] ${{ matrix.python-version }}"
         # yamllint disable-line rule:line-length
         uses: lfreleng-actions/python-test-action@644a2008072617b9cf4846ca2b9d385691f9dc67  # v1.3.3
         with:
           python_version: ${{ matrix.python-version }}
         env:
+          RC_UPSTREAM_ARTIFACTS_DIR: "${{ runner.temp }}/rc-025-upstream-artifacts"
           # CPython 3.14 strict AST validation breaks pytest assertion
           # rewriting; disable until pytest upstream fixes the issue
           # yamllint disable-line rule:line-length

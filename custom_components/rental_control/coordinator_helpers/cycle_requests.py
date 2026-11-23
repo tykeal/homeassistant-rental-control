@@ -6,14 +6,21 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
+from typing import Any
 import uuid
 
 from homeassistant.util import dt
 
+from ..allocator.associations import AssociationMode
+from ..allocator.associations import AssociationTuple
 from ..allocator.models import AdoptionRequest
 from ..allocator.models import AllocationOrigin
 from ..allocator.models import AllocationRequest
 from ..allocator.models import CycleObservation
+from ..allocator.models import ProtectionAuthorizationState
+from ..const import DOMAIN
+from ..const import PROTECTED_REGISTRY_STORE
+from ..keymaster_lifecycle import get_keymaster_lifecycle
 from ..reconciliation import SlotStatus
 from ..reconciliation import compute_desired_plan
 from ..reconciliation.desired import select_eligible_reservations
@@ -45,6 +52,9 @@ def build_cycle_observation(
     entry_id: str,
     lockname: str | None,
     managed_slots: list[ManagedSlot],
+    *,
+    keymaster_entry_id: str | None = None,
+    keymaster_generation: int | None = None,
 ) -> CycleObservation:
     """Build the allocator's physical-state observation for this entry."""
     managed = [slot for slot in managed_slots if slot.managed]
@@ -60,7 +70,53 @@ def build_cycle_observation(
         unreadable_slots=frozenset(
             slot.slot for slot in managed if slot.status is SlotStatus.UNKNOWN
         ),
+        keymaster_entry_id=keymaster_entry_id,
+        keymaster_generation=keymaster_generation,
     )
+
+
+def verified_observation_identity(
+    hass: Any, rc_entry_id: str
+) -> tuple[str, int] | None:
+    """Return the current acknowledged Keymaster identity and lifecycle epoch."""
+    domain_data = getattr(hass, "data", {}).get(DOMAIN)
+    if not isinstance(domain_data, dict):
+        return None
+    store = domain_data.get(PROTECTED_REGISTRY_STORE)
+    if store is None:
+        return None
+    loaded = getattr(store, "loaded_result", None)
+    if (
+        getattr(store, "authorization_state", None)
+        is not ProtectionAuthorizationState.READY
+        or loaded is None
+        or loaded.data is None
+    ):
+        return None
+    entry = hass.config_entries.async_get_entry(rc_entry_id)
+    if entry is None:
+        return None
+    from ..keymaster_runtime import keymaster_runtime_enabled
+
+    if not keymaster_runtime_enabled(entry.data):
+        return None
+    configured = AssociationTuple.from_config(entry.data)
+    acknowledged = store.association_for_entry(rc_entry_id)
+    if (
+        configured is None
+        or configured != acknowledged
+        or configured.mode is not AssociationMode.VERIFIED
+        or configured.verified_keymaster_entry_id is None
+    ):
+        return None
+    lifecycle = get_keymaster_lifecycle(hass, rc_entry_id)
+    if (
+        lifecycle is None
+        or lifecycle.keymaster_entry_id != configured.verified_keymaster_entry_id
+        or not lifecycle.current
+    ):
+        return None
+    return lifecycle.keymaster_entry_id, lifecycle.generation
 
 
 def build_adoption_requests(
@@ -89,9 +145,8 @@ def build_adoption_requests(
             continue
         if reservation.code_rotation_pending:
             _LOGGER.info(
-                "Skipping adoption for %s in slot %d because its date-based "
+                "Skipping adoption in slot %d because its date-based "
                 "code must rotate for the updated booking window",
-                reservation.identity_key,
                 slot.slot,
             )
             requests.suppressed_slots.add(slot.slot)
@@ -99,9 +154,8 @@ def build_adoption_requests(
             continue
         if not slot.actual_code.isdecimal() or len(slot.actual_code) != code_length:
             _LOGGER.warning(
-                "Skipping adoption for %s in slot %d because the observed code "
+                "Skipping adoption in slot %d because the observed code "
                 "does not match the configured code length",
-                reservation.identity_key,
                 slot.slot,
             )
             requests.suppressed_slots.add(slot.slot)

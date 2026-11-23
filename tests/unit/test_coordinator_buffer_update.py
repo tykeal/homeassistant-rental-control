@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -16,6 +17,7 @@ import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 from custom_components.rental_control.coordinator import RentalControlCoordinator
 from custom_components.rental_control.event_overrides import EventOverrides
 
@@ -196,6 +198,95 @@ async def test_update_buffer_times_updates_assigned_slots(
             assert call["data"]["datetime"] == expected
 
 
+@pytest.mark.parametrize("concurrent_change", ["reassignment", "manual_date_edit"])
+async def test_legacy_buffer_update_preserves_concurrent_slot_changes(
+    hass: HomeAssistant,
+    mock_entry: MockConfigEntry,
+    concurrent_change: str,
+) -> None:
+    """A completed buffer write cannot overwrite a reassignment or manual edit."""
+    mock_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_entry)
+    coordinator.code_buffer_before = 30
+    coordinator.code_buffer_after = 60
+
+    tz = ZoneInfo("America/New_York")
+    old_start = datetime(2026, 12, 1, 16, 0, tzinfo=tz)
+    old_end = datetime(2026, 12, 5, 11, 0, tzinfo=tz)
+    new_start = datetime(2027, 1, 10, 16, 0, tzinfo=tz)
+    new_end = datetime(2027, 1, 15, 11, 0, tzinfo=tz)
+    overrides = EventOverrides(10, 3)
+    overrides._overrides = {
+        10: {
+            "slot_name": "Old guest",
+            "slot_code": "1234",
+            "start_time": old_start,
+            "end_time": old_end,
+        },
+        11: None,
+        12: None,
+    }
+    overrides._ready = True
+    coordinator.event_overrides = overrides
+
+    both_services_started = asyncio.Event()
+    release_services = asyncio.Event()
+    started = 0
+
+    async def hold_service_call() -> None:
+        """Hold both mocked service calls while the slot is reassigned."""
+        nonlocal started
+        started += 1
+        if started == 2:
+            both_services_started.set()
+        await release_services.wait()
+
+    def fake_add_call(hass, coro, domain, service, target, data):
+        """Queue a controllable service coroutine."""
+        coro.append(hold_service_call())
+        return coro
+
+    with patch(
+        "custom_components.rental_control.coordinator.add_call",
+        side_effect=fake_add_call,
+    ):
+        buffer_update = asyncio.create_task(
+            coordinator._async_update_buffer_times(0, 0)
+        )
+        await both_services_started.wait()
+        if concurrent_change == "reassignment":
+            await overrides.async_update(
+                10,
+                "5678",
+                "New guest",
+                new_start,
+                new_end,
+            )
+        else:
+            await overrides.async_update(
+                10,
+                "1234",
+                "Old guest",
+                new_start,
+                old_end,
+                merge_feedback=True,
+                feedback_field="start_time",
+                feedback_generation=overrides.get_feedback_generation(10),
+            )
+        release_services.set()
+        await buffer_update
+
+    replacement = overrides.overrides[10]
+    assert replacement is not None
+    expected_name = "New guest" if concurrent_change == "reassignment" else "Old guest"
+    expected_code = "5678" if concurrent_change == "reassignment" else "1234"
+    expected_end = new_end if concurrent_change == "reassignment" else old_end
+    assert replacement["slot_name"] == expected_name
+    assert replacement["slot_code"] == expected_code
+    assert replacement["start_time"] == new_start
+    assert replacement["end_time"] == expected_end
+
+
 async def test_update_buffer_times_no_assigned_slots(
     hass: HomeAssistant, mock_entry: MockConfigEntry
 ) -> None:
@@ -219,6 +310,43 @@ async def test_update_buffer_times_no_assigned_slots(
         await coordinator._async_update_buffer_times(0, 0)
 
     mock_add_call.assert_not_called()
+
+
+async def test_protected_buffer_update_without_lifecycle_is_inert(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Do not write a guessed datetime address while protection is active."""
+    mock_entry.add_to_hass(hass)
+    coordinator = RentalControlCoordinator(hass, mock_entry)
+    coordinator.code_buffer_before = 30
+    coordinator.code_buffer_after = 60
+    start_time = datetime(2025, 1, 15, 16, 0, tzinfo=ZoneInfo("America/New_York"))
+    end_time = datetime(2025, 1, 20, 11, 0, tzinfo=ZoneInfo("America/New_York"))
+    overrides = EventOverrides(10, 3)
+    overrides._overrides = {
+        10: {
+            "slot_name": "Guest A",
+            "slot_code": "1234",
+            "start_time": start_time,
+            "end_time": end_time,
+        },
+        11: None,
+        12: None,
+    }
+    overrides._ready = True
+    coordinator.event_overrides = overrides
+    hass.data.setdefault(DOMAIN, {})[PROTECTED_REGISTRY_STORE] = object()
+
+    with patch(
+        "custom_components.rental_control.coordinator.add_call",
+    ) as mock_add_call:
+        await coordinator._async_update_buffer_times(0, 0)
+
+    mock_add_call.assert_not_called()
+    override = overrides.overrides[10]
+    assert override is not None
+    assert override["start_time"] == start_time
+    assert override["end_time"] == end_time
 
 
 async def test_update_buffer_times_no_lockname(

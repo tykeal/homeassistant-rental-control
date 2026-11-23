@@ -6,9 +6,12 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from collections.abc import Iterable
+from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field
 
+from .associations import AssociationMode
+from .associations import AssociationTuple
 from .models import AllocationOrigin
 from .models import AllocationOwner
 from .models import AllocationRecord
@@ -72,6 +75,38 @@ def physical_slots(owners: Iterable[AllocationOwner]) -> frozenset[SlotKey]:
 def conflict_slots(record: AllocationRecord) -> frozenset[SlotKey]:
     """Return the distinct physical slots a record's code was issued to."""
     return physical_slots(issuance_owners(record))
+
+
+def associated_physical_slot(
+    owner: AllocationOwner,
+    associations: Mapping[str, AssociationTuple],
+) -> SlotKey:
+    """Group only owners with the same explicit verified KM entry and slot."""
+    association = associations.get(owner.entry_id)
+    if (
+        association is not None
+        and association.mode is AssociationMode.VERIFIED
+        and association.verified_keymaster_entry_id is not None
+        and owner.slot is not None
+        and not _is_physical_only(owner.identity_key)
+    ):
+        return (
+            association.verified_keymaster_entry_id,
+            "",
+            str(owner.slot),
+        )
+    return physical_slot(owner)
+
+
+def associated_conflict_slots(
+    record: AllocationRecord,
+    associations: Mapping[str, AssociationTuple],
+) -> frozenset[SlotKey]:
+    """Return conflicts after applying only acknowledged verified associations."""
+    return frozenset(
+        associated_physical_slot(owner, associations)
+        for owner in issuance_owners(record)
+    )
 
 
 def slot_shadowed(
@@ -247,6 +282,42 @@ class AllocationRegistry:
         self.by_identity.pop(identity_key, None)
         if not record.owners:
             del self.records[code]
+        return True
+
+    def release_observed_aliases(
+        self,
+        identity_keys: tuple[str, ...],
+        code: str,
+        slot: int,
+    ) -> bool:
+        """Atomically remove only aliases still observed at this exact slot."""
+        if (
+            not identity_keys
+            or len(set(identity_keys)) != len(identity_keys)
+            or not code.isdecimal()
+            or not isinstance(slot, int)
+            or isinstance(slot, bool)
+            or slot < 1
+        ):
+            return False
+        record = self.records.get(code)
+        if record is None:
+            return False
+        owners = {
+            owner.identity_key: owner
+            for owner in record.owners
+            if owner.identity_key in identity_keys
+        }
+        if len(owners) != len(identity_keys) or any(
+            not is_observed_alias(owner.identity_key)
+            or not owner.lock_observed
+            or owner.slot != slot
+            for owner in owners.values()
+        ):
+            return False
+        for identity_key in identity_keys:
+            if not self.release(identity_key):
+                raise RuntimeError("validated alias release changed unexpectedly")
         return True
 
     def conflicts(self) -> list[AllocationRecord]:

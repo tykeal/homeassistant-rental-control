@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
@@ -677,6 +679,58 @@ class TestAsyncCheckOverrides:
         ) as mock_fire:
             await eo.async_check_overrides(coordinator)
             mock_fire.assert_called_once()
+
+    async def test_stale_clear_does_not_reset_reassigned_slot(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A clear decision waiting on the slot lock cannot reset its successor."""
+        from custom_components.rental_control.event_overrides_helpers import (
+            shell_cleanup,
+        )
+
+        eo = EventOverrides(start_slot=1, max_slots=1)
+        old_start = _make_dt(2025, 7, 1)
+        old_end = _make_dt(2025, 7, 5)
+        eo.update(1, "1234", "Departed Guest", old_start, old_end)
+        coordinator = _make_coordinator(calendar_events=[])
+        waiting_for_slot = asyncio.Event()
+        release_slot = asyncio.Event()
+
+        @asynccontextmanager
+        async def blocked_slot_operation(_coordinator, _slot):
+            """Pause cleanup after its decision but before it acquires the slot."""
+            waiting_for_slot.set()
+            await release_slot.wait()
+            yield
+
+        monkeypatch.setattr(
+            shell_cleanup, "async_slot_operation", blocked_slot_operation
+        )
+        dispatch = AsyncMock(
+            return_value=OperationResult(kind="clear", slot=1, confirmed=True)
+        )
+        monkeypatch.setattr(shell_cleanup, "_dispatch_cleanup_clear", dispatch)
+
+        cleanup = asyncio.create_task(
+            eo.async_check_overrides(coordinator, calendar=[])
+        )
+        await waiting_for_slot.wait()
+        replacement_start = _make_dt(2025, 8, 1)
+        replacement_end = _make_dt(2025, 8, 5)
+        assert await eo.async_update(
+            1, "5678", "Replacement Guest", replacement_start, replacement_end
+        )
+
+        release_slot.set()
+        await cleanup
+
+        dispatch.assert_not_awaited()
+        replacement = eo.overrides[1]
+        assert replacement is not None
+        assert replacement["slot_name"] == "Replacement Guest"
+        assert replacement["slot_code"] == "5678"
+        assert replacement["start_time"] == replacement_start
+        assert replacement["end_time"] == replacement_end
 
     async def test_clears_when_start_after_end(self) -> None:
         """Verify slot is cleared when start_date > end_date."""
@@ -1676,7 +1730,7 @@ class TestSlotOverflow:
     async def test_overflow_logs_warning(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Overflow should log a warning with guest name."""
+        """Overflow should log a warning without guest names."""
         eo = EventOverrides(start_slot=1, max_slots=1)
         now = dt_util.now()
         eo.update(1, "", "", now, now)
@@ -1698,7 +1752,9 @@ class TestSlotOverflow:
                 end_time=_make_dt(2025, 8, 10),
             )
         assert result.slot is None
-        assert "Bob" in caplog.text
+        assert "reservation was not assigned" in caplog.text
+        assert "Alice" not in caplog.text
+        assert "Bob" not in caplog.text
         assert "occupied" in caplog.text
 
 
@@ -1831,11 +1887,10 @@ class TestDedupRedirect:
 
         # Warning about the redirect was logged
         assert any(
-            "Duplicate slot_name 'Alice'" in rec.message
-            and "slot 3" in rec.message
-            and "slot 5" in rec.message
+            "Duplicate slot name detected in slot 3; redirecting write" in rec.message
             for rec in caplog.records
         )
+        assert "Alice" not in caplog.text
 
     async def test_redirect_preserves_code_from_new_write(self) -> None:
         """Redirected write carries the new slot_code to the target."""
@@ -3503,6 +3558,7 @@ class TestPendingClearFenceTokenLifecycle:
         """Return a minimal coordinator for apply-clear tests."""
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
+        coordinator.keymaster_runtime_enabled = True
         coordinator.event_overrides = eo
         return coordinator
 
@@ -3619,6 +3675,25 @@ class TestPendingClearFenceTokenLifecycle:
         assert result.failed is True
         assert eo.overrides[1] is not None
         assert 1 in eo.pending_fences
+
+    async def test_clear_error_text_never_reaches_logs(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Provider error text cannot echo a guest name or door code."""
+        secret = "Guest Example PIN 9384"
+        eo = self._make_eo()
+        coordinator = self._make_coordinator(eo)
+        caplog.set_level(logging.DEBUG)
+
+        with patch(
+            "custom_components.rental_control.event_overrides.async_fire_clear_code",
+            return_value=OperationResult(
+                kind="clear", slot=1, failed=True, error=secret
+            ),
+        ):
+            await eo._apply_clear(coordinator, 1)
+
+        assert secret not in caplog.text
 
     async def test_later_confirmed_free_clears_fence(self) -> None:
         """A later confirmed retry finally clears the slot and fence."""
@@ -4155,6 +4230,7 @@ class TestCallbackReentrancyFencing:
         slot_num = 1
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.keymaster_runtime_enabled = True
         mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
@@ -5123,13 +5199,7 @@ class TestManualDriftLogging:
         assert apply_set.await_args.args[3] == "replace-5-patched-token"
 
     async def test_raw_pin_never_in_log(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Raw PIN value must never appear in WARNING (or above) log records during overwrite.
-
-        The existing EventOverrides.update() debug log includes the overrides
-        dict; that is pre-existing behaviour outside this commit's scope.  This
-        test targets WARNING-and-above records to verify that the new
-        OVERWRITE_MANUAL_CHANGE log message never exposes the raw PIN.
-        """
+        """Raw PIN values must never appear in logs during overwrite."""
         eo = EventOverrides(start_slot=5, max_slots=2)
         now = datetime(2026, 8, 1, tzinfo=self._TZ)
         eo.update(5, "SUPERSECRETPIN", "Alice Smith", now, now + timedelta(days=7))
@@ -5143,7 +5213,7 @@ class TestManualDriftLogging:
 
         confirmed = OperationResult(kind="set", slot=5, confirmed=True)
         with (
-            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            caplog.at_level(logging.DEBUG, logger="custom_components.rental_control"),
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_set_code",
                 return_value=confirmed,
@@ -5151,14 +5221,14 @@ class TestManualDriftLogging:
         ):
             await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
 
-        # Only WARNING+ records are captured; none must contain the raw PIN.
-        for record in (r for r in caplog.records if r.levelno >= logging.WARNING):
+        for record in caplog.records:
             assert "SUPERSECRETPIN" not in record.message
+            assert "Alice Smith" not in record.message
 
-    async def test_desired_identity_in_log(
+    async def test_desired_identity_is_not_in_log(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The desired reservation identity_key appears in the WARNING log."""
+        """A desired reservation identity is withheld from logs."""
         eo = EventOverrides(start_slot=5, max_slots=2)
         now = datetime(2026, 8, 1, tzinfo=self._TZ)
         eo.update(5, "SECRETPIN", "Alice Smith", now, now + timedelta(days=7))
@@ -5174,7 +5244,7 @@ class TestManualDriftLogging:
 
         confirmed = OperationResult(kind="set", slot=5, confirmed=True)
         with (
-            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            caplog.at_level(logging.DEBUG, logger="custom_components.rental_control"),
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_set_code",
                 return_value=confirmed,
@@ -5183,12 +5253,14 @@ class TestManualDriftLogging:
             await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
 
         log_text = " ".join(r.message for r in caplog.records)
-        assert "r-identity-check" in log_text
+        assert "r-identity-check" not in log_text
+        assert "Alice Smith" not in log_text
+        assert "SECRETPIN" not in log_text
 
-    async def test_observed_name_from_actual_state_cache_in_log(
+    async def test_observed_name_is_not_in_log(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Observed name from actual-state cache appears in the WARNING log."""
+        """Observed names from Keymaster state are withheld from logs."""
         eo = EventOverrides(start_slot=5, max_slots=2)
         now = datetime(2026, 8, 1, tzinfo=self._TZ)
         eo.update(5, "SECRETPIN", "Alice Smith", now, now + timedelta(days=7))
@@ -5216,7 +5288,7 @@ class TestManualDriftLogging:
 
         confirmed = OperationResult(kind="set", slot=5, confirmed=True)
         with (
-            caplog.at_level(logging.WARNING, logger="custom_components.rental_control"),
+            caplog.at_level(logging.DEBUG, logger="custom_components.rental_control"),
             patch(
                 "custom_components.rental_control.event_overrides.async_fire_set_code",
                 return_value=confirmed,
@@ -5225,7 +5297,9 @@ class TestManualDriftLogging:
             await eo._apply_overwrite_manual_change(coordinator, 5, res, action)
 
         log_text = " ".join(r.message for r in caplog.records)
-        assert "MANUALLY CHANGED" in log_text
+        assert "MANUALLY CHANGED" not in log_text
+        assert "Alice Smith" not in log_text
+        assert "SECRETPIN" not in log_text
 
     async def test_async_apply_plan_routes_overwrite_manual_change(self) -> None:
         """async_apply_plan dispatches OVERWRITE_MANUAL_CHANGE to the handler."""
@@ -6098,6 +6172,7 @@ class TestSlotNameTrimmingRegression:
         """Return a coordinator mock for set-code regression tests."""
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
+        coordinator.keymaster_runtime_enabled = True
         coordinator.event_prefix = "RC"
         coordinator.trim_names = trim_names
         coordinator.max_name_length = 10

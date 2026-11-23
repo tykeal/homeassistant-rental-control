@@ -15,13 +15,21 @@ from homeassistant.core import callback
 from homeassistant.util import dt
 import probatio
 
+from .allocator.associations import AssociationTuple
 from .config_flow_helpers import schemas as _schemas
+from .config_flow_helpers.association import apply_association_selection
+from .config_flow_helpers.availability import protected_association_backend_registered
 from .config_flow_helpers.models import ConfigFormContext
 from .config_flow_helpers.models import FlowTransitionRequest
 from .config_flow_helpers.steps import start_config_flow as _helper_start_config_flow
 from .config_flow_helpers.validation import (
     normalize_lock_entry as _helper_normalize_lock_entry,
 )
+from .const import CONF_ASSOCIATION_ATTEST_SAME_LOCK
+from .const import CONF_ASSOCIATION_ENTRY_CHOICE
+from .const import CONF_ASSOCIATION_GENERATION
+from .const import CONF_ASSOCIATION_MODE
+from .const import CONF_ASSOCIATION_TRANSACTION_ID
 from .const import CONF_CHECKIN
 from .const import CONF_CHECKOUT
 from .const import CONF_CODE_BUFFER_AFTER
@@ -37,6 +45,7 @@ from .const import CONF_REFRESH_FREQUENCY
 from .const import CONF_SHOULD_UPDATE_CODE
 from .const import CONF_TIMEZONE
 from .const import CONF_TRIM_NAMES
+from .const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
 from .const import DEFAULT_CHECKIN
 from .const import DEFAULT_CHECKOUT
 from .const import DEFAULT_CODE_BUFFER_AFTER
@@ -67,7 +76,7 @@ class RentalControlFlowHandler(  # type: ignore[call-arg]
 ):
     """Handle the config flow for Rental Control."""
 
-    VERSION = 10
+    VERSION = 11
 
     DEFAULTS = {
         CONF_CHECKIN: DEFAULT_CHECKIN,
@@ -129,6 +138,44 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
         flow_data: dict[str, Any] | None = None
         if self.config_entry.data:
             flow_data = dict(self.config_entry.data)
+        association_fields_submitted = bool(
+            user_input
+            and {
+                CONF_ASSOCIATION_ENTRY_CHOICE,
+                CONF_ASSOCIATION_ATTEST_SAME_LOCK,
+            }.intersection(user_input)
+        )
+        backend_registered = protected_association_backend_registered(self.hass)
+        invalid_association = (
+            AssociationTuple.from_config(self.config_entry.data) is None
+        )
+        committed_association = any(
+            key in self.config_entry.data
+            for key in (
+                CONF_ASSOCIATION_MODE,
+                CONF_ASSOCIATION_GENERATION,
+                CONF_ASSOCIATION_TRANSACTION_ID,
+                CONF_VERIFIED_KEYMASTER_ENTRY_ID,
+            )
+        )
+        if user_input is not None:
+            user_input = dict(user_input)
+            for key in (
+                CONF_ASSOCIATION_MODE,
+                CONF_ASSOCIATION_GENERATION,
+                CONF_ASSOCIATION_TRANSACTION_ID,
+                CONF_VERIFIED_KEYMASTER_ENTRY_ID,
+            ):
+                user_input.pop(key, None)
+        handler = (
+            _handle_association_selection
+            if backend_registered or invalid_association
+            else (
+                _reject_unprotected_association_selection
+                if association_fields_submitted
+                else (_handle_association_selection if committed_association else None)
+            )
+        )
         return await _start_config_flow(
             self,
             "init",
@@ -136,6 +183,7 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
             user_input,
             flow_data,
             self.config_entry.entry_id,
+            validated_input_handler=handler,
         )
 
 
@@ -217,6 +265,8 @@ async def _start_config_flow(
     user_input: dict[str, Any] | None,
     defaults: dict[str, Any] | None = None,
     entry_id: str | None = None,
+    *,
+    validated_input_handler: Any = None,
 ) -> Any:
     """Start a config flow."""
     return await _helper_start_config_flow(
@@ -228,5 +278,26 @@ async def _start_config_flow(
             defaults=defaults,
             entry_id=entry_id,
             form_renderer=_show_config_form,
+            validated_input_handler=validated_input_handler,
         )
     )
+
+
+async def _handle_association_selection(
+    flow: Any, user_input: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Run association persistence only after all ordinary options validate."""
+    result = await apply_association_selection(flow, user_input)
+    return result.user_input, result.errors
+
+
+async def _reject_unprotected_association_selection(
+    _flow: Any, user_input: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Reject explicit association requests when persistence is not available."""
+    field = (
+        CONF_ASSOCIATION_ENTRY_CHOICE
+        if CONF_ASSOCIATION_ENTRY_CHOICE in user_input
+        else CONF_ASSOCIATION_ATTEST_SAME_LOCK
+    )
+    return user_input, {field: "association_unavailable"}

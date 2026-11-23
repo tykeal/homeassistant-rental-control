@@ -21,8 +21,14 @@ from homeassistant.helpers.selector import SelectSelectorMode
 from homeassistant.util import dt
 import probatio
 
+from ..allocator.associations import AssociationMode
+from ..allocator.associations import AssociationTuple
 from ..bookings_only import host_defaults_bookings_only
+from ..const import ASSOCIATION_CHOICE_LOCKLESS
+from ..const import ASSOCIATION_CHOICE_NO_CHANGE
 from ..const import CODE_GENERATORS
+from ..const import CONF_ASSOCIATION_ATTEST_SAME_LOCK
+from ..const import CONF_ASSOCIATION_ENTRY_CHOICE
 from ..const import CONF_BOOKINGS_ONLY_FEED
 from ..const import CONF_CHECKIN
 from ..const import CONF_CHECKOUT
@@ -66,6 +72,7 @@ from ..const import DEFAULT_TRIM_NAMES
 from ..const import LOCK_ENTRY_NONE
 from ..const import LOCK_MANAGER
 from ..const import MIN_NAME_LENGTH
+from .availability import protected_association_backend_registered
 from .models import SchemaBuildContext
 
 # aislop-ignore-file ai-slop/hallucinated-import -- Provided by Home Assistant runtime.
@@ -109,24 +116,15 @@ def generator_convert(ident: str, to_type: bool = True) -> str:
 
 def lock_entry_convert(hass: HomeAssistant, entry: str, to_entity: bool = True) -> str:
     """Convert between name and entity for lock entries."""
-    _LOGGER.debug(
-        "In _lock_entry_convert, entry: '%s', to_entity: '%s'", entry, to_entity
-    )
-
     if to_entity:
-        _LOGGER.debug("to entity")
         for lock_entry in hass.config_entries.async_entries(LOCK_MANAGER):
             if entry == lock_entry.title:
-                _LOGGER.debug("'%s' becomes '%s'", entry, lock_entry.data["lockname"])
                 return str(lock_entry.data["lockname"])
     else:
-        _LOGGER.debug("from entity")
         for lock_entry in hass.config_entries.async_entries(LOCK_MANAGER):
             if entry == lock_entry.data["lockname"]:
-                _LOGGER.debug("'%s' becomes '%s'", entry, lock_entry.title)
                 return str(lock_entry.title)
 
-    _LOGGER.debug("no conversion done")
     return entry
 
 
@@ -337,7 +335,7 @@ def _trim_fields(context: SchemaBuildContext) -> dict[Any, Any]:
 
 def _options_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Build options-only schema fields."""
-    return {
+    fields = {
         probatio.Optional(
             CONF_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS,
             default=_get_default(
@@ -358,4 +356,58 @@ def _options_fields(context: SchemaBuildContext) -> dict[Any, Any]:
                 context, CONF_CODE_BUFFER_AFTER, DEFAULT_CODE_BUFFER_AFTER
             ),
         ): probatio.All(probatio.Coerce(int), probatio.Range(min=0)),
+    }
+    if protected_association_backend_registered(context.hass):
+        fields.update(_association_fields(context))
+    return fields
+
+
+def _association_fields(context: SchemaBuildContext) -> dict[Any, Any]:
+    """Offer explicit entry identity and an initially unselected assertion."""
+    data = context.defaults or {}
+    association = AssociationTuple.from_config(data)
+    if (
+        association is not None
+        and association.mode is AssociationMode.EXPLICIT_LOCKLESS
+    ):
+        default_choice = ASSOCIATION_CHOICE_LOCKLESS
+    else:
+        selected_entry = (
+            association.verified_keymaster_entry_id if association is not None else None
+        )
+        default_choice = (
+            selected_entry
+            if isinstance(selected_entry, str) and selected_entry
+            else ASSOCIATION_CHOICE_NO_CHANGE
+        )
+
+    choices = [
+        ASSOCIATION_CHOICE_NO_CHANGE,
+        ASSOCIATION_CHOICE_LOCKLESS,
+    ]
+    for entry in sorted(
+        context.hass.config_entries.async_entries(LOCK_MANAGER),
+        key=lambda item: (item.title.casefold(), item.entry_id),
+    ):
+        choices.append(entry.entry_id)
+    if isinstance(default_choice, str) and default_choice not in choices:
+        choices.append(default_choice)
+
+    return {
+        probatio.Optional(
+            CONF_ASSOCIATION_ENTRY_CHOICE,
+            default=_get_default(
+                context, CONF_ASSOCIATION_ENTRY_CHOICE, default_choice
+            ),
+        ): SelectSelector(
+            SelectSelectorConfig(
+                options=choices,
+                mode=SelectSelectorMode.DROPDOWN,
+                translation_key=CONF_ASSOCIATION_ENTRY_CHOICE,
+            )
+        ),
+        probatio.Optional(
+            CONF_ASSOCIATION_ATTEST_SAME_LOCK,
+            default=_get_default(context, CONF_ASSOCIATION_ATTEST_SAME_LOCK, False),
+        ): cv.boolean,
     }

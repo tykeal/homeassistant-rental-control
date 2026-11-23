@@ -12,8 +12,8 @@ from custom_components.rental_control.const import SLOT_STATUS_OCCUPIED
 from custom_components.rental_control.const import SLOT_STATUS_PENDING_CLEAR
 from custom_components.rental_control.const import SLOT_STATUS_PENDING_SET
 from custom_components.rental_control.coordinator_helpers import reservations
-from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
-    CoordinatorRefreshMixin,
+from custom_components.rental_control.coordinator_helpers.coordinator_reservation_shell import (
+    CoordinatorReservationMixin,
 )
 from custom_components.rental_control.coordinator_helpers.models import (
     GhostReservationResult,
@@ -187,7 +187,7 @@ def test_hydration_resets_missing_count_on_reappearance() -> None:
         }
     }
 
-    CoordinatorRefreshMixin._hydrate_reservations_from_mappings(
+    CoordinatorReservationMixin._hydrate_reservations_from_mappings(
         [reservation], persisted
     )
 

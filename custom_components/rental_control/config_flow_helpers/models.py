@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -65,3 +66,9 @@ class FlowTransitionRequest:
     defaults: dict[str, Any] | None
     entry_id: str | None
     form_renderer: Callable[[Any, ConfigFormContext], Any]
+    validated_input_handler: (
+        Callable[
+            [Any, dict[str, Any]], Awaitable[tuple[dict[str, Any], dict[str, str]]]
+        ]
+        | None
+    ) = None

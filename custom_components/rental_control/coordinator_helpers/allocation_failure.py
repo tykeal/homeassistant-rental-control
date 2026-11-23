@@ -5,9 +5,10 @@
 A generator-only entry has no lock to fall back on, so when its
 allocation step raises, every door code it publishes either stops
 changing or disappears.  A lock-backed entry whose reconciliation
-raises stops programming its lock.  In both cases the traceback
-already reaches the log, but nothing reaches the user interface, and
-the same failure then repeats on every refresh for as long as it lasts.
+raises stops programming its lock. In both cases the same failure then
+repeats on every refresh for as long as it lasts. Only exception classes
+are retained: raw error text can echo guest names, codes, or calendar
+payloads.
 
 Each :class:`FailureKind` keeps its own state and notification, so a
 lockless allocation failure and a reconciliation failure never
@@ -56,15 +57,14 @@ LOCKLESS = FailureKind(
     activity="Door code allocation",
     title=f"{NAME} door code allocation failed",
     message=(
-        "Rental Control could not allocate door codes for {name} on "
+        "Rental Control could not allocate door codes for this entry on "
         "{count} {cycles}. The entry generates codes without "
         "managing a lock, so its sensors keep publishing the codes from "
         "the last successful cycle, or no code at all if none has "
         "succeeded yet. New or changed bookings will not receive a code "
-        "until this clears. The failure is: "
-        "{signature}. Search the Home Assistant log for "
-        '"Lockless allocation failed for {name}" for the full '
-        "traceback, and please report it with those log lines."
+        "until this clears. Failure category: {signature}. Raw error "
+        "details are withheld to protect guest and door-code data. If the "
+        "problem persists, report this category and the affected entry."
     ),
 )
 
@@ -73,14 +73,13 @@ RECONCILIATION = FailureKind(
     activity="Door code reconciliation",
     title=f"{NAME} door code reconciliation failed",
     message=(
-        "Rental Control could not reconcile door codes for {name} with "
+        "Rental Control could not reconcile door codes for this entry with "
         "its lock on {count} {cycles}. A failed cycle may have updated "
         "only some slots, so check the codes actually on the lock. New, "
         "changed or ended bookings may not be programmed or cleared until "
-        "this clears. The failure is: "
-        "{signature}. Search the Home Assistant log for "
-        '"Reconciliation failed for {name}" for the full traceback, and '
-        "please report it with those log lines."
+        "this clears. Failure category: {signature}. Raw error details "
+        "are withheld to protect guest and door-code data. If the problem "
+        "persists, report this category and the affected entry."
     ),
 )
 
@@ -99,8 +98,8 @@ _state: dict[tuple[str, str], FailureState] = {}
 
 
 def signature_for(error: BaseException) -> str:
-    """Return a comparable description of one failure condition."""
-    return f"{type(error).__name__}: {error}"
+    """Return an exception class only; never export arbitrary error text."""
+    return type(error).__name__
 
 
 def notification_id(entry_id: str, kind: FailureKind = LOCKLESS) -> str:
@@ -135,7 +134,7 @@ def report(
         state.signature = signature
     if not announce:
         return
-    _notify(hass, entry_id, name, state, kind)
+    _notify(hass, entry_id, state, kind)
 
 
 def resolve(hass: Any, entry_id: str, name: str, kind: FailureKind = LOCKLESS) -> None:
@@ -144,12 +143,10 @@ def resolve(hass: Any, entry_id: str, name: str, kind: FailureKind = LOCKLESS) -
     if state is None:
         return
     _LOGGER.info(
-        "%s recovered for %s after %d failed refresh %s (last failure: %s)",
+        "%s recovered after %d failed refresh %s",
         kind.activity,
-        name,
         state.count,
         "cycle" if state.count == 1 else "cycles",
-        state.signature,
     )
     dismiss(hass, entry_id, kind)
 
@@ -199,15 +196,13 @@ def diagnostics(entry_id: str, kind: FailureKind = LOCKLESS) -> dict[str, Any] |
     }
 
 
-def _notify(
-    hass: Any, entry_id: str, name: str, state: FailureState, kind: FailureKind
-) -> None:
+def _notify(hass: Any, entry_id: str, state: FailureState, kind: FailureKind) -> None:
     """Write the persistent notification for an ongoing failure run."""
     if not hasattr(hass, "bus"):
         return
     cycles = "refresh cycle" if state.count == 1 else "consecutive refresh cycles"
     message = kind.message.format(
-        name=name, count=state.count, cycles=cycles, signature=state.signature
+        count=state.count, cycles=cycles, signature=state.signature
     )
     async_create(
         hass,

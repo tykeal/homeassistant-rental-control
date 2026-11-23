@@ -192,8 +192,7 @@ def _record_matched_group(
     for extra_ms in duplicate_candidates:
         state.duplicate_slots.add(extra_ms.slot)
         _LOGGER.warning(
-            "Duplicate physical slot-name match for %s in slot %d; non-canonical duplicate will reset",
-            desired_group[0].slot_name,
+            "Duplicate physical slot-name match in slot %d; non-canonical duplicate will reset",
             extra_ms.slot,
         )
 
@@ -251,8 +250,7 @@ def assign_unmatched_reservations(state: DesiredPlanState) -> None:
         if res.slot_code is None:
             state.plan.overflow[res.identity_key] = "code_unavailable"
             _LOGGER.warning(
-                "Overflow: reservation %s has no available code for assignment",
-                res.identity_key,
+                "Overflow: reservation has no available code for assignment"
             )
             continue
         if free_slots:
@@ -261,10 +259,7 @@ def assign_unmatched_reservations(state: DesiredPlanState) -> None:
             state.matched_slots[slot] = res.identity_key
         else:
             state.plan.overflow[res.identity_key] = "no_empty_slot"
-            _LOGGER.warning(
-                "Overflow: reservation %s selected but no confirmed-empty managed slot is available",
-                res.identity_key,
-            )
+            _LOGGER.warning("Overflow: no confirmed-empty managed slot is available")
 
 
 def _classify_slot(

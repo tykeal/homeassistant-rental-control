@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import tzinfo
 import logging
@@ -22,6 +23,17 @@ from .models import ReservationBuildContext
 from .models import _format_display_slot_name
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _GhostBuildContext:
+    """Bundle shared inputs for each missing-reservation projection."""
+
+    current_keys: set[str]
+    prefix: str
+    observed_mapping_keys: set[str] | None
+    reservation_context: ReservationBuildContext
+    advance: bool
 
 
 def _coerce_persisted_datetime(value: Any) -> datetime | None:
@@ -52,10 +64,15 @@ def build_ghost_reservations(
 ) -> GhostReservationResult:
     """Build synthetic Reservations for assigned slots absent from the feed."""
     result = GhostReservationResult()
+    build_context = _GhostBuildContext(
+        current_keys,
+        prefix,
+        observed_mapping_keys,
+        ctx,
+        advance,
+    )
     for key, mapping in persisted.items():
-        ghost = _build_one_ghost(
-            key, mapping, current_keys, prefix, observed_mapping_keys, ctx, advance
-        )
+        ghost = _build_one_ghost(key, mapping, build_context)
         if ghost is not None:
             result.reservations.append(ghost)
     return result
@@ -64,14 +81,10 @@ def build_ghost_reservations(
 def _build_one_ghost(
     key: str,
     mapping: dict[str, Any],
-    current_keys: set[str],
-    prefix: str,
-    observed_mapping_keys: set[str] | None,
-    ctx: ReservationBuildContext,
-    advance: bool,
+    ctx: _GhostBuildContext,
 ) -> _Reservation | None:
     """Return a single ghost reservation, applying missing-count mutations."""
-    if key in current_keys:
+    if key in ctx.current_keys:
         return None
     status = mapping.get("status")
     pending_missing_clear = (
@@ -92,7 +105,7 @@ def _build_one_ghost(
     missing_count = mapping.get("missing_count", 0)
     if not isinstance(missing_count, int):
         missing_count = 0
-    new_mc = missing_count + int(advance)
+    new_mc = missing_count + int(ctx.advance)
     mapping["missing_count"] = new_mc
     if pending_missing_clear:
         return None
@@ -106,11 +119,18 @@ def _build_one_ghost(
         mapping["operation_id"] = None
         mapping["operation_kind"] = OPERATION_KIND_CLEAR
         _LOGGER.debug(
-            "Pending-set ghost %s missed %d cycles; marking pending-clear", key, new_mc
+            "Pending-set ghost missed %d cycles; marking pending-clear", new_mc
         )
         return None
 
-    return _ghost_from_mapping(key, mapping, prefix, observed_mapping_keys, new_mc, ctx)
+    return _ghost_from_mapping(
+        key,
+        mapping,
+        ctx.prefix,
+        ctx.observed_mapping_keys,
+        new_mc,
+        ctx.reservation_context,
+    )
 
 
 def _ghost_from_mapping(
@@ -131,12 +151,8 @@ def _ghost_from_mapping(
         actual_name, slot_name, prefix, observed_mapping_keys, key, ctx
     ):
         _LOGGER.debug(
-            "Ghost reservation %s: physical name %r differs from "
-            "persisted identity %r; preserving slot as unmatched with "
-            "missing_count=%d",
-            key,
-            actual_name,
-            slot_name,
+            "Ghost reservation physical name mismatch; preserving slot as "
+            "unmatched with missing_count=%d",
             new_mc,
         )
         return None
@@ -169,9 +185,9 @@ def _ghost_from_mapping(
             issued_origin=issued_origin(mapping),
         )
     except ValueError:
-        _LOGGER.debug("Ghost reservation %s: invalid Reservation fields; skipping", key)
+        _LOGGER.debug("Ghost reservation has invalid fields; skipping")
         return None
-    _LOGGER.debug("Ghost reservation %s created with missing_count=%d", key, new_mc)
+    _LOGGER.debug("Ghost reservation retained with missing_count=%d", new_mc)
     return ghost
 
 
@@ -199,9 +215,8 @@ def _ghost_stay(
     end_raw = last_actual.get("end_state")
     if not slot_name or start_raw is None or end_raw is None:
         _LOGGER.debug(
-            "Ghost reservation %s: missing slot_name or dates; slot remains "
+            "Ghost reservation is missing identity or date evidence; slot remains "
             "fenced with missing_count=%d",
-            key,
             new_mc,
         )
         return None
@@ -214,11 +229,8 @@ def _ghost_stay(
         end_dt = end_dt.replace(tzinfo=timezone)
     if start_dt is None or end_dt is None or start_dt >= end_dt:
         _LOGGER.debug(
-            "Ghost reservation %s: invalid dates (start=%s end=%s); "
-            "slot remains fenced with missing_count=%d",
-            key,
-            start_raw,
-            end_raw,
+            "Ghost reservation has invalid date evidence; slot remains fenced "
+            "with missing_count=%d",
             new_mc,
         )
         return None

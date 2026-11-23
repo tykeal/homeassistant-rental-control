@@ -47,6 +47,40 @@
       }
     }
   },
+  "issues": {
+    "keymaster_association_invalid": {
+      "title": "L'association Keymaster enregistrée est invalide",
+      "description": "Les détails d'association ou le sélecteur de serrure enregistrés de cette entrée sont incomplets ou non valides. Le calendrier reste disponible, mais la publication des codes et les opérations Keymaster sont bloquées. Conservez la configuration actuelle, le registre, le marqueur de protection et les preuves mises en quarantaine sans modifier ni restaurer de fichiers, et contactez le responsable de l'intégration pour enquêter. Vérifiez si une sauvegarde complète, récente et cohérente peut être contrôlée indépendamment par rapport à un historique faisant autorité ; une sauvegarde concordante ne suffit pas à prouver son exhaustivité ou son actualité. Cette version ne dispose d'aucun vérificateur de sauvegarde historique ni de restauration externe ou de dérogation prise en charge lorsque l'historique ne peut pas être vérifié. Une réinstallation seule ne peut pas établir l'historique manquant."
+    },
+    "keymaster_association_repair": {
+      "title": "Réparer l'association Keymaster",
+      "description": "L'ancienne sélection Keymaster de cette entrée n'est pas résolue ; Rental Control n'associe pas automatiquement les entrées par nom ou identifiant d'entité. Si le registre partagé n'est pas prêt, attendez son chargement ou suivez d'abord les indications d'une éventuelle réparation distincte du registre partagé. Ouvrez ensuite les options de cette entrée et sélectionnez la configuration Keymaster prévue. Tant que l'association n'est pas vérifiée, Rental Control bloque la programmation et l'effacement des codes de porte. La vérification de la sélection ne peut pas contourner le blocage de l'historique du registre. Si les allocations historiques protégées ne contiennent aucune preuve indépendante de leur entrée Keymaster d'origine, le formulaire demandera aussi de confirmer explicitement que l'entrée sélectionnée contrôle le même verrou physique d'origine. Cette déclaration ne permet pas de transférer le travail connu d'une autre entrée Keymaster."
+    },
+    "keymaster_selector_repair": {
+      "title": "Restaurer le sélecteur de serrure Keymaster",
+      "description": "Cette entrée possède une association Keymaster vérifiée, mais aucun sélecteur de serrure historique. L’affichage du calendrier reste disponible, mais la surveillance Keymaster et les opérations sur la serrure sont désactivées jusqu’à la restauration du sélecteur dans les options. Choisissez le sélecteur correspondant à la configuration Keymaster vérifiée ; l’association vérifiée reste la référence pour la cible physique Keymaster."
+    },
+    "keymaster_selected_entry_removed": {
+      "title": "La serrure Keymaster sélectionnée a été supprimée",
+      "description": "L'association Keymaster vérifiée de cette entrée sélectionne une configuration Keymaster qui n'existe plus dans Home Assistant. L’affichage du calendrier reste disponible, mais les codes d'accès des invités ne sont plus publiés jusqu'à ce que cette configuration Keymaster soit restaurée ou qu'une autre serrure (ou le fonctionnement sans serrure) soit sélectionnée dans les options de cette intégration. Une configuration Keymaster simplement déchargée ou en cours de nouvelle tentative de configuration ne déclenche pas ce problème."
+    },
+    "keymaster_version_outside_support": {
+      "title": "La version de Keymaster est hors du support testé",
+      "description": "La version de Keymaster déjà chargée ({version}) est inférieure au niveau de support testé de Rental Control ({support_floor}). Il s’agit uniquement d’un diagnostic de support : la version seule ne bloque ni n’autorise les opérations sur les serrures. Vérifiez l’entrée Keymaster sélectionnée et les capacités actuelles de ses créneaux ; mettez Keymaster à jour si possible."
+    },
+    "keymaster_version_unknown": {
+      "title": "La version de Keymaster n’a pas pu être classée",
+      "description": "Rental Control n’a pas pu classer de manière fiable la version de Keymaster déjà chargée. Vérifiez les métadonnées de l’intégration installée et l’entrée sélectionnée. La version seule ne bloque ni n’autorise les opérations sur les serrures ; chaque opération exige toujours la vérification actuelle de l’identité, des capacités, de l’état et de la protection. Le support testé des versions stables commence à {support_floor}."
+    },
+    "protected_registry_unknown": {
+      "title": "L’historique du registre partagé des codes est invérifiable",
+      "description": "Aucune sauvegarde indépendante, suffisamment complète et accompagnée d’un marqueur de protection vérifié n’a été établie ; une sauvegarde v1 sans marqueur ne prouve pas l’exhaustivité. Préservez le registre actuel, le marqueur de protection et toute preuve de mise en quarantaine sans modifier ni restaurer les fichiers. Cette version ne propose aucune restauration externe ni dérogation prise en charge. L’émission, la réutilisation et la libération peuvent rester bloquées indéfiniment, y compris sur les installations n’ayant jamais activé v2. Cet état ne permet pas de conclure qu’un code non vérifié est présent, absent, visible ou réutilisable."
+    },
+    "protected_registry_scan_incomplete": {
+      "title": "L’analyse des preuves du registre protégé est incomplète",
+      "description": "L’analyse limitée des preuves est incomplète ou a dépassé sa limite ; elle ne permet pas d’établir l’absence de preuves de mise en quarantaine. Préservez le registre actuel, le marqueur de protection et toute preuve de mise en quarantaine. Lorsque Home Assistant est arrêté, corrigez le problème d’analyse sans modifier ni restaurer les fichiers, puis rechargez Rental Control. Cette version ne propose aucune restauration externe ni dérogation prise en charge. L’émission, la réutilisation et la libération restent bloquées tant que l’historique ne peut pas être vérifié."
+    }
+  },
   "options": {
     "error": {
       "bad_code_length": "La longueur du code de verrouillage doit être paire et >= 4",
@@ -61,7 +95,16 @@
       "unknown": "Erreur inattendue, vérifiez les journaux pour plus de détails",
       "bad_max_name_length": "La longueur maximale du nom doit être de 4 ou plus",
       "prefix_too_long_for_trim": "Le préfixe d'événement est trop long pour la longueur maximale du nom",
-      "active_allocations": "La longueur du code ne peut pas être modifiée tant que cette entrée a des allocations de code actives ou que le registre de codes partagé récupère"
+      "active_allocations": "La longueur du code ne peut pas être modifiée tant que cette entrée a des allocations de code actives ou que le registre de codes partagé récupère",
+      "association_unavailable": "L'historique protégé des associations n'est pas prêt ; aucune sélection n'a été enregistrée",
+      "association_invalid_history": "Les détails d'association ou le sélecteur de serrure enregistrés sont incomplets ou non valides ; aucune association ni sélection de serrure n'a été modifiée. Consultez la réparation de l'association Keymaster enregistrée pour préserver les preuves. Cette version ne peut pas reconstruire automatiquement l'association en toute sécurité.",
+      "association_repair_required": "L'historique d'association enregistré ne peut pas être vérifié. Aucune sélection de serrure historique n'a été enregistrée ; rechargez après le rétablissement du registre protégé.",
+      "association_replay_required": "Une transaction d'association protégée attend sa projection de configuration. Rouvrez les options pour la rejouer en toute sécurité.",
+      "association_conflict": "Cette modification pourrait transférer ou masquer du travail existant ; elle n'a pas été enregistrée",
+      "attestation_required": "Confirmez explicitement qu'il s'agit du même verrou physique d'origine pour associer les allocations historiques",
+      "attestation_unused": "Cette attestation ne s'applique qu'à l'association d'allocations historiques non résolues",
+      "invalid_association": "La sélection d'association est invalide",
+      "invalid_candidate": "Sélectionnez une configuration Keymaster existante et activée"
     },
     "step": {
       "init": {
@@ -89,14 +132,26 @@
           "max_name_length": "Longueur maximale du nom de créneau",
           "enable_keymaster_event_diagnostics": "Activer les diagnostics d'événements Keymaster (enregistre les 10 derniers événements keymaster_lock_state_changed sur le capteur d'arrivée)",
           "code_buffer_before": "Tampon d'activation du code de verrouillage (minutes avant l'arrivée)",
-          "code_buffer_after": "Tampon de désactivation du code de verrouillage (minutes après le départ)"
+          "code_buffer_after": "Tampon de désactivation du code de verrouillage (minutes après le départ)",
+          "association_keymaster_entry_choice": "Configuration Keymaster vérifiée",
+          "association_attest_same_original_lock": "J'atteste qu'il s'agit du même verrou physique d'origine"
         },
         "data_description": {
           "bookings_only_feed": "À activer uniquement si ce calendrier ne publie jamais de dates bloquées ou indisponibles. Booking.com n'identifie plus les clients dans son flux, ce qui rend cette option nécessaire pour les calendriers Booking.com n'exportant que les dates réservées. L'activer sur un calendrier publiant des dates bloquées créera des codes de porte pour ces blocages.",
           "cleaning_window": "Heures de maintien du statut de départ avant le retour à aucune réservation (0,5–48)",
           "code_buffer_before": "Minutes avant l'heure d'arrivée pour activer le code de verrouillage (0 = pas de tampon)",
-          "code_buffer_after": "Minutes après l'heure de départ pour désactiver le code de verrouillage (0 = pas de tampon)"
+          "code_buffer_after": "Minutes après l'heure de départ pour désactiver le code de verrouillage (0 = pas de tampon)",
+          "association_keymaster_entry_choice": "Choisissez une entrée Keymaster par son identifiant de configuration. Les entrées désactivées restent listées par identifiant mais sont rejetées lors de l'enregistrement. Le mode sans verrou conserve le calendrier uniquement.",
+          "association_attest_same_original_lock": "Cette déclaration historique de l'opérateur ne sert qu'à associer des allocations historiques non résolues à une entrée Keymaster recréée. Elle ne confirme pas un effacement, ne libère pas un code et ne transfère pas le travail d'une entrée connue."
         }
+      }
+    }
+  },
+  "selector": {
+    "association_keymaster_entry_choice": {
+      "options": {
+        "no_change": "Aucun changement / laisser non résolu",
+        "explicit_lockless": "Explicitement sans serrure (calendrier uniquement)"
       }
     }
   },

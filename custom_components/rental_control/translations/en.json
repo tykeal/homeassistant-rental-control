@@ -49,6 +49,40 @@
       }
     }
   },
+  "issues": {
+    "keymaster_association_invalid": {
+      "title": "Saved Keymaster association is invalid",
+      "description": "This entry's saved association details or lock selector are incomplete or invalid. Calendar display remains available, but code publication and Keymaster operations are blocked. Preserve the current configuration, registry, protection marker, and quarantine evidence without editing or restoring files, and contact the integration maintainer for investigation. Investigate whether a complete, current, consistent backup can be independently verified against authoritative history; a matching backup alone does not prove completeness or recency. This release has no historical-backup verifier or supported external restore or override when history cannot be verified. Reinstalling alone cannot establish missing history."
+    },
+    "keymaster_association_repair": {
+      "title": "Repair the Keymaster association",
+      "description": "This entry's legacy Keymaster selection is unresolved; Rental Control does not automatically associate entries by name or entity ID. If the shared registry is not ready, wait for it to load or follow any separate shared registry Repair guidance first. Then open this entry's Options and select the intended Keymaster configuration. Until the association is verified, Rental Control withholds setting and clearing door codes. Verifying the selection cannot override blocked registry history. If protected legacy allocations have no independent record identifying their original Keymaster entry, the options form will also require an explicit assertion that the selected entry controls the same original physical lock. Known work from another Keymaster entry cannot be transferred by this assertion."
+    },
+    "keymaster_selector_repair": {
+      "title": "Restore the Keymaster lock selector",
+      "description": "This entry has a verified Keymaster association but no legacy lock selector. Calendar display remains available, but Keymaster monitoring and lock operations are disabled until the selector is restored in Options. Set it to the selector corresponding to the verified Keymaster configuration; the verified association remains the authority for the physical Keymaster target."
+    },
+    "keymaster_selected_entry_removed": {
+      "title": "Selected Keymaster lock was removed",
+      "description": "This entry's verified Keymaster association selects a Keymaster configuration that no longer exists in Home Assistant. Calendar display remains available, but guest door codes are withheld until that Keymaster configuration is restored or another lock (or lockless operation) is selected in this integration's Options. A Keymaster configuration that is only unloaded or retrying setup does not raise this issue."
+    },
+    "keymaster_version_outside_support": {
+      "title": "Keymaster version is outside tested support",
+      "description": "The loaded Keymaster version {version} is below Rental Control's tested support floor {support_floor}. This is a support diagnosis only: version status alone does not block or authorize lock operations. Verify the selected Keymaster entry and its current slot capabilities; update Keymaster where practical."
+    },
+    "keymaster_version_unknown": {
+      "title": "Keymaster version could not be classified",
+      "description": "Rental Control could not reliably classify the already-loaded Keymaster version. Verify the installed integration metadata and selected entry. Version status alone does not block or authorize lock operations; each operation still requires current identity, capability, state, and protection checks. Tested stable support begins at {support_floor}."
+    },
+    "protected_registry_unknown": {
+      "title": "Shared door-code registry history is unverified",
+      "description": "No independently verified, sufficiently complete marker-bearing backup has been established; a markerless v1 backup alone cannot prove completeness. Preserve the current registry, protection marker, and quarantine evidence without editing or restoring files. This release has no supported external restore or override. Issuance, reuse, and release may remain blocked indefinitely, including on installations that never activated v2. This does not establish whether an unverified code is present, absent, visible, or reusable."
+    },
+    "protected_registry_scan_incomplete": {
+      "title": "Protected registry evidence scan is incomplete",
+      "description": "The bounded evidence scan was incomplete or exceeded its limit; the incomplete scan cannot establish that quarantine evidence is absent. Preserve the current registry, protection marker, and quarantine evidence. With Home Assistant stopped, resolve the storage scan problem without editing or restoring files, then reload Rental Control. This release has no supported external restore or override. Issuance, reuse, and release remain blocked until history can be verified."
+    }
+  },
   "options": {
     "error": {
       "bad_code_length": "Lock code length must be even and >= 4",
@@ -63,7 +97,16 @@
       "same_name": "Name already in use",
       "unknown": "Unexpected error, check logs for more details",
       "prefix_too_long_for_trim": "Event prefix too long for max name length",
-      "active_allocations": "Code length cannot be changed while this entry has active allocations or the shared code registry is recovering"
+      "active_allocations": "Code length cannot be changed while this entry has active allocations or the shared code registry is recovering",
+      "association_unavailable": "The protected association history is not ready; no selection was saved",
+      "association_invalid_history": "Saved association details or lock selector are incomplete or invalid; no association or lock selection was changed. See the saved Keymaster association Repair for guidance on preserving evidence. This release cannot safely reconstruct the association automatically.",
+      "association_repair_required": "The committed association history cannot be verified. No legacy lock selection was saved; reload after the protected registry is available.",
+      "association_replay_required": "A protected association transaction is awaiting configuration projection. Reopen options to replay it safely.",
+      "association_conflict": "This association change could transfer or obscure existing work and was not saved",
+      "attestation_required": "Confirm explicitly that this is the same original physical lock to associate legacy work",
+      "attestation_unused": "The same-lock assertion applies only when associating unresolved legacy work",
+      "invalid_association": "The association selection is invalid",
+      "invalid_candidate": "Select an existing, enabled Keymaster configuration"
     },
     "step": {
       "init": {
@@ -92,15 +135,27 @@
           "timezone": "Calendar Timezone",
           "url": "Calendar URL",
           "verify_ssl": "Verify SSL certificates",
-          "enable_keymaster_event_diagnostics": "Enable keymaster event diagnostics (records last 10 keymaster_lock_state_changed events on the check-in sensor)"
+          "enable_keymaster_event_diagnostics": "Enable keymaster event diagnostics (records last 10 keymaster_lock_state_changed events on the check-in sensor)",
+          "association_keymaster_entry_choice": "Verified Keymaster configuration",
+          "association_attest_same_original_lock": "I attest this is the same original physical lock"
         },
         "data_description": {
           "bookings_only_feed": "Enable only if this calendar never publishes blocked or unavailable dates. Booking.com no longer identifies guests in its feed, so this is required for Booking.com calendars that export booked dates only. Enabling this on a calendar that does publish blocked dates will issue door codes for those blocks.",
           "cleaning_window": "Hours to keep checkout status before returning to no reservation (0.5–48)",
           "code_buffer_before": "Minutes before check-in time to activate the lock code (0 = no buffer)",
           "code_buffer_after": "Minutes after checkout time to deactivate the lock code (0 = no buffer)",
-          "date_only": "Displays each reservation as a single all-day block. Guest arrival and departure times are hidden from the calendar."
+          "date_only": "Displays each reservation as a single all-day block. Guest arrival and departure times are hidden from the calendar.",
+          "association_keymaster_entry_choice": "Choose a Keymaster entry by configuration ID. Disabled entries remain listed by ID but are rejected when saving. Explicitly lockless keeps calendar-only behavior.",
+          "association_attest_same_original_lock": "This is a historical operator assertion used only for unresolved legacy allocations on a recreated Keymaster entry. It does not confirm a clear, release a code, or transfer work from a known entry."
         }
+      }
+    }
+  },
+  "selector": {
+    "association_keymaster_entry_choice": {
+      "options": {
+        "no_change": "No change / leave unresolved",
+        "explicit_lockless": "Explicitly lockless (calendar only)"
       }
     }
   },

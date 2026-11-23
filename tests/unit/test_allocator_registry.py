@@ -13,7 +13,15 @@ import pytest
 
 from custom_components.rental_control.allocator import allocator as allocator_module
 from custom_components.rental_control.allocator import services as services_module
+from custom_components.rental_control.allocator.adoption import (
+    adopt_associated_alias_unlocked,
+)
+from custom_components.rental_control.allocator.adoption import (
+    associated_alias_candidates,
+)
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
+from custom_components.rental_control.allocator.associations import AssociationMode
+from custom_components.rental_control.allocator.associations import AssociationTuple
 from custom_components.rental_control.allocator.models import AdoptionRequest
 from custom_components.rental_control.allocator.models import AllocationOrigin
 from custom_components.rental_control.allocator.models import AllocationOwner
@@ -22,10 +30,26 @@ from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import CycleRequest
 from custom_components.rental_control.allocator.registry import AllocationRegistry
+from custom_components.rental_control.allocator.registry import (
+    associated_conflict_slots,
+)
+from custom_components.rental_control.allocator.store import code_ref_for
 
 from tests.fixtures.fake_hass import fake_config
 
 _NOW = "2026-09-16T12:00:00+00:00"
+
+
+def _verified_association(entry_id: str) -> AssociationTuple:
+    """Build a committed association for physical-slot grouping tests."""
+    return AssociationTuple(
+        True,
+        "lockname",
+        entry_id,
+        1,
+        "a" * 32,
+        AssociationMode.VERIFIED,
+    )
 
 
 def _request(identity: str, preferred: str = "1234") -> AllocationRequest:
@@ -98,6 +122,199 @@ def test_conflict_recording_makes_code_unavailable() -> None:
 
     assert len(registry.conflicts()) == 1
     assert not registry.is_available("1234", 4, "identity-c")
+
+
+def test_verified_association_groups_only_same_entry_and_slot() -> None:
+    """Shared verified identity joins owners; colliding IDs do not."""
+    record = AllocationRecord(
+        code="1234",
+        code_ref="ref",
+        encoding_salt_value="entry-a",
+        owners=[
+            AllocationOwner(
+                entry_id="rc-a",
+                identity_key="owner-a",
+                origin=AllocationOrigin.ADOPTED,
+                lockname="old_front",
+                slot=10,
+                first_seen=_NOW,
+                last_seen=_NOW,
+            ),
+            AllocationOwner(
+                entry_id="rc-b",
+                identity_key="owner-b",
+                origin=AllocationOrigin.ADOPTED,
+                lockname="renamed_front",
+                slot=10,
+                first_seen=_NOW,
+                last_seen=_NOW,
+            ),
+        ],
+    )
+
+    shared = {
+        "rc-a": _verified_association("km-shared"),
+        "rc-b": _verified_association("km-shared"),
+    }
+    colliding = {
+        "rc-a": _verified_association("km-a"),
+        "rc-b": _verified_association("km-b"),
+    }
+    unresolved = {
+        "rc-a": AssociationTuple(
+            True, "old_front", None, 0, None, AssociationMode.LEGACY_UNRESOLVED
+        ),
+        "rc-b": AssociationTuple(
+            True, "renamed_front", None, 0, None, AssociationMode.LEGACY_UNRESOLVED
+        ),
+    }
+
+    assert len(associated_conflict_slots(record, shared)) == 1
+    assert len(associated_conflict_slots(record, colliding)) == 2
+    assert len(associated_conflict_slots(record, unresolved)) == 2
+
+
+def test_alias_migration_plan_only_matches_same_verified_physical_slot() -> None:
+    """Alias candidates are scoped by exact verified entry and slot."""
+    registry = AllocationRegistry(
+        records={
+            "1234": AllocationRecord(
+                code="1234",
+                code_ref="ref",
+                encoding_salt_value="rc-a",
+                owners=[
+                    AllocationOwner(
+                        entry_id="rc-a",
+                        identity_key="owner:observed:rc-a:old_front:10",
+                        origin=AllocationOrigin.ADOPTED,
+                        lockname="old_front",
+                        slot=10,
+                        lock_observed=True,
+                        first_seen=_NOW,
+                        last_seen=_NOW,
+                    )
+                ],
+            )
+        }
+    )
+    allocator = cast(DoorCodeAllocator, SimpleNamespace(_registry=registry))
+    request = AdoptionRequest(
+        entry_id="rc-b",
+        identity_key="owner-b",
+        code="1234",
+        code_length=4,
+        lockname="renamed_front",
+        slot=10,
+    )
+    shared = {
+        "rc-a": _verified_association("km-shared"),
+        "rc-b": _verified_association("km-shared"),
+    }
+
+    assert associated_alias_candidates(allocator, request, shared) == (
+        "owner:observed:rc-a:old_front:10",
+    )
+    assert (
+        associated_alias_candidates(
+            allocator,
+            request,
+            {
+                "rc-a": _verified_association("km-a"),
+                "rc-b": _verified_association("km-b"),
+            },
+        )
+        == ()
+    )
+
+
+def test_alias_migration_uses_actual_adoption_path_only_for_same_entry() -> None:
+    """Same-entry alias becomes a real owner; cross-entry alias remains held."""
+    alias_key = "owner:observed:rc-a:old_front:10"
+    registry = AllocationRegistry(
+        records={
+            "1234": AllocationRecord(
+                code="1234",
+                code_ref="ref",
+                encoding_salt_value="rc-a",
+                owners=[
+                    AllocationOwner(
+                        entry_id="rc-a",
+                        identity_key=alias_key,
+                        origin=AllocationOrigin.ADOPTED,
+                        lockname="old_front",
+                        slot=10,
+                        lock_observed=True,
+                        first_seen=_NOW,
+                        last_seen=_NOW,
+                    )
+                ],
+            )
+        },
+        code_ref_salt="persisted-salt",
+    )
+    allocator = cast(
+        DoorCodeAllocator,
+        SimpleNamespace(
+            _registry=registry,
+            code_ref=lambda code: code_ref_for(code, registry.code_ref_salt),
+        ),
+    )
+    request = AdoptionRequest(
+        entry_id="rc-b",
+        identity_key="owner-b",
+        code="1234",
+        code_length=4,
+        lockname="renamed_front",
+        slot=10,
+    )
+    same_lock = {
+        "rc-a": _verified_association("km-shared"),
+        "rc-b": _verified_association("km-shared"),
+    }
+
+    adopted = adopt_associated_alias_unlocked(allocator, request, same_lock)
+
+    assert adopted.code == "1234"
+    assert alias_key not in registry.by_identity
+    owner = registry.record_for_identity("owner-b")
+    assert owner is not None
+    assert any(item.entry_id == "rc-b" and item.slot == 10 for item in owner.owners)
+
+
+def test_observed_alias_release_revalidates_the_complete_slot_group() -> None:
+    """Alias candidates are removed all-or-nothing after observation checks."""
+    aliases = (
+        "owner:observed:rc-a:front:10",
+        "owner:observed:rc-b:front:10",
+    )
+    registry = AllocationRegistry(
+        records={
+            "1234": AllocationRecord(
+                code="1234",
+                code_ref="ref",
+                encoding_salt_value="rc-a",
+                owners=[
+                    AllocationOwner(
+                        entry_id=identity.split(":")[2],
+                        identity_key=identity,
+                        origin=AllocationOrigin.ADOPTED,
+                        lockname="front",
+                        slot=10,
+                        lock_observed=True,
+                        first_seen=_NOW,
+                        last_seen=_NOW,
+                    )
+                    for identity in aliases
+                ],
+            )
+        }
+    )
+
+    assert not registry.release_observed_aliases((*aliases, "missing"), "1234", 10)
+    assert not registry.release_observed_aliases(aliases, "1234", 11)
+    assert all(registry.code_for_identity(alias) == "1234" for alias in aliases)
+    assert registry.release_observed_aliases(aliases, "1234", 10)
+    assert all(registry.code_for_identity(alias) is None for alias in aliases)
 
 
 def test_code_length_filtering_blocks_other_lengths() -> None:

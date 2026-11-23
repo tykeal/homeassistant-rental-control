@@ -166,6 +166,23 @@ def test_known_free_slot_does_not_retain_matching_exemption() -> None:
     assert reason is None
 
 
+def test_redundant_same_slot_owner_can_retire_without_releasing_code() -> None:
+    """A shadowed booking retires while its same-slot owner retains the code."""
+    allocator = _allocator()
+    record = _record(owner_keys=("identity-old", "identity-current"))
+    record.owners[1].slot = record.owners[0].slot
+
+    reason = allocator._release_guard_reason(record, [record.owners[0]], [])
+
+    assert reason is None
+    allocator._registry.records[_CODE] = record
+    allocator._registry.rebuild_index()
+    allocator._registry.release("identity-old")
+    assert allocator._registry.code_for_identity("identity-old") is None
+    assert allocator._registry.code_for_identity("identity-current") == _CODE
+    assert not allocator._registry.is_available(_CODE, 4, "identity-next")
+
+
 async def test_only_named_hold_owner_is_releasable_from_conflict() -> None:
     """A forced exemption releases only the targeted hold owner."""
     allocator = _allocator()
@@ -323,8 +340,8 @@ async def test_two_owner_record_still_retained_by_ordinary_paths() -> None:
     ]
 
 
-def test_only_forced_hold_release_constructs_exemption() -> None:
-    """Only forced hold release activates the production exemption path."""
+def test_only_forced_release_paths_construct_exemption() -> None:
+    """Only explicit forced-release paths can construct the exemption."""
     production = Path("custom_components/rental_control")
     sources = {
         path: path.read_text(encoding="utf-8")
@@ -342,12 +359,15 @@ def test_only_forced_hold_release_constructs_exemption() -> None:
         and path != Path("custom_components/rental_control/allocator/allocator.py")
     ]
 
-    assert constructor_sites == [
-        Path("custom_components/rental_control/allocator/reissue_holds.py")
-    ]
-    assert call_sites == [
-        Path("custom_components/rental_control/allocator/reissue_holds.py")
-    ]
+    assert set(constructor_sites) == {
+        Path("custom_components/rental_control/allocator/reissue_holds.py"),
+        Path("custom_components/rental_control/allocator/registry_mutation.py"),
+    }
+    assert set(call_sites) == {
+        Path("custom_components/rental_control/allocator/reissue_holds.py"),
+        Path("custom_components/rental_control/allocator/registry_mutation.py"),
+        Path("custom_components/rental_control/allocator/allocator_lifecycle.py"),
+    }
 
 
 def _allocator() -> DoorCodeAllocator:

@@ -62,6 +62,9 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     if version == 9:
         version = _migrate_v9_to_v10(hass, config_entry, version)
 
+    if version == 10:
+        version = _migrate_v10_to_v11(hass, config_entry, version)
+
     return True
 
 
@@ -220,5 +223,23 @@ def _migrate_v9_to_v10(
     )
 
     version = 10
+    _LOGGER.debug("Migration to version %s complete", config_entry.version)
+    return version
+
+
+def _migrate_v10_to_v11(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    version: int,
+) -> int:
+    """Keep legacy association data unresolved instead of inferring identity."""
+    _LOGGER.debug("Migrating from version %s", version)
+    hass.config_entries.async_update_entry(
+        entry=config_entry,
+        unique_id=config_entry.unique_id,
+        data=config_entry.data,
+        version=11,
+    )
+    version = 11
     _LOGGER.debug("Migration to version %s complete", config_entry.version)
     return version

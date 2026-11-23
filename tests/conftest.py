@@ -168,6 +168,30 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 
 @pytest.fixture(autouse=True)
+def _prepare_protected_registry_storage(hass: HomeAssistant) -> Iterator[None]:
+    """Provide an isolated, existing HA storage directory to integration tests."""
+    storage_dir = Path(hass.config.path(".storage"))
+    if not storage_dir.exists():
+        storage_dir.mkdir(parents=True)
+    if storage_dir.is_symlink() or not storage_dir.is_dir():
+        yield
+        return
+
+    tracked_names = {
+        "rental_control.code_registry",
+        "rental_control.code_registry_protection",
+        "rental_control.code_registry.io_lock",
+    }
+    preexisting = {name for name in tracked_names if (storage_dir / name).exists()}
+    try:
+        yield
+    finally:
+        if not storage_dir.is_symlink() and storage_dir.is_dir():
+            for name in tracked_names - preexisting:
+                (storage_dir / name).unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True)
 def _cancel_checkin_timers(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -368,6 +392,7 @@ def mock_checkin_coordinator(
     coordinator.data = []
     coordinator.last_update_success = True
     coordinator.lockname = None
+    coordinator.keymaster_runtime_enabled = True
     coordinator.monitored_locknames = frozenset()
     coordinator.start_slot = 10
     coordinator.max_events = 3

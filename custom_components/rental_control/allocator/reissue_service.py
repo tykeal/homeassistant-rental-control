@@ -20,6 +20,7 @@ import probatio
 from ..const import COORDINATOR
 from ..const import DOMAIN
 from ..coordinator_helpers import reissue as coordinator_reissue
+from ..keymaster_runtime import coordinator_code_publication_allowed
 from ..reconciliation import SlotStatus
 from .models import ReissueOutcome
 from .models import ReissuePreview
@@ -38,6 +39,7 @@ _PREVIEW_REFUSALS = {
     "unaccounted_slots",
     "recovery_fail_closed",
     "no_existing_allocation",
+    "protective_unknown",
 }
 _REAL_REFUSALS = {*_PREVIEW_REFUSALS, "no_existing_allocation"}
 
@@ -124,6 +126,8 @@ async def _handle_force_reissue_call(
     coordinator = _coordinator_for_target(hass, target)
     if coordinator is None:
         return _refusal("not_a_reservation_sensor", request.dry_run)
+    if not coordinator_code_publication_allowed(coordinator):
+        return _refusal("protective_unknown", request.dry_run)
     allocator = await async_get_or_create_allocator(hass)
     from . import reissue_preview
 
@@ -131,16 +135,22 @@ async def _handle_force_reissue_call(
         _preview_request, preview = await reissue_preview.preview_request_and_result(
             allocator, coordinator, target
         )
+        if not coordinator_code_publication_allowed(coordinator):
+            return _refusal("protective_unknown", request.dry_run)
         if preview.reason in _PREVIEW_REFUSALS:
             return _refusal(preview.reason, request.dry_run)
         return _preview_response(target, request.force, preview)
     async with coordinator_reissue.reissue_lock(coordinator):
+        if not coordinator_code_publication_allowed(coordinator):
+            return _refusal("protective_unknown", request.dry_run)
         repeat = _repeat_outcome(coordinator, allocator, target)
         if repeat is not None:
             return _accepted_response(target, request.force, repeat)
         _preview_request, preview = await reissue_preview.preview_request_and_result(
             allocator, coordinator, target
         )
+        if not coordinator_code_publication_allowed(coordinator):
+            return _refusal("protective_unknown", request.dry_run)
         if preview.reason in _REAL_REFUSALS:
             return _refusal(preview.reason, request.dry_run)
         if target.identity_key is not None and not _target_has_existing_owner(

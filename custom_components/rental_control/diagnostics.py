@@ -22,6 +22,12 @@ exclusion notes), operation error messages that can echo a submitted PIN
 back from a failed service call, and the calendar URL are redacted because
 Home Assistant diagnostics are routinely pasted into public issue
 trackers.
+
+The ``keymaster_status`` projection keeps association, live capability,
+loaded-version and protected-store outcomes separate. It exports only fixed
+status/action codes and aggregate capability counts, never selected entry IDs,
+entity IDs, or entity values. Version status is informational and does not
+authorize or block a hardware operation.
 """
 
 from __future__ import annotations
@@ -67,6 +73,7 @@ from .const import DOMAIN
 from .const import VERSION
 from .coordinator_helpers import allocation_failure
 from .coordinator_helpers import generator_divergence
+from .coordinator_helpers.diagnostics import keymaster_status_diagnostics
 
 #: Keys whose values are secret (door codes), free-form text that can echo
 #: a submitted PIN or guest name back from a failed service call, or
@@ -89,6 +96,9 @@ TO_REDACT: frozenset[str] = frozenset(
         "end_state",
         "last_error",
         "last_slot_errors",
+        "lockname",
+        "lock_name",
+        "name",
         "name_state",
         "pin",
         "preferred_code",
@@ -137,12 +147,13 @@ async def async_get_config_entry_diagnostics(
         ],
         "allocator": allocator.diagnostics if allocator is not None else None,
         "reconciliation": (
-            coordinator.latest_reconciliation_diagnostics
+            getattr(coordinator, "latest_reconciliation_diagnostics", None)
             if coordinator is not None
             else None
         ),
         "slots": _slot_diagnostics(coordinator, set(exclusions)),
         "reservations": _reservation_diagnostics(coordinator),
+        "keymaster_status": keymaster_status_diagnostics(hass, entry),
         "allocation_failure": allocation_failure.diagnostics(entry.entry_id),
         "reconciliation_failure": allocation_failure.diagnostics(
             entry.entry_id, allocation_failure.RECONCILIATION

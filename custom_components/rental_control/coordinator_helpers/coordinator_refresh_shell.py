@@ -10,11 +10,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from datetime import timedelta
-import importlib
 import logging
-from typing import Any
-from typing import cast
-import uuid
 
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.core import HomeAssistant
@@ -25,25 +21,15 @@ from icalendar import Calendar
 import x_wr_timezone
 
 from ..const import REQUEST_TIMEOUT
-from ..reconciliation import Reservation as _Reservation
-from ..reconciliation.desired import select_eligible_reservations
-from ..util import OperationResult
-from . import allocation_failure
+from ..keymaster_runtime import coordinator_keymaster_runtime_enabled
+from ..keymaster_runtime import lockless_allocation_allowed
 from . import calendar_parsing
-from . import code_allocation
-from . import lockless_store
-from . import physical_remap
-from . import reissue
+from .coordinator_allocation_shell import CoordinatorAllocationMixin
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _coordinator_module() -> Any:
-    """Return the public coordinator module for patched compatibility."""
-    return importlib.import_module("custom_components.rental_control.coordinator")
-
-
-class CoordinatorRefreshMixin:
+class CoordinatorRefreshMixin(CoordinatorAllocationMixin):
     """Provide extracted coordinator shell behavior."""
 
     async def _async_get_events_impl(
@@ -55,18 +41,7 @@ class CoordinatorRefreshMixin:
         cal_data: list[CalendarEvent] | None = self.data
         if cal_data and len(cal_data) > 0:
             for event in cal_data:
-                _LOGGER.debug(
-                    "Checking if event %s has start %s and end %s "
-                    "within in the limit: %s and %s",
-                    event.summary,
-                    event.start,
-                    event.end,
-                    start_date,
-                    end_date,
-                )
-
                 if event.start < end_date and event.end > start_date:
-                    _LOGGER.debug("... and it has")
                     events.append(event)
         return events
 
@@ -79,20 +54,17 @@ class CoordinatorRefreshMixin:
                 try:
                     if response.status != 200:
                         raise UpdateFailed(
-                            f"Calendar fetch failed for {self._name}: "
-                            f"HTTP {response.status} - {response.reason}"
+                            f"Calendar fetch failed (HTTP {response.status})"
                         )
                     text = await response.text()
                 finally:
                     response.release()
-        except TimeoutError as err:
-            raise UpdateFailed(f"Calendar fetch timed out for {self._name}") from err
+        except TimeoutError:
+            raise UpdateFailed("Calendar fetch timed out") from None
         except UpdateFailed:
             raise
-        except Exception as err:
-            raise UpdateFailed(
-                f"Calendar fetch failed for {self._name}: {err}"
-            ) from err
+        except Exception:
+            raise UpdateFailed("Calendar fetch failed") from None
 
         try:
             # Some calendars are filled with NULL-bytes that break
@@ -113,29 +85,21 @@ class CoordinatorRefreshMixin:
             end_of_events = dt.start_of_local_day() + timedelta(days=self.days)
 
             return await self._ical_parser(event_list, start_of_events, end_of_events)
-        except Exception as err:
-            raise UpdateFailed(
-                f"Failed to parse calendar for {self._name}: {err}"
-            ) from err
+        except Exception:
+            raise UpdateFailed("Calendar parse failed") from None
 
     async def _async_update_data(self) -> list[CalendarEvent]:
         """Fetch and parse calendar data."""
-        _LOGGER.debug(
-            "Running RentalControl _async_update_data for %s",
-            self._name,
-        )
+        _LOGGER.debug("Running Rental Control calendar update")
 
         is_fresh_data = True
 
         try:
             new_calendar = await self._async_fetch_calendar()
-        except UpdateFailed as err:
+        except UpdateFailed:
             if self.data is not None:
                 _LOGGER.warning(
-                    "Calendar fetch/parse failed for %s: %s; "
-                    "using cached data (%d events)",
-                    self._name,
-                    err,
+                    "Calendar fetch or parse failed; using cached data (%d events)",
                     len(self.data),
                 )
                 new_calendar = list(self.data)
@@ -155,8 +119,7 @@ class CoordinatorRefreshMixin:
             ):
                 self.num_misses += 1
                 _LOGGER.warning(
-                    "No events found in calendar %s, but %d in previous. Miss %d of %d",
-                    self._name,
+                    "No events found, but %d were previously available. Miss %d of %d",
                     len(previous),
                     self.num_misses,
                     self.max_misses,
@@ -164,9 +127,8 @@ class CoordinatorRefreshMixin:
                 new_calendar = list(previous)
             else:
                 _LOGGER.debug(
-                    "Found %d events in calendar %s",
+                    "Found %d calendar events",
                     len(new_calendar),
-                    self._name,
                 )
                 self.num_misses = 0
 
@@ -175,19 +137,17 @@ class CoordinatorRefreshMixin:
         if len(new_calendar) > 0:
             for event in new_calendar:
                 if event.end > dt.now():
-                    _LOGGER.debug(
-                        "Event %s is the first event with end in the future: %s",
-                        event.summary,
-                        event.end,
-                    )
+                    _LOGGER.debug("Found the next upcoming calendar event")
                     self.event = event
                     break
 
         self._advance_calendar_misses = is_fresh_data
         try:
-            if self.event_overrides:
+            if self.event_overrides and coordinator_keymaster_runtime_enabled(self):
                 await self._run_reconciliation(reconciliation_calendar)
-            else:
+            elif coordinator_keymaster_runtime_enabled(
+                self
+            ) or lockless_allocation_allowed(self.hass, self.config_entry):
                 await self._run_lockless_allocation(reconciliation_calendar)
         finally:
             self._advance_calendar_misses = False
@@ -200,264 +160,16 @@ class CoordinatorRefreshMixin:
 
     def _refresh_child_locks(self) -> None:
         """Refresh child lock discovery for the current cycle."""
-        if not self.lockname:
+        if not coordinator_keymaster_runtime_enabled(self) or not self.lockname:
             return
         self._parent_entry_id = self._find_parent_entry_id()
         previous_children = self._child_locknames
         self._child_locknames = self._discover_child_locks()
         if self._child_locknames != previous_children:
             _LOGGER.info(
-                "Child locknames updated for %s: %s",
-                self.lockname,
-                self._child_locknames or "(none)",
+                "Child lock discovery updated (%d related entries)",
+                len(self._child_locknames),
             )
-
-    async def _run_reconciliation(self, new_calendar: list[CalendarEvent]) -> None:
-        """Build a desired plan from the calendar and apply it to the lock.
-
-        An entry whose options gain a lock keeps running in place, so a
-        failure report left by its earlier lockless cycles is cleared
-        here; nothing else would ever clear it. Failures of this cycle
-        are surfaced through ``allocation_failure`` as their own kind.
-        """
-        allocation_failure.forget(
-            self.hass, self._entry_id, allocation_failure.LOCKLESS
-        )
-        event_overrides = self.event_overrides
-        if event_overrides is None:
-            return
-        try:
-            observed_slots = self._observe_managed_slots()
-            reservations = self._prepare_reservations_for_adoption(
-                new_calendar, observed_slots
-            )
-            self._apply_checkin_protection(reservations, observed_slots)
-            result = await code_allocation.async_resolve_codes(
-                reissue.CodeResolutionRequest(
-                    hass=self.hass,
-                    entry_id=self._entry_id,
-                    lockname=self.lockname,
-                    code_length=self.code_length,
-                    managed_slots=observed_slots,
-                    reservations=reservations,
-                    suppression=reissue.current_suppression(self),
-                    forced_reissues=reissue.forced_reissue_directives(
-                        self, reservations
-                    ),
-                )
-            )
-            reissue.consume_cycle_result(self, result)
-
-            plan_id = str(uuid.uuid4())
-            plan = _coordinator_module().compute_desired_plan(
-                reservations=reservations,
-                managed_slots=observed_slots,
-                max_events=self.max_events,
-                plan_id=plan_id,
-                generated_at=dt.now(),
-                entry_id=self._entry_id,
-                lockname=self.lockname,
-                start_slot=self.start_slot,
-            )
-
-            res_by_key: dict[str, _Reservation] = {
-                r.identity_key: r for r in reservations
-            }
-            violations = plan.validate(res_by_key)
-            for v in violations:
-                _LOGGER.warning("Plan %s invariant violation: %s", plan_id, v)
-
-            self._record_observed_slot_codes(plan, res_by_key, observed_slots)
-
-            if self._must_defer_for_checkin_restore(reservations, observed_slots):
-                _LOGGER.info(
-                    "Deferring reconciliation for %s until check-in state is "
-                    "available; same-name physical slot has missing date state",
-                    self._name,
-                )
-                operation_results: list[OperationResult] = []
-            else:
-                operation_results = await event_overrides.async_apply_plan(
-                    self, plan, res_by_key
-                )
-            self._apply_observed_code_results(plan, res_by_key, operation_results)
-            self._sync_slot_store_from_plan(plan, res_by_key, operation_results)
-
-            self._latest_plan = plan
-            self._latest_res_by_key = res_by_key
-
-            _LOGGER.debug(
-                "Reconciliation for %s: plan=%s selected=%d overflow=%d actions=%d",
-                self._name,
-                plan_id,
-                len(plan.selected),
-                len(plan.overflow),
-                len(plan.actions),
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as err:
-            _LOGGER.exception(
-                "Reconciliation failed for %s; skipping cycle", self._name
-            )
-            allocation_failure.report(
-                self.hass,
-                self._entry_id,
-                self._name,
-                err,
-                allocation_failure.RECONCILIATION,
-            )
-        else:
-            allocation_failure.resolve(
-                self.hass, self._entry_id, self._name, allocation_failure.RECONCILIATION
-            )
-
-    async def _run_lockless_allocation(self, new_calendar: list[CalendarEvent]) -> None:
-        """Allocate codes for entries that do not manage Keymaster slots.
-
-        A failed cycle deliberately leaves ``_latest_res_by_key`` alone,
-        so the entry keeps publishing the last codes it successfully
-        issued rather than blanking every guest's code over a failure
-        that may be transient. The failure is made visible through
-        ``allocation_failure`` instead of through missing codes. A
-        reconciliation report left from when the entry had a lock is
-        cleared for the same reason the reverse case is.
-        """
-        allocation_failure.forget(
-            self.hass, self._entry_id, allocation_failure.RECONCILIATION
-        )
-        try:
-            reservations = self._prepare_reservations_for_adoption(new_calendar, [])
-            self._apply_checkin_protection(reservations)
-            result = await code_allocation.async_resolve_codes(
-                reissue.CodeResolutionRequest(
-                    hass=self.hass,
-                    entry_id=self._entry_id,
-                    lockname=None,
-                    code_length=self.code_length,
-                    managed_slots=[],
-                    reservations=reservations,
-                    suppression=reissue.current_suppression(self),
-                    forced_reissues=reissue.forced_reissue_directives(
-                        self, reservations
-                    ),
-                )
-            )
-            reissue.consume_cycle_result(self, result)
-            kept = select_eligible_reservations(reservations, include_checked_out=True)
-            res_by_key: dict[str, _Reservation] = {r.identity_key: r for r in kept}
-            self._sync_lockless_slot_store(res_by_key)
-            self._latest_res_by_key = res_by_key
-            self._latest_plan = None
-        except asyncio.CancelledError:
-            raise
-        except Exception as err:
-            _LOGGER.exception(
-                "Lockless allocation failed for %s; skipping cycle", self._name
-            )
-            allocation_failure.report(self.hass, self._entry_id, self._name, err)
-        else:
-            allocation_failure.resolve(self.hass, self._entry_id, self._name)
-
-    def _sync_lockless_slot_store(self, res_by_key: dict[str, _Reservation]) -> None:
-        """Persist lockless reservation metadata and published-code state."""
-        lockless_store.sync_lockless_slot_store(
-            self._slot_mappings,
-            res_by_key,
-            entry_id=self._entry_id,
-            start_slot=self.start_slot,
-            max_events=self.max_events,
-        )
-
-    def _prepare_reservations_for_adoption(
-        self,
-        new_calendar: list[CalendarEvent],
-        observed_slots: list[Any],
-    ) -> list[_Reservation]:
-        """Hydrate live and ghost reservations before allocator adoption."""
-        self._merge_observed_slots_into_mappings(observed_slots)
-        reservations = cast(
-            "list[_Reservation]",
-            self._build_reservations(new_calendar, observed_slots),
-        )
-        expired = self._slot_mappings.get("expired_checkin")
-        if getattr(self, "_advance_calendar_misses", False) and isinstance(
-            expired, dict
-        ):
-            expired_start = self._coerce_checkin_datetime(expired.get("start"))
-            expired_end = self._coerce_checkin_datetime(expired.get("end"))
-            if any(
-                reservation.slot_name == expired.get("name")
-                and reservation.start == expired_start
-                and reservation.end == expired_end
-                for reservation in reservations
-            ):
-                self._slot_mappings.pop("expired_checkin", None)
-        persisted: dict[str, Any] = self._slot_mappings.setdefault("mappings", {})
-        reissue.remove_pending_ghost_targets(
-            self,
-            persisted,
-            {reservation.identity_key for reservation in reservations},
-        )
-        observed_mapping_keys = {
-            slot.persisted_identity_key
-            for slot in observed_slots
-            if slot.persisted_identity_key is not None
-        }
-        actual_slot_names = {
-            slot.slot: slot.actual_name
-            for slot in observed_slots
-            if isinstance(slot.actual_name, str)
-        }
-        observed_mapping_keys = (
-            physical_remap.remap_observed_mappings_to_physical_reservations(
-                persisted,
-                reservations,
-                actual_slot_names,
-                observed_mapping_keys,
-            )
-        )
-        fresh = getattr(self, "_advance_calendar_misses", False)
-        self._hydrate_reservations_from_mappings(reservations, persisted, fresh=fresh)
-        prefix = f"{self.event_prefix} " if self.event_prefix else ""
-        reservations.extend(
-            self._build_ghost_reservations(
-                {reservation.identity_key for reservation in reservations},
-                persisted,
-                prefix,
-                observed_mapping_keys,
-                advance=fresh,
-            )
-        )
-        return reservations
-
-    @staticmethod
-    def _hydrate_reservations_from_mappings(
-        reservations: list[_Reservation],
-        persisted: dict[str, Any],
-        *,
-        fresh: bool = True,
-    ) -> None:
-        """Copy cache-only mapping continuity fields onto live reservations."""
-        for reservation in reservations:
-            mapping = persisted.get(reservation.identity_key)
-            if not isinstance(mapping, dict):
-                continue
-            history = mapping.get("fingerprint_history", [])
-            if isinstance(history, (list, set, tuple)):
-                reservation.fingerprint_history.update(
-                    item for item in history if isinstance(item, str)
-                )
-            missing_count = mapping.get("missing_count", 0)
-            reservation.missing_count = (
-                0 if fresh or not isinstance(missing_count, int) else missing_count
-            )
-            if fresh:
-                mapping["missing_count"] = 0
-            if mapping.get("missing_stay_pending_clear") is True:
-                reservation.eligible = False
-            reservation.published_once = mapping.get("published_once") is True
-            reservation.issued_origin = lockless_store.issued_origin(mapping)
 
     async def _ical_parser(
         self, calendar: Calendar, from_date: datetime, to_date: datetime

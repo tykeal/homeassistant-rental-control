@@ -38,6 +38,7 @@ async def async_get_or_create_allocator(hass: HomeAssistant) -> DoorCodeAllocato
             register_allocator_services(hass)
             return existing
         allocator = DoorCodeAllocator(hass)
+        allocator._protection_required = True
         await allocator.async_load()
         hass.data[DOMAIN][ALLOCATOR] = allocator
         register_allocator_services(hass)

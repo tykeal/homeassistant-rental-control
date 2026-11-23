@@ -34,3 +34,8 @@ ci:
 engines:
   format: false
   lint: false
+
+imports:
+  provided:
+    - atomicwrites
+    - awesomeversion

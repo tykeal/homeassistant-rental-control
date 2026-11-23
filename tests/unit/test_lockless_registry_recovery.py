@@ -34,8 +34,8 @@ from custom_components.rental_control.coordinator_helpers import reissue
 from custom_components.rental_control.coordinator_helpers import (
     reservations as reservations_module,
 )
-from custom_components.rental_control.coordinator_helpers.coordinator_refresh_shell import (
-    CoordinatorRefreshMixin,
+from custom_components.rental_control.coordinator_helpers.coordinator_reservation_shell import (
+    CoordinatorReservationMixin,
 )
 from custom_components.rental_control.coordinator_helpers.models import (
     ReservationBuildContext,
@@ -751,7 +751,7 @@ def test_issued_origin_survives_the_lockless_store() -> None:
     )
 
     reloaded = _reservation(origin=None)
-    CoordinatorRefreshMixin._hydrate_reservations_from_mappings(
+    CoordinatorReservationMixin._hydrate_reservations_from_mappings(
         [reloaded], store["mappings"]
     )
     assert reloaded.issued_origin == "collision_resolved"
@@ -858,7 +858,8 @@ async def test_disabling_an_unadopted_entry_keeps_the_gate_closed(
 
     allocator._gate_deadline = 1.0
     allocator._warn_if_gate_expired()
-    assert "clear its codes from the lock and delete it" in raised[0]
+    assert "clear their codes from the lock before deleting an entry" in raised[0]
+    assert "entry-disabled" not in raised[0]
 
     await allocator.async_mark_entry_removed("entry-disabled")
     assert allocator._pending_adoption == set()

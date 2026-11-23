@@ -797,16 +797,10 @@ class TestAddCall:
 class TestHandleStateChangeLogging:
     """Tests for handle_state_change debug logging correctness."""
 
-    async def test_debug_log_contains_all_override_fields(
+    async def test_debug_log_excludes_sensitive_override_fields(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Verify the override update log message includes all fields.
-
-        Prior to the fix, extra f-string arguments were passed as
-        positional *args to _LOGGER.debug() and silently dropped.
-        This test ensures lockname, slot_num, slot_name, slot_code,
-        start_time, and end_time all appear in the emitted message.
-        """
+        """Verify logs retain slot context but omit names, PINs, and dates."""
         lockname = "test_lock"
         slot_num = 10
         mock_slot_code_state = MagicMock()
@@ -858,24 +852,18 @@ class TestHandleStateChangeLogging:
             await handle_state_change(hass, config_entry, event)
 
         log_messages = " ".join(caplog.messages)
-        assert lockname in log_messages
+        assert lockname not in log_messages
         assert str(slot_num) in log_messages
-        # Verify slot_name and slot_code objects appear (as repr strings)
-        assert "slot_name:" in log_messages
-        assert "slot_code:" in log_messages
-        # Verify start_time and end_time appear in the same message
-        assert "start_time:" in log_messages
-        assert "end_time:" in log_messages
-        # The critical assertion: all fields must be in a SINGLE log message.
-        # The original bug caused slot_name/slot_code/start_time/end_time to
-        # be silently dropped because they were separate f-string *args.
-        override_msgs = [m for m in caplog.messages if "updating overrides for" in m]
+        assert "Guest Name" not in log_messages
+        assert "1234" not in log_messages
+        assert "slot_name:" not in log_messages
+        assert "slot_code:" not in log_messages
+        override_msgs = [
+            message
+            for message in caplog.messages
+            if "updating overrides for" in message.lower()
+        ]
         assert len(override_msgs) == 1
-        single_msg = override_msgs[0]
-        assert "slot_name:" in single_msg
-        assert "slot_code:" in single_msg
-        assert "start_time:" in single_msg
-        assert "end_time:" in single_msg
 
 
 # ---------------------------------------------------------------------------
@@ -1275,7 +1263,7 @@ class TestHandleStateChangeSlotExtraction:
         ):
             await handle_state_change(hass, config_entry, event)
 
-        assert "Could not extract slot number" in caplog.text
+        assert "Could not identify the slot" in caplog.text
         mock_coordinator.update_event_overrides.assert_not_called()
 
     async def test_reset_entity_with_numeric_lockname(self) -> None:
@@ -2199,8 +2187,10 @@ class TestRetryEscalation:
         coordinator.event_overrides.record_retry_success.assert_called_once_with(10)
         mock_dismiss.assert_not_called()
 
-    async def test_set_code_failure_records_and_escalates(self) -> None:
-        """Verify failure creates persistent notification on escalation."""
+    async def test_set_code_failure_records_only_sanitized_details(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Failure evidence, logs, and notification never echo exception data."""
         coordinator = MagicMock()
         coordinator.lockname = "front_door"
         coordinator.event_prefix = ""
@@ -2209,13 +2199,15 @@ class TestRetryEscalation:
         coordinator.event_overrides.record_retry_failure.return_value = True
         coordinator.event_overrides._escalated = {}
 
-        error = Exception("service unavailable")
+        secret = "987654"
+        guest = "Sensitive Guest"
+        error = Exception(f"service failed for {guest} with pin {secret}")
         coordinator.hass.services.async_call = AsyncMock(side_effect=error)
 
         event = MagicMock()
         event.extra_state_attributes = {
-            "slot_name": "Guest",
-            "slot_code": "1234",
+            "slot_name": guest,
+            "slot_code": secret,
             "start": "2025-01-15T16:00:00",
             "end": "2025-01-17T11:00:00",
         }
@@ -2227,10 +2219,15 @@ class TestRetryEscalation:
 
         coordinator.event_overrides.record_retry_failure.assert_called_once_with(10)
         assert result.failed is True
-        assert result.error is not None
+        assert result.error == "service_operation_failed"
         mock_create.assert_called_once()
         call_kwargs = mock_create.call_args
         assert call_kwargs[1]["notification_id"] == "rental_control_slot_10_failure"
+        notification_text = call_kwargs.args[1]
+        assert secret not in notification_text
+        assert guest not in notification_text
+        assert secret not in caplog.text
+        assert guest not in caplog.text
 
     async def test_set_code_failure_no_notification_below_threshold(self) -> None:
         """Verify no notification when below escalation threshold."""
@@ -2371,7 +2368,7 @@ class TestRetryEscalation:
 
         result = await async_fire_clear_code(coordinator, 10, expected_name="Guest")
         assert result.failed is True
-        assert result.error == "hardware fault"
+        assert result.error == "service_operation_failed"
 
     async def test_clear_code_cancelled_error_propagates(self) -> None:
         """Verify clear_code does not swallow task cancellation."""
@@ -3070,7 +3067,7 @@ class TestAsyncFireClearCodeOperationResult:
         result = await async_fire_clear_code(coordinator, 10, expected_name="Guest")
 
         assert result.failed is True
-        assert result.error == "lock offline"
+        assert result.error == "service_operation_failed"
 
     async def test_no_lockname_returns_unconfirmed(self) -> None:
         """Missing lockname returns an unconfirmed result."""
@@ -3153,7 +3150,7 @@ class TestAsyncFireSetCodeOperationResult:
         result = await async_fire_set_code(coordinator, self._make_event(), 10)
 
         assert result.failed is True
-        assert result.error == "service unavailable"
+        assert result.error == "service_operation_failed"
 
     async def test_invalid_datetime_payload_returns_failed_set(self) -> None:
         """Invalid set-code dates fail as set operations."""

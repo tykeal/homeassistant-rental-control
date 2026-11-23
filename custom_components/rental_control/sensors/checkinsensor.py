@@ -24,6 +24,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .. import const as rc_const
+from ..keymaster_runtime import coordinator_keymaster_runtime_enabled
 from ..util import add_call as add_call  # re-exported for tests/runtime patching
 from ..util import gen_uuid
 from ..util import get_entry_data
@@ -258,6 +259,8 @@ class CheckinTrackingSensor(
 
     def _is_keymaster_monitoring_enabled(self) -> bool:
         """Return True when keymaster monitoring is switched on."""
+        if not coordinator_keymaster_runtime_enabled(self.coordinator):
+            return False
         entry_data = get_entry_data(self._hass, self._config_entry.entry_id)
         if entry_data is None:
             return self.coordinator.lockname is not None
@@ -269,10 +272,7 @@ class CheckinTrackingSensor(
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        _LOGGER.debug(
-            "Running CheckinTrackingSensor coordinator update for %s",
-            self.coordinator.name,
-        )
+        _LOGGER.debug("Running check-in tracking sensor update")
         apply_transition_decision(
             self, decide_coordinator_update(self._decision_context())
         )
@@ -374,14 +374,11 @@ class CheckinTrackingSensor(
         if last_extra is not None:
             restored = CheckinExtraStoredData.from_dict(last_extra.as_dict())
             self._apply_snapshot(restored.snapshot)
-            _LOGGER.debug(
-                "Restored state '%s' for %s", self._state, self.coordinator.name
-            )
+            _LOGGER.debug("Restored check-in state '%s'", self._state)
             self._validate_restored_state()
         else:
             _LOGGER.debug(
-                "No prior state for %s, starting as %s",
-                self.coordinator.name,
+                "No prior state, starting as %s",
                 rc_const.CHECKIN_STATE_NO_RESERVATION,
             )
         if self.coordinator.last_update_success and self.coordinator.data is not None:
