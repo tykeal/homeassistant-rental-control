@@ -124,6 +124,8 @@ def coordinator_code_publication_allowed(coordinator: Any) -> bool:
     if association is None:
         return False
     if coordinator_keymaster_runtime_enabled(coordinator):
+        if _selected_keymaster_entry_removed(coordinator.hass, association):
+            return False
         if (
             _protected_registry_required(coordinator)
             and association.mode is AssociationMode.VERIFIED
@@ -144,6 +146,23 @@ def coordinator_code_publication_allowed(coordinator: Any) -> bool:
                 return False
         return True
     return lockless_allocation_allowed(coordinator.hass, entry)
+
+
+def _selected_keymaster_entry_removed(hass: Any, association: AssociationTuple) -> bool:
+    """Return whether a verified selection names a config entry that is gone.
+
+    Only removal withholds codes; an unloaded, retrying or reloading entry
+    still exists and keeps publishing its cached codes.
+    """
+    if (
+        association.mode is not AssociationMode.VERIFIED
+        or association.verified_keymaster_entry_id is None
+    ):
+        return False
+    return (
+        hass.config_entries.async_get_entry(association.verified_keymaster_entry_id)
+        is None
+    )
 
 
 def coordinator_keymaster_runtime_enabled(coordinator: Any) -> bool:

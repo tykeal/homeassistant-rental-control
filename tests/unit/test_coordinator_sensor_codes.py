@@ -148,7 +148,10 @@ def test_missing_verified_authorization_hides_stale_code(
     )
     coordinator.lockname = selector
     coordinator.hass = as_hass(
-        SimpleNamespace(data={DOMAIN: {PROTECTED_REGISTRY_STORE: object()}})
+        SimpleNamespace(
+            data={DOMAIN: {PROTECTED_REGISTRY_STORE: object()}},
+            config_entries=SimpleNamespace(async_get_entry=lambda _entry_id: object()),
+        )
     )
 
     assert coordinator.get_slot_assignment("identity-1") is None

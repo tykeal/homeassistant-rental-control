@@ -18,6 +18,7 @@ import threading
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from awesomeversion import AwesomeVersion
@@ -99,6 +100,7 @@ from custom_components.rental_control.keymaster_version import (
 from tests.fixtures.keymaster_releases import artifact_paths
 from tests.fixtures.keymaster_releases import import_keymaster_release
 from tests.fixtures.keymaster_releases import remove_imported_package
+from tests.fixtures.stubs import stub_method
 
 _RELEASES = ("v0.6.1", "v0.6.5")
 _RC_ENTRY_ID = "consumer-rc"
@@ -456,6 +458,116 @@ async def test_verified_already_empty_clear_keeps_replacement(
         assert result.confirmed
         assert overrides.overrides.get(_SLOT) is None
         assert "pending_clear" not in _pending_fence_types(store)
+
+
+async def test_code_publication_is_withheld_only_while_selected_entry_is_removed(
+    hass, tmp_path: Path
+) -> None:
+    """Unloaded selections keep publishing; a removed selection withholds codes."""
+    from custom_components.rental_control.keymaster_runtime import (
+        coordinator_code_publication_allowed,
+    )
+
+    coordinator, _store, _entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.1"
+    )
+    assert coordinator_code_publication_allowed(coordinator)
+    km_entry = hass.config_entries.async_get_entry(_KM_ENTRY_ID)
+    assert km_entry is not None
+
+    for state in (ConfigEntryState.NOT_LOADED, ConfigEntryState.SETUP_RETRY):
+        km_entry._async_set_state(hass, state, None)
+        await hass.async_block_till_done()
+        assert coordinator_code_publication_allowed(coordinator)
+
+    await hass.config_entries.async_remove(_KM_ENTRY_ID)
+    await hass.async_block_till_done()
+    assert hass.config_entries.async_get_entry(_KM_ENTRY_ID) is None
+    assert not coordinator_code_publication_allowed(coordinator)
+
+    restored = MockConfigEntry(
+        domain="keymaster",
+        title="Selected lock",
+        entry_id=_KM_ENTRY_ID,
+        data=dict(km_entry.data),
+    )
+    restored.add_to_hass(hass)
+    restored._async_set_state(hass, ConfigEntryState.LOADED, None)
+    await hass.async_block_till_done()
+    assert coordinator_code_publication_allowed(coordinator)
+
+
+async def test_failed_refresh_withholds_cached_code_after_selection_removed(
+    hass, tmp_path: Path
+) -> None:
+    """A cached sensor code survives unloads but not a removed selection."""
+    from custom_components.rental_control.keymaster_runtime import (
+        coordinator_code_publication_allowed,
+    )
+    from custom_components.rental_control.sensors.calsensor import (
+        RentalControlCalSensor,
+    )
+
+    coordinator, _store, _entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.1"
+    )
+    start = datetime.now(UTC) + timedelta(days=1)
+    coordinator.unique_id = "consumer-unique"
+    coordinator.entry_id = _RC_ENTRY_ID
+    coordinator.last_update_success = True
+    coordinator.event_prefix = ""
+    coordinator.device_info = {"identifiers": {(DOMAIN, "consumer-unique")}}
+    coordinator.data = [
+        SimpleNamespace(
+            summary="Reserved - Jane Doe",
+            description="",
+            start=start,
+            end=start + timedelta(days=2),
+            location=None,
+            uid="cached-code",
+        )
+    ]
+    coordinator.get_slot_assignment = lambda _identity: _SLOT
+    coordinator.get_slot_code = lambda _identity: (
+        "2718" if coordinator_code_publication_allowed(coordinator) else None
+    )
+    sensor = RentalControlCalSensor(hass, coordinator, "Consumer test", 0)
+    published: list[object] = []
+    stub_method(
+        sensor,
+        "async_write_ha_state",
+        MagicMock(
+            side_effect=lambda: published.append(
+                sensor.extra_state_attributes["slot_code"]
+            )
+        ),
+    )
+    km_entry = hass.config_entries.async_get_entry(_KM_ENTRY_ID)
+    assert km_entry is not None
+
+    sensor._handle_coordinator_update()
+    assert published[-1] == "2718"
+
+    coordinator.last_update_success = False
+    km_entry._async_set_state(hass, ConfigEntryState.NOT_LOADED, None)
+    await hass.async_block_till_done()
+    sensor._handle_coordinator_update()
+    assert published[-1] == "2718"
+
+    await hass.config_entries.async_remove(_KM_ENTRY_ID)
+    await hass.async_block_till_done()
+    sensor._handle_coordinator_update()
+    assert published[-1] is None
+
+    MockConfigEntry(
+        domain="keymaster",
+        title="Selected lock",
+        entry_id=_KM_ENTRY_ID,
+        data=dict(km_entry.data),
+    ).add_to_hass(hass)
+    await hass.async_block_till_done()
+    sensor._handle_coordinator_update()
+    assert published[-1] == "2718"
 
 
 async def test_selected_keymaster_slot_lock_is_shared_and_cancellation_safe(

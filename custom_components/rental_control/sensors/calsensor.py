@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from ..const import ICON
 from ..const import NAME
+from ..keymaster_runtime import coordinator_code_publication_allowed
 from ..reconciliation import make_reservation_fingerprint
 from ..util import gen_uuid
 from ..util import get_slot_name
@@ -148,6 +149,12 @@ class RentalControlCalSensor(CoordinatorEntity["RentalControlCoordinator"]):
     def extra_state_attributes(self) -> dict:
         """Return the attributes of the event."""
         attrib = {**self._event_attributes, **self._parsed_attributes}
+        # Cached attributes survive failed refreshes; apply the same gate a
+        # fresh render would so a withheld code is never republished.
+        if attrib.get("slot_code") is not None and not (
+            coordinator_code_publication_allowed(self.coordinator)
+        ):
+            attrib["slot_code"] = None
         return attrib
 
     @property
