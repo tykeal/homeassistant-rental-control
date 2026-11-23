@@ -13,6 +13,8 @@ import sys
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from homeassistant import loader
@@ -1109,6 +1111,108 @@ async def test_version_issue_tracks_late_selected_entry_and_shared_selection(
         if second_entry is not None:
             second_entry._async_set_state(hass, ConfigEntryState.NOT_LOADED, None)
         hass.data[loader.DATA_INTEGRATIONS].pop("keymaster", None)
+        await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+async def test_removed_selected_keymaster_entry_raises_clearable_repair(
+    hass,
+    tmp_path: Path,
+) -> None:
+    """Only a removed selection is reported; restore or reselection clears it."""
+    coordinator, _store, _entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.1"
+    )
+    rc_entry = coordinator.config_entry
+    association = AssociationTuple.from_config(rc_entry.data)
+    assert association is not None
+    assert association.verified_keymaster_entry_id is not None
+    km_entry_id = association.verified_keymaster_entry_id
+    selected = hass.config_entries.async_get_entry(km_entry_id)
+    assert selected is not None
+    km_data = dict(selected.data)
+    rc_entry._async_set_state(hass, ConfigEntryState.LOADED, None)
+    registry = async_get_issue_registry(hass)
+    issue_id = f"keymaster_selected_entry_removed_{rc_entry.entry_id}"
+    replacement_id = "consumer-km-replacement"
+    coordinator.async_update_listeners = MagicMock()
+
+    async def restore_keymaster(entry_id: str) -> None:
+        """Re-add a Keymaster entry through the real config-entry add path."""
+        with patch.object(
+            hass.config_entries, "async_setup", AsyncMock(return_value=True)
+        ):
+            await hass.config_entries.async_add(
+                MockConfigEntry(
+                    domain="keymaster", title="Lock", entry_id=entry_id, data=km_data
+                )
+            )
+
+    def reassociate(new_association: AssociationTuple) -> None:
+        """Store a new RC association the way an options change would."""
+        hass.config_entries.async_update_entry(
+            rc_entry, data=new_association.merge_into_config(dict(rc_entry.data))
+        )
+
+    keymaster_version_issue.register_keymaster_version_tracking(hass, rc_entry.entry_id)
+    try:
+        for state in (ConfigEntryState.NOT_LOADED, ConfigEntryState.SETUP_RETRY):
+            selected._async_set_state(hass, state, None)
+            assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+        await hass.config_entries.async_remove(km_entry_id)
+        await hass.async_block_till_done()
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.translation_key == "keymaster_selected_entry_removed"
+        assert issue.config_entry_id == rc_entry.entry_id
+        assert not issue.is_fixable
+        assert issue.is_persistent
+        assert coordinator.async_update_listeners.call_count == 1
+
+        await restore_keymaster(km_entry_id)
+        await hass.async_block_till_done()
+        assert registry.async_get_issue(DOMAIN, issue_id) is None
+        assert coordinator.async_update_listeners.call_count == 2
+
+        await hass.config_entries.async_remove(km_entry_id)
+        await hass.async_block_till_done()
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        await restore_keymaster(replacement_id)
+        reassociate(
+            AssociationTuple(
+                association.legacy_lock_selection_present,
+                association.legacy_lock_selection_raw,
+                replacement_id,
+                association.association_generation + 1,
+                "4" * 32,
+                AssociationMode.VERIFIED,
+            )
+        )
+        await hass.async_block_till_done()
+        assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+        await hass.config_entries.async_remove(replacement_id)
+        await hass.async_block_till_done()
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        reassociate(
+            AssociationTuple(
+                False,
+                None,
+                None,
+                association.association_generation + 2,
+                "5" * 32,
+                AssociationMode.EXPLICIT_LOCKLESS,
+            )
+        )
+        await hass.async_block_till_done()
+        assert registry.async_get_issue(DOMAIN, issue_id) is None
+    finally:
+        keymaster_version_issue.unregister_keymaster_version_tracking(
+            hass, rc_entry.entry_id
+        )
+        rc_entry._async_set_state(hass, ConfigEntryState.NOT_LOADED, None)
+        stop_keymaster_lifecycle(hass, rc_entry.entry_id)
         await hass.async_block_till_done()
 
 

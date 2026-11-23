@@ -21,6 +21,7 @@ from homeassistant.helpers.issue_registry import async_get as async_get_issue_re
 
 from ..allocator.associations import AssociationMode
 from ..allocator.associations import AssociationTuple
+from ..const import COORDINATOR
 from ..const import DOMAIN
 from ..const import LOCK_ENTRY_NONE
 from ..const import LOCK_MANAGER
@@ -37,6 +38,7 @@ _ISSUE_PREFIX: Final = "keymaster_version_"
 _ASSOCIATION_ISSUE_PREFIX: Final = "keymaster_association_repair_"
 _INVALID_ASSOCIATION_ISSUE_PREFIX: Final = "keymaster_association_invalid_"
 _SELECTOR_ISSUE_PREFIX: Final = "keymaster_selector_repair_"
+_REMOVED_ENTRY_ISSUE_PREFIX: Final = "keymaster_selected_entry_removed_"
 
 
 def _report_entry_repairs(
@@ -133,6 +135,7 @@ class KeymasterVersionIssueTracker:
         """Subscribe to config-entry changes for load, unload, and selection."""
         self._hass = hass
         self._rc_entry_ids: set[str] = set()
+        self._removed_selection_entry_ids: set[str] = set()
         self._last_diagnoses: dict[
             str, tuple[KeymasterVersionStatus, str | None, str]
         ] = {}
@@ -175,50 +178,40 @@ class KeymasterVersionIssueTracker:
             association_repair_entry_ids,
             selector_repair_entry_ids,
             invalid_association_entry_ids,
+            removed_entry_ids,
         ) = self._collect_entry_issues(domain_data)
+        entry_repairs = {
+            _ASSOCIATION_ISSUE_PREFIX: (
+                "keymaster_association_repair",
+                association_repair_entry_ids,
+            ),
+            _SELECTOR_ISSUE_PREFIX: (
+                "keymaster_selector_repair",
+                selector_repair_entry_ids,
+            ),
+            _INVALID_ASSOCIATION_ISSUE_PREFIX: (
+                "keymaster_association_invalid",
+                invalid_association_entry_ids,
+            ),
+            _REMOVED_ENTRY_ISSUE_PREFIX: (
+                "keymaster_selected_entry_removed",
+                removed_entry_ids,
+            ),
+        }
+        current_ids = {_ISSUE_PREFIX: selected_entry_ids} | {
+            prefix: entry_ids for prefix, (_key, entry_ids) in entry_repairs.items()
+        }
         issue_registry = async_get_issue_registry(self._hass)
         for issue_domain, issue_id in tuple(issue_registry.issues):
-            if issue_domain == DOMAIN and (
-                (
-                    issue_id.startswith(_ISSUE_PREFIX)
-                    and issue_id[len(_ISSUE_PREFIX) :] not in selected_entry_ids
-                )
-                or (
-                    issue_id.startswith(_ASSOCIATION_ISSUE_PREFIX)
-                    and issue_id[len(_ASSOCIATION_ISSUE_PREFIX) :]
-                    not in association_repair_entry_ids
-                )
-                or (
-                    issue_id.startswith(_SELECTOR_ISSUE_PREFIX)
-                    and issue_id[len(_SELECTOR_ISSUE_PREFIX) :]
-                    not in selector_repair_entry_ids
-                )
-                or (
-                    issue_id.startswith(_INVALID_ASSOCIATION_ISSUE_PREFIX)
-                    and issue_id[len(_INVALID_ASSOCIATION_ISSUE_PREFIX) :]
-                    not in invalid_association_entry_ids
-                )
+            if issue_domain == DOMAIN and any(
+                issue_id.startswith(prefix) and issue_id[len(prefix) :] not in ids
+                for prefix, ids in current_ids.items()
             ):
                 async_delete_issue(self._hass, DOMAIN, issue_id)
 
-        _report_entry_repairs(
-            self._hass,
-            _ASSOCIATION_ISSUE_PREFIX,
-            "keymaster_association_repair",
-            association_repair_entry_ids,
-        )
-        _report_entry_repairs(
-            self._hass,
-            _SELECTOR_ISSUE_PREFIX,
-            "keymaster_selector_repair",
-            selector_repair_entry_ids,
-        )
-        _report_entry_repairs(
-            self._hass,
-            _INVALID_ASSOCIATION_ISSUE_PREFIX,
-            "keymaster_association_invalid",
-            invalid_association_entry_ids,
-        )
+        for prefix, (translation_key, entry_ids) in entry_repairs.items():
+            _report_entry_repairs(self._hass, prefix, translation_key, entry_ids)
+        self._republish_removed_selection_changes(domain_data, removed_entry_ids)
 
         if not selected_entry_ids:
             self._last_diagnoses.clear()
@@ -236,14 +229,30 @@ class KeymasterVersionIssueTracker:
             _report_diagnosis(self._hass, keymaster_entry_id, diagnosis, log=log)
             self._last_diagnoses[keymaster_entry_id] = current_diagnosis
 
+    def _republish_removed_selection_changes(
+        self, domain_data: dict[str, object], removed_entry_ids: set[str]
+    ) -> None:
+        """Rewrite sensor state when a selected entry is removed or restored."""
+        changed = removed_entry_ids ^ self._removed_selection_entry_ids
+        self._removed_selection_entry_ids = set(removed_entry_ids)
+        for rc_entry_id in sorted(changed & self._rc_entry_ids):
+            runtime = domain_data.get(rc_entry_id)
+            coordinator = (
+                runtime.get(COORDINATOR) if isinstance(runtime, dict) else None
+            )
+            update_listeners = getattr(coordinator, "async_update_listeners", None)
+            if callable(update_listeners):
+                update_listeners()
+
     def _collect_entry_issues(
         self, domain_data: dict[str, object]
-    ) -> tuple[set[str], set[str], set[str], set[str]]:
+    ) -> tuple[set[str], set[str], set[str], set[str], set[str]]:
         """Gather current selections and association issues for loaded entries."""
         selected_entry_ids: set[str] = set()
         association_repair_entry_ids: set[str] = set()
         selector_repair_entry_ids: set[str] = set()
         invalid_association_entry_ids: set[str] = set()
+        removed_entry_ids: set[str] = set()
         for rc_entry_id in tuple(self._rc_entry_ids):
             rc_entry = self._hass.config_entries.async_get_entry(rc_entry_id)
             runtime = domain_data.get(rc_entry_id)
@@ -264,6 +273,16 @@ class KeymasterVersionIssueTracker:
                 selector_repair_entry_ids.add(rc_entry_id)
             if (
                 association is not None
+                and association.mode is AssociationMode.VERIFIED
+                and association.verified_keymaster_entry_id is not None
+                and self._hass.config_entries.async_get_entry(
+                    association.verified_keymaster_entry_id
+                )
+                is None
+            ):
+                removed_entry_ids.add(rc_entry_id)
+            if (
+                association is not None
                 and association.mode is AssociationMode.LEGACY_UNRESOLVED
                 and association.legacy_lock_selection_present
                 and association.legacy_lock_selection_raw not in (None, LOCK_ENTRY_NONE)
@@ -278,6 +297,7 @@ class KeymasterVersionIssueTracker:
             association_repair_entry_ids,
             selector_repair_entry_ids,
             invalid_association_entry_ids,
+            removed_entry_ids,
         )
 
 

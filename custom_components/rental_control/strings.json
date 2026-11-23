@@ -64,6 +64,10 @@
       "title": "Restore the Keymaster lock selector",
       "description": "This entry has a verified Keymaster association but no legacy lock selector. Calendar display remains available, but Keymaster monitoring and lock operations are disabled until the selector is restored in Options. Set it to the selector corresponding to the verified Keymaster configuration; the verified association remains the authority for the physical Keymaster target."
     },
+    "keymaster_selected_entry_removed": {
+      "title": "Selected Keymaster lock was removed",
+      "description": "This entry's verified Keymaster association selects a Keymaster configuration that no longer exists in Home Assistant. Calendar display remains available, but guest door codes are withheld until that Keymaster configuration is restored or another lock (or lockless operation) is selected in this integration's Options. A Keymaster configuration that is only unloaded or retrying setup does not raise this issue."
+    },
     "keymaster_version_outside_support": {
       "title": "Keymaster version is outside tested support",
       "description": "The loaded Keymaster version {version} is below Rental Control's tested support floor {support_floor}. This is a support diagnosis only: version status alone does not block or authorize lock operations. Verify the selected Keymaster entry and its current slot capabilities; update Keymaster where practical."

@@ -60,6 +60,10 @@
       "title": "Restaurer le sélecteur de serrure Keymaster",
       "description": "Cette entrée possède une association Keymaster vérifiée, mais aucun sélecteur de serrure historique. L’affichage du calendrier reste disponible, mais la surveillance Keymaster et les opérations sur la serrure sont désactivées jusqu’à la restauration du sélecteur dans les options. Choisissez le sélecteur correspondant à la configuration Keymaster vérifiée ; l’association vérifiée reste la référence pour la cible physique Keymaster."
     },
+    "keymaster_selected_entry_removed": {
+      "title": "La serrure Keymaster sélectionnée a été supprimée",
+      "description": "L'association Keymaster vérifiée de cette entrée sélectionne une configuration Keymaster qui n'existe plus dans Home Assistant. L’affichage du calendrier reste disponible, mais les codes d'accès des invités ne sont plus publiés jusqu'à ce que cette configuration Keymaster soit restaurée ou qu'une autre serrure (ou le fonctionnement sans serrure) soit sélectionnée dans les options de cette intégration. Une configuration Keymaster simplement déchargée ou en cours de nouvelle tentative de configuration ne déclenche pas ce problème."
+    },
     "keymaster_version_outside_support": {
       "title": "La version de Keymaster est hors du support testé",
       "description": "La version de Keymaster déjà chargée ({version}) est inférieure au niveau de support testé de Rental Control ({support_floor}). Il s’agit uniquement d’un diagnostic de support : la version seule ne bloque ni n’autorise les opérations sur les serrures. Vérifiez l’entrée Keymaster sélectionnée et les capacités actuelles de ses créneaux ; mettez Keymaster à jour si possible."
