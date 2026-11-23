@@ -252,6 +252,7 @@ async def async_resolve_verified_clear_fence(
             event_loop_preflight=lambda: (
                 None
                 if intent.is_current(allow_native_empty_text=True)
+                and (intent.dispatch_guard is None or intent.dispatch_guard())
                 else ProtectionLoadResult(
                     ProtectionLoadState.UNAVAILABLE,
                     failure_code="operation_not_current",

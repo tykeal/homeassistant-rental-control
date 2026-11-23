@@ -12,6 +12,9 @@ from ..keymaster_operations import protected_registry_active
 from ..keymaster_operations import verified_lifecycle_active
 from ..keymaster_slot_operations import async_slot_operation
 from .apply_clear import decide_clear_result_mutation
+from .apply_guard import capture_reservation_guard
+from .apply_guard import clear_confirmation_intent
+from .apply_guard import guarded_intent
 
 
 async def apply_clear(
@@ -47,20 +50,32 @@ async def _apply_clear_locked(
     verified = verified_lifecycle_active(coordinator)
     if not verified and protected_registry_active(coordinator.hass):
         return self._operation_result_type(kind="clear", slot=slot, unconfirmed=True)
+    guard = (
+        capture_reservation_guard(
+            self, coordinator, slot, owner_identity_key, include_code=False
+        )
+        if verified
+        else None
+    )
     intent = await _prepare_clear_intent(
         coordinator, slot, owner_identity_key, verified
     )
     if verified and intent is None:
         return self._operation_result_type(kind="clear", slot=slot, unconfirmed=True)
+    confirmation_intent = clear_confirmation_intent(intent, guard)
     if preflight_read:
         preflight_result = await _resolve_clear_preflight(
-            self, coordinator, slot, expected_name, operation_id, intent
+            self, coordinator, slot, expected_name, operation_id, confirmation_intent
         )
         if preflight_result is not None:
             return preflight_result
     await _set_pending_clear(self, slot, operation_id)
-    result = await _dispatch_clear(self, coordinator, slot, expected_name, intent)
-    return await _apply_clear_result(self, slot, operation_id, intent, result)
+    result = await _dispatch_clear(
+        self, coordinator, slot, expected_name, guarded_intent(intent, guard)
+    )
+    return await _apply_clear_result(
+        self, slot, operation_id, confirmation_intent, result
+    )
 
 
 async def _prepare_clear_intent(
@@ -99,12 +114,26 @@ async def _resolve_clear_preflight(
     )
     if result is None or not result.confirmed or intent is None:
         return result
-    if not await async_resolve_verified_clear_fence(intent):
+    if not _reservation_allows_clear(intent) or not (
+        await async_resolve_verified_clear_fence(intent)
+    ):
         await _set_pending_clear(self, slot, operation_id)
         return self._operation_result_type(kind="clear", slot=slot, unconfirmed=True)
     async with self._lock:
+        if not _reservation_allows_clear(intent):
+            self._pending_fences[slot] = operation_id
+            self._pending_clear_slots[slot] = operation_id
+            return self._operation_result_type(
+                kind="clear", slot=slot, unconfirmed=True
+            )
         self.release_pending_clear_slot(slot)
     return result
+
+
+def _reservation_allows_clear(intent: Any) -> bool:
+    """Synchronously recheck the bound reservation guard, if any."""
+    guard = getattr(intent, "dispatch_guard", None)
+    return guard is None or bool(guard())
 
 
 async def _set_pending_clear(self: Any, slot: int, operation_id: str) -> None:
@@ -143,8 +172,9 @@ async def _apply_clear_result(
 ) -> Any:
     """Apply clear evidence while retaining the pending fence on uncertainty."""
     async with self._lock:
-        if intent is not None and not await intent.async_is_current(
-            allow_native_empty_text=True
+        if intent is not None and (
+            not await intent.async_is_current(allow_native_empty_text=True)
+            or not _reservation_allows_clear(intent)
         ):
             return self._operation_result_type(
                 kind="clear", slot=slot, unconfirmed=True
@@ -172,7 +202,9 @@ async def _apply_clear_result(
     if intent is not None and not await async_resolve_verified_clear_fence(intent):
         return self._operation_result_type(kind="clear", slot=slot, unconfirmed=True)
     async with self._lock:
-        if self._pending_fences.get(slot) != operation_id:
+        if self._pending_fences.get(slot) != operation_id or not (
+            _reservation_allows_clear(intent)
+        ):
             return self._operation_result_type(
                 kind="clear", slot=slot, unconfirmed=True
             )

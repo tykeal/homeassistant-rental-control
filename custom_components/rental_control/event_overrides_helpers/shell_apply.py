@@ -13,6 +13,8 @@ from ..keymaster_operations import verified_lifecycle_active
 from ..keymaster_slot_operations import async_slot_operation
 from ..reconciliation import ActionKind
 from .apply_dispatch import classify_action
+from .apply_guard import capture_reservation_guard
+from .apply_guard import guarded_intent
 from .apply_set import build_set_operation_id
 from .apply_set import build_suppression_changes
 from .apply_set import build_tentative_override
@@ -160,7 +162,11 @@ async def _apply_set_locked(self, coordinator: Any, slot: int, res, plan_id: str
     if not verified and protected_registry_active(coordinator.hass):
         return self._operation_result_type(kind="set", slot=slot, unconfirmed=True)
     intent = None
+    guard = None
     if verified:
+        guard = capture_reservation_guard(
+            self, coordinator, slot, res.identity_key, include_code=True
+        )
         intent = await prepare_verified_intent(
             coordinator,
             slot,
@@ -185,6 +191,8 @@ async def _apply_set_locked(self, coordinator: Any, slot: int, res, plan_id: str
         )
     operation_id = build_set_operation_id(plan_id, slot, res.identity_key)
     async with self._lock:
+        if guard is not None and not guard.is_current():
+            return self._operation_result_type(kind="set", slot=slot, unconfirmed=True)
         self._pending_fences[slot] = operation_id
         self._overrides[slot] = build_tentative_override(res)
         self._advance_feedback_generation(slot)
@@ -193,6 +201,8 @@ async def _apply_set_locked(self, coordinator: Any, slot: int, res, plan_id: str
             slot,
             _suppression_changes(coordinator, slot, res, intent),
         )
+        if guard is not None:
+            guard = guard.rebased()
     if intent is None:
         result = await self._module.async_fire_set_code(
             coordinator,
@@ -204,10 +214,11 @@ async def _apply_set_locked(self, coordinator: Any, slot: int, res, plan_id: str
             coordinator,
             self._slot_event_cls(res.slot_name, res.slot_code, res.start, res.end),
             slot,
-            verified_intent=intent,
+            verified_intent=guarded_intent(intent, guard),
         )
     async with self._lock:
         intent_current = intent is None or await intent.async_is_current()
+        intent_current = intent_current and (guard is None or guard.is_current())
         mutation = decide_set_result_mutation(
             result,
             self._pending_fences.get(slot) == operation_id and intent_current,
@@ -219,6 +230,7 @@ async def _apply_set_locked(self, coordinator: Any, slot: int, res, plan_id: str
         self._pending_fences.pop(slot, None)
         if mutation["status"] == "confirmed":
             self._logger.debug("Set confirmed for slot %d", slot)
+            _publish_written_override(self, slot, build_tentative_override(res))
             self._clear_slot_error(slot)
         elif mutation["revert"]:
             self._logger.warning(
@@ -247,7 +259,16 @@ async def _apply_update_times_locked(self, coordinator: Any, slot: int, res):
             kind="update_times", slot=slot, unconfirmed=True
         )
     intent = None
+    guard = None
     if verified:
+        guard = capture_reservation_guard(
+            self,
+            coordinator,
+            slot,
+            res.identity_key,
+            include_code=False,
+            echoes={"start_time": res.buffered_start, "end_time": res.buffered_end},
+        )
         intent = await prepare_verified_intent(
             coordinator,
             slot,
@@ -280,21 +301,36 @@ async def _apply_update_times_locked(self, coordinator: Any, slot: int, res):
             coordinator,
             self._slot_event_cls(res.slot_name, res.slot_code, res.start, res.end),
             slot,
-            verified_intent=intent,
+            verified_intent=guarded_intent(intent, guard),
         )
     if result.confirmed:
         async with self._lock:
-            if intent is not None and not await intent.async_is_current():
+            if intent is not None and (
+                not await intent.async_is_current()
+                or (guard is not None and not guard.is_current())
+            ):
                 return self._operation_result_type(
                     kind="update_times", slot=slot, unconfirmed=True
                 )
             override = self._overrides.get(slot)
             if override is not None:
-                updated_times = (res.buffered_start, res.buffered_end)
-                if (override["start_time"], override["end_time"]) != updated_times:
-                    self._advance_feedback_generation(slot)
-                override["start_time"], override["end_time"] = updated_times
+                _publish_written_override(
+                    self,
+                    slot,
+                    {
+                        **override,
+                        "start_time": res.buffered_start,
+                        "end_time": res.buffered_end,
+                    },
+                )
     return result
+
+
+def _publish_written_override(self, slot: int, written: dict[str, Any]) -> None:
+    """Record exactly what a confirmed write left on the slot."""
+    if self._overrides.get(slot) != written:
+        self._advance_feedback_generation(slot)
+    self._overrides[slot] = written
 
 
 async def _apply_overwrite_manual_change(

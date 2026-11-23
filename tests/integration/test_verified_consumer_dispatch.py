@@ -110,6 +110,354 @@ _TX = "a" * 32
 _ASSOCIATION_TX = "b" * 32
 
 
+def _consumer_reservation(start: datetime, end: datetime) -> SimpleNamespace:
+    """Build the owner reservation used by interleaving tests."""
+    return SimpleNamespace(
+        identity_key=_OWNER_IDENTITY,
+        slot_name="Guest",
+        slot_code=_CODE,
+        start=start,
+        end=end,
+        buffered_start=start,
+        buffered_end=end,
+        display_slot_name="Guest",
+    )
+
+
+def _start_consumer_operation(
+    coordinator, operation: str, reservation: SimpleNamespace
+) -> asyncio.Task:
+    """Start one verified SET, UPDATE_TIMES or CLEAR for the owner."""
+    overrides = coordinator.event_overrides
+    if operation == "set":
+        pending = overrides._apply_set(coordinator, _SLOT, reservation, "race")
+    elif operation == "update_times":
+        pending = overrides._apply_update_times(coordinator, _SLOT, reservation)
+    else:
+        pending = overrides._apply_clear(
+            coordinator, _SLOT, owner_identity_key=_OWNER_IDENTITY
+        )
+    return asyncio.create_task(pending)
+
+
+@pytest.mark.parametrize(
+    "change", ["override_feedback", "pin_only", "plan_reassign", "owner_fence"]
+)
+@pytest.mark.parametrize("operation", ["set", "update_times", "clear"])
+async def test_verified_consumers_recheck_reservation_before_dispatch(
+    hass, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, change: str
+) -> None:
+    """A reservation change at the last awaited check must block dispatch."""
+    from custom_components.rental_control.keymaster_operation_models import (
+        VerifiedOperationIntent,
+    )
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.1"
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    start = datetime.now(UTC) + timedelta(hours=1)
+    end = start + timedelta(hours=2)
+    reservation = _consumer_reservation(start, end)
+    overrides = coordinator.event_overrides
+    if operation != "set":
+        initial = await overrides._apply_set(coordinator, _SLOT, reservation, "initial")
+        assert initial.confirmed
+        events.clear()
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == _OWNER_IDENTITY else None
+    )
+
+    armed = False
+    entered = asyncio.Event()
+    resume = asyncio.Event()
+    original_wait = store.async_wait_for_commit_completion
+    original_call = VerifiedOperationIntent.async_call
+
+    async def hold_current_check() -> bool:
+        """Suspend the durable-current wait inside the first service call."""
+        nonlocal armed
+        if armed:
+            armed = False
+            entered.set()
+            await resume.wait()
+        return (await original_wait()) is True
+
+    async def arm_first_call(self, property_key, service, service_data=None, **kwargs):
+        """Arm exactly the first call, after caller preflight."""
+        nonlocal armed
+        if not entered.is_set():
+            armed = True
+        return await original_call(self, property_key, service, service_data, **kwargs)
+
+    monkeypatch.setattr(store, "async_wait_for_commit_completion", hold_current_check)
+    monkeypatch.setattr(VerifiedOperationIntent, "async_call", arm_first_call)
+    task = _start_consumer_operation(coordinator, operation, reservation)
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    generation = overrides.get_feedback_generation(_SLOT)
+    if change in {"override_feedback", "pin_only"}:
+        field_name = "slot_name" if change == "override_feedback" else "slot_code"
+        assert await overrides.async_update(
+            _SLOT,
+            "9999",
+            "Replacement",
+            start,
+            end,
+            merge_feedback=True,
+            feedback_field=field_name,
+            feedback_generation=generation,
+        )
+    elif change == "plan_reassign":
+        coordinator.get_slot_assignment = lambda identity: (
+            _SLOT if identity == "other-reservation" else None
+        )
+    else:
+        loaded = store.loaded_result
+        assert loaded is not None and loaded.data is not None
+        for fence in loaded.data["pending_fences"]:
+            if fence["slot"] == _SLOT:
+                fence["fence_id"] = "f" * 32
+    resume.set()
+    result = await asyncio.wait_for(task, timeout=5)
+
+    if change == "pin_only" and operation != "set":
+        # The PIN is not reservation identity unless the operation writes it.
+        assert events
+        assert result.confirmed
+    else:
+        assert events == []
+        assert not result.confirmed
+    if change == "override_feedback":
+        assert overrides.get_slot_name(_SLOT) == "Replacement"
+
+
+@pytest.mark.parametrize("operation", ["set", "update_times", "clear"])
+async def test_verified_consumers_accept_their_own_feedback_echo(
+    hass, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """Live feedback of our own writes must not abort a valid operation."""
+    from unittest.mock import AsyncMock
+
+    from homeassistant.helpers.event import async_track_state_change_event
+
+    from custom_components.rental_control import util
+    from custom_components.rental_control.keymaster_operation_models import (
+        VerifiedOperationIntent,
+    )
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.1"
+    )
+    km_entry = hass.config_entries.async_get_entry(_KM_ENTRY_ID)
+    assert km_entry is not None
+    hass.config_entries.async_update_entry(
+        km_entry, data={**km_entry.data, "lockname": "Consumer Door"}
+    )
+    await hass.async_block_till_done()
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    coordinator.async_request_refresh = AsyncMock()
+    coordinator.update_event_overrides = (
+        RentalControlCoordinator.update_event_overrides.__get__(
+            coordinator, RentalControlCoordinator
+        )
+    )
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == _OWNER_IDENTITY else None
+    )
+    start = datetime.now(UTC) + timedelta(hours=1)
+    end = start + timedelta(hours=2)
+    overrides = coordinator.event_overrides
+    if operation != "set":
+        initial = await overrides._apply_set(
+            coordinator, _SLOT, _consumer_reservation(start, end), "initial"
+        )
+        assert initial.confirmed
+        events.clear()
+    # Model echoes that suppression did not absorb, as early checkout sees.
+    monkeypatch.setattr(overrides, "suppress_state_changes", lambda *_a, **_k: None)
+    original_deps = util._state_deps()
+
+    async def immediate_sleep(_delay: float) -> None:
+        """Process the real listener without its settling delay."""
+
+    monkeypatch.setattr(
+        util, "_state_deps", lambda: replace(original_deps, sleep=immediate_sleep)
+    )
+    watched = [
+        entity_ids[f"text.code_slots:{_SLOT}.name"],
+        entity_ids[f"text.code_slots:{_SLOT}.pin"],
+        entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_start"],
+        entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"],
+    ]
+    echoes: list[str] = []
+    feedback_done = asyncio.Event()
+
+    async def listener(event) -> None:
+        """Run the actual registered feedback handler."""
+        await util.handle_state_change(hass, coordinator.config_entry, event)
+        echoes.append(event.data["entity_id"])
+        feedback_done.set()
+
+    unsub = async_track_state_change_event(hass, watched, listener)
+    original_call = VerifiedOperationIntent.async_call
+
+    async def call_then_wait_for_echo(
+        self, property_key, service, service_data=None, **kwargs
+    ):
+        """Let the echo of each changed state land before the next dispatch."""
+        entity_id = self.entity_id(property_key)
+        before = hass.states.get(entity_id)
+        feedback_done.clear()
+        await original_call(self, property_key, service, service_data, **kwargs)
+        after = hass.states.get(entity_id)
+        if entity_id in watched and (before is None or before.state != after.state):
+            await asyncio.wait_for(feedback_done.wait(), timeout=2)
+
+    monkeypatch.setattr(VerifiedOperationIntent, "async_call", call_then_wait_for_echo)
+    shifted = _consumer_reservation(
+        start + timedelta(hours=1), end + timedelta(hours=1)
+    )
+    try:
+        result = await asyncio.wait_for(
+            _start_consumer_operation(coordinator, operation, shifted), timeout=5
+        )
+    finally:
+        unsub()
+
+    assert result.confirmed
+    assert echoes
+    if operation == "clear":
+        assert [event["service"] for event in events] == ["press"]
+        assert overrides.overrides.get(_SLOT) is None
+        return
+    assert overrides.overrides[_SLOT] == {
+        "slot_name": "Guest",
+        "slot_code": _CODE,
+        "start_time": shifted.buffered_start,
+        "end_time": shifted.buffered_end,
+    }
+    expected_calls = 7 if operation == "set" else 2
+    assert len(events) == expected_calls
+
+
+def _pending_fence_types(store) -> list[str]:
+    """Return durable pending-fence types still held for the test slot."""
+    loaded = store.loaded_result
+    assert loaded is not None and loaded.data is not None
+    return [
+        fence["fence_type"]
+        for fence in loaded.data["pending_fences"]
+        if fence["slot"] == _SLOT
+    ]
+
+
+@pytest.mark.parametrize("operation", ["set", "update_times", "clear"])
+async def test_verified_consumers_keep_replacement_written_after_dispatch(
+    hass, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """A replacement written after the final dispatch must survive confirmation."""
+    from custom_components.rental_control import event_overrides as module
+
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.1"
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    start = datetime.now(UTC) + timedelta(hours=1)
+    end = start + timedelta(hours=2)
+    replacement_end = end + timedelta(days=1)
+    reservation = _consumer_reservation(start, end)
+    overrides = coordinator.event_overrides
+    if operation != "set":
+        initial = await overrides._apply_set(coordinator, _SLOT, reservation, "initial")
+        assert initial.confirmed
+        events.clear()
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == _OWNER_IDENTITY else None
+    )
+    fire_name = {
+        "set": "async_fire_set_code",
+        "update_times": "async_fire_update_times",
+        "clear": "async_fire_clear_code",
+    }[operation]
+    original_fire = getattr(module, fire_name)
+
+    async def fire_then_replace(*args, **kwargs):
+        """Write an outside replacement right after every dispatch succeeded."""
+        fired = await original_fire(*args, **kwargs)
+        assert fired.confirmed
+        overrides.update(_SLOT, "9999", "Replacement", start, replacement_end)
+        return fired
+
+    monkeypatch.setattr(module, fire_name, fire_then_replace)
+    result = await asyncio.wait_for(
+        _start_consumer_operation(coordinator, operation, reservation), timeout=5
+    )
+
+    assert events
+    assert not result.confirmed
+    assert overrides.overrides[_SLOT] == {
+        "slot_name": "Replacement",
+        "slot_code": "9999",
+        "start_time": start,
+        "end_time": replacement_end,
+    }
+    if operation == "clear":
+        assert overrides._pending_clear_slots.get(_SLOT) is not None
+        assert "pending_clear" in _pending_fence_types(store)
+
+
+@pytest.mark.parametrize("replaced", [False, True])
+async def test_verified_already_empty_clear_keeps_replacement(
+    hass, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replaced: bool
+) -> None:
+    """The already-empty clear path must not free a replacement reservation."""
+    coordinator, store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.1"
+    )
+    events: list[dict[str, Any]] = []
+    await _register_recording_services(hass, store, entity_ids, events)
+    start = datetime.now(UTC) + timedelta(hours=1)
+    end = start + timedelta(hours=2)
+    overrides = coordinator.event_overrides
+    initial = await overrides._apply_set(
+        coordinator, _SLOT, _consumer_reservation(start, end), "initial"
+    )
+    assert initial.confirmed
+    events.clear()
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == _OWNER_IDENTITY else None
+    )
+    hass.states.async_set(entity_ids[f"text.code_slots:{_SLOT}.name"], "")
+    hass.states.async_set(entity_ids[f"text.code_slots:{_SLOT}.pin"], "")
+    original_preflight = overrides._preflight_clear_result
+
+    async def preflight_then_replace(*args, **kwargs):
+        """Write an outside replacement after the empty-slot read."""
+        outcome = await original_preflight(*args, **kwargs)
+        assert outcome is not None and outcome.confirmed
+        if replaced:
+            overrides.update(_SLOT, "9999", "Replacement", start, end)
+        return outcome
+
+    monkeypatch.setattr(overrides, "_preflight_clear_result", preflight_then_replace)
+    result = await overrides._apply_clear(
+        coordinator, _SLOT, preflight_read=True, owner_identity_key=_OWNER_IDENTITY
+    )
+
+    assert events == []
+    if replaced:
+        assert not result.confirmed
+        assert overrides.get_slot_name(_SLOT) == "Replacement"
+        assert "pending_clear" in _pending_fence_types(store)
+    else:
+        assert result.confirmed
+        assert overrides.overrides.get(_SLOT) is None
+        assert "pending_clear" not in _pending_fence_types(store)
+
+
 async def test_selected_keymaster_slot_lock_is_shared_and_cancellation_safe(
     hass,
 ) -> None:

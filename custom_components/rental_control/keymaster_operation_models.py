@@ -105,6 +105,10 @@ class VerifiedOperationIntent:
     owner_reference: str = field(repr=False)
     allocation_reference: str = field(repr=False)
     capabilities: tuple[CapabilityResolution, ...] = field(repr=False)
+    # Caller-bound synchronous check run last before every service call.
+    dispatch_guard: Callable[[], bool] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def entity_id(self, property_key: str) -> str:
         """Return a previously authorized exact address without dispatching.
@@ -138,6 +142,8 @@ class VerifiedOperationIntent:
         if service not in _SERVICE_ALLOWLIST.get(domain, frozenset()):
             raise VerifiedOperationRejected("service_not_authorized")
         if not await self.async_is_current():
+            raise VerifiedOperationRejected("operation_not_current")
+        if self.dispatch_guard is not None and not self.dispatch_guard():
             raise VerifiedOperationRejected("operation_not_current")
         if pre_dispatch_guard is not None and not pre_dispatch_guard():
             raise VerifiedOperationRejected("operation_not_current")
