@@ -12,6 +12,7 @@ from homeassistant.components.datetime import DOMAIN as DATETIME
 from .helpers import OperationResult
 from .keymaster_operations import VerifiedOperationIntent
 from .keymaster_operations import VerifiedOperationRejected
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
 from .keymaster_service_helpers import KeymasterServiceDeps
 from .keymaster_service_helpers import (
     _require_legacy_address as _require_legacy_address,
@@ -33,6 +34,8 @@ async def _async_fire_update_times_locked(
     verified_intent: VerifiedOperationIntent | None = None,
 ) -> OperationResult:
     """Update times on slot."""
+    if not coordinator_keymaster_runtime_enabled(coordinator):
+        return OperationResult(kind="update_times", slot=slot, unconfirmed=True)
     lockname: str = coordinator.lockname
     slot_name: str = event.extra_state_attributes["slot_name"]
     if not slot or (verified_intent is None and not lockname):

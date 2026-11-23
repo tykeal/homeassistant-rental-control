@@ -16,6 +16,7 @@ from .allocator.association_references import ledger_allocation_references
 from .allocator.association_references import original_keymaster_entry_evidence
 from .allocator.models import CycleObservation
 from .allocator.registry_safety_models import validate_pending_fence
+from .const import ALLOCATOR
 from .const import DOMAIN
 from .const import PROTECTED_REGISTRY_STORE
 from .keymaster_lifecycle import get_keymaster_lifecycle
@@ -417,12 +418,15 @@ def verified_lifecycle_active(coordinator: Any) -> bool:
 
 
 def protected_registry_active(hass: Any) -> bool:
-    """Return whether the production protected registry is registered."""
+    """Return whether runtime requires protected-registry authorization."""
     data = getattr(hass, "data", None)
     if not isinstance(data, dict):
         return False
     domain_data = data.get(DOMAIN)
-    return isinstance(domain_data, dict) and PROTECTED_REGISTRY_STORE in domain_data
+    return isinstance(domain_data, dict) and (
+        PROTECTED_REGISTRY_STORE in domain_data
+        or getattr(domain_data.get(ALLOCATOR), "_protection_required", False) is True
+    )
 
 
 def persisted_owner_identity_for_slot(coordinator: Any, slot: int) -> str | None:

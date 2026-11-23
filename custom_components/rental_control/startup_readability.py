@@ -25,6 +25,7 @@ from .const import DOMAIN
 from .const import UNSUB_LISTENERS
 from .keymaster_lifecycle import get_keymaster_lifecycle
 from .keymaster_operations import protected_registry_active
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
 from .util import get_entry_data
 
 if TYPE_CHECKING:
@@ -43,6 +44,8 @@ def _managed_slot_readability_entity_ids(
     coordinator: RentalControlCoordinator,
 ) -> list[str]:
     """Return the managed Keymaster entities needed to observe slot state."""
+    if not coordinator_keymaster_runtime_enabled(coordinator):
+        return []
     lifecycle = get_keymaster_lifecycle(coordinator.hass, coordinator._entry_id)
     if lifecycle is not None:
         verified_entities: list[str] = []

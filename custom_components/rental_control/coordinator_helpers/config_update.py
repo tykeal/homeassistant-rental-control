@@ -57,7 +57,8 @@ def preserve_committed_association_tuple(
 
     The legacy lock selector remains an ordinary option until a protected
     association tuple has been durably acknowledged. Once any tuple metadata
-    exists, the tuple and its selector are copied only from config-entry data.
+    exists, or the stored selector is malformed, the tuple and its selector
+    are copied only from config-entry data.
     """
     merged = dict(option_data)
     tuple_keys = (
@@ -69,7 +70,9 @@ def preserve_committed_association_tuple(
     for key in tuple_keys:
         merged.pop(key, None)
 
-    if any(key in config_data for key in tuple_keys):
+    if AssociationTuple.from_config(config_data) is None or any(
+        key in config_data for key in tuple_keys
+    ):
         for key in (*tuple_keys, CONF_LOCK_ENTRY):
             if key in config_data:
                 merged[key] = config_data[key]

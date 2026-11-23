@@ -52,9 +52,17 @@
     }
   },
   "issues": {
+    "keymaster_association_invalid": {
+      "title": "Saved Keymaster association is invalid",
+      "description": "This entry's saved association details or lock selector are incomplete or invalid. Calendar display remains available, but code publication and Keymaster operations are blocked. Preserve the current configuration, registry, protection marker, and quarantine evidence without editing or restoring files, and contact the integration maintainer for investigation. Investigate whether a complete, current, consistent backup can be independently verified against authoritative history; a matching backup alone does not prove completeness or recency. This release has no historical-backup verifier or supported external restore or override when history cannot be verified. Reinstalling alone cannot establish missing history."
+    },
     "keymaster_association_repair": {
       "title": "Repair the Keymaster association",
-      "description": "This entry's legacy Keymaster selection is unresolved; Rental Control does not automatically associate entries by name or entity ID. Open this entry's Options and select the intended Keymaster configuration. Until the association is verified, Rental Control withholds setting and clearing door codes. If protected legacy allocations have no independent record identifying their original Keymaster entry, the options form will also require an explicit assertion that the selected entry controls the same original physical lock. Known work from another Keymaster entry cannot be transferred by this assertion."
+      "description": "This entry's legacy Keymaster selection is unresolved; Rental Control does not automatically associate entries by name or entity ID. If the shared registry is not ready, wait for it to load or follow any separate shared registry Repair guidance first. Then open this entry's Options and select the intended Keymaster configuration. Until the association is verified, Rental Control withholds setting and clearing door codes. Verifying the selection cannot override blocked registry history. If protected legacy allocations have no independent record identifying their original Keymaster entry, the options form will also require an explicit assertion that the selected entry controls the same original physical lock. Known work from another Keymaster entry cannot be transferred by this assertion."
+    },
+    "keymaster_selector_repair": {
+      "title": "Restore the Keymaster lock selector",
+      "description": "This entry has a verified Keymaster association but no legacy lock selector. Calendar display remains available, but Keymaster monitoring and lock operations are disabled until the selector is restored in Options. Set it to the selector corresponding to the verified Keymaster configuration; the verified association remains the authority for the physical Keymaster target."
     },
     "keymaster_version_outside_support": {
       "title": "Keymaster version is outside tested support",
@@ -89,6 +97,7 @@
       "prefix_too_long_for_trim": "Event prefix too long for max name length",
       "active_allocations": "Code length cannot be changed while this entry has active allocations or the shared code registry is recovering",
       "association_unavailable": "The protected association history is not ready; no selection was saved",
+      "association_invalid_history": "Saved association details or lock selector are incomplete or invalid; no association or lock selection was changed. See the saved Keymaster association Repair for guidance on preserving evidence. This release cannot safely reconstruct the association automatically.",
       "association_repair_required": "The committed association history cannot be verified. No legacy lock selection was saved; reload after the protected registry is available.",
       "association_replay_required": "A protected association transaction is awaiting configuration projection. Reopen options to replay it safely.",
       "association_conflict": "This association change could transfer or obscure existing work and was not saved",

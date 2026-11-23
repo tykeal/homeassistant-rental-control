@@ -356,6 +356,7 @@ async def test_rc_setup_starts_only_explicit_verified_association(hass) -> None:
         title="Lifecycle RC",
         entry_id="rc-lifecycle",
         data={
+            "keymaster_entry_id": "Front Door",
             "verified_keymaster_entry_id": "km-verified",
             "association_generation": 4,
             "association_transaction_id": "f" * 32,

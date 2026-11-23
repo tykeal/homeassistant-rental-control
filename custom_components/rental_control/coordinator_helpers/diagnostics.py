@@ -22,6 +22,7 @@ from ..allocator.associations import AssociationTuple
 from ..allocator.models import ProtectionAuthorizationState
 from ..const import DOMAIN
 from ..const import PROTECTED_REGISTRY_STORE
+from ..helpers import configured_lock_entry
 from ..keymaster_identity import CapabilityStatus
 from ..keymaster_lifecycle import get_keymaster_lifecycle
 from ..keymaster_version import KeymasterVersionStatus
@@ -115,6 +116,11 @@ def _association_status_diagnostics(
         return {
             "status": association.mode.value,
             "next_step": "review_association_and_repair",
+        }
+    if configured_lock_entry(association.legacy_lock_selection_raw) is None:
+        return {
+            "status": "verified_selector_missing",
+            "next_step": "restore_legacy_lock_selector",
         }
     reader = getattr(store, "association_for_entry", None)
     try:

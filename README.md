@@ -279,10 +279,17 @@ or completing an adoption scan does not clear protective-unknown status.
 After an upgrade, an existing Keymaster-backed Rental Control entry may remain
 unresolved even when its old selector names a lock. Rental Control does not
 infer the Keymaster configuration from a display name, entity ID, or that old
-selector. Rental Control withholds code setting and clearing until you repair
-the association; calendar and display tracking remain available. A Home Assistant
+selector. Rental Control withholds code adoption, issuance, setting, and
+clearing until you repair the association; calendar tracking remains available.
+A Home Assistant
 repair issue points to the entry's Options, where you must select the intended
 Keymaster configuration. Entries are not automatically associated.
+
+If a verified association has no lock selector, a separate repair asks you to
+restore the selector in Options. Calendar display remains available, but
+Keymaster monitoring and lock operations stay disabled until you restore it.
+The verified Keymaster configuration, not the selector name, remains the
+authority for the physical target.
 
 If the protected registry contains legacy allocations and no independent
 evidence ties every affected allocation to a Keymaster entry, selection alone

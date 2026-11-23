@@ -22,6 +22,7 @@ from .models import ReissuePreviewRequest
 from .models import ReleaseReport
 from .registry_mutation import async_commit_staged_registry
 from .registry_mutation import clone_allocator
+from .registry_mutation import lockless_preflight
 from .registry_mutation import owner_transition_authorizer
 
 if TYPE_CHECKING:
@@ -82,6 +83,25 @@ async def async_preview_reissue(
     async with allocator._lock:
         if not snapshot_ready(allocator):
             return ReissuePreview(reason="protective_unknown")
+        if (
+            allocator._protection_required
+            and request.lockname is None
+            and lockless_preflight(allocator, request.entry_id) is not None
+        ):
+            return ReissuePreview(reason="protective_unknown")
+        if allocator._protection_required and request.lockname is not None:
+            from ..coordinator_helpers.cycle_requests import (
+                verified_observation_identity,
+            )
+
+            try:
+                identity = verified_observation_identity(
+                    allocator.hass, request.entry_id
+                )
+            except Exception:
+                identity = None
+            if identity is None:
+                return ReissuePreview(reason="protective_unknown")
         from . import reissue_preview
 
         return reissue_preview.preview_reissue(allocator, request)
@@ -138,6 +158,7 @@ def protective_unknown_cycle_result(request: CycleRequest) -> CycleResult:
         released=ReleaseReport(),
         unaccounted_slots=frozenset(),
         reissues=reissues,
+        blocked_reason="protective_unknown",
     )
 
 

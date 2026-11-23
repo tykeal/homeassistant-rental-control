@@ -366,6 +366,7 @@ async def test_update_listener_present_data_updates_config_and_listeners(
     coordinator = MagicMock()
     coordinator.created = "2026-06-18T15:00:00+00:00"
     coordinator.lockname = "front_door"
+    coordinator.keymaster_runtime_enabled = True
     coordinator.update_config = AsyncMock()
     unsub_listener = MagicMock()
     hass.data[DOMAIN] = {

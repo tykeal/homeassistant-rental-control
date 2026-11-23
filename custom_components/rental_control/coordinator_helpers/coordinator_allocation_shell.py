@@ -15,6 +15,7 @@ import uuid
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.util import dt
 
+from ..keymaster_runtime import protected_legacy_unresolved
 from ..reconciliation import Reservation as _Reservation
 from ..reconciliation.desired import select_eligible_reservations
 from ..util import OperationResult
@@ -42,6 +43,8 @@ class CoordinatorAllocationMixin:
         here; nothing else would ever clear it. Failures of this cycle
         are surfaced through ``allocation_failure`` as their own kind.
         """
+        if protected_legacy_unresolved(self):
+            return
         allocation_failure.forget(
             self.hass, self._entry_id, allocation_failure.LOCKLESS
         )
@@ -140,6 +143,8 @@ class CoordinatorAllocationMixin:
         reconciliation report left from when the entry had a lock is
         cleared for the same reason the reverse case is.
         """
+        if protected_legacy_unresolved(self):
+            return
         allocation_failure.forget(
             self.hass, self._entry_id, allocation_failure.RECONCILIATION
         )

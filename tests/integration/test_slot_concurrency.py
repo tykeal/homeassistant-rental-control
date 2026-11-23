@@ -640,6 +640,7 @@ class TestCallbackReentrancyFencing:
 
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.keymaster_runtime_enabled = True
         mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()

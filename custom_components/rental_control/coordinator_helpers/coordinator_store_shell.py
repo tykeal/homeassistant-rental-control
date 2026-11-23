@@ -16,6 +16,11 @@ from homeassistant.util import dt
 from ..const import STORE_FILE_VERSION
 from ..const import STORE_SCHEMA_VERSION
 from ..const import STORE_SLOT_MAPPINGS_KEY
+from ..keymaster_identity import resolve_capability
+from ..keymaster_lifecycle import get_keymaster_lifecycle
+from ..keymaster_operations import protected_registry_active
+from ..keymaster_runtime import coordinator_keymaster_runtime_enabled
+from ..keymaster_runtime import protected_legacy_unresolved
 from ..reconciliation import DesiredPlan as _DesiredPlan
 from ..reconciliation import ManagedSlot as _ManagedSlot
 from ..reconciliation import Reservation as _Reservation
@@ -35,6 +40,51 @@ def _coordinator_module() -> Any:
 
 class CoordinatorStoreMixin:
     """Provide extracted coordinator shell behavior."""
+
+    def _observed_pin(self, slot_number: int) -> str | None:
+        """Return the PIN the lock currently reports for a slot."""
+        if not coordinator_keymaster_runtime_enabled(
+            self
+        ) or protected_legacy_unresolved(self):
+            return None
+        config_entry = getattr(self, "config_entry", None)
+        entry_id = getattr(config_entry, "entry_id", None) or getattr(
+            self, "_entry_id", None
+        )
+        lifecycle = (
+            get_keymaster_lifecycle(self.hass, entry_id)
+            if isinstance(entry_id, str)
+            else None
+        )
+        if lifecycle is not None:
+            resolution = lifecycle.current.get(f"text.code_slots:{slot_number}.pin")
+            if (
+                resolution is None
+                or not resolution.ready
+                or resolution.identity is None
+                or resolution.identity.slot != slot_number
+                or resolution.identity.keymaster_entry_id
+                != lifecycle.keymaster_entry_id
+                or resolution.identity.generation != lifecycle.generation
+                or resolution.entity_id is None
+            ):
+                return None
+            fresh = resolve_capability(
+                self.hass,
+                lifecycle.keymaster_entry_id,
+                f"text.code_slots:{slot_number}.pin",
+                generation=lifecycle.generation,
+            )
+            if not fresh.ready or fresh.entity_id != resolution.entity_id:
+                return None
+            state = self.hass.states.get(resolution.entity_id)
+            return state.state if state is not None else None
+        if protected_registry_active(self.hass):
+            return None
+        state = self.hass.states.get(
+            f"text.{self.lockname}_code_slot_{slot_number}_pin"
+        )
+        return state.state if state is not None else None
 
     async def _async_load_slot_store_impl(self) -> None:
         """Load cache-only slot metadata from the HA Store."""

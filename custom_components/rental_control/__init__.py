@@ -56,6 +56,8 @@ from .keymaster_feedback_listener import (
 )
 from .keymaster_lifecycle import start_keymaster_lifecycle
 from .keymaster_lifecycle import stop_keymaster_lifecycle
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
+from .keymaster_runtime import explicitly_lockless
 from .listeners import (
     async_register_keymaster_listener as async_register_keymaster_listener,
 )
@@ -188,7 +190,7 @@ async def _async_start_coordinator(
 
     # Register keymaster event bus listener after platform setup
     # so the checkin sensor reference is available (T024/T026)
-    if coordinator.lockname:
+    if coordinator_keymaster_runtime_enabled(coordinator) and coordinator.lockname:
         async_register_keymaster_listener(hass, config_entry)
 
 
@@ -357,7 +359,7 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
         unsub_listener()
     entry_data.get(UNSUB_LISTENERS, []).clear()
 
-    if coordinator.lockname:
+    if coordinator_keymaster_runtime_enabled(coordinator) and coordinator.lockname:
         await async_start_listener(hass, config_entry)
         async_register_keymaster_listener(hass, config_entry)
     else:
@@ -366,4 +368,7 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
 
 def _entry_has_lock(config_entry: ConfigEntry) -> bool:
     """Return whether a config entry should participate in code adoption."""
-    return configured_lock_entry(config_entry.data.get(CONF_LOCK_ENTRY)) is not None
+    return (
+        not explicitly_lockless(config_entry.data)
+        and configured_lock_entry(config_entry.data.get(CONF_LOCK_ENTRY)) is not None
+    )

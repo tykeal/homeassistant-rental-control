@@ -10,6 +10,7 @@ door-code generation, and independent multi-entry updates.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -23,10 +24,12 @@ from aioresponses import aioresponses
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.const import STATE_UNKNOWN
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.issue_registry import async_get as async_get_issue_registry
 import homeassistant.util.dt as dt_util
 from pytest_homeassistant.common import MockConfigEntry
 from pytest_homeassistant.common import async_fire_time_changed
 
+from custom_components.rental_control.allocator.singleton import get_allocator
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import CONF_MAX_EVENTS
 from custom_components.rental_control.const import CONF_REFRESH_FREQUENCY
@@ -256,6 +259,7 @@ async def test_wedged_withholds_writes_without_verified_lock_identity(
     async def save_store(_coordinator: RentalControlCoordinator) -> None:
         """Avoid writing the HA Store in the test."""
 
+    expected_store = deepcopy(store_data)
     with (
         aioresponses() as mock_session,
         patch.object(
@@ -290,9 +294,9 @@ async def test_wedged_withholds_writes_without_verified_lock_identity(
         await hass.async_block_till_done()
 
         coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
-        assert coordinator._latest_plan is not None
-        assert coordinator._latest_plan.selected == {}
-        assert coordinator._latest_plan.overflow != {}
+        assert coordinator._latest_plan is None
+        assert coordinator._slot_mappings == expected_store
+        assert coordinator.data
         set_code.assert_not_awaited()
 
         for suffix in ("name", "pin"):
@@ -308,9 +312,8 @@ async def test_wedged_withholds_writes_without_verified_lock_identity(
         await hass.async_block_till_done()
 
         assert set_code.await_count == 0
-        assert coordinator._latest_plan is not None
-        assert coordinator._latest_plan.overflow != {}
-        assert coordinator._latest_plan.selected == {}
+        assert coordinator._latest_plan is None
+        assert coordinator._slot_mappings == expected_store
 
         hass.states.async_set("text.front_door_code_slot_10_name", "Later Change")
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=6))
@@ -320,16 +323,10 @@ async def test_wedged_withholds_writes_without_verified_lock_identity(
         assert set_code.await_count == 0
 
 
-async def test_missing_store_adopts_coded_slots_when_unavailable_at_setup(
+async def test_missing_store_withholds_unverified_late_slot(
     hass: HomeAssistant,
 ) -> None:
-    """Adopt a coded slot that was unreadable during empty-store setup.
-
-    Like :func:`test_deleted_store_reenable_recovers_coded_slots`, this test
-    keeps ``dt_util.now`` aligned with the event loop clock so the check-in
-    sensor cannot cascade through ``checked_out`` and clear the adopted slot
-    mid-refresh (#798).
-    """
+    """Keep late name-shaped states from being adopted without an association."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Readable Adoption Rental",
@@ -409,8 +406,7 @@ async def test_missing_store_adopts_coded_slots_when_unavailable_at_setup(
 
         coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
         assert coordinator.get_persisted_slot_mappings() == {}
-        assert coordinator._latest_plan is not None
-        assert coordinator._latest_plan.selected == {}
+        assert coordinator._latest_plan is None
 
         hass.states.async_set("text.front_door_code_slot_10_name", "Current Guest")
         hass.states.async_set("text.front_door_code_slot_10_pin", "2468")
@@ -422,44 +418,20 @@ async def test_missing_store_adopts_coded_slots_when_unavailable_at_setup(
         await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-        mappings = coordinator.get_persisted_slot_mappings()
-        assert len(mappings) == 1
-        identity_key = next(iter(mappings))
-        assert not identity_key.startswith("adopted.")
-        mapping = next(iter(mappings.values()))
-        assert mapping["slot"] == 10
-        assert mapping["status"] == "cache"
-        assert mapping["identity"]["slot_name"] == "Current Guest"
-        assert mapping["last_observed_actual"]["has_code"] is True
-        assert coordinator._latest_plan is not None
-        assert coordinator._latest_plan.selected == {identity_key: 10}
-        assert coordinator._latest_plan.overflow == {}
-        assert not any(
-            action.slot == 10 and action.kind.value == "clear"
-            for action in coordinator._latest_plan.actions
-        )
-        assert not any(
-            action.slot == 10 and action.kind.value == "overwrite_manual_change"
-            for action in coordinator._latest_plan.actions
+        assert coordinator.get_persisted_slot_mappings() == {}
+        assert coordinator._latest_plan is None
+        assert coordinator.data
+        assert async_get_issue_registry(hass).async_get_issue(
+            DOMAIN, f"keymaster_association_repair_{entry.entry_id}"
         )
         clear_code.assert_not_awaited()
         set_code.assert_not_awaited()
 
 
-async def test_deleted_store_reenable_recovers_coded_slots(
+async def test_deleted_store_reenable_withholds_unverified_coded_slots(
     hass: HomeAssistant,
 ) -> None:
-    """Recover existing coded slots after disable, Store delete, re-enable.
-
-    The calendar is built relative to the real clock and ``dt_util.now`` is
-    left unpatched so that the check-in sensor's auto-checkin/auto-checkout
-    timers are scheduled in the future, as they would be in a real runtime.
-    Freezing ``dt_util.now`` in the past while the event loop runs on real
-    time makes those timers immediately due, which cascades the sensor
-    through ``checked_out`` and lets a refresh observe the transient state
-    and clear the adopted slot (#798).  The final observation is taken from
-    an explicitly awaited refresh rather than from a drained timer tick.
-    """
+    """Do not adopt a name-shaped slot after the mappings Store is deleted."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Deleted Store Rental",
@@ -485,6 +457,30 @@ async def test_deleted_store_reenable_recovers_coded_slots(
         entry_id="deleted_store_adoption_entry",
     )
     entry.add_to_hass(hass)
+    unrelated = MockConfigEntry(
+        domain="keymaster",
+        title="Unrelated Keymaster",
+        data={"lockname": "another_lock", "lock_entity_id": "lock.another"},
+        entry_id="unrelated-keymaster",
+    )
+    unrelated.add_to_hass(hass)
+    registry = er.async_get(hass)
+    for domain, property_name in (
+        ("text", "name"),
+        ("text", "pin"),
+        ("switch", "enabled"),
+    ):
+        entity = registry.async_get_or_create(
+            domain,
+            "keymaster",
+            f"unrelated-{property_name}",
+            config_entry=unrelated,
+            suggested_object_id=f"front_door_code_slot_10_{property_name}",
+        )
+        assert entity.entity_id == f"{domain}.front_door_code_slot_10_{property_name}"
+    hass.states.async_set("text.front_door_code_slot_10_name", "Reenabled Guest")
+    hass.states.async_set("text.front_door_code_slot_10_pin", "8642")
+    hass.states.async_set("switch.front_door_code_slot_10_enabled", "on")
 
     async def load_deleted_store(coordinator: RentalControlCoordinator) -> None:
         """Simulate the maintainer-deleted mappings Store file."""
@@ -501,6 +497,10 @@ async def test_deleted_store_reenable_recovers_coded_slots(
             autospec=True,
             side_effect=load_deleted_store,
         ),
+        patch(
+            "custom_components.rental_control.coordinator.async_fire_clear_code",
+            new=AsyncMock(),
+        ) as bootstrap_clear,
         patch.object(
             RentalControlCoordinator,
             "async_save_slot_store",
@@ -533,31 +533,25 @@ async def test_deleted_store_reenable_recovers_coded_slots(
         coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
         assert coordinator.get_persisted_slot_mappings() == {}
 
-        hass.states.async_set("text.front_door_code_slot_10_name", "Reenabled Guest")
-        hass.states.async_set("text.front_door_code_slot_10_pin", "8642")
-        hass.states.async_set("switch.front_door_code_slot_10_enabled", "on")
-        await hass.async_block_till_done()
-
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))
         await hass.async_block_till_done()
         await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-        mappings = coordinator.get_persisted_slot_mappings()
-        assert len(mappings) == 1
-        identity_key = next(iter(mappings))
-        assert not identity_key.startswith("adopted.")
-        mapping = next(iter(mappings.values()))
-        assert mapping["slot"] == 10
-        assert mapping["status"] == "cache"
-        assert mapping["identity"]["slot_name"] == "Reenabled Guest"
-        assert coordinator._latest_plan is not None
-        assert coordinator._latest_plan.selected == {identity_key: 10}
-        assert coordinator._latest_plan.overflow == {}
-        assert not any(
-            action.slot == 10 and action.kind.value == "overwrite_manual_change"
-            for action in coordinator._latest_plan.actions
+        assert coordinator.get_persisted_slot_mappings() == {}
+        assert coordinator._latest_plan is None
+        assert coordinator.data
+        snapshot = coordinator._read_slot_snapshot(10)
+        assert snapshot.name_state is None
+        assert snapshot.pin_state is None
+        assert coordinator.event_overrides is not None
+        assert coordinator.event_overrides.overrides == {}
+        allocator = get_allocator(hass)
+        assert allocator is not None and allocator._registry.records == {}
+        assert async_get_issue_registry(hass).async_get_issue(
+            DOMAIN, f"keymaster_association_repair_{entry.entry_id}"
         )
+        bootstrap_clear.assert_not_awaited()
         clear_code.assert_not_awaited()
         set_code.assert_not_awaited()
 

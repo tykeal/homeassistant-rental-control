@@ -1390,24 +1390,34 @@ async def test_t062_missing_store_never_falls_back_from_verified_set(
     coordinator.lockname = "legacy_name_must_not_be_used"
     hass.data[DOMAIN].pop(PROTECTED_REGISTRY_STORE)
     now = datetime.now(UTC)
+    reservation = SimpleNamespace(
+        identity_key=_OWNER_IDENTITY,
+        slot_name="Guest",
+        slot_code=_CODE,
+        start=now + timedelta(hours=1),
+        end=now + timedelta(hours=2),
+        buffered_start=now + timedelta(hours=1),
+        buffered_end=now + timedelta(hours=2),
+        display_slot_name="Guest",
+    )
 
     result = await coordinator.event_overrides._apply_set(
         coordinator,
         _SLOT,
-        SimpleNamespace(
-            identity_key=_OWNER_IDENTITY,
-            slot_name="Guest",
-            slot_code=_CODE,
-            start=now + timedelta(hours=1),
-            end=now + timedelta(hours=2),
-            buffered_start=now + timedelta(hours=1),
-            buffered_end=now + timedelta(hours=2),
-            display_slot_name="Guest",
-        ),
+        reservation,
         f"missing-store-{release}",
     )
-
     assert result.unconfirmed
+
+    stop_keymaster_lifecycle(hass, coordinator.config_entry.entry_id)
+    with patch.object(
+        coordinator.event_overrides, "_slot_confirmed_empty"
+    ) as empty_check:
+        result = await coordinator.event_overrides._apply_set(
+            coordinator, _SLOT, reservation, f"missing-lifecycle-{release}"
+        )
+        assert result.unconfirmed
+        empty_check.assert_not_awaited()
     assert events == []
     assert hass.data[DOMAIN].get(PROTECTED_REGISTRY_STORE) is None
 

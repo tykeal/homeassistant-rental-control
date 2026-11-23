@@ -8,7 +8,19 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timezone
 from types import SimpleNamespace
+from typing import cast
 
+from homeassistant.config_entries import ConfigEntry
+import pytest
+
+from custom_components.rental_control.allocator.associations import AssociationMode
+from custom_components.rental_control.allocator.associations import AssociationTuple
+from custom_components.rental_control.allocator.models import (
+    ProtectionAuthorizationState,
+)
+from custom_components.rental_control.const import CONF_LOCK_ENTRY
+from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 from custom_components.rental_control.coordinator import RentalControlCoordinator
 from custom_components.rental_control.helpers import OperationResult
 from custom_components.rental_control.reconciliation import DesiredPlan
@@ -91,6 +103,104 @@ def test_lock_backed_publishes_after_physical_confirmation() -> None:
     _record_observed(coordinator, reservation, code="2468")
 
     assert coordinator.get_slot_code("identity-1") == "2468"
+
+
+def test_protected_unresolved_hides_stale_assignment_and_code() -> None:
+    """Retain old observations without publishing them after protection activates."""
+    reservation = _reservation("identity-1", None)
+    coordinator = _coordinator(reservation)
+    _record_observed(coordinator, reservation, code="2468")
+    assert coordinator.get_slot_code("identity-1") == "2468"
+    coordinator.config_entry = cast(
+        "ConfigEntry", SimpleNamespace(data={CONF_LOCK_ENTRY: "front_door"})
+    )
+    coordinator.hass = as_hass(
+        SimpleNamespace(data={DOMAIN: {PROTECTED_REGISTRY_STORE: object()}})
+    )
+
+    assert coordinator.get_slot_assignment("identity-1") is None
+    assert coordinator.get_slot_code("identity-1") is None
+    assert coordinator._observed_slot_codes["identity-1"] == (10, "2468")
+
+
+@pytest.mark.parametrize("selector", [None, "front_door"])
+def test_missing_verified_authorization_hides_stale_code(
+    selector: str | None,
+) -> None:
+    """A missing selector or lifecycle cannot expose an earlier observation."""
+    reservation = _reservation("identity-1", None)
+    coordinator = _coordinator(reservation)
+    _record_observed(coordinator, reservation, code="2468")
+    association = AssociationTuple(
+        legacy_lock_selection_present=True,
+        legacy_lock_selection_raw=selector,
+        verified_keymaster_entry_id="keymaster-entry",
+        association_generation=1,
+        association_transaction_id="a" * 32,
+        mode=AssociationMode.VERIFIED,
+    )
+    coordinator.config_entry = cast(
+        "ConfigEntry",
+        SimpleNamespace(
+            data=association.merge_into_config({CONF_LOCK_ENTRY: selector}),
+            entry_id="rc-entry",
+        ),
+    )
+    coordinator.lockname = selector
+    coordinator.hass = as_hass(
+        SimpleNamespace(data={DOMAIN: {PROTECTED_REGISTRY_STORE: object()}})
+    )
+
+    assert coordinator.get_slot_assignment("identity-1") is None
+    assert coordinator.get_slot_code("identity-1") is None
+    assert coordinator._observed_slot_codes["identity-1"] == (10, "2468")
+
+
+def test_association_lookup_failure_hides_cached_code() -> None:
+    """An unavailable association lookup cannot expose an earlier lock PIN."""
+    reservation = _reservation("identity-1", None)
+    coordinator = _coordinator(reservation)
+    _record_observed(coordinator, reservation, code="2468")
+    association = AssociationTuple(
+        legacy_lock_selection_present=True,
+        legacy_lock_selection_raw="front_door",
+        verified_keymaster_entry_id="keymaster-entry",
+        association_generation=1,
+        association_transaction_id="a" * 32,
+        mode=AssociationMode.VERIFIED,
+    )
+    entry = SimpleNamespace(
+        data=association.merge_into_config({CONF_LOCK_ENTRY: "front_door"}),
+        entry_id="rc-entry",
+    )
+    lookups: list[str] = []
+
+    def fail_lookup(entry_id: str) -> None:
+        """Model a protected association store that fails during lookup."""
+        lookups.append(entry_id)
+        raise OSError("association lookup unavailable")
+
+    coordinator.config_entry = cast("ConfigEntry", entry)
+    coordinator.lockname = "front_door"
+    coordinator.hass = as_hass(
+        SimpleNamespace(
+            data={
+                DOMAIN: {
+                    PROTECTED_REGISTRY_STORE: SimpleNamespace(
+                        authorization_state=ProtectionAuthorizationState.READY,
+                        loaded_result=SimpleNamespace(data={}),
+                        association_for_entry=fail_lookup,
+                    )
+                }
+            },
+            config_entries=SimpleNamespace(async_get_entry=lambda _: entry),
+        )
+    )
+
+    assert coordinator.get_slot_assignment("identity-1") is None
+    assert coordinator.get_slot_code("identity-1") is None
+    assert lookups == ["rc-entry", "rc-entry"]
+    assert coordinator._observed_slot_codes["identity-1"] == (10, "2468")
 
 
 def test_lock_backed_retains_observed_code_while_unconfirmed() -> None:

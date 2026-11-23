@@ -24,11 +24,13 @@ from .const import DEFAULT_ENABLE_KEYMASTER_EVENT_DIAGNOSTICS
 from .const import DOMAIN
 from .const import KEYMASTER_MONITORING_SWITCH
 from .const import UNSUB_LISTENERS
+from .keymaster_operations import protected_registry_active
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
 from .keymaster_topology import association_is_verified
 from .keymaster_topology import association_requires_verified_routing
 from .keymaster_topology import event_name_matches_source
 from .keymaster_topology import event_slot_name_matches
-from .keymaster_topology import verified_slot_source
+from .keymaster_topology import verified_event_sources
 from .util import get_entry_data
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,7 +69,13 @@ def async_register_keymaster_listener(
         hass: Home Assistant instance.
         config_entry: The integration config entry.
     """
+    if association_requires_verified_routing(
+        config_entry
+    ) and not association_is_verified(config_entry):
+        return
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
+    if not coordinator_keymaster_runtime_enabled(coordinator):
+        return
     start_slot = coordinator.start_slot
     max_events = coordinator.max_events
 
@@ -99,6 +107,10 @@ def _handle_keymaster_event(
     max_events: int,
 ) -> None:
     """Handle a keymaster_lock_state_changed event."""
+    if not coordinator_keymaster_runtime_enabled(coordinator):
+        return
+    if protected_registry_active(hass) and not association_is_verified(config_entry):
+        return
     event_data = event.data
 
     raw_lockname, event_lockname = _normalized_event_lockname(event_data)
@@ -154,17 +166,13 @@ def _verified_event_matches_source(context: _KeymasterEventContext) -> bool:
     slot = context.code_slot_num
     if isinstance(slot, bool) or not isinstance(slot, int):
         return False
-    source = verified_slot_source(context.hass, context.config_entry, slot)
-    if source is None:
-        return False
-    return (
+    return any(
         context.event_data.get("entity_id") == source.lock_entity_id
         and event_name_matches_source(context.raw_lockname, source)
         and event_slot_name_matches(
-            context.hass,
-            context.event_data.get("code_slot_name"),
-            source,
+            context.hass, context.event_data.get("code_slot_name"), source
         )
+        for source in verified_event_sources(context.hass, context.config_entry, slot)
     )
 
 

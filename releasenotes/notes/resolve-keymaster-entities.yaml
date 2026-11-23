@@ -48,8 +48,23 @@ upgrade:
     after upgrading; their prior display-name selector is not automatically
     trusted as a Keymaster configuration identity. A Home Assistant repair
     issue directs the operator to select the intended Keymaster entry in
-    Options. Setting and clearing door codes are withheld until the
-    association is repaired. If v1 ledger owners have no independent
+    Options. Code adoption, issuance, setting, and clearing are withheld
+    until the association is repaired; existing codes are also withheld from
+    guest-facing Rental Control sensors. Codes already programmed in the
+    physical lock are not cleared by this safeguard. Calendar tracking remains
+    available. If v1 ledger owners have no independent
     original-entry evidence, verified selection also requires an explicit
     same-original-physical-lock assertion. Known work from another entry is
     never transferred by that assertion.
+
+    If a verified association is missing its legacy lock selector, a repair
+    directs the operator to restore it in Options. Calendar display remains
+    available, but Keymaster monitoring and lock operations are withheld
+    until the selector is restored.
+
+    If saved association details or the lock selector are incomplete or
+    invalid, unrelated options can still be changed when the selector can be
+    represented unchanged, without replacing the saved evidence. Association and
+    lock-selector changes remain blocked. A persistent Repair explains how to
+    preserve evidence and that this release cannot safely infer the missing
+    association automatically.

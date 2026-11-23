@@ -678,3 +678,90 @@ async def test_committed_selector_edit_requires_protected_repair(hass, monkeypat
         },
     )
     assert unchanged[1] == {}
+
+
+async def test_partial_association_without_backend_still_rejects_selector_edits(
+    hass, monkeypatch
+) -> None:
+    """Any partial tuple metadata prevents silent edits even without a store."""
+    _add_lock_manager(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Rental",
+        entry_id="rc-partial-association",
+        data={CONF_LOCK_ENTRY: "lock.front_door", CONF_ASSOCIATION_GENERATION: 3},
+    )
+    entry.add_to_hass(hass)
+    flow: Any = _OptionsFlow(hass)
+    flow.config_entry = entry
+
+    async def dispatch_handler(
+        target_flow,
+        _step_id,
+        _title,
+        user_input,
+        _defaults,
+        _entry_id,
+        *,
+        validated_input_handler,
+    ):
+        """Exercise the actual options-flow handler selection."""
+        assert validated_input_handler is not None
+        return await validated_input_handler(target_flow, user_input)
+
+    monkeypatch.setattr(
+        "custom_components.rental_control.config_flow._start_config_flow",
+        dispatch_handler,
+    )
+    unchanged = await RentalControlOptionsFlow.async_step_init(
+        flow, {**_valid_input(), CONF_LOCK_ENTRY: "Front Door"}
+    )
+    assert unchanged[1] == {}
+
+    changed = await RentalControlOptionsFlow.async_step_init(
+        flow, {**_valid_input(), CONF_LOCK_ENTRY: "(none)"}
+    )
+    assert changed[1] == {CONF_LOCK_ENTRY: "association_invalid_history"}
+    assert dict(entry.data) == {
+        CONF_LOCK_ENTRY: "lock.front_door",
+        CONF_ASSOCIATION_GENERATION: 3,
+    }
+
+
+@pytest.mark.parametrize("selector", [123, ["front"], {"lock": "front"}])
+async def test_malformed_legacy_selector_options_preserve_invalid_evidence(
+    hass, monkeypatch, selector: object
+) -> None:
+    """Omitting or replacing an invalid selector cannot silently make it lockless."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Rental",
+        entry_id="rc-invalid-legacy-selector",
+        data={CONF_LOCK_ENTRY: selector},
+    )
+    entry.add_to_hass(hass)
+    flow: Any = _OptionsFlow(hass)
+    flow.config_entry = entry
+
+    async def dispatch_handler(
+        target_flow,
+        _step_id,
+        _title,
+        user_input,
+        _defaults,
+        _entry_id,
+        *,
+        validated_input_handler,
+    ):
+        """Exercise handler routing without a protected backend."""
+        assert validated_input_handler is not None
+        return await validated_input_handler(target_flow, user_input)
+
+    monkeypatch.setattr(
+        "custom_components.rental_control.config_flow._start_config_flow",
+        dispatch_handler,
+    )
+    for submitted in ({}, {CONF_LOCK_ENTRY: "(none)"}):
+        result = await RentalControlOptionsFlow.async_step_init(flow, submitted)
+        assert result[1] == {CONF_LOCK_ENTRY: "association_invalid_history"}
+    assert dict(entry.data) == {CONF_LOCK_ENTRY: selector}

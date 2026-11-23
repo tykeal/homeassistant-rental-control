@@ -16,6 +16,7 @@ import pytest
 from custom_components.rental_control import keymaster_operations
 from custom_components.rental_control import keymaster_service_helpers
 from custom_components.rental_control import keymaster_services
+from custom_components.rental_control.const import ALLOCATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 from custom_components.rental_control.keymaster_operations import (
@@ -450,13 +451,19 @@ def test_verified_lifecycle_gate_requires_exact_loaded_entry(
         (SimpleNamespace(data=[]), False),
         (SimpleNamespace(data={DOMAIN: []}), False),
         (SimpleNamespace(data={DOMAIN: {}}), False),
+        (
+            SimpleNamespace(
+                data={DOMAIN: {ALLOCATOR: SimpleNamespace(_protection_required=True)}}
+            ),
+            True,
+        ),
         (SimpleNamespace(data={DOMAIN: {PROTECTED_REGISTRY_STORE: object()}}), True),
     ),
 )
-def test_protected_registry_presence_is_not_inferred_from_other_state(
+def test_protected_routing_remains_required_if_store_is_missing(
     runtime, expected: bool
 ) -> None:
-    """A missing or malformed production store never opens protected routing."""
+    """A required missing store cannot enable legacy routing."""
     assert keymaster_operations.protected_registry_active(runtime) is expected
 
 

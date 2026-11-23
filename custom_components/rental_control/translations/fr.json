@@ -48,9 +48,17 @@
     }
   },
   "issues": {
+    "keymaster_association_invalid": {
+      "title": "L'association Keymaster enregistrée est invalide",
+      "description": "Les détails d'association ou le sélecteur de serrure enregistrés de cette entrée sont incomplets ou non valides. Le calendrier reste disponible, mais la publication des codes et les opérations Keymaster sont bloquées. Conservez la configuration actuelle, le registre, le marqueur de protection et les preuves mises en quarantaine sans modifier ni restaurer de fichiers, et contactez le responsable de l'intégration pour enquêter. Vérifiez si une sauvegarde complète, récente et cohérente peut être contrôlée indépendamment par rapport à un historique faisant autorité ; une sauvegarde concordante ne suffit pas à prouver son exhaustivité ou son actualité. Cette version ne dispose d'aucun vérificateur de sauvegarde historique ni de restauration externe ou de dérogation prise en charge lorsque l'historique ne peut pas être vérifié. Une réinstallation seule ne peut pas établir l'historique manquant."
+    },
     "keymaster_association_repair": {
       "title": "Réparer l'association Keymaster",
-      "description": "L'ancienne sélection Keymaster de cette entrée n'est pas résolue ; Rental Control n'associe pas automatiquement les entrées par nom ou identifiant d'entité. Ouvrez les options de cette entrée et sélectionnez la configuration Keymaster prévue. Tant que l'association n'est pas vérifiée, Rental Control bloque la programmation et l'effacement des codes de porte. Si les allocations historiques protégées ne contiennent aucune preuve indépendante de leur entrée Keymaster d'origine, le formulaire demandera aussi de confirmer explicitement que l'entrée sélectionnée contrôle le même verrou physique d'origine. Cette déclaration ne permet pas de transférer le travail connu d'une autre entrée Keymaster."
+      "description": "L'ancienne sélection Keymaster de cette entrée n'est pas résolue ; Rental Control n'associe pas automatiquement les entrées par nom ou identifiant d'entité. Si le registre partagé n'est pas prêt, attendez son chargement ou suivez d'abord les indications d'une éventuelle réparation distincte du registre partagé. Ouvrez ensuite les options de cette entrée et sélectionnez la configuration Keymaster prévue. Tant que l'association n'est pas vérifiée, Rental Control bloque la programmation et l'effacement des codes de porte. La vérification de la sélection ne peut pas contourner le blocage de l'historique du registre. Si les allocations historiques protégées ne contiennent aucune preuve indépendante de leur entrée Keymaster d'origine, le formulaire demandera aussi de confirmer explicitement que l'entrée sélectionnée contrôle le même verrou physique d'origine. Cette déclaration ne permet pas de transférer le travail connu d'une autre entrée Keymaster."
+    },
+    "keymaster_selector_repair": {
+      "title": "Restaurer le sélecteur de serrure Keymaster",
+      "description": "Cette entrée possède une association Keymaster vérifiée, mais aucun sélecteur de serrure historique. L’affichage du calendrier reste disponible, mais la surveillance Keymaster et les opérations sur la serrure sont désactivées jusqu’à la restauration du sélecteur dans les options. Choisissez le sélecteur correspondant à la configuration Keymaster vérifiée ; l’association vérifiée reste la référence pour la cible physique Keymaster."
     },
     "keymaster_version_outside_support": {
       "title": "La version de Keymaster est hors du support testé",
@@ -85,6 +93,7 @@
       "prefix_too_long_for_trim": "Le préfixe d'événement est trop long pour la longueur maximale du nom",
       "active_allocations": "La longueur du code ne peut pas être modifiée tant que cette entrée a des allocations de code actives ou que le registre de codes partagé récupère",
       "association_unavailable": "L'historique protégé des associations n'est pas prêt ; aucune sélection n'a été enregistrée",
+      "association_invalid_history": "Les détails d'association ou le sélecteur de serrure enregistrés sont incomplets ou non valides ; aucune association ni sélection de serrure n'a été modifiée. Consultez la réparation de l'association Keymaster enregistrée pour préserver les preuves. Cette version ne peut pas reconstruire automatiquement l'association en toute sécurité.",
       "association_repair_required": "L'historique d'association enregistré ne peut pas être vérifié. Aucune sélection de serrure historique n'a été enregistrée ; rechargez après le rétablissement du registre protégé.",
       "association_replay_required": "Une transaction d'association protégée attend sa projection de configuration. Rouvrez les options pour la rejouer en toute sécurité.",
       "association_conflict": "Cette modification pourrait transférer ou masquer du travail existant ; elle n'a pas été enregistrée",

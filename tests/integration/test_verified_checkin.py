@@ -5,18 +5,23 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable
 from collections.abc import Mapping
 from dataclasses import replace
+from datetime import datetime
 import importlib
 from pathlib import Path
 import tempfile
 from types import ModuleType
 from types import SimpleNamespace
 from typing import Any
+from typing import cast
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Event
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
@@ -32,8 +37,14 @@ from custom_components.rental_control.const import LOCK_MANAGER
 from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 from custom_components.rental_control.const import UNSUB_LISTENERS
 from custom_components.rental_control.coordinator import RentalControlCoordinator
+from custom_components.rental_control.coordinator_helpers.coordinator_config_shell import (
+    CoordinatorConfigMixin,
+)
 from custom_components.rental_control.coordinator_helpers.coordinator_setup_shell import (
     CoordinatorSetupMixin,
+)
+from custom_components.rental_control.keymaster_feedback_listener import (
+    async_start_listener,
 )
 from custom_components.rental_control.keymaster_feedback_listener import (
     lifecycle_listener_callback,
@@ -41,6 +52,7 @@ from custom_components.rental_control.keymaster_feedback_listener import (
 from custom_components.rental_control.keymaster_identity import (
     build_capability_identity,
 )
+from custom_components.rental_control.keymaster_lifecycle import get_keymaster_lifecycle
 from custom_components.rental_control.keymaster_lifecycle import (
     start_keymaster_lifecycle,
 )
@@ -51,8 +63,12 @@ from custom_components.rental_control.keymaster_lifecycle_registry import (
     managed_slot_property_keys,
 )
 from custom_components.rental_control.listeners import _handle_keymaster_event
+from custom_components.rental_control.listeners import async_register_keymaster_listener
 from custom_components.rental_control.sensors.checkin import runtime
 from custom_components.rental_control.sensors.checkin import verified_date
+from custom_components.rental_control.switch import (
+    async_setup_entry as async_setup_switches,
+)
 
 from tests.fixtures.keymaster_releases import artifact_paths
 from tests.fixtures.keymaster_releases import import_keymaster_release
@@ -256,6 +272,74 @@ async def _world(
     start_keymaster_lifecycle(hass, rc_entry, coordinator)
     await hass.async_block_till_done()
     return rc_entry, selected, recorder, [selected, parent, sibling]
+
+
+async def test_explicit_lockless_association_ignores_retained_legacy_name(
+    hass,
+) -> None:
+    """A retained legacy selector cannot reactivate Keymaster runtime paths."""
+    association = AssociationTuple(
+        legacy_lock_selection_present=True,
+        legacy_lock_selection_raw="Front Door",
+        verified_keymaster_entry_id=None,
+        association_generation=1,
+        association_transaction_id="d" * 32,
+        mode=AssociationMode.EXPLICIT_LOCKLESS,
+    )
+    rc_entry = _config_entry(
+        hass,
+        DOMAIN,
+        _RC_ID,
+        association.merge_into_config({"name": "Rental"}),
+    )
+    coordinator = SimpleNamespace(
+        config_entry=rc_entry,
+        hass=hass,
+        _entry_id=rc_entry.entry_id,
+        lockname="front-door",
+        keymaster_runtime_enabled=False,
+        start_slot=_SLOT,
+        max_events=1,
+    )
+    coordinator._read_slot_snapshot = lambda _slot: pytest.fail(
+        "explicitly lockless setup must not read legacy Keymaster entities"
+    )
+    entry_data = {
+        COORDINATOR: coordinator,
+        UNSUB_LISTENERS: [],
+    }
+    hass.data.setdefault(DOMAIN, {})[rc_entry.entry_id] = entry_data
+
+    coordinator_for_mixins: Any = coordinator
+    await CoordinatorSetupMixin._async_setup_keymaster_overrides_impl(
+        coordinator_for_mixins
+    )
+    snapshot = CoordinatorSetupMixin._read_slot_snapshot(coordinator_for_mixins, _SLOT)
+    await async_start_listener(hass, rc_entry)
+    async_register_keymaster_listener(hass, rc_entry)
+    added_switches: list[Any] = []
+
+    def add_switches(
+        entities: Iterable[Entity], update_before_add: bool = False
+    ) -> None:
+        """Capture monitoring entities offered by the platform."""
+        added_switches.extend(entities)
+
+    await async_setup_switches(hass, rc_entry, cast(AddEntitiesCallback, add_switches))
+    await CoordinatorConfigMixin._async_update_buffer_times(
+        coordinator_for_mixins, 1, 1
+    )
+    expiry_updated = await runtime.async_update_lock_code_expiry(
+        SimpleNamespace(coordinator=coordinator),
+        datetime.now().astimezone(),
+    )
+
+    assert snapshot.name_state is None
+    assert entry_data[UNSUB_LISTENERS] == []
+    assert "keymaster_state_listener_unsub" not in entry_data
+    assert not coordinator.keymaster_runtime_enabled
+    assert added_switches == []
+    assert not expiry_updated
 
 
 @pytest.mark.parametrize("release", _RELEASES)
@@ -467,6 +551,51 @@ async def test_real_release_payload_attributes_exact_verified_source(
     assert entries
 
 
+@pytest.mark.parametrize(
+    "mode,selector",
+    [
+        (AssociationMode.EXPLICIT_LOCKLESS, "Front Door"),
+        (AssociationMode.VERIFIED, None),
+        (AssociationMode.LEGACY_UNRESOLVED, "Front Door"),
+    ],
+)
+async def test_queued_unlock_is_rejected_after_association_disables_runtime(
+    hass, mode: AssociationMode, selector: str | None
+) -> None:
+    """A queued event cannot use a stale live listener or lifecycle."""
+    rc_entry, _selected, recorder, _entries = await _world(hass)
+    association = _association()
+    changed = replace(
+        association,
+        mode=mode,
+        legacy_lock_selection_raw=selector,
+        verified_keymaster_entry_id=(
+            _KM_ID if mode is AssociationMode.VERIFIED else None
+        ),
+    )
+    hass.config_entries.async_update_entry(
+        rc_entry, data=changed.merge_into_config(rc_entry.data)
+    )
+    _handle_keymaster_event(
+        hass,
+        rc_entry,
+        _event(
+            {
+                "lockname": "Front Door",
+                "entity_id": "lock.front_door",
+                "state": "unlocked",
+                "code_slot_num": _SLOT,
+                "code_slot_name": "Guest",
+            }
+        ),
+        hass.data[DOMAIN][_RC_ID][COORDINATOR],
+        _SLOT,
+        1,
+    )
+    assert recorder.calls == []
+    stop_keymaster_lifecycle(hass, rc_entry.entry_id)
+
+
 @pytest.mark.parametrize("release", _RELEASES)
 async def test_inherited_child_uses_parent_physical_source(hass, release: str) -> None:
     """A child with override disabled uses its exact live parent property."""
@@ -498,6 +627,244 @@ async def test_inherited_child_uses_parent_physical_source(hass, release: str) -
     )
     assert inherited_recorder.calls == [(_SLOT, "Front Door")]
     stop_keymaster_lifecycle(hass, inherited_rc.entry_id)
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_parent_association_accepts_inherited_child_lock_event(
+    hass, release: str
+) -> None:
+    """A linked child's physical unlock is attributable to its inherited slot."""
+    rc_entry, selected, recorder, entries = await _world(hass)
+    child = _config_entry(
+        hass,
+        LOCK_MANAGER,
+        "linked-child-lock",
+        {
+            "lock_entity_id": "lock.side_door",
+            "lockname": "Side Door",
+            "parent_entry_id": selected.entry_id,
+        },
+    )
+    _create_slot_properties(
+        hass,
+        child,
+        slot=_SLOT,
+        slot_name="Guest",
+        override_parent=False,
+    )
+
+    _handle_keymaster_event(
+        hass,
+        rc_entry,
+        _event(
+            _emit_real_release_event(
+                release,
+                slot=_SLOT,
+                lockname="Side Door",
+                entity_id="lock.side_door",
+                slot_name="Guest",
+            ),
+        ),
+        hass.data[DOMAIN][_RC_ID][COORDINATOR],
+        _SLOT,
+        1,
+    )
+
+    assert recorder.calls == [(_SLOT, "Side Door")]
+    assert child.data["parent_entry_id"] == selected.entry_id
+    assert entries[0] == selected
+    stop_keymaster_lifecycle(hass, rc_entry.entry_id)
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_associated_inherited_child_accepts_its_physical_event(
+    hass, release: str
+) -> None:
+    """A selected inherited child also reports its own lock's physical source."""
+    rc_entry, selected, recorder, _entries = await _world(
+        hass,
+        selected_id="child-inherited",
+        selected_name="Child Door",
+        selected_lock="lock.child_door",
+        parent_id="parent-door",
+        parent_name="Front Door",
+        parent_lock="lock.front_door",
+        override_parent=False,
+    )
+
+    _handle_keymaster_event(
+        hass,
+        rc_entry,
+        _event(
+            _emit_real_release_event(
+                release,
+                slot=_SLOT,
+                lockname="Child Door",
+                entity_id="lock.child_door",
+                slot_name="Guest",
+            ),
+        ),
+        hass.data[DOMAIN][_RC_ID][COORDINATOR],
+        _SLOT,
+        1,
+    )
+
+    assert recorder.calls == [(_SLOT, "Child Door")]
+    assert selected.entry_id == "child-inherited"
+    stop_keymaster_lifecycle(hass, rc_entry.entry_id)
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_parent_association_rejects_overridden_child_event(
+    hass, release: str
+) -> None:
+    """A child-local override cannot check in a parent-associated guest."""
+    rc_entry, selected, recorder, _entries = await _world(hass)
+    child = _config_entry(
+        hass,
+        LOCK_MANAGER,
+        "linked-child-override",
+        {
+            "lock_entity_id": "lock.side_door",
+            "lockname": "Side Door",
+            "parent_entry_id": selected.entry_id,
+        },
+    )
+    _create_slot_properties(
+        hass,
+        child,
+        slot=_SLOT,
+        slot_name="Guest",
+        override_parent=True,
+    )
+
+    _handle_keymaster_event(
+        hass,
+        rc_entry,
+        _event(
+            _emit_real_release_event(
+                release,
+                slot=_SLOT,
+                lockname="Side Door",
+                entity_id="lock.side_door",
+                slot_name="Guest",
+            ),
+        ),
+        hass.data[DOMAIN][_RC_ID][COORDINATOR],
+        _SLOT,
+        1,
+    )
+
+    assert recorder.calls == []
+    stop_keymaster_lifecycle(hass, rc_entry.entry_id)
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_parent_association_rejects_unrelated_child_event(
+    hass, release: str
+) -> None:
+    """A same-slot child under another parent is not an event source."""
+    rc_entry, selected, recorder, _entries = await _world(hass)
+    unrelated_parent = _config_entry(
+        hass,
+        LOCK_MANAGER,
+        "unrelated-parent",
+        {
+            "lock_entity_id": "lock.back_door",
+            "lockname": "Back Door",
+        },
+    )
+    child = _config_entry(
+        hass,
+        LOCK_MANAGER,
+        "unrelated-linked-child",
+        {
+            "lock_entity_id": "lock.side_door",
+            "lockname": "Side Door",
+            "parent_entry_id": unrelated_parent.entry_id,
+        },
+    )
+    _create_slot_properties(
+        hass,
+        child,
+        slot=_SLOT,
+        slot_name="Guest",
+        override_parent=False,
+    )
+
+    _handle_keymaster_event(
+        hass,
+        rc_entry,
+        _event(
+            _emit_real_release_event(
+                release,
+                slot=_SLOT,
+                lockname="Side Door",
+                entity_id="lock.side_door",
+                slot_name="Guest",
+            ),
+        ),
+        hass.data[DOMAIN][_RC_ID][COORDINATOR],
+        _SLOT,
+        1,
+    )
+
+    assert recorder.calls == []
+    assert child.data["parent_entry_id"] == unrelated_parent.entry_id
+    assert child.data["parent_entry_id"] != selected.entry_id
+    stop_keymaster_lifecycle(hass, rc_entry.entry_id)
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+async def test_parent_association_rejects_ambiguous_child_physical_source(
+    hass, release: str
+) -> None:
+    """Two linked entries sharing a physical source do not identify one lock."""
+    rc_entry, selected, recorder, _entries = await _world(hass)
+    children = []
+    for entry_id, lockname in (
+        ("linked-child-one", "Side Door"),
+        ("linked-child-two", "Side Entry"),
+    ):
+        child = _config_entry(
+            hass,
+            LOCK_MANAGER,
+            entry_id,
+            {
+                "lock_entity_id": "lock.shared_side_door",
+                "lockname": lockname,
+                "parent_entry_id": selected.entry_id,
+            },
+        )
+        _create_slot_properties(
+            hass,
+            child,
+            slot=_SLOT,
+            slot_name="Guest",
+            override_parent=False,
+        )
+        children.append(child)
+
+    _handle_keymaster_event(
+        hass,
+        rc_entry,
+        _event(
+            _emit_real_release_event(
+                release,
+                slot=_SLOT,
+                lockname="Side Door",
+                entity_id="lock.shared_side_door",
+                slot_name="Guest",
+            ),
+        ),
+        hass.data[DOMAIN][_RC_ID][COORDINATOR],
+        _SLOT,
+        1,
+    )
+
+    assert recorder.calls == []
+    assert len(children) == 2
+    stop_keymaster_lifecycle(hass, rc_entry.entry_id)
 
 
 @pytest.mark.parametrize("release", _RELEASES)
@@ -738,7 +1105,7 @@ async def test_verified_parent_discovery_uses_entry_links_not_matching_names(
 
 
 async def test_unready_child_override_property_blocks_event(hass) -> None:
-    """An unavailable override control cannot authorize inherited routing."""
+    """Unready child control fails closed and restored readiness enables routing."""
     rc_entry, _selected, recorder, _entries = await _world(
         hass,
         selected_id="child-unready",
@@ -771,6 +1138,147 @@ async def test_unready_child_override_property_blocks_event(hass) -> None:
         1,
     )
     assert recorder.calls == []
+
+    hass.states.async_set(override.entity_id, "off")
+    await hass.async_block_till_done()
+    _handle_keymaster_event(
+        hass,
+        rc_entry,
+        _event(
+            {
+                "lockname": "Front Door",
+                "entity_id": "lock.front_door",
+                "state": "unlocked",
+                "code_slot_num": _SLOT,
+                "code_slot_name": "Guest",
+            },
+        ),
+        hass.data[DOMAIN][_RC_ID][COORDINATOR],
+        _SLOT,
+        1,
+    )
+    assert recorder.calls == [(_SLOT, "Front Door")]
+    stop_keymaster_lifecycle(hass, rc_entry.entry_id)
+
+
+async def test_direct_child_requires_live_current_generation_override(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Restored or stale-generation child evidence cannot attribute an unlock."""
+    from custom_components.rental_control import keymaster_topology
+
+    rc_entry, selected, recorder, _entries = await _world(hass)
+    child = _config_entry(
+        hass,
+        LOCK_MANAGER,
+        "child-restored-state",
+        {
+            "lock_entity_id": "lock.side_door",
+            "lockname": "Side Door",
+            "parent_entry_id": selected.entry_id,
+        },
+    )
+    _create_slot_properties(
+        hass, child, slot=_SLOT, slot_name="Guest", override_parent=False
+    )
+    identity = build_capability_identity(
+        child.entry_id, f"switch.code_slots:{_SLOT}.override_parent", generation=1
+    )
+    assert identity is not None
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "switch", LOCK_MANAGER, identity.unique_id
+    )
+    assert entity_id is not None
+    coordinator = hass.data[DOMAIN][_RC_ID][COORDINATOR]
+    payload = _event(
+        {
+            "lockname": "Side Door",
+            "entity_id": "lock.side_door",
+            "state": "unlocked",
+            "code_slot_num": _SLOT,
+            "code_slot_name": "Guest",
+        }
+    )
+    hass.states.async_set(entity_id, "off", {"restored": True})
+    _handle_keymaster_event(hass, rc_entry, payload, coordinator, _SLOT, 1)
+    assert recorder.calls == []
+
+    hass.states.async_set(entity_id, "off")
+    _handle_keymaster_event(hass, rc_entry, payload, coordinator, _SLOT, 1)
+    assert recorder.calls == [(_SLOT, "Side Door")]
+    recorder.calls.clear()
+    old_lifecycle = get_keymaster_lifecycle(hass, rc_entry.entry_id)
+    assert old_lifecycle is not None
+    old_generation = old_lifecycle.generation
+    stop_keymaster_lifecycle(hass, rc_entry.entry_id)
+    start_keymaster_lifecycle(hass, rc_entry, coordinator)
+    await hass.async_block_till_done()
+    current = get_keymaster_lifecycle(hass, rc_entry.entry_id)
+    assert current is not None and current.generation > old_generation
+
+    resolve = keymaster_topology.resolve_capability
+
+    def stale_child_resolution(*args, **kwargs):
+        """Simulate a child override retained from an older lifecycle epoch."""
+        resolution = resolve(*args, **kwargs)
+        if args[1] == child.entry_id and resolution.identity is not None:
+            return replace(
+                resolution,
+                identity=replace(resolution.identity, generation=old_generation),
+            )
+        return resolution
+
+    monkeypatch.setattr(
+        keymaster_topology, "resolve_capability", stale_child_resolution
+    )
+    _handle_keymaster_event(hass, rc_entry, payload, coordinator, _SLOT, 1)
+    assert recorder.calls == []
+    monkeypatch.setattr(keymaster_topology, "resolve_capability", resolve)
+    _handle_keymaster_event(hass, rc_entry, payload, coordinator, _SLOT, 1)
+    assert recorder.calls == [(_SLOT, "Side Door")]
+    stop_keymaster_lifecycle(hass, rc_entry.entry_id)
+
+
+async def test_parent_link_change_revokes_old_inherited_event_source(hass) -> None:
+    """Changing the live parent link stops accepting events from the old parent."""
+    rc_entry, selected, recorder, _entries = await _world(
+        hass,
+        selected_id="child-relinked",
+        selected_name="Child Door",
+        selected_lock="lock.child_door",
+        parent_id="original-parent",
+        parent_name="Front Door",
+        parent_lock="lock.front_door",
+        override_parent=False,
+    )
+    coordinator = hass.data[DOMAIN][_RC_ID][COORDINATOR]
+
+    def emit_parent_event() -> None:
+        """Emit an unlock event from the formerly inherited parent."""
+        _handle_keymaster_event(
+            hass,
+            rc_entry,
+            _event(
+                {
+                    "lockname": "Front Door",
+                    "entity_id": "lock.front_door",
+                    "state": "unlocked",
+                    "code_slot_num": _SLOT,
+                    "code_slot_name": "Guest",
+                },
+            ),
+            coordinator,
+            _SLOT,
+            1,
+        )
+
+    emit_parent_event()
+    assert recorder.calls == [(_SLOT, "Front Door")]
+    changed_data = dict(selected.data)
+    changed_data["parent_entry_id"] = "replacement-parent"
+    hass.config_entries.async_update_entry(selected, data=changed_data)
+    emit_parent_event()
+    assert recorder.calls == [(_SLOT, "Front Door")]
     stop_keymaster_lifecycle(hass, rc_entry.entry_id)
 
 

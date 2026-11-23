@@ -83,6 +83,7 @@ async def test_reset_entity_preserves_empty_override_update(
     slot = 10
     coordinator = MagicMock()
     coordinator.lockname = lockname
+    coordinator.keymaster_runtime_enabled = True
     coordinator.event_overrides.async_update = AsyncMock()
     hass = MagicMock()
     hass.data = {DOMAIN: {"entry-id": {COORDINATOR: coordinator}}}
@@ -113,6 +114,7 @@ def test_verified_state_context_uses_exact_property_mapping(
     coordinator = MagicMock()
     coordinator.config_entry.entry_id = "rc-entry"
     coordinator.event_overrides = None
+    coordinator.keymaster_runtime_enabled = True
     event = MagicMock()
     event.data = {
         "entity_id": "text.area_secret",
@@ -146,6 +148,7 @@ async def test_verified_reset_requires_ready_same_slot_name_and_pin(
         state_handlers, "get_keymaster_lifecycle", lambda *_args: lifecycle
     )
     coordinator = MagicMock()
+    coordinator.keymaster_runtime_enabled = True
     coordinator.config_entry.entry_id = "rc-entry"
     coordinator.event_overrides = MagicMock()
     coordinator.event_overrides.async_update = AsyncMock()
@@ -180,6 +183,7 @@ async def test_feedback_identity_is_captured_before_sleep_and_rechecked(
         state_handlers, "get_keymaster_lifecycle", lambda *_args: lifecycle
     )
     coordinator = MagicMock()
+    coordinator.keymaster_runtime_enabled = True
     coordinator.lockname = None
     coordinator.config_entry.entry_id = "rc-entry"
     coordinator.event_overrides = MagicMock()
@@ -250,6 +254,7 @@ async def test_concurrent_verified_feedback_preserves_each_changed_field(
         "old-pin", "Old guest", start_time, old_end_time
     )
     coordinator = MagicMock()
+    coordinator.keymaster_runtime_enabled = True
     coordinator.lockname = None
     coordinator.trim_names = False
     coordinator.event_prefix = ""
@@ -331,6 +336,7 @@ async def test_queued_feedback_cannot_resurrect_override_after_reset(
         "old-pin", "Old guest", start_time, end_time
     )
     coordinator = MagicMock()
+    coordinator.keymaster_runtime_enabled = True
     coordinator.lockname = None
     coordinator.trim_names = False
     coordinator.event_prefix = ""
@@ -417,6 +423,7 @@ async def test_out_of_order_same_field_feedback_keeps_current_state(
         "old-pin", "Old guest", start_time, end_time
     )
     coordinator = MagicMock()
+    coordinator.keymaster_runtime_enabled = True
     coordinator.lockname = None
     coordinator.trim_names = False
     coordinator.event_prefix = ""
@@ -482,6 +489,7 @@ async def test_stale_enabled_event_does_not_initialize_missing_override(
     )
     event_overrides = EventOverrides(20, 10)
     coordinator = MagicMock()
+    coordinator.keymaster_runtime_enabled = True
     coordinator.lockname = None
     coordinator.trim_names = False
     coordinator.event_prefix = ""
@@ -530,6 +538,7 @@ async def test_reconciliation_clear_fences_feedback_before_hardware_state_change
         "old-pin", "Old guest", start_time, end_time
     )
     coordinator = MagicMock()
+    coordinator.keymaster_runtime_enabled = True
     coordinator.lockname = "front_door"
     coordinator.trim_names = False
     coordinator.config_entry.entry_id = "rc-entry"
@@ -609,6 +618,7 @@ async def test_reservation_supersession_fences_queued_feedback_snapshot(
     )
     event_overrides._slot_uids[20] = "reservation-uid"
     coordinator = MagicMock()
+    coordinator.keymaster_runtime_enabled = True
     coordinator.lockname = "front_door"
     coordinator.trim_names = False
     coordinator.config_entry.entry_id = "rc-entry"

@@ -392,6 +392,7 @@ def mock_checkin_coordinator(
     coordinator.data = []
     coordinator.last_update_success = True
     coordinator.lockname = None
+    coordinator.keymaster_runtime_enabled = True
     coordinator.monitored_locknames = frozenset()
     coordinator.start_slot = 10
     coordinator.max_events = 3

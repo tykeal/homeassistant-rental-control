@@ -33,6 +33,7 @@ from .models import ReissueOutcome
 from .registry import AllocationRegistry
 from .registry_mutation import async_commit_staged_registry
 from .registry_mutation import clone_allocator
+from .registry_mutation import lockless_preflight
 from .registry_mutation import observation_preflight
 from .registry_mutation import owner_transition_authorizer
 
@@ -167,11 +168,27 @@ async def _resolve_protected_cycle(
     """Stage allocator changes and acknowledge them before returning codes."""
     from ..keymaster_operations import async_refence_observed_legacy_owners
 
+    if not _request_matches_observation(request):
+        return protection_gate.protective_unknown_cycle_result(request)
     await async_refence_observed_legacy_owners(allocator.hass, request.observation)
     async with allocator._mutation_lock:
+        if not _request_matches_observation(request):
+            return protection_gate.protective_unknown_cycle_result(request)
+        if request.observation.lockname is None:
+            if lockless_preflight(allocator, request.observation.entry_id) is not None:
+                return protection_gate.protective_unknown_cycle_result(request)
         async with allocator._lock:
             if not protection_gate.snapshot_ready(allocator):
                 return protection_gate.protective_unknown_cycle_result(request)
+            if request.observation.lockname is not None:
+                try:
+                    if (
+                        observation_preflight(allocator, [request.observation])
+                        is not None
+                    ):
+                        return protection_gate.protective_unknown_cycle_result(request)
+                except Exception:
+                    return protection_gate.protective_unknown_cycle_result(request)
             baseline = copy.deepcopy(allocator._registry)
             staged = clone_allocator(allocator)
             result = _resolve_cycle_unlocked(staged, request, persist=False)
@@ -191,14 +208,34 @@ async def _resolve_protected_cycle(
             baseline,
             staged,
             authorize_owner_transition=authorization,
-            event_loop_preflight=lambda: observation_preflight(
-                allocator, [request.observation]
+            event_loop_preflight=lambda: (
+                lockless_preflight(allocator, request.observation.entry_id)
+                if request.observation.lockname is None
+                else observation_preflight(allocator, [request.observation])
             ),
             operation_lock_held=True,
         )
         if committed.state is not ProtectionLoadState.VALID_V2:
             return protection_gate.protective_unknown_cycle_result(request)
         return result
+
+
+def _request_matches_observation(request: CycleRequest) -> bool:
+    """Prevent a cycle from authorizing owners of a different observed lock."""
+    items: list[AdoptionRequest | AllocationRequest] = [
+        *request.adoptions,
+        *request.observed_reservations,
+        *request.allocations,
+    ]
+    return all(
+        item.entry_id == request.observation.entry_id
+        and item.lockname == request.observation.lockname
+        for item in items
+    ) and all(
+        directive.entry_id == request.observation.entry_id
+        and directive.lockname == request.observation.lockname
+        for directive in request.forced_reissues
+    )
 
 
 def _resolve_cycle_unlocked(

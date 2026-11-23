@@ -24,6 +24,8 @@ from .keymaster_identity import CapabilityRegistryIndex
 from .keymaster_identity import resolve_capability_identity
 from .keymaster_lifecycle import get_keymaster_lifecycle
 from .keymaster_operations import protected_registry_active
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
+from .keymaster_topology import association_requires_verified_routing
 from .startup_readability import async_arm_startup_readability_refresh
 from .util import get_entry_data
 from .util import handle_state_change
@@ -106,11 +108,15 @@ async def async_start_listener(
     if entry_data is None:
         return
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
+    if not coordinator_keymaster_runtime_enabled(coordinator):
+        return
     if expected_coordinator is not None and coordinator is not expected_coordinator:
         return
     lockname = coordinator.lockname
     lifecycle = get_keymaster_lifecycle(hass, config_entry.entry_id)
     if expected_lifecycle is not None and lifecycle is not expected_lifecycle:
+        return
+    if lifecycle is None and association_requires_verified_routing(config_entry):
         return
 
     if lifecycle is not None:

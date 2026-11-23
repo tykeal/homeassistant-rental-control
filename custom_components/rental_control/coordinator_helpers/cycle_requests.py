@@ -96,6 +96,10 @@ def verified_observation_identity(
     entry = hass.config_entries.async_get_entry(rc_entry_id)
     if entry is None:
         return None
+    from ..keymaster_runtime import keymaster_runtime_enabled
+
+    if not keymaster_runtime_enabled(entry.data):
+        return None
     configured = AssociationTuple.from_config(entry.data)
     acknowledged = store.association_for_entry(rc_entry_id)
     if (

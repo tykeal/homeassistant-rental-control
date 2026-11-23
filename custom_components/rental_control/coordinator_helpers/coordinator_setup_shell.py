@@ -65,6 +65,10 @@ from ..event_overrides import EventOverrides
 from ..helpers import configured_lock_slug
 from ..keymaster_identity import resolve_capability
 from ..keymaster_lifecycle import get_keymaster_lifecycle
+from ..keymaster_runtime import coordinator_code_publication_allowed
+from ..keymaster_runtime import coordinator_keymaster_runtime_enabled
+from ..keymaster_runtime import explicitly_lockless
+from ..keymaster_runtime import protected_legacy_unresolved
 from ..keymaster_topology import association_is_verified
 from ..keymaster_topology import association_requires_verified_routing
 from ..keymaster_topology import verified_association_entry
@@ -89,6 +93,10 @@ class CoordinatorSetupMixin:
 
     async def _async_setup_keymaster_overrides_impl(self) -> None:
         """Bootstrap Keymaster slot overrides on first load."""
+        if association_requires_verified_routing(self.config_entry):
+            return
+        if protected_legacy_unresolved(self):
+            return
         if not self.lockname:
             return
         if get_keymaster_lifecycle(self.hass, self._entry_id) is not None:
@@ -143,7 +151,9 @@ class CoordinatorSetupMixin:
         self.checkout: time = cv.time(config.get(CONF_CHECKOUT))
         self.start_slot: int = int(str(config.get(CONF_START_SLOT)))
         lockname_raw = config.get(CONF_LOCK_ENTRY)
-        self.lockname: str | None = configured_lock_slug(lockname_raw)
+        self.lockname: str | None = (
+            None if explicitly_lockless(config) else configured_lock_slug(lockname_raw)
+        )
         self.max_events: int = int(str(config.get(CONF_MAX_EVENTS)))
         self.max_misses: int = DEFAULT_MAX_MISSES
         self.num_misses: int = 0
@@ -293,9 +303,15 @@ class CoordinatorSetupMixin:
 
     def _read_slot_snapshot(self, slot: int) -> KeymasterSlotSnapshot:
         """Read all Keymaster entity states for a slot into a snapshot."""
+        if not coordinator_keymaster_runtime_enabled(
+            self
+        ) or not coordinator_code_publication_allowed(self):
+            return KeymasterSlotSnapshot(slot=slot)
         lifecycle = get_keymaster_lifecycle(self.hass, self._entry_id)
         if lifecycle is not None:
             return self._read_verified_slot_snapshot(slot, lifecycle)
+        if association_requires_verified_routing(self.config_entry):
+            return KeymasterSlotSnapshot(slot=slot)
         base = f"{self.lockname}_code_slot_{slot}"
         return KeymasterSlotSnapshot(
             slot=slot,

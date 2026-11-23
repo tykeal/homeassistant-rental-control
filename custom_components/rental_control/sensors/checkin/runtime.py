@@ -23,6 +23,7 @@ from ...const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from ...const import EVENT_RENTAL_CONTROL_CHECKIN
 from ...const import EVENT_RENTAL_CONTROL_CHECKOUT
 from ...keymaster_operations import protected_registry_active
+from ...keymaster_runtime import coordinator_keymaster_runtime_enabled
 from ...keymaster_topology import association_requires_verified_routing
 from ...util import add_call
 from ...util import check_gather_results
@@ -205,6 +206,8 @@ async def async_update_lock_code_expiry(
     identity_end: datetime | None = None,
 ) -> bool:
     """Update keymaster lock code expiry after early checkout."""
+    if not coordinator_keymaster_runtime_enabled(entity.coordinator):
+        return False
     if (
         entity._tracked_event_slot_name is None
         or not entity.coordinator.event_overrides

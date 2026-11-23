@@ -248,6 +248,18 @@ def test_options_projection_allows_legacy_selector_and_strips_tuple_injection() 
     assert CONF_ASSOCIATION_TRANSACTION_ID not in absent
 
 
+@pytest.mark.parametrize("selector", [123, ["front"], {"lock": "front"}])
+def test_options_projection_preserves_malformed_legacy_selector(
+    selector: object,
+) -> None:
+    """An option update cannot erase malformed selector evidence."""
+    stored = {CONF_LOCK_ENTRY: selector, "unrelated": "stored"}
+    projected = preserve_committed_association_tuple(
+        stored, {CONF_LOCK_ENTRY: None, "unrelated": "new"}
+    )
+    assert projected == {CONF_LOCK_ENTRY: selector, "unrelated": "new"}
+
+
 def test_options_projection_preserves_committed_tuple_without_backend() -> None:
     """Options cannot overwrite or erase a committed tuple when unavailable."""
     config_data = {

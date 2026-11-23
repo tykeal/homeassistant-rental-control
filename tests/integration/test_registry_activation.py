@@ -17,6 +17,7 @@ from homeassistant.helpers.storage import Store
 import pytest
 
 from custom_components.rental_control.allocator import allocator as allocator_module
+from custom_components.rental_control.allocator import issuance
 from custom_components.rental_control.allocator import registry_commit
 from custom_components.rental_control.allocator.allocator import DoorCodeAllocator
 from custom_components.rental_control.allocator.association_evidence import (
@@ -36,12 +37,16 @@ from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import CycleRequest
 from custom_components.rental_control.allocator.models import ForcedReissueDirective
+from custom_components.rental_control.allocator.models import ProtectionLoadResult
 from custom_components.rental_control.allocator.models import ProtectionLoadState
 from custom_components.rental_control.allocator.models import ReissuePreviewRequest
 from custom_components.rental_control.allocator.protected_store import (
     ProtectedRegistryStore,
 )
 from custom_components.rental_control.allocator.registry import AllocationRegistry
+from custom_components.rental_control.allocator.registry_mutation import (
+    registry_changed,
+)
 from custom_components.rental_control.allocator.registry_snapshot import (
     async_commit_registry_snapshot,
 )
@@ -456,13 +461,19 @@ async def test_conflict_notice_is_created_after_commit_acknowledgement(
         notices.append((store.authorization_state.value, loaded.generation, owner_ids))
 
     monkeypatch.setattr(allocator_module, "async_create", capture_notice)
+    # This test isolates durable notice ordering; identity authorization has
+    # separate integration coverage.
+    monkeypatch.setattr(
+        "custom_components.rental_control.allocator.issuance.observation_preflight",
+        lambda *_args: None,
+    )
     result = await allocator.async_resolve_cycle(
         CycleRequest(
             observation=CycleObservation(
                 entry_id="notice-entry",
-                lockname=None,
-                managed_slots=frozenset(),
-                observed_codes={},
+                lockname="front",
+                managed_slots=frozenset({1, 2}),
+                observed_codes={"4831": 1},
                 unreadable_slots=frozenset(),
             ),
             adoptions=[
@@ -566,6 +577,241 @@ async def test_v1_activation_rejects_mismatched_live_registry_without_rewrite(
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
+async def test_protected_unresolved_cycle_withholds_adoption_and_issuance(hass) -> None:
+    """Unverified observations cannot reserve codes, even for no-op cycles."""
+    Path(hass.config.path(".storage")).mkdir(parents=True, exist_ok=True)
+    _clear_registry_fixture(hass)
+    allocator = DoorCodeAllocator(hass)
+    allocator._protection_required = True
+    hass.data[DOMAIN] = {ALLOCATOR: allocator}
+    await allocator.async_load()
+
+    entry = _lockless_entry("legacy-unverified")
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_LOCK_ENTRY: "front_door"}
+    )
+    observation = CycleObservation(
+        entry_id=entry.entry_id,
+        lockname="front_door",
+        managed_slots=frozenset({10}),
+        observed_codes={"2468": 10},
+        unreadable_slots=frozenset(),
+    )
+    adoption = AdoptionRequest(
+        entry_id=entry.entry_id,
+        identity_key="guest",
+        code="2468",
+        code_length=4,
+        lockname="front_door",
+        slot=10,
+    )
+    before_registry = deepcopy(allocator._registry)
+    before_pending = deepcopy(allocator._pending_adoption)
+    for allocations in (
+        [],
+        [
+            AllocationRequest(
+                entry_id=entry.entry_id,
+                identity_key="guest",
+                preferred_code="2468",
+                code_length=4,
+                lockname="front_door",
+                slot=10,
+            )
+        ],
+    ):
+        result = await allocator.async_resolve_cycle(
+            CycleRequest(
+                observation=observation,
+                adoptions=[adoption],
+                rekeys=[],
+                allocations=allocations,
+                active_keys={"guest"},
+                observed_reservations=(adoption,),
+            )
+        )
+        assert result.blocked_reason == "protective_unknown"
+        assert result.adopted == {}
+        assert all(
+            allocation.code is None and allocation.reason == "protective_unknown"
+            for allocation in result.allocated.values()
+        )
+        assert allocator._registry == before_registry
+        assert allocator._pending_adoption == before_pending
+
+    direct = await allocator.async_allocate(
+        AllocationRequest(
+            entry_id=entry.entry_id,
+            identity_key="guest",
+            preferred_code="2468",
+            code_length=4,
+            lockname="front_door",
+            slot=10,
+        )
+    )
+    direct_adoption = await allocator.async_adopt(adoption)
+    assert direct.code is None and direct.reason == "protective_unknown"
+    assert direct_adoption.code is None
+    assert direct_adoption.reason == "protective_unknown"
+    disguised = await allocator.async_allocate(
+        AllocationRequest(
+            entry_id=entry.entry_id,
+            identity_key="guest",
+            preferred_code="2468",
+            code_length=4,
+        )
+    )
+    assert disguised.code is None and disguised.reason == "protective_unknown"
+    preview = await allocator.async_preview_reissue(
+        ReissuePreviewRequest(
+            entry_id=entry.entry_id,
+            identity_key="guest",
+            preferred_code="2468",
+            code_length=4,
+            lockname="front_door",
+            slot=10,
+        )
+    )
+    assert preview.replacement_code is None
+    assert preview.reason == "protective_unknown"
+    lockless_preview = await allocator.async_preview_reissue(
+        ReissuePreviewRequest(
+            entry_id=entry.entry_id,
+            identity_key="guest",
+            preferred_code="2468",
+            code_length=4,
+            lockname=None,
+            slot=None,
+        )
+    )
+    assert lockless_preview.replacement_code is None
+    assert lockless_preview.reason == "protective_unknown"
+    assert allocator._registry == before_registry
+
+
+@pytest.mark.usefixtures("enable_custom_integrations")
+@pytest.mark.parametrize("change", ["lifecycle", "commit_in_flight"])
+async def test_noop_protected_cycle_withholds_code_after_authorization_changes(
+    hass, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    """A no-op cycle cannot return an existing code after authority changes."""
+    coordinator, store, _entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage"
+    )
+    allocator = get_allocator(hass)
+    assert allocator is not None
+    lifecycle = get_keymaster_lifecycle(hass, _RC_ENTRY_ID)
+    assert lifecycle is not None
+    before_registry = deepcopy(allocator._registry)
+    original_resolve = issuance._resolve_cycle_unlocked
+    original_commit = issuance.async_commit_staged_registry
+    candidate_codes: list[str | None] = []
+    in_flight: list[int] = []
+
+    def observe_candidate(*args: Any, **kwargs: Any) -> Any:
+        """Record the real staged result before revoking its authorization."""
+        result = original_resolve(*args, **kwargs)
+        candidate_codes.append(result.allocated[_OWNER_IDENTITY].code)
+        return result
+
+    async def revoke_before_commit(
+        current_allocator: Any, baseline: Any, staged: Any, **kwargs: Any
+    ) -> Any:
+        """Invalidate authorization after calculation but before publication."""
+        assert not registry_changed(baseline, staged._registry)
+        if change == "lifecycle":
+            stop_keymaster_lifecycle(hass, _RC_ENTRY_ID)
+        else:
+            in_flight.append(store._begin_commit_operation())
+        return await original_commit(current_allocator, baseline, staged, **kwargs)
+
+    monkeypatch.setattr(issuance, "_resolve_cycle_unlocked", observe_candidate)
+    monkeypatch.setattr(issuance, "async_commit_staged_registry", revoke_before_commit)
+    observation = CycleObservation(
+        entry_id=_RC_ENTRY_ID,
+        lockname="lock.consumer",
+        managed_slots=frozenset({_SLOT}),
+        observed_codes={_CODE: _SLOT},
+        unreadable_slots=frozenset(),
+        keymaster_entry_id=lifecycle.keymaster_entry_id,
+        keymaster_generation=lifecycle.generation,
+    )
+    allocation = AllocationRequest(
+        entry_id=_RC_ENTRY_ID,
+        identity_key=_OWNER_IDENTITY,
+        preferred_code=_CODE,
+        code_length=len(_CODE),
+        lockname="lock.consumer",
+        slot=_SLOT,
+    )
+    try:
+        result = await allocator.async_resolve_cycle(
+            CycleRequest(
+                observation=observation,
+                adoptions=[],
+                rekeys=[],
+                allocations=[allocation],
+                active_keys={_OWNER_IDENTITY},
+            )
+        )
+    finally:
+        if in_flight:
+            store._apply_commit_completion(
+                ProtectionLoadResult(ProtectionLoadState.UNAVAILABLE),
+                operation_id=in_flight[0],
+            )
+        stop_keymaster_lifecycle(hass, _RC_ENTRY_ID)
+
+    assert candidate_codes == [_CODE]
+    assert result.blocked_reason == "protective_unknown"
+    assert result.allocated[_OWNER_IDENTITY].code is None
+    assert allocator._registry == before_registry
+    assert coordinator.config_entry.entry_id == _RC_ENTRY_ID
+
+
+@pytest.mark.usefixtures("enable_custom_integrations")
+async def test_protected_cycle_rejects_mismatched_observation_owner(hass) -> None:
+    """A lockless observation cannot authorize a different lock's adoption."""
+    Path(hass.config.path(".storage")).mkdir(parents=True, exist_ok=True)
+    _clear_registry_fixture(hass)
+    allocator = DoorCodeAllocator(hass)
+    allocator._protection_required = True
+    hass.data[DOMAIN] = {ALLOCATOR: allocator}
+    await allocator.async_load()
+    entry = _lockless_entry("lockless-mismatch")
+    entry.add_to_hass(hass)
+    adoption = AdoptionRequest(
+        entry_id=entry.entry_id,
+        identity_key="guest",
+        code="2468",
+        code_length=4,
+        lockname="other_lock",
+        slot=10,
+    )
+    before_registry = deepcopy(allocator._registry)
+    result = await allocator.async_resolve_cycle(
+        CycleRequest(
+            observation=CycleObservation(
+                entry_id=entry.entry_id,
+                lockname=None,
+                managed_slots=frozenset(),
+                observed_codes={},
+                unreadable_slots=frozenset(),
+            ),
+            adoptions=[adoption],
+            rekeys=[],
+            allocations=[],
+            active_keys={"guest"},
+            observed_reservations=(adoption,),
+        )
+    )
+    assert result.blocked_reason == "protective_unknown"
+    assert result.adopted == {}
+    assert allocator._registry == before_registry
+
+
+@pytest.mark.usefixtures("enable_custom_integrations")
 async def test_failed_first_allocation_commit_does_not_publish_staged_owner(
     hass,
     monkeypatch: pytest.MonkeyPatch,
@@ -596,13 +842,18 @@ async def test_failed_first_allocation_commit_does_not_publish_staged_owner(
     monkeypatch.setattr(
         registry_commit, "_atomic_write_acknowledged", reject_marker_write
     )
+    # Commit-failure behavior is independent of the observation authorization.
+    monkeypatch.setattr(
+        "custom_components.rental_control.allocator.issuance.observation_preflight",
+        lambda *_args: None,
+    )
     result = await allocator.async_resolve_cycle(
         CycleRequest(
             observation=CycleObservation(
                 entry_id="lockless-entry",
-                lockname=None,
-                managed_slots=frozenset(),
-                observed_codes={},
+                lockname="front",
+                managed_slots=frozenset({1, 2}),
+                observed_codes={"4831": 1},
                 unreadable_slots=frozenset(),
             ),
             adoptions=[
@@ -1278,12 +1529,10 @@ async def test_registry_size_limit_retains_existing_owner_and_fails_closed(
 
     allocation = await allocator.async_allocate(
         AllocationRequest(
-            entry_id=_RC_ENTRY_ID,
+            entry_id="capacity-pressure-lockless",
             identity_key="capacity-pressure-new-owner",
             preferred_code="9384",
             code_length=4,
-            lockname="lock.consumer",
-            slot=_SLOT + 1,
         )
     )
     assert allocation.code is None

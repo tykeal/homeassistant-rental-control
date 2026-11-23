@@ -40,6 +40,7 @@ from custom_components.rental_control.const import CONF_ASSOCIATION_TRANSACTION_
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import LOCK_ENTRY_NONE
 from custom_components.rental_control.const import LOCK_MANAGER
 from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 
@@ -343,6 +344,46 @@ async def test_lockless_selection_remains_distinct_and_never_attests(hass) -> No
     assert association.mode is AssociationMode.EXPLICIT_LOCKLESS
     assert association.verified_keymaster_entry_id is None
     assert store.envelopes[0]["data"]["attestations"] == []
+
+
+async def test_verified_selection_cannot_leave_runtime_lockless(hass) -> None:
+    """A verified association cannot coexist with the lockless runtime selector."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Lockless Rental",
+        data={
+            CONF_LOCK_ENTRY: LOCK_ENTRY_NONE,
+            CONF_VERIFIED_KEYMASTER_ENTRY_ID: None,
+            CONF_ASSOCIATION_GENERATION: 1,
+            CONF_ASSOCIATION_TRANSACTION_ID: "c" * 32,
+            CONF_ASSOCIATION_MODE: AssociationMode.EXPLICIT_LOCKLESS.value,
+        },
+        entry_id="rc-explicit-lockless",
+    )
+    entry.add_to_hass(hass)
+    _candidate(hass)
+    flow, store = _flow(hass, entry)
+    current = AssociationTuple.from_config(entry.data)
+    assert current is not None
+    store.loaded_result.data["associations"] = [
+        association_storage_record(entry.entry_id, current)
+    ]
+    store.references = ()
+
+    result = await apply_association_selection(
+        flow,
+        {
+            CONF_ASSOCIATION_ENTRY_CHOICE: "km-a",
+            CONF_ASSOCIATION_ATTEST_SAME_LOCK: False,
+            CONF_LOCK_ENTRY: LOCK_ENTRY_NONE,
+        },
+    )
+
+    assert result.errors == {CONF_LOCK_ENTRY: "association_conflict"}
+    assert not store.envelopes
+    association = AssociationTuple.from_config(entry.data)
+    assert association is not None
+    assert association.mode is AssociationMode.EXPLICIT_LOCKLESS
 
 
 async def test_known_association_reselects_with_old_work_held_to_original(hass) -> None:

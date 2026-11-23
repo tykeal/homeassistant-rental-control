@@ -58,6 +58,9 @@ from custom_components.rental_control.const import CONF_VERIFIED_KEYMASTER_ENTRY
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 from custom_components.rental_control.coordinator_helpers import keymaster_version_issue
+from custom_components.rental_control.coordinator_helpers.coordinator_setup_shell import (
+    CoordinatorSetupMixin,
+)
 from custom_components.rental_control.keymaster_identity import CapabilityStatus
 from custom_components.rental_control.keymaster_identity import (
     build_capability_identity,
@@ -802,14 +805,22 @@ async def test_setup_unload_entry_tracks_selected_keymaster_version_issue(
 
 
 @pytest.mark.asyncio
-async def test_ready_v2_legacy_keymaster_entry_gets_actionable_repair_issue(
+@pytest.mark.parametrize("protected_unready", [False, True])
+async def test_legacy_keymaster_entry_gets_actionable_repair_issue(
     hass,
     tmp_path: Path,
+    protected_unready: bool,
 ) -> None:
-    """A migrated lock-backed legacy tuple prompts until selection is verified."""
-    coordinator, _store, _entity_ids = await _setup_verified_consumer(
+    """An unresolved tuple prompts even when registry history is unverified."""
+    coordinator, store, _entity_ids = await _setup_verified_consumer(
         hass, tmp_path / ".storage", "v0.6.1"
     )
+    if protected_unready:
+        store._enter_protective_unknown(
+            ProtectionLoadResult(
+                ProtectionLoadState.PROTECTIVE_UNKNOWN, failure_code="operation_failed"
+            )
+        )
     entry = coordinator.config_entry
     entry._async_set_state(hass, ConfigEntryState.LOADED, None)
     verified = AssociationTuple.from_config(entry.data)
@@ -833,9 +844,145 @@ async def test_ready_v2_legacy_keymaster_entry_gets_actionable_repair_issue(
         assert issue is not None
         assert issue.translation_key == "keymaster_association_repair"
         assert issue.config_entry_id == entry.entry_id
+        if protected_unready:
+            assert issue_registry.async_get_issue(DOMAIN, "protected_registry_unknown")
 
         hass.config_entries.async_update_entry(
             entry, data=verified.merge_into_config(legacy_data)
+        )
+        await hass.async_block_till_done()
+        assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
+    finally:
+        keymaster_version_issue.unregister_keymaster_version_tracking(
+            hass, entry.entry_id
+        )
+        entry._async_set_state(hass, ConfigEntryState.NOT_LOADED, None)
+        stop_keymaster_lifecycle(hass, entry.entry_id)
+        await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("damage", "protected_unready"),
+    [
+        ("partial", False),
+        ("partial_missing_selector", True),
+        ("non_string_selector", False),
+    ],
+)
+async def test_invalid_association_repair_preserves_history_until_cleared(
+    hass, tmp_path: Path, damage: str, protected_unready: bool
+) -> None:
+    """Malformed tuples raise a distinct Repair even with unknown provenance."""
+    coordinator, store, _entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.1"
+    )
+    if protected_unready:
+        store._enter_protective_unknown(
+            ProtectionLoadResult(
+                ProtectionLoadState.PROTECTIVE_UNKNOWN, failure_code="operation_failed"
+            )
+        )
+    entry = coordinator.config_entry
+    entry._async_set_state(hass, ConfigEntryState.LOADED, None)
+    original = dict(entry.data)
+    damaged = dict(original)
+    if damage in {"partial", "partial_missing_selector"}:
+        damaged.pop(CONF_ASSOCIATION_GENERATION)
+    if damage == "partial_missing_selector":
+        damaged.pop(CONF_LOCK_ENTRY)
+    if damage == "non_string_selector":
+        damaged[CONF_LOCK_ENTRY] = 123
+    assert AssociationTuple.from_config(damaged) is None
+    hass.config_entries.async_update_entry(entry, data=damaged)
+
+    issue_registry = async_get_issue_registry(hass)
+    issue_id = f"keymaster_association_invalid_{entry.entry_id}"
+    keymaster_version_issue.register_keymaster_version_tracking(hass, entry.entry_id)
+    try:
+        issue = issue_registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.translation_key == "keymaster_association_invalid"
+        assert issue.config_entry_id == entry.entry_id
+        assert not issue.is_fixable
+        assert dict(entry.data) == damaged
+        if protected_unready:
+            assert issue_registry.async_get_issue(DOMAIN, "protected_registry_unknown")
+        hass.config_entries.async_update_entry(entry, data=original)
+        await hass.async_block_till_done()
+        assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
+
+        hass.config_entries.async_update_entry(entry, data=damaged)
+        await hass.async_block_till_done()
+        assert issue_registry.async_get_issue(DOMAIN, issue_id) is not None
+        keymaster_version_issue.unregister_keymaster_version_tracking(
+            hass, entry.entry_id
+        )
+        assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
+    finally:
+        keymaster_version_issue.unregister_keymaster_version_tracking(
+            hass, entry.entry_id
+        )
+        entry._async_set_state(hass, ConfigEntryState.NOT_LOADED, None)
+        stop_keymaster_lifecycle(hass, entry.entry_id)
+        await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+async def test_verified_association_without_legacy_selector_is_calendar_only_and_reported(
+    hass,
+    tmp_path: Path,
+) -> None:
+    """A missing selector preserves calendar runtime but blocks Keymaster paths."""
+    coordinator, _store, _entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.1"
+    )
+    entry = coordinator.config_entry
+    entry._async_set_state(hass, ConfigEntryState.LOADED, None)
+    verified = AssociationTuple.from_config(entry.data)
+    assert verified is not None
+    missing_selector = AssociationTuple(
+        legacy_lock_selection_present=True,
+        legacy_lock_selection_raw=None,
+        verified_keymaster_entry_id=verified.verified_keymaster_entry_id,
+        association_generation=verified.association_generation,
+        association_transaction_id=verified.association_transaction_id,
+        mode=AssociationMode.VERIFIED,
+    )
+    coordinator_event_overrides = coordinator.event_overrides
+    repaired_data = missing_selector.merge_into_config(entry.data)
+    hass.config_entries.async_update_entry(entry, data=repaired_data)
+    coordinator.keymaster_runtime_enabled = False
+    coordinator._child_locknames = set()
+    start_keymaster_lifecycle(hass, entry, coordinator)
+
+    issue_registry = async_get_issue_registry(hass)
+    issue_id = f"keymaster_selector_repair_{entry.entry_id}"
+    keymaster_version_issue.register_keymaster_version_tracking(hass, entry.entry_id)
+    try:
+        issue = issue_registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.translation_key == "keymaster_selector_repair"
+        assert not coordinator.keymaster_runtime_enabled
+        assert get_keymaster_lifecycle(hass, entry.entry_id) is None
+        coordinator.monitored_locknames = frozenset()
+        assert coordinator.monitored_locknames == frozenset()
+        assert coordinator.event_overrides is coordinator_event_overrides
+
+        await CoordinatorSetupMixin._async_setup_keymaster_overrides_impl(coordinator)
+        assert coordinator.event_overrides is coordinator_event_overrides
+        with patch(
+            "custom_components.rental_control.coordinator_helpers."
+            "coordinator_setup_shell.get_keymaster_lifecycle",
+            return_value=object(),
+        ) as stale_lifecycle:
+            snapshot = CoordinatorSetupMixin._read_slot_snapshot(coordinator, 21)
+        assert snapshot.name_state is None
+        assert snapshot.pin_state is None
+        stale_lifecycle.assert_not_called()
+
+        hass.config_entries.async_update_entry(
+            entry, data=verified.merge_into_config(repaired_data)
         )
         await hass.async_block_till_done()
         assert issue_registry.async_get_issue(DOMAIN, issue_id) is None

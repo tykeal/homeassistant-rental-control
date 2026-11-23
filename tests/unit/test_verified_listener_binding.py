@@ -33,6 +33,7 @@ async def test_listener_rebinds_exact_current_ids_and_unsubscribes_old(
     entry = MagicMock(entry_id="rc-entry", unique_id="public-id")
     coordinator = SimpleNamespace(
         lockname=None,
+        keymaster_runtime_enabled=True,
         start_slot=20,
         max_events=4,
     )
@@ -175,7 +176,7 @@ async def test_verified_listener_unsubscribes_when_registry_address_changes(
     """A registry rename during subscription cannot publish stale feedback."""
     hass = MagicMock()
     entry = MagicMock(entry_id="rc-entry", unique_id="public-id")
-    coordinator = SimpleNamespace(lockname=None)
+    coordinator = SimpleNamespace(lockname=None, keymaster_runtime_enabled=True)
     entry_data = {COORDINATOR: coordinator, UNSUB_LISTENERS: []}
     hass.data = {DOMAIN: {entry.entry_id: entry_data}}
     lifecycle = SimpleNamespace(generation=7, request_refresh=MagicMock())

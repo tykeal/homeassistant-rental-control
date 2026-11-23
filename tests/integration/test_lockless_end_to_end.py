@@ -12,24 +12,42 @@ allocator that withholds a code is visible (issue #849).
 
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
+from unittest.mock import patch
 
 from aioresponses import aioresponses
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.issue_registry import async_get as async_get_issue_registry
 import homeassistant.util.dt as dt_util
 import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.rental_control.allocator import registry_commit
+from custom_components.rental_control.allocator.associations import AssociationMode
+from custom_components.rental_control.allocator.associations import AssociationTuple
 from custom_components.rental_control.allocator.registry import AllocationRegistry
 from custom_components.rental_control.allocator.singleton import get_allocator
 from custom_components.rental_control.codegen import generate_date_based_code
+from custom_components.rental_control.config_flow_helpers.association import (
+    apply_association_selection,
+)
+from custom_components.rental_control.const import ASSOCIATION_CHOICE_LOCKLESS
+from custom_components.rental_control.const import ASSOCIATION_CHOICE_NO_CHANGE
 from custom_components.rental_control.const import CHECKIN_SENSOR
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_OUT
+from custom_components.rental_control.const import CONF_ASSOCIATION_ENTRY_CHOICE
+from custom_components.rental_control.const import CONF_ASSOCIATION_GENERATION
+from custom_components.rental_control.const import CONF_ASSOCIATION_MODE
+from custom_components.rental_control.const import CONF_ASSOCIATION_TRANSACTION_ID
 from custom_components.rental_control.const import CONF_LOCK_ENTRY
+from custom_components.rental_control.const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
@@ -91,7 +109,8 @@ async def _setup(
     hass: HomeAssistant, entry: MockConfigEntry, body: str | None = None
 ) -> None:
     """Set the entry up against a frozen clock and a stubbed calendar."""
-    entry.add_to_hass(hass)
+    if hass.config_entries.async_get_entry(entry.entry_id) is None:
+        entry.add_to_hass(hass)
     with (
         aioresponses() as mock_session,
         pytest.MonkeyPatch.context() as patcher,
@@ -221,6 +240,355 @@ async def test_no_lock_entry_keeps_its_code_across_refreshes(
 
     assert first == _expected_code()
     assert _event_sensor_code(hass, entry) == first
+
+
+async def test_committed_lockless_retained_selector_remains_calendar_only(
+    hass: HomeAssistant,
+) -> None:
+    """A retained selector cannot disable lockless allocation or enable hardware."""
+    entry = _entry("committed_lockless")
+    await _setup(hass, entry)
+    flow = SimpleNamespace(hass=hass, config_entry=entry)
+    result = await apply_association_selection(
+        flow,
+        {
+            CONF_ASSOCIATION_ENTRY_CHOICE: ASSOCIATION_CHOICE_LOCKLESS,
+            CONF_LOCK_ENTRY: "Front Door",
+        },
+    )
+    assert not result.errors
+    association = AssociationTuple.from_config(entry.data)
+    assert association is not None
+    assert association.mode is AssociationMode.EXPLICIT_LOCKLESS
+    assert association.legacy_lock_selection_raw == "Front Door"
+    coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(coordinator, "async_request_refresh", AsyncMock())
+        await coordinator.update_config({**entry.data, "refresh_frequency": 2})
+    await _refresh(hass, entry)
+    assert coordinator.lockname is None
+    assert coordinator.event_overrides is None
+    assert not coordinator.keymaster_runtime_enabled
+    assert _event_sensor_code(hass, entry) == _expected_code()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await _setup(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+    assert coordinator.lockname is None
+    assert coordinator.event_overrides is None
+    assert _event_sensor_code(hass, entry) == _expected_code()
+    allocator = get_allocator(hass)
+    assert allocator is not None
+    before = deepcopy(allocator._registry)
+    inconsistent = replace(
+        association,
+        mode=AssociationMode.VERIFIED,
+        verified_keymaster_entry_id="replacement-entry",
+    )
+    hass.config_entries.async_update_entry(
+        entry, data=inconsistent.merge_into_config(entry.data)
+    )
+    await coordinator._run_lockless_allocation(coordinator.data)
+    assert allocator._registry == before
+
+
+async def test_unresolved_lock_cannot_use_lockless_allocation(
+    hass: HomeAssistant,
+) -> None:
+    """A legacy lock selector cannot issue codes via the lockless path."""
+    entry = _entry("unresolved_lockless_cycle")
+    await _setup(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+    allocator = get_allocator(hass)
+    assert allocator is not None
+    before_registry = deepcopy(allocator._registry)
+    before_reservations = deepcopy(coordinator._latest_res_by_key)
+    assert before_reservations
+    identity = next(iter(before_reservations))
+    assert coordinator.get_slot_code(identity) == _expected_code()
+
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_LOCK_ENTRY: "Front Door"}
+    )
+    await coordinator._run_lockless_allocation(coordinator.data)
+    assert allocator._registry == before_registry
+    assert coordinator._latest_res_by_key == before_reservations
+    assert coordinator.get_slot_code(identity) is None
+    assert coordinator.data
+
+
+@pytest.mark.parametrize("selector", [123, ["front"], {"lock": "front"}])
+async def test_malformed_legacy_selector_blocks_issuance_and_raises_repair(
+    hass: HomeAssistant, selector: object
+) -> None:
+    """Malformed legacy selectors never become lockless, including at startup."""
+    entry = _entry("malformed_legacy_selector")
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_LOCK_ENTRY: selector}
+    )
+    with patch.object(
+        type(hass.services), "async_call", new=AsyncMock()
+    ) as service_calls:
+        await _setup(hass, entry)
+        coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+        allocator = get_allocator(hass)
+        assert allocator is not None
+        store = hass.data[DOMAIN][PROTECTED_REGISTRY_STORE]
+        assert store.authorization_state.value == "ready"
+        assert coordinator.data
+        assert coordinator.last_update_success
+        assert not coordinator.keymaster_runtime_enabled
+        assert not allocator._registry.records
+        assert _event_sensor_code(hass, entry) is None
+        issue = async_get_issue_registry(hass).async_get_issue(
+            DOMAIN, f"keymaster_association_invalid_{entry.entry_id}"
+        )
+        assert issue is not None
+        assert not issue.is_fixable
+        before_registry = deepcopy(allocator._registry)
+        before_store = deepcopy(store.loaded_result.data)
+
+        await coordinator._run_lockless_allocation(coordinator.data)
+        await _refresh(hass, entry)
+        assert allocator._registry == before_registry
+        assert store.loaded_result.data == before_store
+        assert entry.data[CONF_LOCK_ENTRY] == selector
+        assert _event_sensor_code(hass, entry) is None
+        service_calls.assert_not_called()
+
+
+async def test_malformed_legacy_selector_withholds_existing_protected_code(
+    hass: HomeAssistant,
+) -> None:
+    """A malformed selector preserves old ownership but withholds the code."""
+    entry = _entry("malformed_legacy_with_owner")
+    await _setup(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+    allocator = get_allocator(hass)
+    assert allocator is not None
+    store = hass.data[DOMAIN][PROTECTED_REGISTRY_STORE]
+    assert allocator._registry.records
+    assert _event_sensor_code(hass, entry) == _expected_code()
+    before_registry = deepcopy(allocator._registry)
+    before_store = deepcopy(store.loaded_result.data)
+    reservations = deepcopy(coordinator._latest_res_by_key)
+    identity = next(iter(reservations))
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_LOCK_ENTRY: {"bad": "selector"}}
+    )
+    with patch.object(
+        type(hass.services), "async_call", new=AsyncMock()
+    ) as service_calls:
+        await coordinator._run_lockless_allocation(coordinator.data)
+        await _refresh(hass, entry)
+        assert allocator._registry == before_registry
+        assert store.loaded_result.data == before_store
+        assert coordinator._latest_res_by_key == reservations
+        assert coordinator.get_slot_code(identity) is None
+        assert _event_sensor_code(hass, entry) is None
+        assert coordinator.data
+        service_calls.assert_not_called()
+    assert entry.data[CONF_LOCK_ENTRY] == {"bad": "selector"}
+    assert async_get_issue_registry(hass).async_get_issue(
+        DOMAIN, f"keymaster_association_invalid_{entry.entry_id}"
+    )
+
+
+async def test_malformed_legacy_selector_options_cannot_clear_it(
+    hass: HomeAssistant,
+) -> None:
+    """A real options submission cannot turn malformed history into locklessness."""
+    entry = _entry("malformed_legacy_options")
+    await _setup(hass, entry)
+    damaged = {**entry.data, CONF_LOCK_ENTRY: {"bad": "selector"}}
+    hass.config_entries.async_update_entry(entry, data=damaged)
+    inputs = {
+        "name": "Lockless Rental",
+        "url": _URL,
+        "verify_ssl": True,
+        CONF_LOCK_ENTRY: "(none)",
+        "refresh_frequency": 30,
+        "timezone": "UTC",
+        "event_prefix": "",
+        "checkin": "16:00",
+        "checkout": "11:00",
+        "days": 90,
+        "max_events": 2,
+        "start_slot": 10,
+        "code_length": 4,
+        "code_generation": "Start/End Date",
+        "should_update_code": True,
+        CONF_ASSOCIATION_ENTRY_CHOICE: ASSOCIATION_CHOICE_NO_CHANGE,
+    }
+    with aioresponses() as mock_session:
+        mock_session.get(
+            _URL,
+            status=200,
+            body=future_ics(days_ahead=_DAYS_AHEAD, duration=_DURATION),
+            headers={"content-type": "text/calendar"},
+            repeat=True,
+        )
+        form = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            form["flow_id"], user_input=inputs
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_LOCK_ENTRY: "association_invalid_history"}
+    assert dict(entry.data) == damaged
+    await _refresh(hass, entry)
+    assert _event_sensor_code(hass, entry) is None
+
+
+async def test_options_preserve_invalid_association_without_authorizing_hardware(
+    hass: HomeAssistant,
+) -> None:
+    """Unrelated options remain usable without rewriting malformed evidence."""
+    entry = _entry("invalid_association_options")
+    await _setup(hass, entry)
+    hass.data["keymaster"] = {}
+    for entry_id, title, lockname in (
+        ("invalid-km-front", "Front Door", "lock.front_door"),
+        ("invalid-km-back", "Back Door", "lock.back_door"),
+    ):
+        MockConfigEntry(
+            domain="keymaster",
+            title=title,
+            entry_id=entry_id,
+            data={"lockname": lockname},
+        ).add_to_hass(hass)
+    partial = {
+        **entry.data,
+        CONF_LOCK_ENTRY: "lock.front_door",
+        CONF_ASSOCIATION_MODE: "verified",
+        CONF_VERIFIED_KEYMASTER_ENTRY_ID: "invalid-km-front",
+        CONF_ASSOCIATION_TRANSACTION_ID: "a" * 32,
+    }
+    partial.pop(CONF_ASSOCIATION_GENERATION, None)
+    hass.config_entries.async_update_entry(entry, data=partial)
+    await hass.async_block_till_done()
+    issue = async_get_issue_registry(hass).async_get_issue(
+        DOMAIN, f"keymaster_association_invalid_{entry.entry_id}"
+    )
+    assert issue is not None
+    assert not issue.is_fixable
+    evidence_keys = (
+        CONF_LOCK_ENTRY,
+        CONF_ASSOCIATION_MODE,
+        CONF_VERIFIED_KEYMASTER_ENTRY_ID,
+        CONF_ASSOCIATION_TRANSACTION_ID,
+        CONF_ASSOCIATION_GENERATION,
+    )
+    evidence = {key: entry.data[key] for key in evidence_keys if key in entry.data}
+    store = hass.data[DOMAIN][PROTECTED_REGISTRY_STORE]
+    before_store = deepcopy(store.loaded_result.data)
+    allocator = get_allocator(hass)
+    assert allocator is not None
+    before_registry = deepcopy(allocator._registry)
+    inputs = {
+        "name": "Lockless Rental",
+        "url": _URL,
+        "verify_ssl": True,
+        CONF_LOCK_ENTRY: "Front Door",
+        "refresh_frequency": 30,
+        "timezone": "UTC",
+        "event_prefix": "",
+        "checkin": "16:00",
+        "checkout": "11:00",
+        "days": 90,
+        "max_events": 2,
+        "start_slot": 10,
+        "code_length": 4,
+        "code_generation": "Start/End Date",
+        "should_update_code": True,
+        CONF_ASSOCIATION_ENTRY_CHOICE: ASSOCIATION_CHOICE_NO_CHANGE,
+    }
+    with (
+        aioresponses() as mock_session,
+        patch.object(
+            type(hass.services), "async_call", new=AsyncMock()
+        ) as service_calls,
+    ):
+        mock_session.get(
+            _URL,
+            status=200,
+            body=future_ics(days_ahead=_DAYS_AHEAD, duration=_DURATION),
+            headers={"content-type": "text/calendar"},
+            repeat=True,
+        )
+        form = await hass.config_entries.options.async_init(entry.entry_id)
+        schema = form["data_schema"]
+        assert schema is not None
+        choice_key = next(
+            key
+            for key in schema.schema
+            if str(key.schema) == CONF_ASSOCIATION_ENTRY_CHOICE
+        )
+        assert choice_key.default() == ASSOCIATION_CHOICE_NO_CHANGE
+        result = await hass.config_entries.options.async_configure(
+            form["flow_id"], user_input=inputs
+        )
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        assert entry.data["refresh_frequency"] == 30
+        assert {key: entry.data[key] for key in evidence_keys if key in entry.data} == (
+            evidence
+        )
+        coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+        assert not coordinator.keymaster_runtime_enabled
+        assert coordinator._observed_pin(10) is None
+        assert coordinator.data
+
+        for changes, error_field in (
+            (
+                {CONF_ASSOCIATION_ENTRY_CHOICE: ASSOCIATION_CHOICE_LOCKLESS},
+                CONF_ASSOCIATION_ENTRY_CHOICE,
+            ),
+            ({CONF_LOCK_ENTRY: "Back Door"}, CONF_LOCK_ENTRY),
+        ):
+            form = await hass.config_entries.options.async_init(entry.entry_id)
+            result = await hass.config_entries.options.async_configure(
+                form["flow_id"], user_input={**inputs, **changes}
+            )
+            assert result["type"] is FlowResultType.FORM
+            assert result["errors"] == {error_field: "association_invalid_history"}
+
+        service_calls.assert_not_awaited()
+    assert {key: entry.data[key] for key in evidence_keys if key in entry.data} == (
+        evidence
+    )
+    assert store.loaded_result.data == before_store
+    assert allocator._registry == before_registry
+
+
+async def test_verified_without_selector_preserves_calendar_and_opens_repair(
+    hass: HomeAssistant,
+) -> None:
+    """A contradictory saved tuple does not become an active lockless issuer."""
+    entry = _entry("verified_missing_selector")
+    association = AssociationTuple(
+        legacy_lock_selection_present=True,
+        legacy_lock_selection_raw=None,
+        verified_keymaster_entry_id="missing-keymaster-entry",
+        association_generation=1,
+        association_transaction_id="a" * 32,
+        mode=AssociationMode.VERIFIED,
+    )
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, data=association.merge_into_config(entry.data)
+    )
+    await _setup(hass, entry)
+
+    coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
+    issue = async_get_issue_registry(hass).async_get_issue(
+        DOMAIN, f"keymaster_selector_repair_{entry.entry_id}"
+    )
+    assert issue is not None
+    assert coordinator.last_update_success
+    assert coordinator.data
+    assert not coordinator.keymaster_runtime_enabled
+    assert not coordinator.monitored_locknames
+    assert _event_sensor_code(hass, entry) is None
 
 
 async def test_no_lock_entry_withholds_code_when_protected_snapshot_is_lost(

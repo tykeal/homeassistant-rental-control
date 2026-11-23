@@ -186,6 +186,13 @@ def _record_cycle_outcome(
     """Apply the cycle result to reservations and report what it withheld."""
     entry_id = request.entry_id
     reservations = request.reservations
+    blocked_reason = getattr(result, "blocked_reason", None)
+    if blocked_reason is not None:
+        _LOGGER.warning(
+            "Shared code allocator withheld the cycle for entry %s: %s",
+            entry_id,
+            blocked_reason,
+        )
     cycle_results.apply_adoption_results(allocator, entry_id, reservations, result)
     if result.unaccounted_slots:
         _LOGGER.warning(

@@ -30,6 +30,7 @@ from ..const import STORE_CODE_REGISTRY_KEY
 from ..coordinator_helpers.config_update import AssociationApplyState
 from ..coordinator_helpers.config_update import async_commit_association_transaction
 from ..coordinator_helpers.config_update import replay_pending_association_transactions
+from ..helpers import configured_lock_entry
 from .association_flow_models import AssociationFlowResult
 from .association_flow_models import AssociationIntent
 from .association_transaction import build_association_transaction
@@ -200,7 +201,9 @@ def _build_intent(
     entry: ConfigEntry = flow.config_entry
     old = AssociationTuple.from_config(entry.data)
     if old is None:
-        return _association_error(user_input, "association_unavailable")
+        return _invalid_association_result(
+            flow, user_input, submitted, selection, attest_same_lock
+        )
     legacy_selection = _submitted_legacy_selection(flow, user_input, old)
     if legacy_selection is None:
         return _association_error(user_input, "invalid_association")
@@ -221,6 +224,13 @@ def _build_intent(
         attest_same_lock,
     )
 
+    if mode is AssociationMode.VERIFIED and configured_lock_entry(legacy_raw) is None:
+        return _association_error(
+            user_input,
+            "association_conflict",
+            field=CONF_LOCK_ENTRY,
+        )
+
     if not intent.changes_tuple:
         if attest_same_lock:
             return _field_error(
@@ -230,6 +240,40 @@ def _build_intent(
             )
         return intent
     return intent
+
+
+def _invalid_association_result(
+    flow: Any,
+    user_input: dict[str, Any],
+    submitted: dict[str, Any],
+    selection: str,
+    attest_same_lock: bool,
+) -> AssociationFlowResult:
+    """Keep malformed association evidence while permitting unrelated options."""
+    if selection != ASSOCIATION_CHOICE_NO_CHANGE:
+        return _association_error(user_input, "association_invalid_history")
+    if attest_same_lock:
+        return _field_error(
+            user_input, CONF_ASSOCIATION_ATTEST_SAME_LOCK, "attestation_unused"
+        )
+    raw = flow.config_entry.data.get(CONF_LOCK_ENTRY)
+    if raw is not None and not isinstance(raw, str):
+        return _association_error(
+            user_input, "association_invalid_history", field=CONF_LOCK_ENTRY
+        )
+    if CONF_LOCK_ENTRY in user_input:
+        expected = (
+            LOCK_ENTRY_NONE
+            if raw is None or raw == LOCK_ENTRY_NONE
+            else lock_entry_convert(flow.hass, raw, False)
+            if isinstance(raw, str)
+            else None
+        )
+        if expected is None or user_input[CONF_LOCK_ENTRY] != expected:
+            return _association_error(
+                user_input, "association_invalid_history", field=CONF_LOCK_ENTRY
+            )
+    return AssociationFlowResult(submitted, {})
 
 
 def _requested_target(

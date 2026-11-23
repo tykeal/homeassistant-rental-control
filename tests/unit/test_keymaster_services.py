@@ -56,6 +56,7 @@ async def test_update_times_writes_end_before_start() -> None:
     """Extracted update-times helper preserves Keymaster service-call order."""
     coordinator = MagicMock()
     coordinator.lockname = "front_door"
+    coordinator.keymaster_runtime_enabled = True
     coordinator.code_buffer_before = 0
     coordinator.code_buffer_after = 0
     coordinator.hass.services.async_call = AsyncMock()

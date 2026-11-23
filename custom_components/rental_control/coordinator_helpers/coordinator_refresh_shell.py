@@ -21,6 +21,8 @@ from icalendar import Calendar
 import x_wr_timezone
 
 from ..const import REQUEST_TIMEOUT
+from ..keymaster_runtime import coordinator_keymaster_runtime_enabled
+from ..keymaster_runtime import lockless_allocation_allowed
 from . import calendar_parsing
 from .coordinator_allocation_shell import CoordinatorAllocationMixin
 
@@ -141,9 +143,11 @@ class CoordinatorRefreshMixin(CoordinatorAllocationMixin):
 
         self._advance_calendar_misses = is_fresh_data
         try:
-            if self.event_overrides:
+            if self.event_overrides and coordinator_keymaster_runtime_enabled(self):
                 await self._run_reconciliation(reconciliation_calendar)
-            else:
+            elif coordinator_keymaster_runtime_enabled(
+                self
+            ) or lockless_allocation_allowed(self.hass, self.config_entry):
                 await self._run_lockless_allocation(reconciliation_calendar)
         finally:
             self._advance_calendar_misses = False
@@ -156,7 +160,7 @@ class CoordinatorRefreshMixin(CoordinatorAllocationMixin):
 
     def _refresh_child_locks(self) -> None:
         """Refresh child lock discovery for the current cycle."""
-        if not self.lockname:
+        if not coordinator_keymaster_runtime_enabled(self) or not self.lockname:
             return
         self._parent_entry_id = self._find_parent_entry_id()
         previous_children = self._child_locknames

@@ -15,6 +15,7 @@ from .const import DOMAIN
 from .const import PROTECTED_REGISTRY_STORE
 from .helpers import get_entry_data
 from .keymaster_lifecycle_tracker import KeymasterEntityLifecycle
+from .keymaster_runtime import keymaster_runtime_enabled
 
 _GENERATION_EPOCHS_KEY = "_keymaster_lifecycle_epochs"
 _KEYMASTER_LIFECYCLE = "keymaster_lifecycle"
@@ -87,6 +88,8 @@ def start_keymaster_lifecycle(
     if entry_data is None:
         return
     stop_keymaster_lifecycle(hass, config_entry.entry_id)
+    if not keymaster_runtime_enabled(config_entry.data):
+        return
     association = AssociationTuple.from_config(config_entry.data)
     if (
         association is None

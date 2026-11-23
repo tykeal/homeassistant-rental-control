@@ -16,6 +16,7 @@ from .keymaster_date_services import (
 from .keymaster_date_services import async_fire_update_times as async_fire_update_times
 from .keymaster_operations import VerifiedOperationIntent
 from .keymaster_operations import VerifiedOperationRejected
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
 from .keymaster_service_helpers import KeymasterServiceDeps
 from .keymaster_service_helpers import (
     _require_legacy_address as _require_legacy_address,
@@ -56,6 +57,8 @@ async def _async_fire_set_code_locked(
     """Set codes into a slot."""
     deps.logger.debug("In async_fire_set_code - slot: %s", slot)
     deps.logger.debug("Slot: %s", slot)
+    if not coordinator_keymaster_runtime_enabled(coordinator):
+        return OperationResult(kind="set", slot=slot, unconfirmed=True)
     lockname: str = coordinator.lockname
     if verified_intent is None:
         try:
@@ -170,6 +173,8 @@ async def _async_fire_clear_code_locked(
 ) -> OperationResult:
     """Fire a clear_code signal."""
     deps.logger.debug("In async_fire_clear_code - slot: %s", slot)
+    if not coordinator_keymaster_runtime_enabled(coordinator):
+        return OperationResult(kind="clear", slot=slot, unconfirmed=True)
     reset_entity = _clear_entity_targets(
         coordinator, slot, expected_name, deps, verified_intent
     )

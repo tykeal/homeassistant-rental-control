@@ -24,6 +24,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .. import const as rc_const
+from ..keymaster_runtime import coordinator_keymaster_runtime_enabled
 from ..util import add_call as add_call  # re-exported for tests/runtime patching
 from ..util import gen_uuid
 from ..util import get_entry_data
@@ -258,6 +259,8 @@ class CheckinTrackingSensor(
 
     def _is_keymaster_monitoring_enabled(self) -> bool:
         """Return True when keymaster monitoring is switched on."""
+        if not coordinator_keymaster_runtime_enabled(self.coordinator):
+            return False
         entry_data = get_entry_data(self._hass, self._config_entry.entry_id)
         if entry_data is None:
             return self.coordinator.lockname is not None

@@ -253,6 +253,11 @@ async def test_protected_stage_fails_closed_when_store_is_not_registered(hass) -
             True,
         ),
         (None, ProtectionLoadState.UNAVAILABLE, False),
+        (
+            ProtectionLoadResult(ProtectionLoadState.PROTECTIVE_UNKNOWN),
+            ProtectionLoadState.PROTECTIVE_UNKNOWN,
+            False,
+        ),
     ),
 )
 async def test_noop_stage_publishes_only_against_current_registry(
@@ -262,13 +267,16 @@ async def test_noop_stage_publishes_only_against_current_registry(
     allocator = DoorCodeAllocator(hass)
     allocator._protection_required = True
     allocator._registry = _registry(_owner())
-    store = SimpleNamespace(loaded_result=loaded_result)
+    store = SimpleNamespace(
+        loaded_result=loaded_result, operation_snapshot_ready=lambda: True
+    )
     hass.data[DOMAIN] = {
         ALLOCATOR: allocator,
         PROTECTED_REGISTRY_STORE: store,
     }
     baseline = allocator._registry
     staged = clone_allocator(cast(AllocatorState, allocator))
+    staged._pending_adoption.add("staged-only")
     notices: list[str] = []
     after_commit(cast(AllocatorState, staged), lambda: notices.append("acknowledged"))
 
@@ -278,6 +286,9 @@ async def test_noop_stage_publishes_only_against_current_registry(
 
     assert result.state is expected_state
     assert notices == (["acknowledged"] if callback_expected else [])
+    assert ("staged-only" in allocator._pending_adoption) is callback_expected
+    if not callback_expected:
+        assert allocator._registry is baseline
 
 
 async def test_noop_stage_rejects_stale_baseline_without_projection(hass) -> None:
@@ -288,7 +299,8 @@ async def test_noop_stage_rejects_stale_baseline_without_projection(hass) -> Non
     hass.data[DOMAIN] = {
         ALLOCATOR: allocator,
         PROTECTED_REGISTRY_STORE: SimpleNamespace(
-            loaded_result=ProtectionLoadResult(ProtectionLoadState.VALID_V2)
+            loaded_result=ProtectionLoadResult(ProtectionLoadState.VALID_V2),
+            operation_snapshot_ready=lambda: True,
         ),
     }
     baseline = copy.deepcopy(allocator._registry)
@@ -301,3 +313,86 @@ async def test_noop_stage_rejects_stale_baseline_without_projection(hass) -> Non
 
     assert result.failure_code == "registry_changed"
     assert allocator._registry.code_ref_salt == "concurrent-update"
+
+
+@pytest.mark.parametrize("raises", [False, True])
+async def test_noop_stage_rechecks_preflight_before_publication(
+    hass, raises: bool
+) -> None:
+    """A failed association preflight cannot publish an unchanged ledger."""
+    allocator = DoorCodeAllocator(hass)
+    allocator._protection_required = True
+    allocator._registry = _registry(_owner())
+    hass.data[DOMAIN] = {
+        ALLOCATOR: allocator,
+        PROTECTED_REGISTRY_STORE: SimpleNamespace(
+            loaded_result=ProtectionLoadResult(ProtectionLoadState.VALID_V2),
+            operation_snapshot_ready=lambda: True,
+        ),
+    }
+    baseline = allocator._registry
+    staged = clone_allocator(cast(AllocatorState, allocator))
+    staged._pending_adoption.add("unverified")
+    notices: list[str] = []
+    after_commit(cast(AllocatorState, staged), lambda: notices.append("published"))
+
+    def reject_preflight() -> ProtectionLoadResult:
+        """Model a rejected or failing association check."""
+        if raises:
+            raise RuntimeError("association check failed")
+        return ProtectionLoadResult(
+            ProtectionLoadState.UNAVAILABLE,
+            failure_code="keymaster_observation_unverified",
+        )
+
+    result = await async_commit_staged_registry(
+        cast(AllocatorState, allocator),
+        baseline,
+        staged,
+        event_loop_preflight=reject_preflight,
+    )
+
+    assert result.state is ProtectionLoadState.UNAVAILABLE
+    assert allocator._registry is baseline
+    assert "unverified" not in allocator._pending_adoption
+    assert notices == []
+
+
+@pytest.mark.parametrize("readiness", ["false", "missing", "raises"])
+async def test_noop_stage_rejects_retained_snapshot_when_store_not_ready(
+    hass, readiness: str
+) -> None:
+    """A retained valid observation does not authorize an unready store."""
+
+    def failed_readiness() -> bool:
+        """Model an unavailable protected-store readiness check."""
+        raise OSError("readiness unavailable")
+
+    allocator = DoorCodeAllocator(hass)
+    allocator._protection_required = True
+    allocator._registry = _registry(_owner())
+    store = SimpleNamespace(
+        loaded_result=ProtectionLoadResult(ProtectionLoadState.VALID_V2)
+    )
+    if readiness != "missing":
+        store.operation_snapshot_ready = (
+            failed_readiness if readiness == "raises" else lambda: False
+        )
+    hass.data[DOMAIN] = {
+        ALLOCATOR: allocator,
+        PROTECTED_REGISTRY_STORE: store,
+    }
+    baseline = allocator._registry
+    staged = clone_allocator(cast(AllocatorState, allocator))
+    staged._pending_adoption.add("unverified")
+    notices: list[str] = []
+    after_commit(cast(AllocatorState, staged), lambda: notices.append("published"))
+
+    result = await async_commit_staged_registry(
+        cast(AllocatorState, allocator), baseline, staged
+    )
+
+    assert result.state is ProtectionLoadState.UNAVAILABLE
+    assert allocator._registry is baseline
+    assert "unverified" not in allocator._pending_adoption
+    assert notices == []

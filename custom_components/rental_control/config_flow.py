@@ -15,6 +15,7 @@ from homeassistant.core import callback
 from homeassistant.util import dt
 import probatio
 
+from .allocator.associations import AssociationTuple
 from .config_flow_helpers import schemas as _schemas
 from .config_flow_helpers.association import apply_association_selection
 from .config_flow_helpers.availability import protected_association_backend_registered
@@ -145,7 +146,18 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
             }.intersection(user_input)
         )
         backend_registered = protected_association_backend_registered(self.hass)
-        committed_association = CONF_ASSOCIATION_MODE in self.config_entry.data
+        invalid_association = (
+            AssociationTuple.from_config(self.config_entry.data) is None
+        )
+        committed_association = any(
+            key in self.config_entry.data
+            for key in (
+                CONF_ASSOCIATION_MODE,
+                CONF_ASSOCIATION_GENERATION,
+                CONF_ASSOCIATION_TRANSACTION_ID,
+                CONF_VERIFIED_KEYMASTER_ENTRY_ID,
+            )
+        )
         if user_input is not None:
             user_input = dict(user_input)
             for key in (
@@ -157,7 +169,7 @@ class RentalControlOptionsFlow(config_entries.OptionsFlow):
                 user_input.pop(key, None)
         handler = (
             _handle_association_selection
-            if backend_registered
+            if backend_registered or invalid_association
             else (
                 _reject_unprotected_association_selection
                 if association_fields_submitted

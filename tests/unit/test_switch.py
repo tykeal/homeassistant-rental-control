@@ -62,6 +62,7 @@ def _make_coordinator(
     coordinator = MagicMock()
     coordinator.hass = hass
     coordinator.lockname = lockname
+    coordinator.keymaster_runtime_enabled = bool(lockname)
     coordinator.unique_id = "test-switch-unique-id"
     coordinator.name = "Test Rental"
     coordinator.start_slot = 10

@@ -344,6 +344,7 @@ async def test_old_watcher_teardown_cannot_clear_replacement_generation(
     lifecycle.keymaster_entry_id = "km-entry"
     coordinator.hass = hass
     coordinator._entry_id = entry.entry_id
+    coordinator.keymaster_runtime_enabled = True
     lifecycle.current = {
         key: CapabilityResolution(
             build_capability_identity("km-entry", key, generation=7),

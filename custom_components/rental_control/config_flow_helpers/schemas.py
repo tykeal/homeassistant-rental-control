@@ -21,13 +21,14 @@ from homeassistant.helpers.selector import SelectSelectorMode
 from homeassistant.util import dt
 import probatio
 
+from ..allocator.associations import AssociationMode
+from ..allocator.associations import AssociationTuple
 from ..bookings_only import host_defaults_bookings_only
 from ..const import ASSOCIATION_CHOICE_LOCKLESS
 from ..const import ASSOCIATION_CHOICE_NO_CHANGE
 from ..const import CODE_GENERATORS
 from ..const import CONF_ASSOCIATION_ATTEST_SAME_LOCK
 from ..const import CONF_ASSOCIATION_ENTRY_CHOICE
-from ..const import CONF_ASSOCIATION_MODE
 from ..const import CONF_BOOKINGS_ONLY_FEED
 from ..const import CONF_CHECKIN
 from ..const import CONF_CHECKOUT
@@ -50,7 +51,6 @@ from ..const import CONF_SHOULD_UPDATE_CODE
 from ..const import CONF_START_SLOT
 from ..const import CONF_TIMEZONE
 from ..const import CONF_TRIM_NAMES
-from ..const import CONF_VERIFIED_KEYMASTER_ENTRY_ID
 from ..const import DEFAULT_CHECKIN
 from ..const import DEFAULT_CHECKOUT
 from ..const import DEFAULT_CLEANING_WINDOW
@@ -365,11 +365,16 @@ def _options_fields(context: SchemaBuildContext) -> dict[Any, Any]:
 def _association_fields(context: SchemaBuildContext) -> dict[Any, Any]:
     """Offer explicit entry identity and an initially unselected assertion."""
     data = context.defaults or {}
-    current_mode = data.get(CONF_ASSOCIATION_MODE)
-    if current_mode == "explicit_lockless":
+    association = AssociationTuple.from_config(data)
+    if (
+        association is not None
+        and association.mode is AssociationMode.EXPLICIT_LOCKLESS
+    ):
         default_choice = ASSOCIATION_CHOICE_LOCKLESS
     else:
-        selected_entry = data.get(CONF_VERIFIED_KEYMASTER_ENTRY_ID)
+        selected_entry = (
+            association.verified_keymaster_entry_id if association is not None else None
+        )
         default_choice = (
             selected_entry
             if isinstance(selected_entry, str) and selected_entry

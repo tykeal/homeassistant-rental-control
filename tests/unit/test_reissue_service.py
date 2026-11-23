@@ -24,6 +24,7 @@ from custom_components.rental_control.allocator.models import AllocationOrigin
 from custom_components.rental_control.allocator.models import AllocationRequest
 from custom_components.rental_control.allocator.models import CycleObservation
 from custom_components.rental_control.allocator.models import CycleRequest
+from custom_components.rental_control.allocator.models import ReissuePreview
 from custom_components.rental_control.allocator.reissue_service import ATTR_DRY_RUN
 from custom_components.rental_control.allocator.reissue_service import ATTR_FORCE
 from custom_components.rental_control.allocator.reissue_service import ATTR_LOCKNAME
@@ -40,8 +41,10 @@ from custom_components.rental_control.allocator.services import (
 from custom_components.rental_control.const import ALLOCATOR
 from custom_components.rental_control.const import CHECKIN_SENSOR
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
+from custom_components.rental_control.const import CONF_LOCK_ENTRY
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
+from custom_components.rental_control.const import PROTECTED_REGISTRY_STORE
 from custom_components.rental_control.coordinator_helpers import reissue
 from custom_components.rental_control.coordinator_helpers.models import (
     ReservationBuildContext,
@@ -127,6 +130,65 @@ async def test_repeat_invocation_does_not_rotate_twice(
     assert first["status"] == "accepted"
     assert second["status"] == "accepted"
     assert coordinator.async_request_refresh.await_count == 1
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_unresolved_protected_reissue_is_refused(
+    hass: HomeAssistant, dry_run: bool
+) -> None:
+    """Neither previews nor queued reissues proceed without an association."""
+    harness = _install_service(hass)
+    harness.coordinator.config_entry = SimpleNamespace(data={CONF_LOCK_ENTRY: "front"})
+    hass.data[DOMAIN][PROTECTED_REGISTRY_STORE] = object()
+    before_registry = deepcopy(harness.allocator._registry)
+
+    response = await _call(
+        hass, {ATTR_ENTITY_ID: "sensor.guest", ATTR_DRY_RUN: dry_run}
+    )
+
+    assert response == {
+        "status": "refused",
+        "reason": "protective_unknown",
+        "dry_run": dry_run,
+    }
+    assert harness.allocator._registry == before_registry
+    harness.async_request_refresh.assert_not_awaited()
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_reissue_refuses_association_loss_during_preview(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, dry_run: bool
+) -> None:
+    """A preview cannot authorize or expose a PIN after association loss."""
+    harness = _install_service(hass)
+    before_registry = deepcopy(harness.allocator._registry)
+
+    async def lose_association(
+        _allocator: Any, coordinator: Any, _target: Any
+    ) -> tuple[None, ReissuePreview]:
+        """Replace a formerly usable association while preview is awaited."""
+        coordinator.config_entry = SimpleNamespace(data={CONF_LOCK_ENTRY: "front"})
+        hass.data[DOMAIN][PROTECTED_REGISTRY_STORE] = object()
+        return None, ReissuePreview(replacement_code="9876")
+
+    monkeypatch.setattr(
+        "custom_components.rental_control.allocator.reissue_preview."
+        "preview_request_and_result",
+        lose_association,
+    )
+
+    response = await _call(
+        hass, {ATTR_ENTITY_ID: "sensor.guest", ATTR_DRY_RUN: dry_run}
+    )
+
+    assert response == {
+        "status": "refused",
+        "reason": "protective_unknown",
+        "dry_run": dry_run,
+    }
+    assert harness.allocator._registry == before_registry
+    assert not reissue.pending_reissues(harness.coordinator)
+    harness.async_request_refresh.assert_not_awaited()
 
 
 async def test_repeat_after_deferred_release_does_not_rotate(

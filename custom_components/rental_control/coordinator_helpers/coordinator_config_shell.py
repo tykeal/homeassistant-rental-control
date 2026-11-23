@@ -59,6 +59,8 @@ from ..keymaster_operations import persisted_owner_identity_for_slot
 from ..keymaster_operations import prepare_verified_intent
 from ..keymaster_operations import protected_registry_active
 from ..keymaster_operations import verified_lifecycle_active
+from ..keymaster_runtime import coordinator_keymaster_runtime_enabled
+from ..keymaster_runtime import explicitly_lockless
 from ..keymaster_slot_operations import async_slot_operation
 from ..util import apply_buffer
 from ..util import check_gather_results
@@ -97,7 +99,9 @@ class CoordinatorConfigMixin:
         previous_lockname = self.lockname
         previous_max_events = self.max_events
         previous_start_slot = self.start_slot
-        self.lockname = configured_lock_slug(lockname_raw)
+        self.lockname = (
+            None if explicitly_lockless(config) else configured_lock_slug(lockname_raw)
+        )
         self.max_events = int(str(config.get(CONF_MAX_EVENTS)))
         self.start_slot = int(str(config.get(CONF_START_SLOT)))
         # Keep event_overrides in sync with config changes
@@ -147,6 +151,13 @@ class CoordinatorConfigMixin:
         previous_start_slot: int,
     ) -> None:
         """Re-sync event overrides and lock discovery after a config change."""
+        if explicitly_lockless(self.config_entry.data):
+            self.event_overrides = None
+            self._parent_entry_id = None
+            self._child_locknames = set()
+            return
+        if not coordinator_keymaster_runtime_enabled(self):
+            return
         lockname_changed = self.lockname != previous_lockname
         if not self.lockname:
             self.event_overrides = None
@@ -188,6 +199,8 @@ class CoordinatorConfigMixin:
         already-buffered values.  To avoid double-buffering, reverse
         the previous buffer before applying the new one.
         """
+        if not coordinator_keymaster_runtime_enabled(self):
+            return
         verified = verified_lifecycle_active(self)
         if not self.event_overrides or (not verified and not self.lockname):
             return

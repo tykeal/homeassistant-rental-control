@@ -18,6 +18,7 @@ from .const import COORDINATOR
 from .const import DOMAIN
 from .keymaster_lifecycle import get_keymaster_lifecycle
 from .keymaster_operations import protected_registry_active
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
 from .state_handler_models import VERIFIED_FEEDBACK_PROPERTIES
 from .state_handler_models import SlotStateSnapshot
 from .state_handler_models import StateChangeContext
@@ -99,6 +100,8 @@ def _resolve_context(
     config_entry_id: str | None = None,
 ) -> StateChangeContext | None:
     """Resolve state-change inputs and extract the Keymaster slot number."""
+    if not coordinator_keymaster_runtime_enabled(coordinator):
+        return None
     entity_id = event.data["entity_id"]
     event_new_state = event.data.get("new_state")
     event_new_value = (

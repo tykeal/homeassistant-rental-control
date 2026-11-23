@@ -86,6 +86,56 @@ def registry_changed(before: AllocationRegistry, after: AllocationRegistry) -> b
     return first != second
 
 
+async def _commit_unchanged_registry(
+    allocator: AllocatorState,
+    baseline: AllocationRegistry,
+    staged: AllocatorState,
+    store: Any,
+    event_loop_preflight: Callable[[], ProtectionLoadResult | None] | None,
+) -> ProtectionLoadResult:
+    """Revalidate before publishing staged state with an unchanged ledger."""
+    async with allocator._lock:
+        if allocator._registry != baseline:
+            return ProtectionLoadResult(
+                ProtectionLoadState.UNAVAILABLE,
+                failure_code="registry_changed",
+            )
+        if event_loop_preflight is not None:
+            try:
+                preflight_result = event_loop_preflight()
+            except Exception:
+                return ProtectionLoadResult(
+                    ProtectionLoadState.UNAVAILABLE,
+                    failure_code="snapshot_precondition_failed",
+                )
+            if preflight_result is not None:
+                return preflight_result
+        loaded = getattr(store, "loaded_result", None)
+        result = (
+            loaded
+            if isinstance(loaded, ProtectionLoadResult)
+            else ProtectionLoadResult(
+                ProtectionLoadState.UNAVAILABLE,
+                failure_code="snapshot_unavailable",
+            )
+        )
+        if result.state is not ProtectionLoadState.VALID_V2:
+            return result
+        readiness = getattr(store, "operation_snapshot_ready", None)
+        try:
+            ready = callable(readiness) and readiness()
+        except Exception:
+            ready = False
+        if not ready:
+            return ProtectionLoadResult(
+                ProtectionLoadState.UNAVAILABLE,
+                failure_code="snapshot_unavailable",
+            )
+        _publish_staged_state(allocator, staged)
+    _publish_after_commit_actions(staged)
+    return result
+
+
 def owner_transition_authorizer(
     allocator: AllocatorState,
     observations: list[CycleObservation],
@@ -183,6 +233,21 @@ def observation_preflight(
     return None
 
 
+def lockless_preflight(
+    allocator: AllocatorState, entry_id: str
+) -> ProtectionLoadResult | None:
+    """Reject a lockless request when its entry is not authorized as lockless."""
+    from ..keymaster_runtime import lockless_allocation_allowed
+
+    entry = allocator.hass.config_entries.async_get_entry(entry_id)
+    if entry is not None and not lockless_allocation_allowed(allocator.hass, entry):
+        return ProtectionLoadResult(
+            ProtectionLoadState.UNAVAILABLE,
+            failure_code="operation_not_current",
+        )
+    return None
+
+
 async def async_commit_staged_registry(
     allocator: AllocatorState,
     baseline: AllocationRegistry,
@@ -220,27 +285,9 @@ async def async_commit_staged_registry(
         )
 
     if not registry_changed(baseline, staged._registry):
-        async with allocator._lock:
-            if allocator._registry != baseline:
-                return ProtectionLoadResult(
-                    ProtectionLoadState.UNAVAILABLE,
-                    failure_code="registry_changed",
-                )
-            _publish_staged_state(allocator, staged)
-            loaded = getattr(store, "loaded_result", None)
-            result = (
-                loaded
-                if isinstance(loaded, ProtectionLoadResult)
-                else (
-                    ProtectionLoadResult(
-                        ProtectionLoadState.UNAVAILABLE,
-                        failure_code="snapshot_unavailable",
-                    )
-                )
-            )
-        if result.state is ProtectionLoadState.VALID_V2:
-            _publish_after_commit_actions(staged)
-        return result
+        return await _commit_unchanged_registry(
+            allocator, baseline, staged, store, event_loop_preflight
+        )
 
     exclusion_generation, exclusions = _current_exclusion_snapshot(allocator.hass)
     committed_registry: AllocationRegistry | None = None

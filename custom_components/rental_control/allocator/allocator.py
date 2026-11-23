@@ -39,6 +39,7 @@ from .registry import AllocationRegistry
 from .registry_mutation import after_commit
 from .registry_mutation import async_commit_staged_registry
 from .registry_mutation import clone_allocator
+from .registry_mutation import lockless_preflight
 from .store import RegistryStore
 from .store import code_ref_for
 
@@ -176,21 +177,8 @@ class DoorCodeAllocator(AllocatorLifecycleMixin):
         if not await protection_gate.async_operation_ready(self):
             return AllocationResult(reason="protective_unknown")
         if self._protection_required:
-            async with self._mutation_lock:
-                async with self._lock:
-                    if not protection_gate.snapshot_ready(self):
-                        return AllocationResult(reason="protective_unknown")
-                    baseline = copy.deepcopy(self._registry)
-                    staged = clone_allocator(self)
-                    result = staged._adopt_unlocked(request)
-                committed = await async_commit_staged_registry(
-                    self, baseline, staged, operation_lock_held=True
-                )
-                return (
-                    result
-                    if committed.state is ProtectionLoadState.VALID_V2
-                    else AllocationResult(reason="protective_unknown")
-                )
+            # A direct request contains no verified physical observation.
+            return AllocationResult(reason="protective_unknown")
         async with self._lock:
             if not protection_gate.snapshot_ready(self):
                 return AllocationResult(reason="protective_unknown")
@@ -256,9 +244,13 @@ class DoorCodeAllocator(AllocatorLifecycleMixin):
         if not await protection_gate.async_operation_ready(self):
             return AllocationResult(reason="protective_unknown")
         if self._protection_required:
+            if request.lockname is not None:
+                return AllocationResult(reason="protective_unknown")
             async with self._mutation_lock:
                 async with self._lock:
                     if not protection_gate.snapshot_ready(self):
+                        return AllocationResult(reason="protective_unknown")
+                    if lockless_preflight(self, request.entry_id) is not None:
                         return AllocationResult(reason="protective_unknown")
                     baseline = copy.deepcopy(self._registry)
                     staged = clone_allocator(self)
@@ -272,7 +264,13 @@ class DoorCodeAllocator(AllocatorLifecycleMixin):
                         staged._registry_lost = False
                         staged._registry_missing = False
                 committed = await async_commit_staged_registry(
-                    self, baseline, staged, operation_lock_held=True
+                    self,
+                    baseline,
+                    staged,
+                    event_loop_preflight=lambda: lockless_preflight(
+                        self, request.entry_id
+                    ),
+                    operation_lock_held=True,
                 )
                 return (
                     result

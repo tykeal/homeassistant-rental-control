@@ -285,6 +285,7 @@ class CycleResult:
     released: ReleaseReport
     unaccounted_slots: frozenset[int]
     reissues: tuple[ReissueOutcome, ...] = ()
+    blocked_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

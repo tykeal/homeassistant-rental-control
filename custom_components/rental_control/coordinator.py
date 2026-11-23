@@ -49,9 +49,10 @@ from .coordinator_helpers.models import (
 )
 from .coordinator_helpers.models import normalize_event_override_update
 from .helpers import OperationResult
-from .keymaster_identity import resolve_capability
-from .keymaster_lifecycle import get_keymaster_lifecycle
-from .keymaster_operations import protected_registry_active
+from .keymaster_runtime import coordinator_code_publication_allowed
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
+from .keymaster_runtime import keymaster_runtime_enabled
+from .keymaster_runtime import protected_legacy_unresolved
 from .reconciliation import DesiredPlan as _DesiredPlan
 from .reconciliation import ManagedSlot as _ManagedSlot
 from .reconciliation import Reservation as _Reservation
@@ -135,7 +136,7 @@ class RentalControlCoordinator(
             config_entry=config_entry,
             update_interval=timedelta(minutes=self.refresh_frequency),
         )
-        if self.lockname:
+        if self.keymaster_runtime_enabled:
             self._parent_entry_id = self._find_parent_entry_id()
             if self._parent_entry_id is not None:
                 self._child_locknames = self._discover_child_locks()
@@ -144,9 +145,17 @@ class RentalControlCoordinator(
     @property
     def monitored_locknames(self) -> frozenset[str]:
         """Return the set of all monitored locknames."""
-        if self.lockname is None:
+        if not self.keymaster_runtime_enabled or self.lockname is None:
             return frozenset()
         return frozenset({self.lockname} | self._child_locknames)
+
+    @property
+    def keymaster_runtime_enabled(self) -> bool:
+        """Return whether current association state permits Keymaster behavior."""
+        return keymaster_runtime_enabled(
+            self.config_entry.data,
+            legacy_runtime_lockname=self.lockname,
+        )
 
     @property
     def device_info(self) -> dr.DeviceInfo:
@@ -202,12 +211,14 @@ class RentalControlCoordinator(
 
     def get_slot_assignment(self, identity_key: str) -> int | None:
         """Return slot number assigned to identity_key in latest plan, or None."""
-        if self._latest_plan is None:
+        if not coordinator_code_publication_allowed(self) or self._latest_plan is None:
             return None
         return self._latest_plan.selected.get(identity_key)
 
     def get_slot_code(self, identity_key: str) -> str | None:
         """Return the code safe for the sensor to publish for identity_key."""
+        if not coordinator_code_publication_allowed(self):
+            return None
         res = self._latest_res_by_key.get(identity_key)
         if res is None:
             return None
@@ -299,47 +310,6 @@ class RentalControlCoordinator(
             return
         self._observed_slot_codes[identity_key] = (slot_number, slot_code)
 
-    def _observed_pin(self, slot_number: int) -> str | None:
-        """Return the PIN the lock currently reports for a slot."""
-        config_entry = getattr(self, "config_entry", None)
-        entry_id = getattr(config_entry, "entry_id", None) or getattr(
-            self, "_entry_id", None
-        )
-        lifecycle = (
-            get_keymaster_lifecycle(self.hass, entry_id)
-            if isinstance(entry_id, str)
-            else None
-        )
-        if lifecycle is not None:
-            resolution = lifecycle.current.get(f"text.code_slots:{slot_number}.pin")
-            if (
-                resolution is None
-                or not resolution.ready
-                or resolution.identity is None
-                or resolution.identity.slot != slot_number
-                or resolution.identity.keymaster_entry_id
-                != lifecycle.keymaster_entry_id
-                or resolution.identity.generation != lifecycle.generation
-                or resolution.entity_id is None
-            ):
-                return None
-            fresh = resolve_capability(
-                self.hass,
-                lifecycle.keymaster_entry_id,
-                f"text.code_slots:{slot_number}.pin",
-                generation=lifecycle.generation,
-            )
-            if not fresh.ready or fresh.entity_id != resolution.entity_id:
-                return None
-            state = self.hass.states.get(resolution.entity_id)
-            return state.state if state is not None else None
-        if protected_registry_active(self.hass):
-            return None
-        state = self.hass.states.get(
-            f"text.{self.lockname}_code_slot_{slot_number}_pin"
-        )
-        return state.state if state is not None else None
-
     def get_overflow_reason(self, identity_key: str) -> str | None:
         """Return overflow reason for identity_key in latest plan, or None."""
         if self._latest_plan is None:
@@ -406,6 +376,12 @@ class RentalControlCoordinator(
     ) -> None:
         """Update the event overrides with the ServiceCall data."""
         _LOGGER.debug("In update_event_overrides")
+        if not coordinator_keymaster_runtime_enabled(
+            self
+        ) or protected_legacy_unresolved(self):
+            if self.event_overrides is None and guard is None and request_refresh:
+                await self.async_request_refresh()
+            return
         payload = normalize_event_override_update(update, values, legacy)
         if self.event_overrides:
             accepted = await self.event_overrides.async_update(

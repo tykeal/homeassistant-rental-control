@@ -200,6 +200,85 @@ def verified_slot_source(
     )
 
 
+def verified_event_sources(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    slot: int,
+) -> tuple[VerifiedSlotSource, ...]:
+    """Resolve the selected lock and linked inherited-child event sources."""
+    source = verified_slot_source(hass, config_entry, slot)
+    selected = verified_association_entry(hass, config_entry)
+    if source is None or selected is None:
+        return ()
+
+    sources = [source]
+    source_entry_ids = {source.entry.entry_id}
+
+    def inherited_child_source(
+        child: ConfigEntry,
+        parent_entry_id: str,
+    ) -> VerifiedSlotSource | None:
+        """Return a child physical source only for a live inherited slot."""
+        if (
+            child.entry_id == parent_entry_id
+            or child.domain != LOCK_MANAGER
+            or child.disabled_by is not None
+            or child.state is not ConfigEntryState.LOADED
+            or child.data.get(_PARENT_ENTRY_ID) != parent_entry_id
+        ):
+            return None
+        override = resolve_capability(
+            hass,
+            child.entry_id,
+            f"switch.code_slots:{slot}.override_parent",
+            generation=source.lifecycle_generation,
+        )
+        if (
+            not override.ready
+            or override.identity is None
+            or override.identity.keymaster_entry_id != child.entry_id
+            or override.identity.slot != slot
+            or override.identity.generation != source.lifecycle_generation
+            or override.boolean_state is not False
+        ):
+            return None
+        lock_entity_id = _physical_lock_entity_id(child)
+        lockname = _raw_lockname(child)
+        if (
+            lock_entity_id is None
+            or lockname is None
+            or _has_unrelated_shared_source(hass, child)
+        ):
+            return None
+        return VerifiedSlotSource(
+            child,
+            lock_entity_id,
+            lockname,
+            source.name_capability,
+            source.lifecycle_generation,
+        )
+
+    # A selected child whose slot inherits from its parent reports events
+    # against the child's own physical lock as well as the inherited source.
+    if selected.entry_id != source.entry.entry_id:
+        selected_source = inherited_child_source(selected, source.entry.entry_id)
+        if selected_source is not None:
+            sources.append(selected_source)
+            source_entry_ids.add(selected.entry_id)
+
+    # Preserve the established parent->child monitoring boundary: only direct
+    # children of the selected association can add an inherited event source.
+    for candidate in hass.config_entries.async_entries(LOCK_MANAGER):
+        if candidate.entry_id in source_entry_ids:
+            continue
+        child_source = inherited_child_source(candidate, selected.entry_id)
+        if child_source is not None:
+            sources.append(child_source)
+            source_entry_ids.add(candidate.entry_id)
+
+    return tuple(sources)
+
+
 def event_name_matches_source(event_name: object, source: VerifiedSlotSource) -> bool:
     """Use event names only as corroboration after exact identity resolution."""
     if not isinstance(event_name, str) or not event_name.strip():
@@ -285,6 +364,7 @@ __all__ = [
     "association_requires_verified_routing",
     "event_name_matches_source",
     "event_slot_name_matches",
+    "verified_event_sources",
     "verified_association_entry",
     "verified_slot_source",
 ]

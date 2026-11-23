@@ -25,6 +25,7 @@ from .const import COORDINATOR
 from .const import DOMAIN
 from .const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from .const import KEYMASTER_MONITORING_SWITCH
+from .keymaster_runtime import coordinator_keymaster_runtime_enabled
 from .util import gen_uuid
 from .util import get_entry_data
 
@@ -55,7 +56,7 @@ async def async_setup_entry(
 
     entities: list[SwitchEntity] = []
 
-    if coordinator.lockname:
+    if coordinator_keymaster_runtime_enabled(coordinator) and coordinator.lockname:
         entities.append(KeymasterMonitoringSwitch(coordinator, config_entry))
         entities.append(EarlyCheckoutExpirySwitch(coordinator, config_entry))
 

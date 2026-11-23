@@ -1663,6 +1663,10 @@ async def test_buffer_config_updates_override_cache(
         return coro
 
     mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, CONF_LOCK_ENTRY: "Front Door"},
+    )
     coordinator = RentalControlCoordinator(hass, mock_config_entry)
     coordinator.lockname = "front_door"
     coordinator.event_overrides = EventOverrides(10, 3)
@@ -1734,6 +1738,10 @@ async def test_buffer_config_service_failure_advances_override_cache(
     old_start = utc_time(25, 15, 30)
     old_end = utc_time(30, 11, 30)
     mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, CONF_LOCK_ENTRY: "Front Door"},
+    )
     coordinator = RentalControlCoordinator(hass, mock_config_entry)
     coordinator.lockname = "front_door"
     coordinator.event_overrides = EventOverrides(10, 3)
@@ -1842,6 +1850,10 @@ async def test_coordinator_update_event_overrides_with_overrides(
     Covers coordinator.py update_event_overrides with event_overrides set.
     """
     mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, CONF_LOCK_ENTRY: "Front Door"},
+    )
 
     # Create coordinator and directly inject a mock event_overrides
     coordinator = RentalControlCoordinator(hass, mock_config_entry)

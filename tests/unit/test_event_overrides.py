@@ -3558,6 +3558,7 @@ class TestPendingClearFenceTokenLifecycle:
         """Return a minimal coordinator for apply-clear tests."""
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
+        coordinator.keymaster_runtime_enabled = True
         coordinator.event_overrides = eo
         return coordinator
 
@@ -4229,6 +4230,7 @@ class TestCallbackReentrancyFencing:
         slot_num = 1
         mock_coordinator = MagicMock()
         mock_coordinator.lockname = lockname
+        mock_coordinator.keymaster_runtime_enabled = True
         mock_coordinator.trim_names = False
         mock_coordinator.event_overrides = MagicMock()
         mock_coordinator.event_overrides.async_check_overrides = AsyncMock()
@@ -6170,6 +6172,7 @@ class TestSlotNameTrimmingRegression:
         """Return a coordinator mock for set-code regression tests."""
         coordinator = MagicMock()
         coordinator.lockname = "test_lock"
+        coordinator.keymaster_runtime_enabled = True
         coordinator.event_prefix = "RC"
         coordinator.trim_names = trim_names
         coordinator.max_name_length = 10
