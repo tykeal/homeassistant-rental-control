@@ -315,7 +315,9 @@ async def test_same_name_early_checkout_routes_by_tracked_reservation_identity(
     slot_names = {_SLOT: "Guest", target_slot: "Guest"}
     coordinator = SimpleNamespace(
         event_overrides=SimpleNamespace(
-            get_slot_name=lambda slot: slot_names.get(slot)
+            get_slot_name=lambda slot: slot_names.get(slot),
+            get_feedback_generation=lambda _slot: 0,
+            overrides={target_slot: {"slot_name": "Guest"}},
         ),
         hass=hass,
         start_slot=_SLOT,
@@ -345,9 +347,10 @@ async def test_same_name_early_checkout_routes_by_tracked_reservation_identity(
             return entity_id
 
         async def async_call(
-            self, property_key: str, _service: str, _data: dict[str, str]
+            self, property_key: str, _service: str, _data: dict[str, str], **kwargs: Any
         ) -> None:
             """Record the exact assigned slot and property dispatch."""
+            assert kwargs["pre_dispatch_guard"]()
             steps.append("async_call")
             dispatched.append((target_slot, identity, property_key))
 
@@ -414,7 +417,11 @@ async def test_date_update_fails_closed_after_verified_dispatch_error(
 
     start = datetime.now(UTC)
     coordinator = SimpleNamespace(
-        event_overrides=SimpleNamespace(get_slot_name=lambda _slot: "Guest"),
+        event_overrides=SimpleNamespace(
+            get_slot_name=lambda _slot: "Guest",
+            get_feedback_generation=lambda _slot: 0,
+            overrides={_SLOT: {"slot_name": "Guest"}},
+        ),
         start_slot=_SLOT,
         max_events=1,
         get_slot_assignment=lambda _identity: _SLOT,
@@ -437,8 +444,16 @@ async def test_date_update_fails_closed_after_verified_dispatch_error(
     class FailedIntent:
         """Represent a verified provider dispatch that did not complete."""
 
+        def entity_id(self, _property_key: str) -> str:
+            """Provide the authorized entity before the failed dispatch."""
+            return "datetime.authorized"
+
         async def async_call(
-            self, _property_key: str, _service: str, _data: dict[str, str]
+            self,
+            _property_key: str,
+            _service: str,
+            _data: dict[str, str],
+            **_kwargs: Any,
         ) -> None:
             """Raise the injected provider failure without exposing details."""
             if error_kind == "rejected":
@@ -475,7 +490,11 @@ async def test_date_update_requires_prepared_intent_before_dispatch(
 
     start = datetime.now(UTC)
     coordinator = SimpleNamespace(
-        event_overrides=SimpleNamespace(get_slot_name=lambda _slot: "Guest"),
+        event_overrides=SimpleNamespace(
+            get_slot_name=lambda _slot: "Guest",
+            get_feedback_generation=lambda _slot: 0,
+            overrides={_SLOT: {"slot_name": "Guest"}},
+        ),
         start_slot=_SLOT,
         max_events=1,
         get_slot_assignment=lambda _identity: _SLOT,

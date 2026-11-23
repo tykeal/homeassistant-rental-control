@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field
 from typing import Any
@@ -126,6 +127,8 @@ class VerifiedOperationIntent:
         property_key: str,
         service: str,
         service_data: dict[str, Any] | None = None,
+        *,
+        pre_dispatch_guard: Callable[[], bool] | None = None,
     ) -> None:
         """Dispatch one exact-entity call with point-in-time revalidation."""
         if not await self.async_is_current():
@@ -135,6 +138,8 @@ class VerifiedOperationIntent:
         if service not in _SERVICE_ALLOWLIST.get(domain, frozenset()):
             raise VerifiedOperationRejected("service_not_authorized")
         if not await self.async_is_current():
+            raise VerifiedOperationRejected("operation_not_current")
+        if pre_dispatch_guard is not None and not pre_dispatch_guard():
             raise VerifiedOperationRejected("operation_not_current")
         await self.hass.services.async_call(
             domain=domain,

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime
 from importlib import import_module
 import logging
@@ -88,11 +89,28 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         return
     _LOGGER.info("Early checkout expiry: shortening the active lock-code window")
     previous_end = entity._tracked_event_end
+    tracked_start = entity._tracked_event_start
+    tracked_name = entity._tracked_event_slot_name
     entity._tracked_event_end = new_end
+    dispatched = False
+
+    def mark_dispatched() -> None:
+        """Record that the new expiry may have reached the lock."""
+        nonlocal dispatched
+        dispatched = True
+
     updated = await async_update_lock_code_expiry(
-        entity, new_end, identity_end=previous_end
+        entity, new_end, identity_end=previous_end, on_dispatch=mark_dispatched
     )
-    if not updated and association_requires_verified_routing(entity._config_entry):
+    # Once sent, the lock may hold new_end even if unconfirmed; keep it.
+    if (
+        not updated
+        and not dispatched
+        and association_requires_verified_routing(entity._config_entry)
+        and entity._tracked_event_start == tracked_start
+        and entity._tracked_event_slot_name == tracked_name
+        and entity._tracked_event_end == new_end
+    ):
         entity._tracked_event_end = previous_end
 
 
@@ -204,6 +222,7 @@ async def async_update_lock_code_expiry(
     new_end: datetime,
     *,
     identity_end: datetime | None = None,
+    on_dispatch: Callable[[], None] | None = None,
 ) -> bool:
     """Update keymaster lock code expiry after early checkout."""
     if not coordinator_keymaster_runtime_enabled(entity.coordinator):
@@ -218,6 +237,7 @@ async def async_update_lock_code_expiry(
             entity,
             new_end,
             identity_end=identity_end,
+            on_dispatch=on_dispatch,
         )
     if protected_registry_active(entity._hass):
         return False
