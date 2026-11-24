@@ -26,6 +26,7 @@ async def async_update_verified_lock_code_expiry(
     *,
     identity_end: datetime | None,
     on_dispatch: Callable[[], None] | None = None,
+    pre_dispatch_guard: Callable[[], bool] | None = None,
 ) -> bool:
     """Set one date property through a current owner fence and exact capability.
 
@@ -42,7 +43,9 @@ async def async_update_verified_lock_code_expiry(
 
     def release_dispatch() -> bool:
         """Run the final assignment check and record a released dispatch."""
-        if not assignment_is_current(False):
+        if not assignment_is_current(False) or (
+            pre_dispatch_guard is not None and not pre_dispatch_guard()
+        ):
             return False
         if on_dispatch is not None:
             on_dispatch()

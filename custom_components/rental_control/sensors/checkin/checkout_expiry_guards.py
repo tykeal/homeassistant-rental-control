@@ -11,6 +11,8 @@ from importlib import import_module
 from typing import Any
 from typing import cast
 
+from homeassistant.util import dt as dt_util
+
 from ...helpers import apply_buffer
 from ...keymaster_topology import association_requires_verified_routing
 from .event_selection import event_datetime
@@ -191,6 +193,23 @@ def _retry_reservation_is_current(entity: Any) -> bool:
             entity, override, start, original_end, new_end
         )
         and event_match is not False
+    )
+
+
+def _retry_dispatch_is_current(
+    entity: Any,
+    generation: int,
+    original_end: datetime,
+    new_end: datetime,
+) -> bool:
+    """Recheck retry identity, reservation ownership, and deadline before dispatch."""
+    return (
+        entity._early_expiry_retry_generation == generation
+        and entity._early_expiry_original_end == original_end
+        and entity._early_expiry_new_end == new_end
+        and not getattr(entity, "_early_expiry_retry_entity_removed", False)
+        and dt_util.now() < original_end
+        and _retry_reservation_is_current(entity)
     )
 
 

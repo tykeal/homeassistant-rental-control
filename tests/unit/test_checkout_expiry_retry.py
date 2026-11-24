@@ -193,9 +193,11 @@ async def test_failed_early_expiry_notifies_and_retries(
         *,
         identity_end: datetime | None = None,
         on_dispatch: Any = None,
+        pre_dispatch_guard: Any = None,
     ) -> bool:
         """Report an unconfirmed update, optionally after dispatch."""
         assert identity_end == old_end
+        assert pre_dispatch_guard is not None and pre_dispatch_guard()
         attempts.append(new_end)
         if dispatched and on_dispatch is not None:
             on_dispatch()
@@ -225,9 +227,11 @@ async def test_failed_early_expiry_notifies_and_retries(
         *,
         identity_end: datetime | None = None,
         on_dispatch: Any = None,
+        pre_dispatch_guard: Any = None,
     ) -> bool:
         """Confirm the next request."""
         assert identity_end == old_end
+        assert pre_dispatch_guard is not None and pre_dispatch_guard()
         attempts.append(_new_end)
         return True
 
@@ -516,9 +520,11 @@ async def test_initial_checkout_failure_after_entity_removal(
         *,
         identity_end: datetime | None = None,
         on_dispatch: Any = None,
+        pre_dispatch_guard: Any = None,
     ) -> bool:
         """Hold the initial request until after the entity is unloaded."""
         assert identity_end == original_end
+        assert pre_dispatch_guard is not None and pre_dispatch_guard()
         if on_dispatch is not None:
             on_dispatch()
         started.set()
@@ -688,9 +694,11 @@ async def test_retry_resolves_slot_that_was_unavailable_at_checkout(
         *,
         identity_end: datetime | None = None,
         on_dispatch: Any = None,
+        pre_dispatch_guard: Any = None,
     ) -> bool:
         """Confirm the retry using the newly available slot."""
         assert identity_end == old_end
+        assert pre_dispatch_guard is not None and pre_dispatch_guard()
         resolved.append(entity._early_expiry_retry_slot)
         return True
 
@@ -757,8 +765,10 @@ async def test_legacy_checkout_waits_for_verified_routing(
         *,
         identity_end: datetime | None = None,
         on_dispatch: Any = None,
+        pre_dispatch_guard: Any = None,
     ) -> bool:
         """Record only calls made after verified routing becomes available."""
+        assert pre_dispatch_guard is not None and pre_dispatch_guard()
         update_calls.append((new_end, identity_end))
         if on_dispatch is not None:
             on_dispatch()
@@ -1222,8 +1232,10 @@ async def test_retry_clear_flag_does_not_leak_across_reload(
         *,
         identity_end: datetime | None = None,
         on_dispatch: Any = None,
+        pre_dispatch_guard: Any = None,
     ) -> bool:
         """Confirm the retry restored from persisted state."""
+        assert pre_dispatch_guard is not None and pre_dispatch_guard()
         retry_calls.append((new_end, identity_end))
         if on_dispatch is not None:
             on_dispatch()
@@ -1355,8 +1367,10 @@ async def test_retry_survives_linger_expiry_and_restore(
         *,
         identity_end: datetime | None = None,
         on_dispatch: Any = None,
+        pre_dispatch_guard: Any = None,
     ) -> bool:
         """Confirm the pending expiry against its stored reservation identity."""
+        assert pre_dispatch_guard is not None and pre_dispatch_guard()
         retry_calls.append((expected_end, identity_end))
         if on_dispatch is not None:
             on_dispatch()
@@ -1396,7 +1410,7 @@ async def test_resume_retry_schedules_while_overrides_are_unavailable(
 async def test_cancelled_retry_callback_ignores_stale_generation(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A cancelled timer callback cannot restart retry work."""
+    """A stale callback cannot clear the handle for a newer timer."""
     _notices, timers = _patch_checkout_runtime(monkeypatch)
     now = dt_util.now()
     old_end = now + timedelta(hours=4)
@@ -1408,10 +1422,59 @@ async def test_cancelled_retry_callback_ignores_stale_generation(
 
     monkeypatch.setattr(checkout_expiry, "async_update_lock_code_expiry", failed)
     await runtime._maybe_shorten_lock_expiry(entity, now)
-    checkout_expiry_retry.cancel_early_expiry_retry(entity, dismiss=False)
+    checkout_expiry_retry._schedule_early_expiry_retry(entity)
+    assert len(timers) == 2
+    latest_handle = entity._early_expiry_retry_handle
 
     timers[0]["callback"](timers[0]["when"])
     assert entity._early_expiry_retry_task is None
+    assert entity._early_expiry_retry_handle is latest_handle
+
+    checkout_expiry_retry.cancel_early_expiry_retry(entity, dismiss=False)
+    assert timers[1]["cancelled"]
+
+
+async def test_retry_rechecks_original_end_before_dispatch(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retry waiting on slot work cannot dispatch after reservation expiry."""
+    _notices, timers = _patch_checkout_runtime(monkeypatch)
+    now = dt_util.now()
+    old_end = now + timedelta(hours=4)
+    entity = _entity(hass, now - timedelta(days=1), old_end)
+
+    async def failed(*_args: Any, **_kwargs: Any) -> bool:
+        """Leave the initial update pending."""
+        return False
+
+    monkeypatch.setattr(checkout_expiry, "async_update_lock_code_expiry", failed)
+    await runtime._maybe_shorten_lock_expiry(entity, now)
+    entity._state = CHECKIN_STATE_CHECKED_OUT
+    dispatch_guards: list[bool] = []
+
+    async def expire_before_dispatch(
+        _entity: Any,
+        _new_end: datetime,
+        *,
+        pre_dispatch_guard: Any = None,
+        **_kwargs: Any,
+    ) -> bool:
+        """Advance time while the update waits to reach its dispatch guard."""
+        monkeypatch.setattr(checkout_expiry_retry.dt_util, "now", lambda: old_end)
+        assert pre_dispatch_guard is not None
+        dispatch_guards.append(pre_dispatch_guard())
+        return False
+
+    monkeypatch.setattr(
+        checkout_expiry, "async_update_lock_code_expiry", expire_before_dispatch
+    )
+    timers[0]["callback"](timers[0]["when"])
+    retry_task = entity._early_expiry_retry_task
+    assert retry_task is not None
+    await retry_task
+
+    assert dispatch_guards == [False]
+    assert entity._early_expiry_original_end is None
 
 
 async def test_entity_removal_cancels_active_retry_task(hass: Any) -> None:

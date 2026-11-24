@@ -21,6 +21,7 @@ from homeassistant.util import dt as dt_util
 from ...keymaster_topology import association_requires_verified_routing
 from .checkout_expiry import _retry_reservation_is_current
 from .checkout_expiry import _verified_retry_identity_end
+from .checkout_expiry_guards import _retry_dispatch_is_current
 
 _LOGGER = logging.getLogger("custom_components.rental_control.sensors.checkinsensor")
 _EARLY_EXPIRY_NOTIFICATION_PREFIX = "rental_control_early_checkout_expiry"
@@ -254,9 +255,9 @@ def _schedule_early_expiry_retry(entity: Any) -> None:
     @callback
     def retry_callback(now: datetime) -> None:
         """Start the async retry after validating its generation."""
-        entity._early_expiry_retry_handle = None
         if entity._early_expiry_retry_generation != generation:
             return
+        entity._early_expiry_retry_handle = None
         entity._early_expiry_retry_task = entity._hass.async_create_task(
             _async_run_early_expiry_retry(entity, generation, now)
         )
@@ -324,7 +325,7 @@ async def _async_run_early_expiry_retry(
             _clear_early_expiry_retry(entity)
             return
         updated, dispatched, previous_end = await _async_dispatch_retry(
-            entity, checkout_expiry, slot, original_end, new_end
+            entity, checkout_expiry, slot, original_end, new_end, generation
         )
         if updated:
             if (
@@ -382,6 +383,7 @@ async def _async_dispatch_retry(
     slot: int,
     original_end: datetime,
     new_end: datetime,
+    generation: int,
 ) -> tuple[bool, bool, datetime | None]:
     """Dispatch one retry and report whether it may have reached the lock."""
     identity_start = (
@@ -423,6 +425,9 @@ async def _async_dispatch_retry(
             new_end,
             identity_end=identity_end,
             on_dispatch=mark_dispatched,
+            pre_dispatch_guard=lambda: _retry_dispatch_is_current(
+                entity, generation, original_end, new_end
+            ),
         )
     except Exception:
         _LOGGER.warning(

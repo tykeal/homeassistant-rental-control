@@ -1504,6 +1504,108 @@ async def test_verified_early_checkout_retry_uses_real_dispatch_and_timer(
     assert entity._early_expiry_original_end is None
 
 
+async def test_initial_update_is_not_dispatched_after_state_override(
+    hass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A state override invalidates an initial write still preparing dispatch."""
+    from datetime import UTC
+    from datetime import timedelta
+
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.5"
+    )
+    km_entry = hass.config_entries.async_get_entry("consumer-km")
+    assert km_entry is not None
+    hass.config_entries.async_update_entry(
+        km_entry,
+        data={
+            **km_entry.data,
+            "lockname": "Consumer Door",
+            "lock_entity_id": "lock.selected_physical_lock",
+        },
+    )
+    await hass.async_block_till_done()
+
+    identity_key = "consumer-reservation"
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == identity_key else None
+    )
+    now = datetime.now(UTC)
+    start = now - timedelta(days=1)
+    old_end = now + timedelta(days=3)
+    overrides = coordinator.event_overrides
+    assert overrides is not None
+    overrides.overrides[_SLOT].update(
+        slot_name="Guest",
+        start_time=start,
+        end_time=old_end,
+    )
+    monkeypatch.setattr(
+        verified_date,
+        "make_reservation_fingerprint",
+        lambda *_args: identity_key,
+    )
+    monkeypatch.setattr(
+        checkout_expiry,
+        "get_entry_data",
+        lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
+    )
+    prepare_started = asyncio.Event()
+    allow_prepare = asyncio.Event()
+    original_prepare = verified_date.prepare_verified_intent
+
+    async def hold_prepare(*args: Any, **kwargs: Any) -> Any:
+        """Pause while verified intent is prepared, before service dispatch."""
+        prepare_started.set()
+        await allow_prepare.wait()
+        return await original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(verified_date, "prepare_verified_intent", hold_prepare)
+    dispatches: list[dict[str, Any]] = []
+
+    async def set_datetime(call: Any) -> None:
+        """Record a service write if the invalidated intent is dispatched."""
+        dispatches.append(dict(call.data))
+
+    hass.services.async_register("datetime", "set_value", set_datetime)
+    entity = SimpleNamespace(
+        _hass=hass,
+        _config_entry=coordinator.config_entry,
+        coordinator=coordinator,
+        _state=CHECKIN_STATE_CHECKED_IN,
+        _attr_options=["manual_override"],
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=old_end,
+        _tracked_event_summary="Reserved - Guest",
+        _early_expiry_retry_generation=0,
+        _early_expiry_retry_task=None,
+        _early_expiry_retry_handle=None,
+        _early_expiry_retry_dispatched=False,
+        _early_expiry_notice_published=False,
+        _early_expiry_retry_entity_removed=False,
+        entity_id="sensor.test_checkin",
+        unique_id="state-override-write-guard",
+        _cancel_timer=lambda: None,
+        async_write_ha_state=lambda: None,
+    )
+    end_id = entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
+    hass.states.async_set(end_id, old_end.isoformat())
+    request = asyncio.create_task(runtime._maybe_shorten_lock_expiry(entity, now))
+    await prepare_started.wait()
+
+    await runtime.async_set_state(entity, "manual_override")
+    allow_prepare.set()
+    await request
+
+    assert not dispatches
+    assert entity._state == "manual_override"
+    assert entity._early_expiry_original_end is None
+    assert entity._early_expiry_new_end is None
+
+
 async def test_legacy_pending_expiry_waits_for_verified_routing_then_dispatches(
     hass,
     tmp_path: Path,
