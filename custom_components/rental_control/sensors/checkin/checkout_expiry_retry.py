@@ -18,7 +18,6 @@ from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.util import dt as dt_util
 
-from ...const import CHECKIN_STATE_CHECKED_OUT
 from ...keymaster_topology import association_requires_verified_routing
 from .checkout_expiry import _legacy_calendar_event_matches
 from .checkout_expiry import _retry_reservation_is_current
@@ -37,6 +36,45 @@ def _notification_id(entity: Any) -> str:
 def _notification_id_for_entry(entry_id: str) -> str:
     """Return a notification ID scoped to one config entry."""
     return f"{_EARLY_EXPIRY_NOTIFICATION_PREFIX}_{entry_id}"
+
+
+def initialize_early_expiry_retry(entity: Any) -> None:
+    """Initialize persisted and runtime retry lifecycle fields."""
+    entity._early_expiry_original_end = None
+    entity._early_expiry_new_end = None
+    entity._early_expiry_retry_attempt = 0
+    entity._early_expiry_retry_slot = None
+    entity._early_expiry_reservation_start = None
+    entity._early_expiry_reservation_slot_name = None
+    entity._early_expiry_retry_was_dispatched = False
+    entity._early_expiry_retry_initial_pending = False
+    entity._early_expiry_notice_published = False
+    entity._early_expiry_retry_dispatched = False
+    entity._early_expiry_retry_clear_when_done = False
+    entity._early_expiry_retry_entity_removed = False
+    entity._early_expiry_retry_handle = None
+    entity._early_expiry_retry_task = None
+    entity._early_expiry_retry_generation = 0
+
+
+def early_expiry_snapshot_fields(entity: Any) -> dict[str, Any]:
+    """Return retry identity fields for inclusion in the sensor snapshot."""
+    return {
+        "early_expiry_original_end": entity._early_expiry_original_end,
+        "early_expiry_new_end": entity._early_expiry_new_end,
+        "early_expiry_retry_attempt": entity._early_expiry_retry_attempt,
+        "early_expiry_retry_slot": entity._early_expiry_retry_slot,
+        "early_expiry_reservation_start": entity._early_expiry_reservation_start,
+        "early_expiry_reservation_slot_name": (
+            entity._early_expiry_reservation_slot_name
+        ),
+        "early_expiry_retry_was_dispatched": (
+            entity._early_expiry_retry_was_dispatched
+        ),
+        "early_expiry_retry_initial_pending": (
+            entity._early_expiry_retry_initial_pending
+        ),
+    }
 
 
 def dismiss_early_expiry_notice(hass: Any, entry_id: str) -> None:
@@ -83,6 +121,10 @@ def _clear_early_expiry_retry(entity: Any) -> None:
     entity._early_expiry_new_end = None
     entity._early_expiry_retry_attempt = 0
     entity._early_expiry_retry_slot = None
+    entity._early_expiry_reservation_start = None
+    entity._early_expiry_reservation_slot_name = None
+    entity._early_expiry_retry_was_dispatched = False
+    entity._early_expiry_retry_initial_pending = False
     entity._early_expiry_notice_published = False
     entity._early_expiry_retry_clear_when_done = False
     if had_pending_retry and hasattr(entity._hass, "bus"):
@@ -124,11 +166,10 @@ def resume_early_expiry_retry(entity: Any) -> None:
     entity._early_expiry_retry_entity_removed = False
     if getattr(entity, "_early_expiry_original_end", None) is None:
         return
-    if entity._state != CHECKIN_STATE_CHECKED_OUT:
-        _clear_early_expiry_retry(entity)
-        return
     if entity._early_expiry_original_end <= dt_util.now():
         _clear_early_expiry_retry(entity)
+        return
+    if getattr(entity, "_early_expiry_retry_initial_pending", False):
         return
     overrides = entity.coordinator.event_overrides
     if overrides is None or not getattr(overrides, "ready", False):
@@ -207,14 +248,15 @@ async def _async_run_early_expiry_retry(
             return
         original_end = entity._early_expiry_original_end
         new_end = entity._early_expiry_new_end
-        tracked_start = entity._tracked_event_start
-        tracked_name = entity._tracked_event_slot_name
-        if (
-            original_end is None
-            or new_end is None
-            or now >= original_end
-            or entity._state != CHECKIN_STATE_CHECKED_OUT
-        ):
+        tracked_start = (
+            getattr(entity, "_early_expiry_reservation_start", None)
+            or entity._tracked_event_start
+        )
+        tracked_name = (
+            getattr(entity, "_early_expiry_reservation_slot_name", None)
+            or entity._tracked_event_slot_name
+        )
+        if original_end is None or new_end is None or now >= original_end:
             _clear_early_expiry_retry(entity)
             return
         if not _retry_reservation_is_current(entity):
@@ -226,8 +268,8 @@ async def _async_run_early_expiry_retry(
         slot = checkout_expiry._retry_slot(
             entity,
             original_end,
-            entity._tracked_event_start,
-            entity._tracked_event_slot_name,
+            tracked_start,
+            tracked_name,
             new_end,
         )
         entity._early_expiry_retry_slot = slot
@@ -252,12 +294,8 @@ async def _async_run_early_expiry_retry(
                 entity._early_expiry_original_end == original_end
                 and entity._early_expiry_new_end == new_end
             ):
-                if (
-                    entity._tracked_event_start == tracked_start
-                    and entity._tracked_event_slot_name == tracked_name
-                ) or getattr(entity, "_early_expiry_retry_clear_when_done", False):
-                    _clear_early_expiry_retry(entity)
-                    _write_retry_state(entity)
+                _clear_early_expiry_retry(entity)
+                _write_retry_state(entity)
             return
         _finish_failed_early_expiry_retry(
             entity,
@@ -309,8 +347,22 @@ async def _async_dispatch_retry(
     new_end: datetime,
 ) -> tuple[bool, bool, datetime | None]:
     """Dispatch one retry and report whether it may have reached the lock."""
+    identity_start = (
+        getattr(entity, "_early_expiry_reservation_start", None)
+        or entity._tracked_event_start
+    )
+    identity_name = (
+        getattr(entity, "_early_expiry_reservation_slot_name", None)
+        or entity._tracked_event_slot_name
+    )
     previous_end = entity._tracked_event_end
-    entity._tracked_event_end = new_end
+    tracked_identity = (
+        entity._tracked_event_start == identity_start
+        and entity._tracked_event_slot_name == identity_name
+        and previous_end in {original_end, new_end}
+    )
+    if tracked_identity:
+        entity._tracked_event_end = new_end
     dispatched = False
     entity._early_expiry_retry_dispatched = False
     identity_end = original_end
@@ -326,6 +378,7 @@ async def _async_dispatch_retry(
         nonlocal dispatched
         dispatched = True
         entity._early_expiry_retry_dispatched = True
+        entity._early_expiry_retry_was_dispatched = True
 
     try:
         updated = await checkout_expiry.async_update_lock_code_expiry(

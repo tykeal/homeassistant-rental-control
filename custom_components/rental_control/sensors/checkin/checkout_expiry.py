@@ -51,6 +51,25 @@ def _legacy_expiry_entity_id(lockname: str, slot: int) -> str:
     return f"datetime.{lockname}_code_slot_{slot}_date_range_end"
 
 
+def _record_checkout_expiry_identity(
+    entity: Any,
+    original_end: datetime,
+    new_end: datetime,
+    start: datetime | None,
+    slot_name: str | None,
+    slot: int | None,
+) -> None:
+    """Keep reservation identity separate from later sensor display tracking."""
+    entity._early_expiry_original_end = original_end
+    entity._early_expiry_new_end = new_end
+    entity._early_expiry_retry_attempt = 0
+    entity._early_expiry_retry_slot = slot
+    entity._early_expiry_reservation_start = start
+    entity._early_expiry_reservation_slot_name = slot_name
+    entity._early_expiry_retry_was_dispatched = False
+    entity._early_expiry_retry_initial_pending = True
+
+
 async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
     """Shorten lock code expiry when early checkout expiry is enabled."""
     entry_data = get_entry_data(entity._hass, entity._config_entry.entry_id)
@@ -77,12 +96,12 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         """Record that the new expiry may have reached the lock."""
         nonlocal dispatched
         dispatched = True
+        entity._early_expiry_retry_was_dispatched = True
 
     entity._early_expiry_retry_clear_when_done = False
-    entity._early_expiry_original_end = previous_end
-    entity._early_expiry_new_end = new_end
-    entity._early_expiry_retry_attempt = 0
-    entity._early_expiry_retry_slot = retry_slot
+    _record_checkout_expiry_identity(
+        entity, previous_end, new_end, tracked_start, tracked_name, retry_slot
+    )
     try:
         updated = await async_update_lock_code_expiry(
             entity, new_end, identity_end=previous_end, on_dispatch=mark_dispatched
@@ -95,6 +114,7 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         )
         updated = False
     if updated:
+        entity._early_expiry_retry_initial_pending = False
         retry = import_module(
             "custom_components.rental_control.sensors.checkin.checkout_expiry_retry"
         )
@@ -108,6 +128,7 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         and entity._tracked_event_end == new_end
     ):
         entity._tracked_event_end = previous_end
+    entity._early_expiry_retry_initial_pending = False
     retry = import_module(
         "custom_components.rental_control.sensors.checkin.checkout_expiry_retry"
     )
@@ -236,9 +257,9 @@ async def async_update_lock_code_expiry(
     if not coordinator_keymaster_runtime_enabled(entity.coordinator):
         return False
     if (
-        entity._tracked_event_slot_name is None
-        or not entity.coordinator.event_overrides
-    ):
+        getattr(entity, "_early_expiry_reservation_slot_name", None)
+        or entity._tracked_event_slot_name
+    ) is None or not entity.coordinator.event_overrides:
         return False
     if association_requires_verified_routing(entity._config_entry):
         return await async_update_verified_lock_code_expiry(
@@ -249,9 +270,11 @@ async def async_update_lock_code_expiry(
         )
     if protected_registry_active(entity._hass):
         return False
-    slot = entity.coordinator.event_overrides.get_slot_key_by_name(
-        entity._tracked_event_slot_name
+    slot_name = (
+        getattr(entity, "_early_expiry_reservation_slot_name", None)
+        or entity._tracked_event_slot_name
     )
+    slot = entity.coordinator.event_overrides.get_slot_key_by_name(slot_name)
     lockname = entity.coordinator.lockname
     if not slot or not lockname:
         return False

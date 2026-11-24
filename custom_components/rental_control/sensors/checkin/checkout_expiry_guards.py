@@ -11,8 +11,10 @@ from importlib import import_module
 from typing import Any
 from typing import cast
 
+from ...helpers import apply_buffer
 from ...keymaster_topology import association_requires_verified_routing
 from .event_selection import event_datetime
+from .event_selection import extract_slot_name
 
 
 def _retry_slot(
@@ -69,9 +71,13 @@ def _legacy_reservation_is_current(
 ) -> bool:
     """Keep legacy service routing attached to the original reservation."""
     overrides = entity.coordinator.event_overrides
-    start = entity._tracked_event_start
+    start = getattr(entity, "_early_expiry_reservation_start", None)
+    if start is None:
+        start = entity._tracked_event_start
     end = identity_end
-    slot_name = entity._tracked_event_slot_name
+    slot_name = getattr(entity, "_early_expiry_reservation_slot_name", None)
+    if slot_name is None:
+        slot_name = entity._tracked_event_slot_name
     if overrides is None or start is None or end is None or not slot_name:
         return False
     override = getattr(overrides, "overrides", {}).get(slot)
@@ -80,16 +86,38 @@ def _legacy_reservation_is_current(
     same_slot = bool(
         override.get("slot_name") == slot_name
         and overrides.get_slot_key_by_name(slot_name) == slot
-        and entity._tracked_event_end in {end, new_end}
     )
     if not same_slot:
         return False
-    event_match = _legacy_calendar_event_matches(entity, end)
-    if event_match is not None:
-        return event_match
+    event_match = _legacy_calendar_event_matches(entity, end, start, slot_name)
     return bool(
-        override.get("start_time") == start
-        and override.get("end_time") in {end, new_end}
+        _legacy_slot_reservation_matches(entity, override, start, end, new_end)
+        and event_match is not False
+    )
+
+
+def _legacy_slot_reservation_matches(
+    entity: Any,
+    override: dict[str, Any],
+    start: datetime,
+    original_end: datetime,
+    new_end: datetime,
+) -> bool:
+    """Require the assigned legacy slot's date window to match this stay."""
+    coordinator = entity.coordinator
+    before = getattr(coordinator, "code_buffer_before", 0)
+    after = getattr(coordinator, "code_buffer_after", 0)
+    if not isinstance(before, int) or not isinstance(after, int):
+        return False
+    expected_start, expected_end = apply_buffer(
+        start, original_end, before, after, coordinator
+    )
+    expected_ends = {expected_end}
+    if getattr(entity, "_early_expiry_retry_was_dispatched", False):
+        expected_ends.add(new_end)
+    return (
+        override.get("start_time") == expected_start
+        and override.get("end_time") in expected_ends
     )
 
 
@@ -111,31 +139,30 @@ def _retry_reservation_is_current(entity: Any) -> bool:
     original_end = getattr(entity, "_early_expiry_original_end", None)
     new_end = getattr(entity, "_early_expiry_new_end", None)
     previous_slot = getattr(entity, "_early_expiry_retry_slot", None)
-    start = entity._tracked_event_start
-    slot_name = entity._tracked_event_slot_name
-    if (
-        original_end is None
-        or new_end is None
-        or start is None
-        or not slot_name
-        or entity._tracked_event_end not in {original_end, new_end}
-    ):
+    start = getattr(entity, "_early_expiry_reservation_start", None)
+    if start is None:
+        start = entity._tracked_event_start
+    slot_name = getattr(entity, "_early_expiry_reservation_slot_name", None)
+    if slot_name is None:
+        slot_name = entity._tracked_event_slot_name
+    if original_end is None or new_end is None or start is None or not slot_name:
         return False
     coordinator = entity.coordinator
     overrides = coordinator.event_overrides
     if overrides is None or not getattr(overrides, "ready", False):
         return True
-    event_match = _legacy_calendar_event_matches(entity, original_end)
+    event_match = _legacy_calendar_event_matches(entity, original_end, start, slot_name)
     if event_match is False:
         return False
     slot = _retry_slot(entity, original_end, start, slot_name, new_end)
     if slot is None:
         if isinstance(previous_slot, int) and not isinstance(previous_slot, bool):
             previous_override = getattr(overrides, "overrides", {}).get(previous_slot)
-            if isinstance(previous_override, dict) and (
-                previous_override.get("slot_name") != slot_name
-                or previous_override.get("start_time") != start
-                or previous_override.get("end_time") not in {original_end, new_end}
+            if isinstance(previous_override, dict) and not (
+                previous_override.get("slot_name") == slot_name
+                and _legacy_slot_reservation_matches(
+                    entity, previous_override, start, original_end, new_end
+                )
             ):
                 return False
         return True
@@ -150,38 +177,41 @@ def _retry_reservation_is_current(entity: Any) -> bool:
         <= slot
         < coordinator.start_slot + coordinator.max_events
     ):
-        return event_match is not False
+        return False
     if association_requires_verified_routing(entity._config_entry):
         assignment = getattr(coordinator, "get_slot_assignment", None)
         if not callable(assignment):
             return True
-        return _verified_retry_identity_end(entity, slot, assignment) is not None or (
-            event_match is not False
+        return (
+            _verified_retry_identity_end(entity, slot, assignment) is not None
+            and event_match is not False
         )
-    if event_match is not None:
-        return event_match
-    if override.get("start_time") == start and override.get("end_time") in {
-        original_end,
-        new_end,
-    }:
-        return True
-    return False
+    return (
+        _legacy_slot_reservation_matches(entity, override, start, original_end, new_end)
+        and event_match is not False
+    )
 
 
 def _verified_retry_identity_end(
     entity: Any, slot: int, assignment: Callable[[str], int | None]
 ) -> datetime | None:
     """Find which persisted reservation identity still owns the verified slot."""
+    start = getattr(entity, "_early_expiry_reservation_start", None)
+    if start is None:
+        start = entity._tracked_event_start
+    slot_name = getattr(entity, "_early_expiry_reservation_slot_name", None)
+    if slot_name is None:
+        slot_name = entity._tracked_event_slot_name
     for identity_end in (
         entity._early_expiry_original_end,
         entity._early_expiry_new_end,
     ):
-        if not isinstance(identity_end, datetime):
+        if not isinstance(identity_end, datetime) or start is None or not slot_name:
             continue
         identity_key = _reservation_fingerprint(
             entity._config_entry.entry_id,
-            entity._tracked_event_slot_name,
-            entity._tracked_event_start,
+            slot_name,
+            start,
             identity_end,
         )
         if assignment(identity_key) == slot:
@@ -189,11 +219,13 @@ def _verified_retry_identity_end(
     return None
 
 
-def _legacy_calendar_event_matches(entity: Any, identity_end: datetime) -> bool | None:
+def _legacy_calendar_event_matches(
+    entity: Any,
+    identity_end: datetime,
+    identity_start: datetime | None = None,
+    slot_name: str | None = None,
+) -> bool | None:
     """Check the live calendar identity when data is authoritative and available."""
-    finder = getattr(entity, "_find_tracked_event", None)
-    if not callable(finder):
-        return None
     coordinator = entity.coordinator
     data = getattr(coordinator, "data", None)
     if (
@@ -201,6 +233,35 @@ def _legacy_calendar_event_matches(entity: Any, identity_end: datetime) -> bool 
         or data is None
         or not data
     ):
+        return None
+    start = identity_start or getattr(entity, "_early_expiry_reservation_start", None)
+    name = slot_name or getattr(entity, "_early_expiry_reservation_slot_name", None)
+    if start is None:
+        start = entity._tracked_event_start
+    if name is None:
+        name = entity._tracked_event_slot_name
+    if start is not None and name:
+        prefix = getattr(coordinator, "event_prefix", "") or ""
+        bookings_only = bool(getattr(coordinator, "bookings_only_feed", False))
+        extractor = getattr(entity, "_extract_slot_name", None)
+        for event in data:
+            try:
+                event_name = (
+                    extractor(event)
+                    if callable(extractor)
+                    else extract_slot_name(event, prefix, bookings_only)
+                )
+                if (
+                    event_datetime(event.start) == start
+                    and event_datetime(event.end) == identity_end
+                    and event_name == name
+                ):
+                    return True
+            except TypeError:
+                continue
+        return False
+    finder = getattr(entity, "_find_tracked_event", None)
+    if not callable(finder):
         return None
     event = finder()
     if event is None:

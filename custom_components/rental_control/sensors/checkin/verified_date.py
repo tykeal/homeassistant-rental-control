@@ -83,8 +83,12 @@ def _owned_slot(entity: Any, identity_end: datetime | None) -> tuple[str, int] |
     """Return the tracked reservation's identity and its managed slot."""
     coordinator = entity.coordinator
     overrides = coordinator.event_overrides
-    slot_name = entity._tracked_event_slot_name
-    start = entity._tracked_event_start
+    slot_name = getattr(entity, "_early_expiry_reservation_slot_name", None)
+    if slot_name is None:
+        slot_name = entity._tracked_event_slot_name
+    start = getattr(entity, "_early_expiry_reservation_start", None)
+    if start is None:
+        start = entity._tracked_event_start
     reservation_end = identity_end or entity._tracked_event_end
     if (
         overrides is None
@@ -166,9 +170,12 @@ def _assignment_guard(
     coordinator = entity.coordinator
     config_entry = entity._config_entry
     overrides = coordinator.event_overrides
-    slot_name = entity._tracked_event_slot_name
-    start = entity._tracked_event_start
-    tracked_end = entity._tracked_event_end
+    slot_name = getattr(entity, "_early_expiry_reservation_slot_name", None)
+    if slot_name is None:
+        slot_name = entity._tracked_event_slot_name
+    start = getattr(entity, "_early_expiry_reservation_start", None)
+    if start is None:
+        start = entity._tracked_event_start
     source = verified_slot_source(entity._hass, config_entry, slot)
     generation_reader = getattr(overrides, "get_feedback_generation", None)
     slot_overrides = getattr(overrides, "overrides", None)
@@ -204,9 +211,6 @@ def _assignment_guard(
             and overrides.get_feedback_generation(slot) == generation
             and current_override == expected_override
             and overrides.get_slot_name(slot) == slot_name
-            and entity._tracked_event_slot_name == slot_name
-            and entity._tracked_event_start == start
-            and entity._tracked_event_end == tracked_end
             and verified_slot_source(entity._hass, config_entry, slot) == source
         )
 

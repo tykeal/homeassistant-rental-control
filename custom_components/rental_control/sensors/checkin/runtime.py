@@ -32,13 +32,16 @@ from .checkout_expiry_retry import (
     _async_run_early_expiry_retry as _async_run_early_expiry_retry,
 )
 from .checkout_expiry_retry import (
-    _clear_early_expiry_retry as _clear_early_expiry_retry,
-)
-from .checkout_expiry_retry import (
     _schedule_early_expiry_retry as _schedule_early_expiry_retry,
 )
 from .checkout_expiry_retry import (
     cancel_early_expiry_retry as cancel_early_expiry_retry,
+)
+from .checkout_expiry_retry import (
+    early_expiry_snapshot_fields as early_expiry_snapshot_fields,
+)
+from .checkout_expiry_retry import (
+    initialize_early_expiry_retry as initialize_early_expiry_retry,
 )
 from .checkout_expiry_retry import (
     resume_early_expiry_retry as resume_early_expiry_retry,
@@ -93,7 +96,6 @@ def _validate_checkout_day(entity: Any, end: datetime, force: bool) -> None:
 def transition_to_no_reservation(entity: Any) -> None:
     """Transition to no_reservation state and clear tracked data."""
     _LOGGER.debug("Transitioning to no_reservation")
-    _clear_early_expiry_retry(entity)
     entity._state = CHECKIN_STATE_NO_RESERVATION
     entity._tracked_event_summary = entity._tracked_event_start = None
     entity._tracked_event_end = entity._tracked_event_slot_name = None
@@ -108,7 +110,6 @@ def transition_to_no_reservation(entity: Any) -> None:
 
 def apply_silent_checked_in(entity: Any, source: str) -> None:
     """Apply a restore-silent checked-in transition."""
-    _clear_early_expiry_retry(entity)
     entity._state = CHECKIN_STATE_CHECKED_IN
     entity._checkin_source = source
     entity._cancel_timer()
@@ -131,7 +132,6 @@ def apply_silent_checked_out(
 def transition_to_awaiting(entity: Any, event: Any) -> None:
     """Transition to awaiting_checkin state."""
     _LOGGER.debug("Transitioning to awaiting_checkin")
-    _clear_early_expiry_retry(entity)
     entity._state = CHECKIN_STATE_AWAITING
     entity._tracked_event_summary = event.summary
     entity._tracked_event_start = event.start
@@ -170,7 +170,6 @@ def transition_to_checked_in(entity: Any, source: str, lock_name: str = "") -> N
         "Transitioning to checked_in (source=%s)",
         source,
     )
-    _clear_early_expiry_retry(entity)
     entity._state = CHECKIN_STATE_CHECKED_IN
     entity._checkin_source = source
     entity._checkin_lock_name = lock_name or None

@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
 import logging
 from typing import TYPE_CHECKING
@@ -63,6 +62,15 @@ class CheckinTrackingSensor(
 ):
     """Sensor that tracks guest check-in/check-out state."""
 
+    _early_expiry_original_end: datetime | None
+    _early_expiry_new_end: datetime | None
+    _early_expiry_retry_attempt: int
+    _early_expiry_retry_slot: int | None
+    _early_expiry_reservation_start: datetime | None
+    _early_expiry_reservation_slot_name: str | None
+    _early_expiry_retry_was_dispatched: bool
+    _early_expiry_retry_initial_pending: bool
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -97,13 +105,7 @@ class CheckinTrackingSensor(
         self._linger_followon_key: str | None = None
         self._linger_baseline: datetime | None = None
         self._event_missing_warned = False
-        self._early_expiry_original_end: datetime | None = None
-        self._early_expiry_new_end: datetime | None = None
-        self._early_expiry_retry_attempt = 0
-        self._early_expiry_retry_slot: int | None = None
-        self._early_expiry_retry_handle: CALLBACK_TYPE | None = None
-        self._early_expiry_retry_task: asyncio.Task[None] | None = None
-        self._early_expiry_retry_generation = 0
+        runtime.initialize_early_expiry_retry(self)
         self._timer_manager = CheckinTimerManager(hass, async_track_point_in_time)
         self._unique_id = gen_uuid(f"{self.coordinator.unique_id} checkin_tracking")
 
@@ -192,10 +194,7 @@ class CheckinTrackingSensor(
             self._linger_followon_key,
             self._linger_baseline,
             self._event_missing_warned,
-            self._early_expiry_original_end,
-            self._early_expiry_new_end,
-            self._early_expiry_retry_attempt,
-            self._early_expiry_retry_slot,
+            **runtime.early_expiry_snapshot_fields(self),
         )
 
     def _apply_snapshot(self, snapshot: CheckinStateSnapshot) -> None:

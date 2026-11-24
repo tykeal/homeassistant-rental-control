@@ -25,6 +25,7 @@ _STORED_DT_FIELDS = (
     "next_event_start_day",
     "early_expiry_original_end",
     "early_expiry_new_end",
+    "early_expiry_reservation_start",
 )
 _STORED_KEYS = (
     "state",
@@ -43,6 +44,10 @@ _STORED_KEYS = (
     "early_expiry_retry_slot",
     "early_expiry_original_end",
     "early_expiry_new_end",
+    "early_expiry_reservation_start",
+    "early_expiry_reservation_slot_name",
+    "early_expiry_retry_was_dispatched",
+    "early_expiry_retry_initial_pending",
 )
 
 
@@ -100,6 +105,12 @@ class CheckinExtraStoredData(ExtraStoredData):
         fields["state"] = data.get("state", CHECKIN_STATE_NO_RESERVATION)
         fields["early_expiry_retry_attempt"] = data.get("early_expiry_retry_attempt", 0)
         fields["early_expiry_retry_slot"] = data.get("early_expiry_retry_slot")
+        fields["early_expiry_retry_was_dispatched"] = data.get(
+            "early_expiry_retry_was_dispatched", False
+        )
+        fields["early_expiry_retry_initial_pending"] = data.get(
+            "early_expiry_retry_initial_pending", False
+        )
         for key in _STORED_DT_FIELDS:
             fields[key] = _parse_dt(data.get(key))
         return cls(snapshot=CheckinStateSnapshot(**fields))

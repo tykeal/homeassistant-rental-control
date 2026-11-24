@@ -307,6 +307,62 @@ async def test_stale_reservation_does_not_publish_retry_notice(
     assert entity._early_expiry_original_end is None
 
 
+async def test_legacy_same_name_slot_replacement_fails_date_identity(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Calendar membership cannot validate a reused legacy slot by name alone."""
+    _patch_checkout_runtime(monkeypatch)
+    now = dt_util.now()
+    start = now - timedelta(days=1)
+    original_end = now + timedelta(hours=4)
+    new_end = runtime.compute_early_expiry_time(now, original_end)
+    entity = _entity(hass, start, original_end)
+    entity._early_expiry_original_end = original_end
+    entity._early_expiry_new_end = new_end
+    entity._early_expiry_reservation_start = start
+    entity._early_expiry_reservation_slot_name = "Guest"
+    entity._early_expiry_retry_slot = 10
+    entity.coordinator.code_buffer_before = 15
+    entity.coordinator.code_buffer_after = 30
+    entity.coordinator.event_prefix = ""
+    entity.coordinator.bookings_only_feed = False
+    entity.coordinator.last_update_success = True
+    original_event = SimpleNamespace(
+        summary="Guest",
+        description=None,
+        start=start,
+        end=original_end,
+        uid=None,
+    )
+    entity.coordinator.data = [original_event]
+
+    entity.coordinator.event_overrides.overrides[10].update(
+        start_time=start - timedelta(minutes=15),
+        end_time=original_end + timedelta(minutes=30),
+    )
+    assert checkout_expiry_guards._legacy_calendar_event_matches(
+        entity, original_end, start, "Guest"
+    )
+    assert checkout_expiry_guards._legacy_reservation_is_current(
+        entity, 10, original_end, new_end
+    )
+
+    replacement_start = start + timedelta(days=2)
+    replacement_end = original_end + timedelta(days=3)
+    entity.coordinator.event_overrides.overrides[10].update(
+        start_time=replacement_start - timedelta(minutes=15),
+        end_time=replacement_end + timedelta(minutes=30),
+    )
+
+    assert checkout_expiry_guards._legacy_calendar_event_matches(
+        entity, original_end, start, "Guest"
+    )
+    assert not checkout_expiry_guards._legacy_reservation_is_current(
+        entity, 10, original_end, new_end
+    )
+    assert not checkout_expiry_guards._retry_reservation_is_current(entity)
+
+
 async def test_failed_retry_keeps_notice_and_uses_backoff(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -334,6 +390,45 @@ async def test_failed_retry_keeps_notice_and_uses_backoff(
     assert len(notices.created) == 1
     assert len(timers) == 2
     assert timers[1]["when"] - now >= timedelta(minutes=15)
+
+
+async def test_initial_checkout_request_survives_coordinator_refresh(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refreshes must preserve retry metadata while checkout is awaiting confirmation."""
+    notices, timers = _patch_checkout_runtime(monkeypatch)
+    now = dt_util.now()
+    old_end = now + timedelta(hours=4)
+    entity = _entity(hass, now - timedelta(days=1), old_end)
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def fail_after_refresh(*_args: Any, **_kwargs: Any) -> bool:
+        """Hold the initial request until after the coordinator refresh."""
+        started.set()
+        await finish.wait()
+        return False
+
+    monkeypatch.setattr(
+        checkout_expiry, "async_update_lock_code_expiry", fail_after_refresh
+    )
+    request = asyncio.create_task(runtime._maybe_shorten_lock_expiry(entity, now))
+    await started.wait()
+
+    checkout_expiry_retry.resume_early_expiry_retry(entity)
+
+    assert entity._early_expiry_retry_initial_pending
+    assert entity._early_expiry_original_end == old_end
+    assert not notices.created
+    assert not timers
+
+    finish.set()
+    await request
+
+    assert not entity._early_expiry_retry_initial_pending
+    assert entity._early_expiry_original_end == old_end
+    assert notices.created
+    assert len(timers) == 1
 
 
 async def test_retry_exception_keeps_notice_and_reschedules(
@@ -1137,6 +1232,97 @@ async def test_resume_retry_waits_for_ready_reservation_data(
     checkout_expiry_retry.resume_early_expiry_retry(entity)
     assert entity._early_expiry_original_end is None
     assert timers[0]["cancelled"]
+    assert notices.dismissed
+
+
+async def test_retry_survives_linger_expiry_and_restore(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An expired display linger does not discard an active reservation retry."""
+    notices, timers = _patch_checkout_runtime(monkeypatch)
+    now = dt_util.now()
+    start = now - timedelta(days=1)
+    original_end = now + timedelta(hours=4)
+    new_end = runtime.compute_early_expiry_time(now, original_end)
+    entity = _entity(hass, start, original_end)
+    entity._cancel_timer = lambda: None
+    entity.coordinator.event_prefix = ""
+    entity.coordinator.bookings_only_feed = False
+    entity.coordinator.last_update_success = True
+    entity.coordinator.data = [
+        SimpleNamespace(
+            summary="Guest",
+            description=None,
+            start=start,
+            end=original_end,
+            uid=None,
+        )
+    ]
+
+    async def fail_initial(*_args: Any, **_kwargs: Any) -> bool:
+        """Create a pending, undispatched expiry retry."""
+        return False
+
+    monkeypatch.setattr(checkout_expiry, "async_update_lock_code_expiry", fail_initial)
+    await runtime._maybe_shorten_lock_expiry(entity, now)
+    entity._state = CHECKIN_STATE_CHECKED_OUT
+    runtime.transition_to_no_reservation(entity)
+
+    assert entity._state == "no_reservation"
+    assert entity._tracked_event_start is None
+    assert entity._tracked_event_slot_name is None
+    assert entity._early_expiry_original_end == original_end
+    assert not notices.dismissed
+    snapshot = CheckinStateSnapshot(
+        state=entity._state,
+        early_expiry_original_end=entity._early_expiry_original_end,
+        early_expiry_new_end=entity._early_expiry_new_end,
+        early_expiry_retry_attempt=entity._early_expiry_retry_attempt,
+        early_expiry_retry_slot=entity._early_expiry_retry_slot,
+        early_expiry_reservation_start=entity._early_expiry_reservation_start,
+        early_expiry_reservation_slot_name=entity._early_expiry_reservation_slot_name,
+        early_expiry_retry_was_dispatched=entity._early_expiry_retry_was_dispatched,
+    )
+    restored = CheckinExtraStoredData.from_dict(
+        CheckinExtraStoredData.from_snapshot(snapshot).as_dict()
+    ).snapshot
+
+    checkout_expiry_retry.cancel_early_expiry_retry(entity, dismiss=False)
+    reloaded = _entity(hass, start, original_end)
+    reloaded.coordinator.event_prefix = ""
+    reloaded.coordinator.bookings_only_feed = False
+    reloaded.coordinator.last_update_success = True
+    reloaded.coordinator.data = entity.coordinator.data
+    for field in restored.__dataclass_fields__:
+        setattr(reloaded, f"_{field}", getattr(restored, field))
+
+    checkout_expiry_retry.resume_early_expiry_retry(reloaded)
+
+    assert len(timers) == 2
+    assert timers[0]["cancelled"]
+    retry_calls: list[tuple[datetime, datetime | None]] = []
+
+    async def confirm_retry(
+        _entity: Any,
+        expected_end: datetime,
+        *,
+        identity_end: datetime | None = None,
+        on_dispatch: Any = None,
+    ) -> bool:
+        """Confirm the pending expiry against its stored reservation identity."""
+        retry_calls.append((expected_end, identity_end))
+        if on_dispatch is not None:
+            on_dispatch()
+        return True
+
+    monkeypatch.setattr(checkout_expiry, "async_update_lock_code_expiry", confirm_retry)
+    timers[-1]["callback"](now)
+    retry_task = reloaded._early_expiry_retry_task
+    assert retry_task is not None
+    await retry_task
+
+    assert retry_calls == [(new_end, original_end)]
+    assert reloaded._early_expiry_original_end is None
     assert notices.dismissed
 
 

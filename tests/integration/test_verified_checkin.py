@@ -1704,6 +1704,7 @@ async def test_failed_early_checkout_does_not_restore_replaced_reservation(
     await asyncio.wait_for(task, timeout=5)
     assert entity._tracked_event_start == replacement_start
     assert entity._tracked_event_end == replacement_end
+    runtime.cancel_early_expiry_retry(entity, dismiss=False)
 
 
 async def test_early_checkout_confirms_its_own_date_feedback(

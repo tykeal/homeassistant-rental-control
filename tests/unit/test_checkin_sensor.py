@@ -51,6 +51,7 @@ from custom_components.rental_control.const import EVENT_RENTAL_CONTROL_CHECKOUT
 from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
 from custom_components.rental_control.const import UNSUB_LISTENERS
 from custom_components.rental_control.sensors.checkin import checkout_expiry
+from custom_components.rental_control.sensors.checkin import checkout_expiry_guards
 from custom_components.rental_control.sensors.checkin import checkout_expiry_retry
 from custom_components.rental_control.sensors.checkin.event_selection import (
     event_datetime,
@@ -4583,6 +4584,10 @@ class TestEarlyCheckoutExpiry:
         sensor._checkin_source = "keymaster"
 
         mock_checkin_coordinator.lockname = "front_door"
+        mock_checkin_coordinator.code_buffer_before = 0
+        mock_checkin_coordinator.code_buffer_after = 0
+        mock_checkin_coordinator.event_prefix = ""
+        mock_checkin_coordinator.bookings_only_feed = False
         mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
         mock_checkin_coordinator.event_overrides.get_slot_name.return_value = (
@@ -4615,6 +4620,19 @@ class TestEarlyCheckoutExpiry:
             checkout_expiry,
             "_async_wait_for_expected_datetime",
             AsyncMock(return_value=True),
+        )
+        assert checkout_expiry_guards._legacy_slot_reservation_matches(
+            sensor,
+            mock_checkin_coordinator.event_overrides.overrides[10],
+            start,
+            original_end,
+            runtime.compute_early_expiry_time(now, original_end),
+        )
+        assert (
+            checkout_expiry_guards._legacy_calendar_event_matches(
+                sensor, original_end, start, "John Smith"
+            )
+            is not False
         )
         assert runtime._legacy_reservation_is_current(
             sensor,
@@ -6156,6 +6174,8 @@ class TestEarlyExpiryRetryRestore:
         )
         overrides.get_slot_name.return_value = "Guest"
         mock_checkin_coordinator.event_overrides = overrides
+        mock_checkin_coordinator.code_buffer_before = 0
+        mock_checkin_coordinator.code_buffer_after = 0
         mock_checkin_coordinator.data = []
         mock_checkin_coordinator.last_update_success = True
         mock_checkin_coordinator._is_missing_checkin_stay.return_value = False

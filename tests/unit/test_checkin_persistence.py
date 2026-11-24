@@ -34,6 +34,10 @@ _EXPECTED_KEYS = {
     "early_expiry_retry_slot",
     "early_expiry_original_end",
     "early_expiry_new_end",
+    "early_expiry_reservation_start",
+    "early_expiry_reservation_slot_name",
+    "early_expiry_retry_was_dispatched",
+    "early_expiry_retry_initial_pending",
 }
 
 
@@ -94,6 +98,10 @@ def test_missing_fields_default_to_no_reservation() -> None:
     assert restored.next_event_start_day is None
     assert restored.early_expiry_retry_attempt == 0
     assert restored.early_expiry_retry_slot is None
+    assert restored.early_expiry_reservation_start is None
+    assert restored.early_expiry_reservation_slot_name is None
+    assert not restored.early_expiry_retry_was_dispatched
+    assert not restored.early_expiry_retry_initial_pending
 
 
 def test_retry_state_round_trips() -> None:
@@ -105,6 +113,10 @@ def test_retry_state_round_trips() -> None:
     snapshot.early_expiry_new_end = original_end - timedelta(hours=1)
     snapshot.early_expiry_retry_attempt = 2
     snapshot.early_expiry_retry_slot = 21
+    snapshot.early_expiry_reservation_start = snapshot.tracked_event_start
+    snapshot.early_expiry_reservation_slot_name = "Guest"
+    snapshot.early_expiry_retry_was_dispatched = True
+    snapshot.early_expiry_retry_initial_pending = True
 
     stored = CheckinExtraStoredData.from_snapshot(snapshot)
     restored = CheckinExtraStoredData.from_dict(stored.as_dict())
@@ -113,6 +125,10 @@ def test_retry_state_round_trips() -> None:
     assert restored.early_expiry_new_end == snapshot.early_expiry_new_end
     assert restored.early_expiry_retry_attempt == 2
     assert restored.early_expiry_retry_slot == 21
+    assert restored.early_expiry_reservation_start == snapshot.tracked_event_start
+    assert restored.early_expiry_reservation_slot_name == "Guest"
+    assert restored.early_expiry_retry_was_dispatched
+    assert restored.early_expiry_retry_initial_pending
 
 
 def test_invalid_datetimes_log_warning(caplog) -> None:  # type: ignore[no-untyped-def]

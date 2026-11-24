@@ -58,6 +58,10 @@ class CheckinStateSnapshot:
     early_expiry_new_end: datetime | None = None
     early_expiry_retry_attempt: int = 0
     early_expiry_retry_slot: int | None = None
+    early_expiry_reservation_start: datetime | None = None
+    early_expiry_reservation_slot_name: str | None = None
+    early_expiry_retry_was_dispatched: bool = False
+    early_expiry_retry_initial_pending: bool = False
 
 
 @dataclass(frozen=True, slots=True)
