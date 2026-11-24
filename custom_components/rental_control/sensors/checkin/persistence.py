@@ -108,9 +108,9 @@ class CheckinExtraStoredData(ExtraStoredData):
         fields["early_expiry_retry_was_dispatched"] = data.get(
             "early_expiry_retry_was_dispatched", False
         )
-        fields["early_expiry_retry_initial_pending"] = data.get(
-            "early_expiry_retry_initial_pending", False
-        )
+        # The in-flight request cannot survive a restart, so allow a restored
+        # retry to resume instead of waiting for a coroutine that no longer exists.
+        fields["early_expiry_retry_initial_pending"] = False
         for key in _STORED_DT_FIELDS:
             fields[key] = _parse_dt(data.get(key))
         return cls(snapshot=CheckinStateSnapshot(**fields))

@@ -121,6 +121,7 @@ def test_retry_state_round_trips() -> None:
     stored = CheckinExtraStoredData.from_snapshot(snapshot)
     restored = CheckinExtraStoredData.from_dict(stored.as_dict())
 
+    assert stored.as_dict()["early_expiry_retry_initial_pending"]
     assert restored.early_expiry_original_end == snapshot.tracked_event_end
     assert restored.early_expiry_new_end == snapshot.early_expiry_new_end
     assert restored.early_expiry_retry_attempt == 2
@@ -128,7 +129,7 @@ def test_retry_state_round_trips() -> None:
     assert restored.early_expiry_reservation_start == snapshot.tracked_event_start
     assert restored.early_expiry_reservation_slot_name == "Guest"
     assert restored.early_expiry_retry_was_dispatched
-    assert restored.early_expiry_retry_initial_pending
+    assert not restored.early_expiry_retry_initial_pending
 
 
 def test_invalid_datetimes_log_warning(caplog) -> None:  # type: ignore[no-untyped-def]

@@ -363,6 +363,65 @@ async def test_legacy_same_name_slot_replacement_fails_date_identity(
     assert not checkout_expiry_guards._retry_reservation_is_current(entity)
 
 
+async def test_verified_duplicate_guest_name_uses_fingerprint_slot(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verified routing must retain its fingerprint-resolved slot."""
+    _patch_checkout_runtime(monkeypatch)
+    monkeypatch.setattr(
+        checkout_expiry_guards, "association_requires_verified_routing", lambda *_: True
+    )
+    now = dt_util.now()
+    start = now - timedelta(days=1)
+    original_end = now + timedelta(hours=4)
+    new_end = runtime.compute_early_expiry_time(now, original_end)
+    entity = _entity(hass, start, original_end)
+    entity._early_expiry_original_end = original_end
+    entity._early_expiry_new_end = new_end
+    entity._early_expiry_reservation_start = start
+    entity._early_expiry_reservation_slot_name = "Guest"
+    entity._early_expiry_retry_slot = 11
+
+    class DuplicateNameOverrides(_Overrides):
+        """Represent two verified reservations with the same display name."""
+
+        def __init__(self) -> None:
+            """Set up duplicate display names across distinct slots."""
+            self.ready = True
+            self.overrides = {
+                10: {"slot_name": "Guest"},
+                11: {"slot_name": "Guest"},
+            }
+
+        def get_slot_key_by_name(self, slot_name: str) -> int:
+            """Return the first name match, not necessarily the verified slot."""
+            return 10 if slot_name == "Guest" else 0
+
+        def get_slot_name(self, slot: int) -> str:
+            """Return the selected slot occupant."""
+            return cast(str, self.overrides.get(slot, {}).get("slot_name", ""))
+
+    overrides = DuplicateNameOverrides()
+    entity.coordinator.event_overrides = overrides
+    entity.coordinator.start_slot = 10
+    entity.coordinator.max_events = 2
+    identity = original_end.isoformat()
+    monkeypatch.setattr(
+        checkout_expiry_guards,
+        "_reservation_fingerprint",
+        lambda _entry, _name, _start, end: end.isoformat(),
+    )
+    entity.coordinator.get_slot_assignment = lambda key: 11 if key == identity else None
+
+    assert (
+        checkout_expiry_guards._retry_slot(
+            entity, original_end, start, "Guest", new_end
+        )
+        == 11
+    )
+    assert checkout_expiry_guards._retry_reservation_is_current(entity)
+
+
 async def test_failed_retry_keeps_notice_and_uses_backoff(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -428,6 +487,48 @@ async def test_initial_checkout_request_survives_coordinator_refresh(
     assert not entity._early_expiry_retry_initial_pending
     assert entity._early_expiry_original_end == old_end
     assert notices.created
+    assert len(timers) == 1
+
+
+async def test_interrupted_initial_request_resumes_after_restore(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A restored in-flight marker must not block retry recovery."""
+    notices, timers = _patch_checkout_runtime(monkeypatch)
+    now = dt_util.now()
+    start = now - timedelta(days=1)
+    original_end = now + timedelta(hours=4)
+    new_end = runtime.compute_early_expiry_time(now, original_end)
+    snapshot = CheckinStateSnapshot(
+        state=CHECKIN_STATE_CHECKED_OUT,
+        tracked_event_start=start,
+        tracked_event_end=original_end,
+        tracked_event_slot_name="Guest",
+        early_expiry_original_end=original_end,
+        early_expiry_new_end=new_end,
+        early_expiry_reservation_start=start,
+        early_expiry_reservation_slot_name="Guest",
+        early_expiry_retry_initial_pending=True,
+    )
+    stored = CheckinExtraStoredData.from_snapshot(snapshot)
+    restored = CheckinExtraStoredData.from_dict(stored.as_dict()).snapshot
+    entity = _entity(hass, start, original_end)
+    entity._state = CHECKIN_STATE_CHECKED_OUT
+    entity._early_expiry_original_end = restored.early_expiry_original_end
+    entity._early_expiry_new_end = restored.early_expiry_new_end
+    entity._early_expiry_reservation_start = restored.early_expiry_reservation_start
+    entity._early_expiry_reservation_slot_name = (
+        restored.early_expiry_reservation_slot_name
+    )
+    entity._early_expiry_retry_initial_pending = (
+        restored.early_expiry_retry_initial_pending
+    )
+    entity.coordinator.event_overrides = None
+
+    checkout_expiry_retry.resume_early_expiry_retry(entity)
+
+    assert not entity._early_expiry_retry_initial_pending
+    assert len(notices.created) == 1
     assert len(timers) == 1
 
 

@@ -172,7 +172,6 @@ def _retry_reservation_is_current(entity: Any) -> bool:
     if (
         override.get("slot_name") != slot_name
         or overrides.get_slot_name(slot) != slot_name
-        or overrides.get_slot_key_by_name(slot_name) != slot
         or not coordinator.start_slot
         <= slot
         < coordinator.start_slot + coordinator.max_events
@@ -187,7 +186,10 @@ def _retry_reservation_is_current(entity: Any) -> bool:
             and event_match is not False
         )
     return (
-        _legacy_slot_reservation_matches(entity, override, start, original_end, new_end)
+        overrides.get_slot_key_by_name(slot_name) == slot
+        and _legacy_slot_reservation_matches(
+            entity, override, start, original_end, new_end
+        )
         and event_match is not False
     )
 
