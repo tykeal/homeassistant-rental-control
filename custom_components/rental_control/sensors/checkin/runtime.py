@@ -5,14 +5,10 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable
 from datetime import datetime
-from importlib import import_module
 import logging
 from typing import Any
 
-from homeassistant.components.datetime import DOMAIN as DATETIME
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.util import dt as dt_util
 
@@ -20,17 +16,33 @@ from ...const import CHECKIN_STATE_AWAITING
 from ...const import CHECKIN_STATE_CHECKED_IN
 from ...const import CHECKIN_STATE_CHECKED_OUT
 from ...const import CHECKIN_STATE_NO_RESERVATION
-from ...const import EARLY_CHECKOUT_EXPIRY_SWITCH
 from ...const import EVENT_RENTAL_CONTROL_CHECKIN
 from ...const import EVENT_RENTAL_CONTROL_CHECKOUT
-from ...keymaster_operations import protected_registry_active
-from ...keymaster_runtime import coordinator_keymaster_runtime_enabled
-from ...keymaster_topology import association_requires_verified_routing
-from ...util import add_call
-from ...util import check_gather_results
-from ...util import compute_early_expiry_time
-from ...util import get_entry_data
-from .verified_date import async_update_verified_lock_code_expiry
+from ...util import compute_early_expiry_time as compute_early_expiry_time
+from .checkout_expiry import (
+    _legacy_reservation_is_current as _legacy_reservation_is_current,
+)
+from .checkout_expiry import _maybe_shorten_lock_expiry as _maybe_shorten_lock_expiry
+from .checkout_expiry import async_set_state as async_set_state
+from .checkout_expiry import (
+    async_update_lock_code_expiry as async_update_lock_code_expiry,
+)
+from .checkout_expiry import handle_keymaster_unlock as handle_keymaster_unlock
+from .checkout_expiry_retry import (
+    _async_run_early_expiry_retry as _async_run_early_expiry_retry,
+)
+from .checkout_expiry_retry import (
+    _clear_early_expiry_retry as _clear_early_expiry_retry,
+)
+from .checkout_expiry_retry import (
+    _schedule_early_expiry_retry as _schedule_early_expiry_retry,
+)
+from .checkout_expiry_retry import (
+    cancel_early_expiry_retry as cancel_early_expiry_retry,
+)
+from .checkout_expiry_retry import (
+    resume_early_expiry_retry as resume_early_expiry_retry,
+)
 
 _LOGGER = logging.getLogger("custom_components.rental_control.sensors.checkinsensor")
 
@@ -78,193 +90,10 @@ def _validate_checkout_day(entity: Any, end: datetime, force: bool) -> None:
     _LOGGER.warning("Force checkout: overriding the reservation last-day guard")
 
 
-async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
-    """Shorten lock code expiry when early checkout expiry is enabled."""
-    entry_data = get_entry_data(entity._hass, entity._config_entry.entry_id)
-    switch = entry_data.get(EARLY_CHECKOUT_EXPIRY_SWITCH) if entry_data else None
-    if switch is None or not switch.is_on or entity._tracked_event_end is None:
-        return
-    new_end = compute_early_expiry_time(now, entity._tracked_event_end)
-    if new_end >= entity._tracked_event_end:
-        return
-    _LOGGER.info("Early checkout expiry: shortening the active lock-code window")
-    previous_end = entity._tracked_event_end
-    tracked_start = entity._tracked_event_start
-    tracked_name = entity._tracked_event_slot_name
-    entity._tracked_event_end = new_end
-    dispatched = False
-
-    def mark_dispatched() -> None:
-        """Record that the new expiry may have reached the lock."""
-        nonlocal dispatched
-        dispatched = True
-
-    updated = await async_update_lock_code_expiry(
-        entity, new_end, identity_end=previous_end, on_dispatch=mark_dispatched
-    )
-    # Once sent, the lock may hold new_end even if unconfirmed; keep it.
-    if (
-        not updated
-        and not dispatched
-        and association_requires_verified_routing(entity._config_entry)
-        and entity._tracked_event_start == tracked_start
-        and entity._tracked_event_slot_name == tracked_name
-        and entity._tracked_event_end == new_end
-    ):
-        entity._tracked_event_end = previous_end
-
-
-async def async_set_state(entity: Any, state: str) -> None:
-    """Force-set the sensor to an arbitrary valid state."""
-    valid = entity._attr_options
-    if valid is None or state not in valid:
-        raise ServiceValidationError(
-            f"Invalid state '{state}'. Valid states: {', '.join(valid or [])}"
-        )
-    _LOGGER.warning(
-        "DEBUG override: forcing %s from '%s' to '%s'",
-        entity.entity_id,
-        entity._state,
-        state,
-    )
-    entity._state = state
-    entity._tracked_event_summary = entity._tracked_event_start = (
-        entity._tracked_event_end
-    ) = None
-    entity._tracked_event_slot_name = entity._checkin_source = (
-        entity._checkout_source
-    ) = None
-    entity._checkout_time = entity._transition_target_time = (
-        entity._checked_out_event_key
-    ) = None
-    entity._next_event_start_day = entity._checkin_lock_name = None
-    entity._linger_followon_key = entity._linger_baseline = None
-    entity._event_missing_warned = False
-    entity._cancel_timer()
-    entity.async_write_ha_state()
-
-
-def handle_keymaster_unlock(
-    entity: Any, code_slot_num: int, lock_name: str = ""
-) -> None:
-    """Handle a keymaster unlock event."""
-    if _ignore_keymaster_unlock(entity, code_slot_num):
-        return
-    if entity._state == CHECKIN_STATE_CHECKED_IN:
-        _ignore_checked_in_unlock(entity, code_slot_num)
-        return
-    if entity._state != CHECKIN_STATE_AWAITING:
-        _LOGGER.debug(
-            "Ignoring keymaster unlock: sensor state is %s, not awaiting_checkin",
-            entity._state,
-        )
-        return
-    if _unlock_slot_mismatch(entity, code_slot_num):
-        return
-    _LOGGER.info(
-        "Keymaster unlock detected for managed slot %d; transitioning to checked_in",
-        code_slot_num,
-    )
-    entity._transition_to_checked_in(source="keymaster", lock_name=lock_name)
-
-
-def _ignore_keymaster_unlock(entity: Any, code_slot_num: int) -> bool:
-    """Return true when an unlock event is out of scope."""
-    if code_slot_num == 0:
-        _LOGGER.debug("Ignoring keymaster unlock: code_slot_num == 0 (manual/RF)")
-        return True
-    start_slot = entity.coordinator.start_slot
-    if start_slot <= code_slot_num < start_slot + entity.coordinator.max_events:
-        return False
-    _LOGGER.debug(
-        "Ignoring keymaster unlock: code_slot_num %d outside managed range [%d, %d)",
-        code_slot_num,
-        start_slot,
-        start_slot + entity.coordinator.max_events,
-    )
-    return True
-
-
-def _ignore_checked_in_unlock(entity: Any, code_slot_num: int) -> None:
-    """Preserve checked-in unlock ignore behavior."""
-    tracked_slot = 0
-    if entity._tracked_event_slot_name and entity.coordinator.event_overrides:
-        tracked_slot = entity.coordinator.event_overrides.get_slot_key_by_name(
-            entity._tracked_event_slot_name
-        )
-    if tracked_slot != code_slot_num:
-        _LOGGER.debug(
-            "Ignoring keymaster unlock: code_slot_num %d does not match tracked event slot %d",
-            code_slot_num,
-            tracked_slot,
-        )
-
-
-def _unlock_slot_mismatch(entity: Any, code_slot_num: int) -> bool:
-    """Return true when override slot name does not match tracked guest."""
-    overrides = entity.coordinator.event_overrides
-    if not overrides or not overrides.ready:
-        return False
-    incoming_slot_name = overrides.get_slot_name(code_slot_num)
-    if not incoming_slot_name or not entity._tracked_event_slot_name:
-        return False
-    if incoming_slot_name == entity._tracked_event_slot_name:
-        return False
-    _LOGGER.debug(
-        "Ignoring keymaster unlock because slot %d does not match the tracked reservation",
-        code_slot_num,
-    )
-    return True
-
-
-async def async_update_lock_code_expiry(
-    entity: Any,
-    new_end: datetime,
-    *,
-    identity_end: datetime | None = None,
-    on_dispatch: Callable[[], None] | None = None,
-) -> bool:
-    """Update keymaster lock code expiry after early checkout."""
-    if not coordinator_keymaster_runtime_enabled(entity.coordinator):
-        return False
-    if (
-        entity._tracked_event_slot_name is None
-        or not entity.coordinator.event_overrides
-    ):
-        return False
-    if association_requires_verified_routing(entity._config_entry):
-        return await async_update_verified_lock_code_expiry(
-            entity,
-            new_end,
-            identity_end=identity_end,
-            on_dispatch=on_dispatch,
-        )
-    if protected_registry_active(entity._hass):
-        return False
-    slot = entity.coordinator.event_overrides.get_slot_key_by_name(
-        entity._tracked_event_slot_name
-    )
-    lockname = entity.coordinator.lockname
-    if not slot or not lockname:
-        return False
-    module = import_module("custom_components.rental_control.sensors.checkinsensor")
-    caller = getattr(module, "add_call", add_call)
-    coro = caller(
-        entity._hass,
-        [],
-        DATETIME,
-        "set_value",
-        f"datetime.{lockname}_code_slot_{slot}_date_range_end",
-        {"datetime": new_end.isoformat()},
-    )
-    results = await asyncio.gather(*coro, return_exceptions=True)
-    check_gather_results(results, "Early checkout lock code expiry update", _LOGGER)
-    return True
-
-
 def transition_to_no_reservation(entity: Any) -> None:
     """Transition to no_reservation state and clear tracked data."""
     _LOGGER.debug("Transitioning to no_reservation")
+    _clear_early_expiry_retry(entity)
     entity._state = CHECKIN_STATE_NO_RESERVATION
     entity._tracked_event_summary = entity._tracked_event_start = None
     entity._tracked_event_end = entity._tracked_event_slot_name = None
@@ -279,6 +108,7 @@ def transition_to_no_reservation(entity: Any) -> None:
 
 def apply_silent_checked_in(entity: Any, source: str) -> None:
     """Apply a restore-silent checked-in transition."""
+    _clear_early_expiry_retry(entity)
     entity._state = CHECKIN_STATE_CHECKED_IN
     entity._checkin_source = source
     entity._cancel_timer()
@@ -301,6 +131,7 @@ def apply_silent_checked_out(
 def transition_to_awaiting(entity: Any, event: Any) -> None:
     """Transition to awaiting_checkin state."""
     _LOGGER.debug("Transitioning to awaiting_checkin")
+    _clear_early_expiry_retry(entity)
     entity._state = CHECKIN_STATE_AWAITING
     entity._tracked_event_summary = event.summary
     entity._tracked_event_start = event.start
@@ -339,6 +170,7 @@ def transition_to_checked_in(entity: Any, source: str, lock_name: str = "") -> N
         "Transitioning to checked_in (source=%s)",
         source,
     )
+    _clear_early_expiry_retry(entity)
     entity._state = CHECKIN_STATE_CHECKED_IN
     entity._checkin_source = source
     entity._checkin_lock_name = lock_name or None

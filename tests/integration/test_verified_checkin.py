@@ -30,6 +30,8 @@ from custom_components.rental_control import util
 from custom_components.rental_control.allocator.associations import AssociationMode
 from custom_components.rental_control.allocator.associations import AssociationTuple
 from custom_components.rental_control.const import CHECKIN_SENSOR
+from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
+from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_OUT
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import EARLY_CHECKOUT_EXPIRY_SWITCH
@@ -68,6 +70,8 @@ from custom_components.rental_control.keymaster_slot_operations import (
 )
 from custom_components.rental_control.listeners import _handle_keymaster_event
 from custom_components.rental_control.listeners import async_register_keymaster_listener
+from custom_components.rental_control.sensors.checkin import checkout_expiry
+from custom_components.rental_control.sensors.checkin import checkout_expiry_retry
 from custom_components.rental_control.sensors.checkin import runtime
 from custom_components.rental_control.sensors.checkin import verified_date
 from custom_components.rental_control.switch import (
@@ -1354,7 +1358,7 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
         lambda *_args: identity_key,
     )
     fallback = AsyncMock()
-    monkeypatch.setattr(runtime, "add_call", fallback)
+    monkeypatch.setattr(checkout_expiry, "add_call", fallback)
     original_deps = util._keymaster_deps
     monkeypatch.setattr(
         util,
@@ -1362,9 +1366,12 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
         lambda: replace(original_deps(), confirmation_timeout=0.01),
     )
     monkeypatch.setattr(
-        runtime,
+        checkout_expiry,
         "get_entry_data",
         lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
+    )
+    monkeypatch.setattr(
+        checkout_expiry_retry, "_schedule_early_expiry_retry", lambda *_args: None
     )
     dispatches: list[dict[str, Any]] = []
 
@@ -1402,6 +1409,102 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
         for record in store.loaded_result.data["pending_fences"]
     )
     fallback.assert_not_awaited()
+
+
+async def test_verified_early_checkout_retry_uses_real_dispatch_and_timer(
+    hass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scheduled verified retry uses the real guarded date-property path."""
+    from datetime import UTC
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant.common import async_fire_time_changed
+
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.5"
+    )
+    km_entry = hass.config_entries.async_get_entry("consumer-km")
+    assert km_entry is not None
+    hass.config_entries.async_update_entry(
+        km_entry,
+        data={
+            **km_entry.data,
+            "lockname": "Consumer Door",
+            "lock_entity_id": "lock.selected_physical_lock",
+        },
+    )
+    await hass.async_block_till_done()
+
+    identity_key = "consumer-reservation"
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == identity_key else None
+    )
+    start = datetime.now(UTC)
+    old_end = start + timedelta(days=3)
+    now = datetime.now(UTC)
+    monkeypatch.setattr(
+        verified_date,
+        "make_reservation_fingerprint",
+        lambda *_args: identity_key,
+    )
+    original_deps = util._keymaster_deps
+    monkeypatch.setattr(
+        util,
+        "_keymaster_deps",
+        lambda: replace(original_deps(), confirmation_timeout=0.01),
+    )
+    monkeypatch.setattr(
+        checkout_expiry,
+        "get_entry_data",
+        lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
+    )
+
+    dispatches: list[dict[str, Any]] = []
+
+    async def set_datetime(call) -> None:
+        """Leave the first write unconfirmed; apply the scheduled retry."""
+        dispatches.append(dict(call.data))
+        if len(dispatches) > 1:
+            hass.states.async_set(call.data["entity_id"], call.data["datetime"])
+
+    hass.services.async_register("datetime", "set_value", set_datetime)
+    entity = SimpleNamespace(
+        _hass=hass,
+        _config_entry=coordinator.config_entry,
+        coordinator=coordinator,
+        _state=CHECKIN_STATE_CHECKED_IN,
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=old_end,
+        _tracked_event_summary="Reserved - Guest",
+        unique_id="verified-retry",
+        _early_expiry_original_end=None,
+        _early_expiry_new_end=None,
+        _early_expiry_retry_attempt=0,
+        _early_expiry_retry_slot=None,
+        _early_expiry_retry_handle=None,
+        _early_expiry_retry_task=None,
+        _early_expiry_retry_generation=0,
+        _early_expiry_notice_published=False,
+        async_write_ha_state=lambda: None,
+    )
+    end_id = entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
+    hass.states.async_set(end_id, old_end.isoformat())
+    await runtime._maybe_shorten_lock_expiry(entity, now)
+
+    assert len(dispatches) == 1
+    assert entity._early_expiry_original_end == old_end
+    entity._state = CHECKIN_STATE_CHECKED_OUT
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=6))
+    await hass.async_block_till_done()
+
+    assert len(dispatches) == 2
+    assert dispatches[0]["entity_id"] == end_id
+    assert dispatches[1]["entity_id"] == end_id
+    assert entity._early_expiry_original_end is None
 
 
 @pytest.mark.parametrize("phase", ["queued", "pre_dispatch", "in_dispatch"])
@@ -1569,7 +1672,7 @@ async def test_failed_early_checkout_does_not_restore_replaced_reservation(
         lambda *_args: "consumer-reservation",
     )
     monkeypatch.setattr(
-        runtime,
+        checkout_expiry,
         "get_entry_data",
         lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
     )
@@ -1821,9 +1924,12 @@ async def test_early_checkout_rolls_back_only_when_nothing_was_sent(
         lambda *_args: "consumer-reservation",
     )
     monkeypatch.setattr(
-        runtime,
+        checkout_expiry,
         "get_entry_data",
         lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
+    )
+    monkeypatch.setattr(
+        checkout_expiry_retry, "_schedule_early_expiry_retry", lambda *_args: None
     )
     dispatches: list[dict[str, Any]] = []
 

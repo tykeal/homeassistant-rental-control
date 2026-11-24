@@ -256,6 +256,9 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
 async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Handle permanent removal of a Rental Control entry."""
+    from .sensors.checkin.checkout_expiry_retry import dismiss_early_expiry_notice
+
+    dismiss_early_expiry_notice(hass, config_entry.entry_id)
     unregister_keymaster_version_tracking(hass, config_entry.entry_id)
     dismiss_unreadable_slots(hass, config_entry.entry_id)
     dismiss_excluded_slots(hass, config_entry.entry_id)

@@ -23,6 +23,8 @@ _STORED_DT_FIELDS = (
     "checkout_time",
     "transition_target_time",
     "next_event_start_day",
+    "early_expiry_original_end",
+    "early_expiry_new_end",
 )
 _STORED_KEYS = (
     "state",
@@ -37,6 +39,10 @@ _STORED_KEYS = (
     "checked_out_event_key",
     "next_event_start_day",
     "checkin_lock_name",
+    "early_expiry_retry_attempt",
+    "early_expiry_retry_slot",
+    "early_expiry_original_end",
+    "early_expiry_new_end",
 )
 
 
@@ -92,6 +98,8 @@ class CheckinExtraStoredData(ExtraStoredData):
         """Reconstruct an instance from the persisted dictionary shape."""
         fields: dict[str, Any] = {key: data.get(key) for key in _STORED_KEYS}
         fields["state"] = data.get("state", CHECKIN_STATE_NO_RESERVATION)
+        fields["early_expiry_retry_attempt"] = data.get("early_expiry_retry_attempt", 0)
+        fields["early_expiry_retry_slot"] = data.get("early_expiry_retry_slot")
         for key in _STORED_DT_FIELDS:
             fields[key] = _parse_dt(data.get(key))
         return cls(snapshot=CheckinStateSnapshot(**fields))

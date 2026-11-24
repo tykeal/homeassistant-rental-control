@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 import logging
 from typing import TYPE_CHECKING
@@ -96,6 +97,13 @@ class CheckinTrackingSensor(
         self._linger_followon_key: str | None = None
         self._linger_baseline: datetime | None = None
         self._event_missing_warned = False
+        self._early_expiry_original_end: datetime | None = None
+        self._early_expiry_new_end: datetime | None = None
+        self._early_expiry_retry_attempt = 0
+        self._early_expiry_retry_slot: int | None = None
+        self._early_expiry_retry_handle: CALLBACK_TYPE | None = None
+        self._early_expiry_retry_task: asyncio.Task[None] | None = None
+        self._early_expiry_retry_generation = 0
         self._timer_manager = CheckinTimerManager(hass, async_track_point_in_time)
         self._unique_id = gen_uuid(f"{self.coordinator.unique_id} checkin_tracking")
 
@@ -184,6 +192,10 @@ class CheckinTrackingSensor(
             self._linger_followon_key,
             self._linger_baseline,
             self._event_missing_warned,
+            self._early_expiry_original_end,
+            self._early_expiry_new_end,
+            self._early_expiry_retry_attempt,
+            self._early_expiry_retry_slot,
         )
 
     def _apply_snapshot(self, snapshot: CheckinStateSnapshot) -> None:
@@ -276,6 +288,7 @@ class CheckinTrackingSensor(
         apply_transition_decision(
             self, decide_coordinator_update(self._decision_context())
         )
+        runtime.resume_early_expiry_retry(self)
 
     def _transition_to_awaiting(self, event: CalendarEvent) -> None:
         """Transition to awaiting_checkin state."""
@@ -401,6 +414,7 @@ class CheckinTrackingSensor(
     async def async_will_remove_from_hass(self) -> None:
         """Clean up when entity is being removed."""
         self._cancel_timer()
+        runtime.cancel_early_expiry_retry(self, dismiss=False, entity_removed=True)
         await super().async_will_remove_from_hass()
 
     @callback

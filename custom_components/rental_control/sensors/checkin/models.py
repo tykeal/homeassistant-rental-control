@@ -54,6 +54,10 @@ class CheckinStateSnapshot:
     linger_followon_key: str | None = None
     linger_baseline: datetime | None = None
     event_missing_warned: bool = False
+    early_expiry_original_end: datetime | None = None
+    early_expiry_new_end: datetime | None = None
+    early_expiry_retry_attempt: int = 0
+    early_expiry_retry_slot: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

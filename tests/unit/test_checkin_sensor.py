@@ -50,9 +50,12 @@ from custom_components.rental_control.const import EVENT_RENTAL_CONTROL_CHECKIN
 from custom_components.rental_control.const import EVENT_RENTAL_CONTROL_CHECKOUT
 from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
 from custom_components.rental_control.const import UNSUB_LISTENERS
+from custom_components.rental_control.sensors.checkin import checkout_expiry
+from custom_components.rental_control.sensors.checkin import checkout_expiry_retry
 from custom_components.rental_control.sensors.checkin.event_selection import (
     event_datetime,
 )
+from custom_components.rental_control.sensors.checkin.models import CheckinStateSnapshot
 from custom_components.rental_control.sensors.checkinsensor import (
     CheckinExtraStoredData,
 )
@@ -4282,6 +4285,13 @@ class TestEarlyCheckoutExpiry:
         with freeze_time("2025-06-15T12:00:00+00:00"):
             yield
 
+    @pytest.fixture(autouse=True)
+    def _disable_retry_timers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep legacy checkout tests focused on their individual behavior."""
+        monkeypatch.setattr(
+            checkout_expiry_retry, "_schedule_early_expiry_retry", lambda *_: None
+        )
+
     async def test_unlock_while_checked_in_is_ignored(
         self,
         hass: HomeAssistant,
@@ -4357,6 +4367,7 @@ class TestEarlyCheckoutExpiry:
         hass: HomeAssistant,
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test manual checkout with early-expiry ON shortens end time.
 
@@ -4383,6 +4394,11 @@ class TestEarlyCheckoutExpiry:
 
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
 
+        async def confirmed(*_args: Any, **_kwargs: Any) -> bool:
+            """Keep this test focused on the manual checkout state change."""
+            return True
+
+        monkeypatch.setattr(checkout_expiry, "async_update_lock_code_expiry", confirmed)
         await sensor.async_checkout()
 
         # End time should be shortened to approximately now + grace
@@ -4431,6 +4447,7 @@ class TestEarlyCheckoutExpiry:
         hass: HomeAssistant,
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test auto-checkout timer is cancelled on manual checkout.
 
@@ -4463,6 +4480,11 @@ class TestEarlyCheckoutExpiry:
 
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
 
+        async def confirmed(*_args: Any, **_kwargs: Any) -> bool:
+            """Keep this test focused on the existing checkout timer."""
+            return True
+
+        monkeypatch.setattr(checkout_expiry, "async_update_lock_code_expiry", confirmed)
         await sensor.async_checkout()
 
         # Old timer should have been cancelled
@@ -4538,6 +4560,7 @@ class TestEarlyCheckoutExpiry:
         hass: HomeAssistant,
         mock_checkin_coordinator: MagicMock,
         mock_checkin_config_entry: MockConfigEntry,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test early checkout expiry updates keymaster lock code end time.
 
@@ -4562,10 +4585,43 @@ class TestEarlyCheckoutExpiry:
         mock_checkin_coordinator.lockname = "front_door"
         mock_checkin_coordinator.event_overrides = MagicMock()
         mock_checkin_coordinator.event_overrides.get_slot_key_by_name.return_value = 10
-        mock_checkin_coordinator.data = []
+        mock_checkin_coordinator.event_overrides.get_slot_name.return_value = (
+            "John Smith"
+        )
+        mock_checkin_coordinator.event_overrides.overrides = {
+            10: {
+                "slot_name": "John Smith",
+                "start_time": start,
+                "end_time": original_end,
+                "slot_code": "123456",
+            }
+        }
+        mock_checkin_coordinator.data = [_make_event(start=start, end=original_end)]
 
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
 
+        from custom_components.rental_control.sensors.checkin import runtime
+
+        monkeypatch.setattr(
+            checkout_expiry, "coordinator_keymaster_runtime_enabled", lambda *_: True
+        )
+        monkeypatch.setattr(
+            checkout_expiry, "association_requires_verified_routing", lambda *_: False
+        )
+        monkeypatch.setattr(
+            checkout_expiry, "protected_registry_active", lambda *_: False
+        )
+        monkeypatch.setattr(
+            checkout_expiry,
+            "_async_wait_for_expected_datetime",
+            AsyncMock(return_value=True),
+        )
+        assert runtime._legacy_reservation_is_current(
+            sensor,
+            10,
+            original_end,
+            runtime.compute_early_expiry_time(now, original_end),
+        )
         mock_coro = AsyncMock(return_value=None)
         with patch(
             "custom_components.rental_control.sensors.checkinsensor.add_call",
@@ -6048,6 +6104,77 @@ class TestCheckinTrackingReconciliationRegression:
             mock_checkin_coordinator,
             reservations,
         )
-
         assert reservations[0].protected_active is True
         assert reservations[1].protected_active is False
+
+
+class TestEarlyExpiryRetryRestore:
+    """Persisted checkout-expiry retry is resumed by the real sensor."""
+
+    async def test_restored_retry_is_scheduled_on_coordinator_update(
+        self,
+        hass: HomeAssistant,
+        mock_checkin_coordinator: MagicMock,
+        mock_checkin_config_entry: MockConfigEntry,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Snapshot restore and coordinator update re-arm pending retry work."""
+        sensor = _create_sensor(
+            hass, mock_checkin_coordinator, mock_checkin_config_entry
+        )
+        now = dt_util.now()
+        start = now - timedelta(days=1)
+        old_end = now + timedelta(hours=4)
+        new_end = now + timedelta(hours=1)
+        snapshot = CheckinStateSnapshot(
+            state=CHECKIN_STATE_CHECKED_OUT,
+            tracked_event_summary="Reserved - Guest",
+            tracked_event_start=start,
+            tracked_event_end=old_end,
+            tracked_event_slot_name="Guest",
+            linger_baseline=now,
+            early_expiry_original_end=old_end,
+            early_expiry_new_end=new_end,
+            early_expiry_retry_attempt=1,
+        )
+        restored = CheckinExtraStoredData.from_dict(
+            CheckinExtraStoredData.from_snapshot(snapshot).as_dict()
+        )
+        sensor._apply_snapshot(restored.snapshot)
+
+        overrides = MagicMock()
+        overrides.ready = True
+        overrides.overrides = {
+            10: {
+                "slot_name": "Guest",
+                "start_time": start,
+                "end_time": old_end,
+            }
+        }
+        overrides.get_slot_key_by_name.side_effect = lambda name: (
+            10 if name == "Guest" else 0
+        )
+        overrides.get_slot_name.return_value = "Guest"
+        mock_checkin_coordinator.event_overrides = overrides
+        mock_checkin_coordinator.data = []
+        mock_checkin_coordinator.last_update_success = True
+        mock_checkin_coordinator._is_missing_checkin_stay.return_value = False
+        sensor._unsub_timer = MagicMock()
+
+        timers: list[tuple[Any, datetime]] = []
+
+        def track(_hass: Any, callback: Any, when: datetime) -> Any:
+            """Capture the retry scheduled by the coordinator update."""
+            timers.append((callback, when))
+            return lambda: None
+
+        monkeypatch.setattr(checkout_expiry_retry, "async_track_point_in_time", track)
+        monkeypatch.setattr(checkout_expiry_retry, "async_create", MagicMock())
+
+        sensor._handle_coordinator_update()
+
+        assert sensor._state == CHECKIN_STATE_CHECKED_OUT
+        assert sensor._early_expiry_original_end == old_end
+        assert sensor._early_expiry_new_end == new_end
+        assert len(timers) == 1
+        assert timers[0][1] > now
