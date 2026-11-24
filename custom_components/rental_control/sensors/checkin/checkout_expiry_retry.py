@@ -18,6 +18,8 @@ from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.util import dt as dt_util
 
+from ...helpers import _same_instant
+from ...helpers import _same_instant_in
 from ...keymaster_topology import association_requires_verified_routing
 from .checkout_expiry import _retry_reservation_is_current
 from .checkout_expiry import _verified_retry_identity_end
@@ -334,14 +336,15 @@ async def _async_run_early_expiry_retry(
             entity, checkout_expiry, slot, original_end, new_end, generation
         )
         if updated:
-            if (
-                entity._early_expiry_original_end == original_end
-                and entity._early_expiry_new_end == new_end
-            ):
+            if _same_instant(
+                entity._early_expiry_original_end, original_end
+            ) and _same_instant(entity._early_expiry_new_end, new_end):
                 if (
-                    entity._tracked_event_start == tracked_start
+                    _same_instant(entity._tracked_event_start, tracked_start)
                     and entity._tracked_event_slot_name == tracked_name
-                    and entity._tracked_event_end in {original_end, new_end}
+                    and _same_instant_in(
+                        entity._tracked_event_end, (original_end, new_end)
+                    )
                 ):
                     entity._tracked_event_end = new_end
                 _clear_early_expiry_retry(entity, dispatch_finished=True)
@@ -386,18 +389,14 @@ async def _async_dispatch_retry(
     generation: int,
 ) -> bool:
     """Attempt a guarded verified write for the pending reservation."""
-    identity_start = (
-        getattr(entity, "_early_expiry_reservation_start", None)
-        or entity._tracked_event_start
-    )
-    identity_name = (
-        getattr(entity, "_early_expiry_reservation_slot_name", None)
-        or entity._tracked_event_slot_name
-    )
+    identity_start = getattr(entity, "_early_expiry_reservation_start", None)
+    identity_start = identity_start or entity._tracked_event_start
+    identity_name = getattr(entity, "_early_expiry_reservation_slot_name", None)
+    identity_name = identity_name or entity._tracked_event_slot_name
     tracked_identity = (
-        entity._tracked_event_start == identity_start
+        _same_instant(entity._tracked_event_start, identity_start)
         and entity._tracked_event_slot_name == identity_name
-        and entity._tracked_event_end in {original_end, new_end}
+        and _same_instant_in(entity._tracked_event_end, (original_end, new_end))
     )
     entity._early_expiry_retry_dispatched = False
     identity_end = original_end
@@ -414,9 +413,9 @@ async def _async_dispatch_retry(
         entity._early_expiry_retry_was_dispatched = True
         if (
             tracked_identity
-            and entity._tracked_event_start == identity_start
+            and _same_instant(entity._tracked_event_start, identity_start)
             and entity._tracked_event_slot_name == identity_name
-            and entity._tracked_event_end == original_end
+            and _same_instant(entity._tracked_event_end, original_end)
         ):
             entity._tracked_event_end = new_end
 

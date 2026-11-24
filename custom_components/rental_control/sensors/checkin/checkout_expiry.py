@@ -12,10 +12,12 @@ import logging
 from typing import Any
 
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.util import dt as dt_util
 
 from ...const import CHECKIN_STATE_AWAITING
 from ...const import CHECKIN_STATE_CHECKED_IN
 from ...const import EARLY_CHECKOUT_EXPIRY_SWITCH
+from ...helpers import _same_instant
 from ...keymaster_runtime import coordinator_keymaster_runtime_enabled
 from ...keymaster_topology import association_requires_verified_routing
 from ...util import compute_early_expiry_time
@@ -82,9 +84,9 @@ def _initial_request_is_current(
     """Reject an initial write after its checkout identity was invalidated."""
     return (
         entity._early_expiry_retry_generation == generation
-        and entity._early_expiry_original_end == original_end
-        and entity._early_expiry_new_end == new_end
-        and entity._early_expiry_reservation_start == start
+        and _same_instant(entity._early_expiry_original_end, original_end)
+        and _same_instant(entity._early_expiry_new_end, new_end)
+        and _same_instant(entity._early_expiry_reservation_start, start)
         and entity._early_expiry_reservation_slot_name == slot_name
         and entity._early_expiry_retry_initial_pending
         and not getattr(entity, "_early_expiry_retry_entity_removed", False)
@@ -98,7 +100,7 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
     if switch is None or not switch.is_on or entity._tracked_event_end is None:
         return
     new_end = compute_early_expiry_time(now, entity._tracked_event_end)
-    if new_end >= entity._tracked_event_end:
+    if dt_util.as_utc(new_end) >= dt_util.as_utc(entity._tracked_event_end):
         return
     _LOGGER.info("Early checkout expiry: shortening the active lock-code window")
     previous_end = entity._tracked_event_end
@@ -123,9 +125,9 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         """Record that the new expiry may have reached the lock."""
         entity._early_expiry_retry_was_dispatched = True
         if (
-            entity._tracked_event_start == tracked_start
+            _same_instant(entity._tracked_event_start, tracked_start)
             and entity._tracked_event_slot_name == tracked_name
-            and entity._tracked_event_end == previous_end
+            and _same_instant(entity._tracked_event_end, previous_end)
         ):
             entity._tracked_event_end = new_end
 
@@ -153,13 +155,13 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         updated = False
     if updated and (
         entity._early_expiry_retry_generation == generation
-        and entity._early_expiry_original_end == previous_end
-        and entity._early_expiry_new_end == new_end
+        and _same_instant(entity._early_expiry_original_end, previous_end)
+        and _same_instant(entity._early_expiry_new_end, new_end)
     ):
         if (
-            entity._tracked_event_start == tracked_start
+            _same_instant(entity._tracked_event_start, tracked_start)
             and entity._tracked_event_slot_name == tracked_name
-            and entity._tracked_event_end == previous_end
+            and _same_instant(entity._tracked_event_end, previous_end)
         ):
             entity._tracked_event_end = new_end
         entity._early_expiry_retry_initial_pending = False

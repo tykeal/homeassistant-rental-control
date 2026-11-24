@@ -25,6 +25,7 @@ from custom_components.rental_control.sensors.checkin import checkout_expiry
 from custom_components.rental_control.sensors.checkin import checkout_expiry_guards
 from custom_components.rental_control.sensors.checkin import checkout_expiry_retry
 from custom_components.rental_control.sensors.checkin import runtime
+from custom_components.rental_control.sensors.checkin import verified_date
 from custom_components.rental_control.sensors.checkin.models import CheckinStateSnapshot
 from custom_components.rental_control.sensors.checkin.persistence import (
     CheckinExtraStoredData,
@@ -388,6 +389,113 @@ async def test_legacy_same_name_slot_replacement_fails_date_identity(
         entity, 10, original_end, new_end
     )
     assert not checkout_expiry_guards._retry_reservation_is_current(entity)
+
+
+@pytest.mark.parametrize("mismatched_bound", ["start", "end"])
+async def test_legacy_calendar_matching_distinguishes_fallback_folds(
+    hass: Any, mismatched_bound: str
+) -> None:
+    """Same local wall time in the other DST fold is a different reservation."""
+    eastern = ZoneInfo("America/New_York")
+    start = datetime(2026, 11, 1, 1, 10, tzinfo=eastern, fold=0)
+    original_end = datetime(
+        2026,
+        11,
+        1,
+        1,
+        50,
+        tzinfo=eastern,
+        fold=1 if mismatched_bound == "start" else 0,
+    )
+    event_start = start.replace(fold=1) if mismatched_bound == "start" else start
+    event_end = (
+        original_end.replace(fold=1) if mismatched_bound == "end" else original_end
+    )
+    entity = _entity(hass, start, original_end)
+    entity.coordinator.last_update_success = True
+    entity.coordinator.data = [
+        SimpleNamespace(
+            summary="Guest",
+            description=None,
+            start=event_start,
+            end=event_end,
+            uid=None,
+        )
+    ]
+
+    assert not checkout_expiry_guards._legacy_calendar_event_matches(
+        entity, original_end, start, "Guest"
+    )
+    slot_start = datetime(2026, 11, 1, 1, 10, tzinfo=eastern, fold=0)
+    slot_end = datetime(2026, 11, 1, 1, 50, tzinfo=eastern, fold=0)
+    override_start = (
+        slot_start.replace(fold=1) if mismatched_bound == "start" else slot_start
+    )
+    override_end = slot_end.replace(fold=1) if mismatched_bound == "end" else slot_end
+    entity.coordinator.code_buffer_before = 0
+    entity.coordinator.code_buffer_after = 0
+    assert not checkout_expiry_guards._legacy_slot_reservation_matches(
+        entity,
+        {"start_time": override_start, "end_time": override_end},
+        slot_start,
+        slot_end,
+        slot_end - timedelta(minutes=15),
+    )
+
+
+@pytest.mark.parametrize("mismatched_field", ["start", "original_end", "new_end"])
+async def test_initial_request_guard_distinguishes_fallback_folds(
+    hass: Any, mismatched_field: str
+) -> None:
+    """Initial write ownership treats repeated-hour wall times as distinct."""
+    eastern = ZoneInfo("America/New_York")
+    start = datetime(2026, 11, 1, 1, 10, tzinfo=eastern, fold=0)
+    original_end = datetime(2026, 11, 1, 1, 55, tzinfo=eastern, fold=1)
+    new_end = datetime(2026, 11, 1, 1, 20, tzinfo=eastern, fold=0)
+    entity = _entity(hass, start, original_end)
+    entity._early_expiry_retry_generation = 3
+    entity._early_expiry_original_end = original_end
+    entity._early_expiry_new_end = new_end
+    entity._early_expiry_reservation_start = start
+    entity._early_expiry_reservation_slot_name = "Guest"
+    entity._early_expiry_retry_initial_pending = True
+    candidate_start = start.replace(fold=1) if mismatched_field == "start" else start
+    candidate_original_end = (
+        original_end.replace(fold=0)
+        if mismatched_field == "original_end"
+        else original_end
+    )
+    candidate_new_end = (
+        new_end.replace(fold=1) if mismatched_field == "new_end" else new_end
+    )
+
+    assert not checkout_expiry._initial_request_is_current(
+        entity,
+        3,
+        candidate_original_end,
+        candidate_new_end,
+        candidate_start,
+        "Guest",
+    )
+
+
+def test_verified_reservation_field_comparison_uses_instants() -> None:
+    """Verified assignment snapshots distinguish repeated wall-clock times."""
+    eastern = ZoneInfo("America/New_York")
+    start = datetime(2026, 11, 1, 1, 10, tzinfo=eastern, fold=0)
+    original_end = datetime(2026, 11, 1, 1, 50, tzinfo=eastern, fold=0)
+    same_start_utc = dt_util.as_utc(start)
+    same_end_utc = dt_util.as_utc(original_end)
+    next_fold_end = original_end.replace(fold=1)
+
+    assert verified_date._same_reservation_fields(
+        {"slot_name": "Guest", "start_time": same_start_utc, "end_time": same_end_utc},
+        {"slot_name": "Guest", "start_time": start, "end_time": original_end},
+    )
+    assert not verified_date._same_reservation_fields(
+        {"slot_name": "Guest", "start_time": start, "end_time": next_fold_end},
+        {"slot_name": "Guest", "start_time": start, "end_time": original_end},
+    )
 
 
 async def test_verified_duplicate_guest_name_uses_fingerprint_slot(

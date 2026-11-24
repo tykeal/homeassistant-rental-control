@@ -9,6 +9,7 @@ from datetime import datetime
 import logging
 from typing import Any
 
+from ...helpers import _same_instant
 from ...keymaster_operations import VerifiedOperationRejected
 from ...keymaster_operations import prepare_verified_intent
 from ...keymaster_slot_operations import async_slot_operation
@@ -200,7 +201,7 @@ def _assignment_guard(
         if (
             allow_expected_end
             and current_override is not None
-            and current_override.get("end_time") == new_end
+            and _same_instant(current_override.get("end_time"), new_end)
         ):
             expected_override["end_time"] = new_end
         return (
@@ -212,12 +213,32 @@ def _assignment_guard(
             <= slot
             < coordinator.start_slot + coordinator.max_events
             and overrides.get_feedback_generation(slot) == generation
-            and current_override == expected_override
+            and _same_reservation_fields(current_override, expected_override)
             and overrides.get_slot_name(slot) == slot_name
             and verified_slot_source(entity._hass, config_entry, slot) == source
         )
 
     return assignment_is_current
+
+
+def _same_reservation_fields(
+    current: dict[str, Any] | None, expected: dict[str, Any]
+) -> bool:
+    """Compare reservation fields while treating datetimes as absolute instants."""
+    if current is None or current.keys() != expected.keys():
+        return False
+    for key, expected_value in expected.items():
+        current_value = current[key]
+        if isinstance(current_value, datetime) or isinstance(expected_value, datetime):
+            if not (
+                isinstance(current_value, datetime)
+                and isinstance(expected_value, datetime)
+                and _same_instant(current_value, expected_value)
+            ):
+                return False
+        elif current_value != expected_value:
+            return False
+    return True
 
 
 def _reservation_fields(override: Any) -> dict[str, Any] | None:

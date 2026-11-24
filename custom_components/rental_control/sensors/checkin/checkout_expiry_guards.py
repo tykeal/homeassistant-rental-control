@@ -13,6 +13,7 @@ from typing import cast
 
 from homeassistant.util import dt as dt_util
 
+from ...helpers import _same_instant
 from ...helpers import apply_buffer
 from ...keymaster_topology import association_requires_verified_routing
 from .event_selection import event_datetime
@@ -114,12 +115,15 @@ def _legacy_slot_reservation_matches(
     expected_start, expected_end = apply_buffer(
         start, original_end, before, after, coordinator
     )
-    expected_ends = {expected_end}
+    if not isinstance(expected_start, datetime) or not isinstance(
+        expected_end, datetime
+    ):
+        return False
+    expected_ends = [expected_end]
     if getattr(entity, "_early_expiry_retry_was_dispatched", False):
-        expected_ends.add(new_end)
-    return (
-        override.get("start_time") == expected_start
-        and override.get("end_time") in expected_ends
+        expected_ends.append(new_end)
+    return _same_instant(override.get("start_time"), expected_start) and any(
+        _same_instant(override.get("end_time"), expected) for expected in expected_ends
     )
 
 
@@ -205,8 +209,8 @@ def _retry_dispatch_is_current(
     """Recheck retry identity, reservation ownership, and deadline before dispatch."""
     return (
         entity._early_expiry_retry_generation == generation
-        and entity._early_expiry_original_end == original_end
-        and entity._early_expiry_new_end == new_end
+        and _same_instant(entity._early_expiry_original_end, original_end)
+        and _same_instant(entity._early_expiry_new_end, new_end)
         and not getattr(entity, "_early_expiry_retry_entity_removed", False)
         and dt_util.utcnow() < dt_util.as_utc(original_end)
         and _retry_reservation_is_current(entity)
@@ -273,8 +277,8 @@ def _legacy_calendar_event_matches(
                     else extract_slot_name(event, prefix, bookings_only)
                 )
                 if (
-                    event_datetime(event.start) == start
-                    and event_datetime(event.end) == identity_end
+                    _same_instant(event_datetime(event.start), start)
+                    and _same_instant(event_datetime(event.end), identity_end)
                     and event_name == name
                 ):
                     return True
@@ -287,4 +291,4 @@ def _legacy_calendar_event_matches(
     event = finder()
     if event is None:
         return False
-    return event_datetime(event.end) == identity_end
+    return _same_instant(event_datetime(event.end), identity_end)
