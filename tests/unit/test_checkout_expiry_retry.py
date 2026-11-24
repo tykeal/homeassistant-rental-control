@@ -423,6 +423,13 @@ async def test_legacy_calendar_matching_distinguishes_fallback_folds(
         )
     ]
 
+    entity.coordinator.data[0].start = start
+    entity.coordinator.data[0].end = original_end
+    assert checkout_expiry_guards._legacy_calendar_event_matches(
+        entity, original_end, start, "Guest"
+    )
+    entity.coordinator.data[0].start = event_start
+    entity.coordinator.data[0].end = event_end
     assert not checkout_expiry_guards._legacy_calendar_event_matches(
         entity, original_end, start, "Guest"
     )
@@ -434,6 +441,13 @@ async def test_legacy_calendar_matching_distinguishes_fallback_folds(
     override_end = slot_end.replace(fold=1) if mismatched_bound == "end" else slot_end
     entity.coordinator.code_buffer_before = 0
     entity.coordinator.code_buffer_after = 0
+    assert checkout_expiry_guards._legacy_slot_reservation_matches(
+        entity,
+        {"start_time": slot_start, "end_time": slot_end},
+        slot_start,
+        slot_end,
+        slot_end - timedelta(minutes=15),
+    )
     assert not checkout_expiry_guards._legacy_slot_reservation_matches(
         entity,
         {"start_time": override_start, "end_time": override_end},
@@ -469,6 +483,9 @@ async def test_initial_request_guard_distinguishes_fallback_folds(
         new_end.replace(fold=1) if mismatched_field == "new_end" else new_end
     )
 
+    assert checkout_expiry._initial_request_is_current(
+        entity, 3, original_end, new_end, start, "Guest"
+    )
     assert not checkout_expiry._initial_request_is_current(
         entity,
         3,
