@@ -1750,6 +1750,81 @@ async def test_legacy_pending_expiry_waits_for_verified_routing_then_dispatches(
     assert dismissed
 
 
+async def test_verified_expiry_fails_closed_without_active_lifecycle(
+    hass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A verified association without live publication cannot dispatch."""
+    from datetime import UTC
+    from datetime import timedelta
+
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.5"
+    )
+    km_entry = hass.config_entries.async_get_entry("consumer-km")
+    assert km_entry is not None
+    hass.config_entries.async_update_entry(
+        km_entry,
+        data={
+            **km_entry.data,
+            "lockname": "Consumer Door",
+            "lock_entity_id": "lock.selected_physical_lock",
+        },
+    )
+    await hass.async_block_till_done()
+
+    identity_key = "consumer-reservation"
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == identity_key else None
+    )
+    monkeypatch.setattr(
+        verified_date,
+        "make_reservation_fingerprint",
+        lambda *_args: identity_key,
+    )
+    overrides = coordinator.event_overrides
+    assert overrides is not None
+    start = datetime.now(UTC)
+    original_end = start + timedelta(days=3)
+    overrides.overrides[_SLOT].update(
+        slot_name="Guest",
+        start_time=start,
+        end_time=original_end,
+    )
+    entity = SimpleNamespace(
+        _hass=hass,
+        _config_entry=coordinator.config_entry,
+        coordinator=coordinator,
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=original_end,
+        _early_expiry_reservation_slot_name="Guest",
+        _early_expiry_reservation_start=start,
+    )
+    date_entity_id = entity_ids[
+        f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"
+    ]
+    hass.states.async_set(date_entity_id, original_end.isoformat())
+    dispatches: list[dict[str, Any]] = []
+
+    async def set_datetime(call: Any) -> None:
+        """Record a service call that must be blocked by the missing lifecycle."""
+        dispatches.append(dict(call.data))
+
+    hass.services.async_register("datetime", "set_value", set_datetime)
+    stop_keymaster_lifecycle(hass, coordinator.config_entry.entry_id)
+
+    updated = await verified_date.async_update_verified_lock_code_expiry(
+        entity,
+        start + timedelta(hours=1),
+        identity_end=original_end,
+    )
+
+    assert not updated
+    assert not dispatches
+
+
 @pytest.mark.parametrize("phase", ["queued", "pre_dispatch", "in_dispatch"])
 @pytest.mark.parametrize("changed", ["override", "feedback", "assignment"])
 async def test_early_checkout_rejects_stale_slot_assignment(

@@ -208,7 +208,7 @@ def _retry_dispatch_is_current(
         and entity._early_expiry_original_end == original_end
         and entity._early_expiry_new_end == new_end
         and not getattr(entity, "_early_expiry_retry_entity_removed", False)
-        and dt_util.now() < original_end
+        and dt_util.utcnow() < dt_util.as_utc(original_end)
         and _retry_reservation_is_current(entity)
     )
 

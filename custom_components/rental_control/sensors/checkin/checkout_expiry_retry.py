@@ -208,7 +208,7 @@ def resume_early_expiry_retry(entity: Any) -> None:
     entity._early_expiry_retry_entity_removed = False
     if getattr(entity, "_early_expiry_original_end", None) is None:
         return
-    if entity._early_expiry_original_end <= dt_util.now():
+    if dt_util.as_utc(entity._early_expiry_original_end) <= dt_util.utcnow():
         _clear_early_expiry_retry(entity)
         return
     if getattr(entity, "_early_expiry_retry_initial_pending", False):
@@ -242,8 +242,10 @@ def _schedule_early_expiry_retry(entity: Any) -> None:
     delay = _EARLY_EXPIRY_RETRY_DELAYS[
         min(attempt, len(_EARLY_EXPIRY_RETRY_DELAYS) - 1)
     ]
-    target = min(dt_util.now() + delay, original_end)
-    if target <= dt_util.now():
+    now_utc = dt_util.utcnow()
+    original_end_utc = dt_util.as_utc(original_end)
+    target = min(now_utc + delay, original_end_utc)
+    if target <= now_utc:
         _clear_early_expiry_retry(entity)
         return
     cancel = getattr(entity, "_early_expiry_retry_handle", None)
@@ -298,7 +300,11 @@ async def _async_run_early_expiry_retry(
             getattr(entity, "_early_expiry_reservation_slot_name", None)
             or entity._tracked_event_slot_name
         )
-        if original_end is None or new_end is None or now >= original_end:
+        if (
+            original_end is None
+            or new_end is None
+            or dt_util.as_utc(now) >= dt_util.as_utc(original_end)
+        ):
             _clear_early_expiry_retry(entity)
             return
         if not _retry_reservation_is_current(entity):

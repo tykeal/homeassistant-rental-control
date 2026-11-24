@@ -8,9 +8,11 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime
 from datetime import timedelta
+from datetime import timezone
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
+from zoneinfo import ZoneInfo
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -157,6 +159,22 @@ def test_notification_is_skipped_without_home_assistant_bus(hass: Any) -> None:
     entity._hass = SimpleNamespace()
 
     checkout_expiry_retry._publish_early_expiry_notice(entity)
+
+
+def test_legacy_notice_reports_prior_dispatched_write(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A legacy notice does not deny an earlier verified dispatch."""
+    notices, _timers = _patch_checkout_runtime(monkeypatch, verified=False)
+    now = dt_util.now()
+    entity = _entity(hass, now - timedelta(days=1), now + timedelta(hours=4))
+    entity._early_expiry_retry_was_dispatched = True
+
+    checkout_expiry_retry._publish_early_expiry_notice(entity)
+
+    message = notices.created[0][0][1]
+    assert "earlier verified update may have reached the lock" in message
+    assert "123456" not in message
 
 
 def test_permanent_removal_dismisses_entry_scoped_notice(
@@ -1454,6 +1472,142 @@ async def test_resume_retry_schedules_while_overrides_are_unavailable(
     assert timers[0]["when"] < old_end
 
 
+@pytest.mark.parametrize(
+    ("fold", "attempt", "expected_target"),
+    [
+        (0, 1, datetime(2026, 11, 1, 6, 5, tzinfo=timezone.utc)),
+        (1, 0, datetime(2026, 11, 1, 6, 55, tzinfo=timezone.utc)),
+    ],
+)
+async def test_retry_schedule_uses_utc_instants_during_dst_fallback(
+    hass: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    fold: int,
+    attempt: int,
+    expected_target: datetime,
+) -> None:
+    """Retry intervals remain accurate across the repeated local DST hour."""
+    _notices, timers = _patch_checkout_runtime(monkeypatch)
+    eastern = ZoneInfo("America/New_York")
+    local_now = datetime(2026, 11, 1, 1, 50, tzinfo=eastern, fold=fold)
+    now_utc = dt_util.as_utc(local_now)
+    original_end = datetime(2026, 11, 1, 8, 0, tzinfo=timezone.utc)
+    entity = _entity(hass, local_now - timedelta(days=1), original_end)
+    entity._early_expiry_original_end = original_end
+    entity._early_expiry_new_end = datetime(2026, 11, 1, 5, 0, tzinfo=timezone.utc)
+    entity._early_expiry_retry_attempt = attempt
+    monkeypatch.setattr(checkout_expiry_retry.dt_util, "utcnow", lambda: now_utc)
+
+    checkout_expiry_retry._schedule_early_expiry_retry(entity)
+
+    assert timers[0]["when"] == expected_target
+    assert dt_util.as_utc(timers[0]["when"]) == expected_target
+
+
+async def test_retry_schedule_caps_at_original_end_in_utc(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry timer is capped to the original end as an absolute instant."""
+    _notices, timers = _patch_checkout_runtime(monkeypatch)
+    local_now = datetime(
+        2026, 11, 1, 1, 50, tzinfo=ZoneInfo("America/New_York"), fold=1
+    )
+    now_utc = dt_util.as_utc(local_now)
+    original_end = datetime(2026, 11, 1, 6, 57, tzinfo=timezone.utc)
+    entity = _entity(hass, local_now - timedelta(days=1), original_end)
+    entity._early_expiry_original_end = original_end
+    entity._early_expiry_new_end = datetime(2026, 11, 1, 5, 0, tzinfo=timezone.utc)
+    entity._early_expiry_retry_attempt = 1
+    monkeypatch.setattr(checkout_expiry_retry.dt_util, "utcnow", lambda: now_utc)
+
+    checkout_expiry_retry._schedule_early_expiry_retry(entity)
+
+    assert timers[0]["when"] == original_end
+
+
+async def test_retry_schedule_clears_when_utc_deadline_has_passed(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reservation ending now in UTC does not get a stale retry timer."""
+    notices, timers = _patch_checkout_runtime(monkeypatch)
+    now_utc = datetime(2026, 11, 1, 6, 55, tzinfo=timezone.utc)
+    entity = _entity(hass, now_utc - timedelta(days=1), now_utc)
+    entity._early_expiry_original_end = now_utc
+    entity._early_expiry_new_end = now_utc - timedelta(hours=1)
+    monkeypatch.setattr(checkout_expiry_retry.dt_util, "utcnow", lambda: now_utc)
+
+    checkout_expiry_retry._schedule_early_expiry_retry(entity)
+
+    assert timers == []
+    assert entity._early_expiry_original_end is None
+    assert notices.dismissed
+
+
+async def test_retry_schedule_ignores_missing_original_end(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retry cannot be scheduled without its reservation deadline."""
+    _notices, timers = _patch_checkout_runtime(monkeypatch)
+    entity = _entity(
+        hass,
+        dt_util.now() - timedelta(days=1),
+        dt_util.now() + timedelta(hours=4),
+    )
+
+    checkout_expiry_retry._schedule_early_expiry_retry(entity)
+
+    assert timers == []
+
+
+async def test_retry_callback_deadline_uses_utc_during_dst_fallback(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fold=1 callback cannot retry after the fold=0 reservation end."""
+    _notices, _timers = _patch_checkout_runtime(monkeypatch)
+    eastern = ZoneInfo("America/New_York")
+    now = datetime(2026, 11, 1, 1, 50, tzinfo=eastern, fold=1)
+    original_end = datetime(2026, 11, 1, 1, 55, tzinfo=eastern, fold=0)
+    entity = _entity(hass, now - timedelta(days=1), original_end)
+    entity._early_expiry_original_end = original_end
+    entity._early_expiry_new_end = datetime(2026, 11, 1, 5, 0, tzinfo=timezone.utc)
+    entity._early_expiry_retry_generation = 3
+
+    await checkout_expiry_retry._async_run_early_expiry_retry(entity, 3, now)
+
+    assert entity._early_expiry_original_end is None
+
+
+async def test_retry_ignores_stale_generation(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale callback generation cannot operate on a newer retry request."""
+    _notices, _timers = _patch_checkout_runtime(monkeypatch)
+    now = dt_util.now()
+    entity = _entity(hass, now - timedelta(days=1), now + timedelta(hours=4))
+    entity._early_expiry_retry_generation = 2
+    entity._early_expiry_original_end = entity._tracked_event_end
+    entity._early_expiry_new_end = now + timedelta(hours=1)
+
+    await checkout_expiry_retry._async_run_early_expiry_retry(entity, 1, now)
+
+    assert entity._early_expiry_original_end == entity._tracked_event_end
+
+
+async def test_retry_with_missing_new_end_clears_incomplete_restore(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Incomplete persisted retry metadata is discarded without dispatch."""
+    _notices, _timers = _patch_checkout_runtime(monkeypatch)
+    now = dt_util.now()
+    entity = _entity(hass, now - timedelta(days=1), now + timedelta(hours=4))
+    entity._early_expiry_retry_generation = 2
+    entity._early_expiry_original_end = entity._tracked_event_end
+
+    await checkout_expiry_retry._async_run_early_expiry_retry(entity, 2, now)
+
+    assert entity._early_expiry_original_end is None
+
+
 async def test_cancelled_retry_callback_ignores_stale_generation(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1507,7 +1661,11 @@ async def test_retry_rechecks_original_end_before_dispatch(
         **_kwargs: Any,
     ) -> bool:
         """Advance time while the update waits to reach its dispatch guard."""
-        monkeypatch.setattr(checkout_expiry_retry.dt_util, "now", lambda: old_end)
+        monkeypatch.setattr(
+            checkout_expiry_retry.dt_util,
+            "utcnow",
+            lambda: dt_util.as_utc(old_end),
+        )
         assert pre_dispatch_guard is not None
         dispatch_guards.append(pre_dispatch_guard())
         return False
