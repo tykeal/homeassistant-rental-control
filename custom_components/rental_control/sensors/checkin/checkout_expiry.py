@@ -5,31 +5,21 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from datetime import datetime
 from importlib import import_module
 import logging
 from typing import Any
 
-from homeassistant.components.datetime import DOMAIN as DATETIME
 from homeassistant.exceptions import ServiceValidationError
 
 from ...const import CHECKIN_STATE_AWAITING
 from ...const import CHECKIN_STATE_CHECKED_IN
 from ...const import EARLY_CHECKOUT_EXPIRY_SWITCH
-from ...keymaster_operations import protected_registry_active
 from ...keymaster_runtime import coordinator_keymaster_runtime_enabled
 from ...keymaster_topology import association_requires_verified_routing
-from ...util import _SET_CODE_CONFIRMATION_TIMEOUT
-from ...util import _async_wait_for_expected_datetime
-from ...util import add_call
-from ...util import check_gather_results
 from ...util import compute_early_expiry_time
 from ...util import get_entry_data
-from .checkout_expiry_guards import (
-    _legacy_calendar_event_matches as _legacy_calendar_event_matches,
-)
 from .checkout_expiry_guards import (
     _legacy_reservation_is_current as _legacy_reservation_is_current,
 )
@@ -44,11 +34,6 @@ from .checkout_expiry_guards import (
 from .verified_date import async_update_verified_lock_code_expiry
 
 _LOGGER = logging.getLogger("custom_components.rental_control.sensors.checkinsensor")
-
-
-def _legacy_expiry_entity_id(lockname: str, slot: int) -> str:
-    """Build the legacy Keymaster datetime entity ID for a code slot."""
-    return f"datetime.{lockname}_code_slot_{slot}_date_range_end"
 
 
 def _record_checkout_expiry_identity(
@@ -70,6 +55,19 @@ def _record_checkout_expiry_identity(
     entity._early_expiry_retry_initial_pending = True
 
 
+def _schedule_legacy_pending_retry(entity: Any) -> None:
+    """Keep the request pending without dispatching through legacy routing."""
+    entity._early_expiry_retry_initial_pending = False
+    retry = import_module(
+        "custom_components.rental_control.sensors.checkin.checkout_expiry_retry"
+    )
+    if _retry_reservation_is_current(entity):
+        retry._publish_early_expiry_notice(entity)
+        retry._schedule_early_expiry_retry(entity)
+    else:
+        retry._clear_early_expiry_retry(entity)
+
+
 async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
     """Shorten lock code expiry when early checkout expiry is enabled."""
     entry_data = get_entry_data(entity._hass, entity._config_entry.entry_id)
@@ -89,6 +87,13 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
             "Early checkout expiry update could not identify a retry slot for entry %s",
             entity._config_entry.entry_id,
         )
+    entity._early_expiry_retry_clear_when_done = False
+    _record_checkout_expiry_identity(
+        entity, previous_end, new_end, tracked_start, tracked_name, retry_slot
+    )
+    if not association_requires_verified_routing(entity._config_entry):
+        _schedule_legacy_pending_retry(entity)
+        return
     entity._tracked_event_end = new_end
     dispatched = False
 
@@ -98,10 +103,6 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         dispatched = True
         entity._early_expiry_retry_was_dispatched = True
 
-    entity._early_expiry_retry_clear_when_done = False
-    _record_checkout_expiry_identity(
-        entity, previous_end, new_end, tracked_start, tracked_name, retry_slot
-    )
     try:
         updated = await async_update_lock_code_expiry(
             entity, new_end, identity_end=previous_end, on_dispatch=mark_dispatched
@@ -118,7 +119,7 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         retry = import_module(
             "custom_components.rental_control.sensors.checkin.checkout_expiry_retry"
         )
-        retry._clear_early_expiry_retry(entity)
+        retry._clear_early_expiry_retry(entity, dispatch_finished=True)
         return
     if getattr(entity, "_early_expiry_retry_entity_removed", False):
         return
@@ -256,6 +257,8 @@ async def async_update_lock_code_expiry(
     on_dispatch: Callable[[], None] | None = None,
 ) -> bool:
     """Update keymaster lock code expiry after early checkout."""
+    if not association_requires_verified_routing(entity._config_entry):
+        return False
     if not coordinator_keymaster_runtime_enabled(entity.coordinator):
         return False
     if (
@@ -263,49 +266,9 @@ async def async_update_lock_code_expiry(
         or entity._tracked_event_slot_name
     ) is None or not entity.coordinator.event_overrides:
         return False
-    if association_requires_verified_routing(entity._config_entry):
-        return await async_update_verified_lock_code_expiry(
-            entity,
-            new_end,
-            identity_end=identity_end,
-            on_dispatch=on_dispatch,
-        )
-    if protected_registry_active(entity._hass):
-        return False
-    slot_name = (
-        getattr(entity, "_early_expiry_reservation_slot_name", None)
-        or entity._tracked_event_slot_name
-    )
-    slot = entity.coordinator.event_overrides.get_slot_key_by_name(slot_name)
-    lockname = entity.coordinator.lockname
-    if not slot or not lockname:
-        return False
-    if not _legacy_reservation_is_current(entity, slot, identity_end, new_end):
-        return False
-    entity_id = _legacy_expiry_entity_id(lockname, slot)
-    module = import_module("custom_components.rental_control.sensors.checkinsensor")
-    caller = getattr(module, "add_call", add_call)
-    coro = caller(
-        entity._hass,
-        [],
-        DATETIME,
-        "set_value",
-        entity_id,
-        {"datetime": new_end.isoformat()},
-    )
-    if on_dispatch is not None:
-        on_dispatch()
-    results = await asyncio.gather(*coro, return_exceptions=True)
-    check_gather_results(results, "Early checkout lock code expiry update", _LOGGER)
-    if any(isinstance(result, BaseException) for result in results):
-        return False
-    if not _legacy_reservation_is_current(entity, slot, identity_end, new_end):
-        return False
-    if not await _async_wait_for_expected_datetime(
-        entity._hass,
-        entity_id,
+    return await async_update_verified_lock_code_expiry(
+        entity,
         new_end,
-        _SET_CODE_CONFIRMATION_TIMEOUT,
-    ):
-        return False
-    return _legacy_reservation_is_current(entity, slot, identity_end, new_end)
+        identity_end=identity_end,
+        on_dispatch=on_dispatch,
+    )

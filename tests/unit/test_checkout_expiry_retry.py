@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from collections.abc import Callable
 from datetime import datetime
 from datetime import timedelta
 from types import SimpleNamespace
@@ -16,11 +16,9 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 import pytest
 
-from custom_components.rental_control import util
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
 from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_OUT
 from custom_components.rental_control.const import EARLY_CHECKOUT_EXPIRY_SWITCH
-from custom_components.rental_control.sensors import checkinsensor
 from custom_components.rental_control.sensors.checkin import checkout_expiry
 from custom_components.rental_control.sensors.checkin import checkout_expiry_guards
 from custom_components.rental_control.sensors.checkin import checkout_expiry_retry
@@ -82,6 +80,7 @@ def _entity(hass: Any, start: datetime, original_end: datetime) -> SimpleNamespa
         start_slot=10,
         max_events=1,
         lockname="front_door",
+        get_slot_assignment=lambda _identity: 10,
     )
     entity = SimpleNamespace(
         _hass=hass,
@@ -108,10 +107,16 @@ def _entity(hass: Any, start: datetime, original_end: datetime) -> SimpleNamespa
 
 def _patch_checkout_runtime(
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    verified: bool | Callable[[], bool] = True,
 ) -> tuple[_Notifications, list[dict[str, Any]]]:
     """Patch routing and timer dependencies to capture retry scheduling."""
     notices = _Notifications()
     timers: list[dict[str, Any]] = []
+
+    def requires_verified_routing(*_args: Any) -> bool:
+        """Return the test's selected route mode."""
+        return verified() if callable(verified) else verified
 
     def track(_hass: Any, callback: Any, when: datetime) -> Any:
         """Record one scheduled callback and return its cancellation handle."""
@@ -120,17 +125,19 @@ def _patch_checkout_runtime(
         return lambda: timer.__setitem__("cancelled", True)
 
     monkeypatch.setattr(
-        checkout_expiry, "association_requires_verified_routing", lambda *_: False
+        checkout_expiry,
+        "association_requires_verified_routing",
+        requires_verified_routing,
     )
     monkeypatch.setattr(
         checkout_expiry_guards,
         "association_requires_verified_routing",
-        lambda *_: False,
+        requires_verified_routing,
     )
     monkeypatch.setattr(
         checkout_expiry_retry,
         "association_requires_verified_routing",
-        lambda *_: False,
+        requires_verified_routing,
     )
     monkeypatch.setattr(checkout_expiry_retry, "async_create", notices.create)
     monkeypatch.setattr(checkout_expiry_retry, "async_dismiss", notices.dismiss)
@@ -202,7 +209,11 @@ async def test_failed_early_expiry_notifies_and_retries(
     assert entity._early_expiry_original_end == old_end
     assert len(notices.created) == 1
     notice = notices.created[0][0][1]
-    assert "could not confirm" in notice
+    assert (
+        "could not confirm" in notice
+        if dispatched
+        else "No expiry write was sent" in notice
+    )
     assert "123456" not in notice
     assert len(timers) == 1
     assert timers[0]["when"] - now <= timedelta(minutes=5, seconds=1)
@@ -260,7 +271,7 @@ async def test_retry_clears_when_slot_is_replaced(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A retry never proceeds after its original slot is replaced."""
-    notices, timers = _patch_checkout_runtime(monkeypatch)
+    notices, timers = _patch_checkout_runtime(monkeypatch, verified=False)
     now = dt_util.now()
     start = now - timedelta(days=1)
     old_end = now + timedelta(hours=4)
@@ -287,19 +298,13 @@ async def test_stale_reservation_does_not_publish_retry_notice(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Known replacement data clears pending work without flashing a notice."""
-    notices, timers = _patch_checkout_runtime(monkeypatch)
+    notices, timers = _patch_checkout_runtime(monkeypatch, verified=False)
     now = dt_util.now()
     old_end = now + timedelta(hours=4)
     entity = _entity(hass, now - timedelta(days=1), old_end)
-
-    async def replaced(*_args: Any, **_kwargs: Any) -> bool:
-        """Replace the slot before reporting an unconfirmed update."""
-        entity.coordinator.event_overrides.overrides[10]["end_time"] = (
-            old_end + timedelta(days=1)
-        )
-        return False
-
-    monkeypatch.setattr(checkout_expiry, "async_update_lock_code_expiry", replaced)
+    entity.coordinator.event_overrides.overrides[10]["end_time"] = old_end + timedelta(
+        days=1
+    )
     await runtime._maybe_shorten_lock_expiry(entity, now)
 
     assert not notices.created
@@ -311,7 +316,7 @@ async def test_legacy_same_name_slot_replacement_fails_date_identity(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Calendar membership cannot validate a reused legacy slot by name alone."""
-    _patch_checkout_runtime(monkeypatch)
+    _patch_checkout_runtime(monkeypatch, verified=False)
     now = dt_util.now()
     start = now - timedelta(days=1)
     original_end = now + timedelta(hours=4)
@@ -652,36 +657,17 @@ async def test_retry_exception_keeps_notice_and_reschedules(
     assert len(timers) == 2
 
 
-@pytest.mark.parametrize("verified", [False, True])
 async def test_retry_resolves_slot_that_was_unavailable_at_checkout(
-    hass: Any, monkeypatch: pytest.MonkeyPatch, verified: bool
+    hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A missing legacy or verified slot is resolved before retry."""
+    """A missing verified slot is resolved before retry."""
     _notices, timers = _patch_checkout_runtime(monkeypatch)
     now = dt_util.now()
     old_end = now + timedelta(hours=4)
     entity = _entity(hass, now - timedelta(days=1), old_end)
-    overrides = entity.coordinator.event_overrides
     available = False
-    if verified:
-        monkeypatch.setattr(
-            checkout_expiry, "association_requires_verified_routing", lambda *_: True
-        )
-        monkeypatch.setattr(
-            checkout_expiry_guards,
-            "association_requires_verified_routing",
-            lambda *_: True,
-        )
-        monkeypatch.setattr(
-            checkout_expiry_retry,
-            "association_requires_verified_routing",
-            lambda *_: True,
-        )
-        entity.coordinator.get_slot_assignment = lambda _identity: (
-            10 if available else None
-        )
-    else:
-        overrides.get_slot_key_by_name = lambda _name: 0
+    entity.coordinator.get_slot_assignment = lambda _identity: 10 if available else None
+    entity._early_expiry_retry_was_dispatched = False
 
     async def failed(*_args: Any, **_kwargs: Any) -> bool:
         """Leave the first request unconfirmed."""
@@ -694,8 +680,6 @@ async def test_retry_resolves_slot_that_was_unavailable_at_checkout(
 
     entity._state = CHECKIN_STATE_CHECKED_OUT
     available = True
-    if not verified:
-        overrides.get_slot_key_by_name = lambda _name: 10
     resolved: list[int] = []
 
     async def confirmed(
@@ -722,8 +706,8 @@ async def test_retry_resolves_slot_that_was_unavailable_at_checkout(
 async def test_empty_legacy_calendar_data_keeps_retry_pending(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Transiently empty calendar results are unknown, not reservation loss."""
-    _notices, timers = _patch_checkout_runtime(monkeypatch)
+    """Unverified legacy associations keep retrying without dispatch."""
+    notices, timers = _patch_checkout_runtime(monkeypatch, verified=False)
     now = dt_util.now()
     old_end = now + timedelta(hours=4)
     entity = _entity(hass, now - timedelta(days=1), old_end)
@@ -747,9 +731,79 @@ async def test_empty_legacy_calendar_data_keeps_retry_pending(
     )
 
     assert entity._early_expiry_original_end == old_end
-    assert attempts == 1
+    assert attempts == 0
     assert len(timers) == 2
     assert entity._early_expiry_retry_attempt == 1
+    assert "cannot safely serialize" in notices.created[0][0][1]
+
+
+async def test_legacy_checkout_waits_for_verified_routing(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy checkout sends no writes; a later verified retry is allowed."""
+    verified = False
+    notices, timers = _patch_checkout_runtime(monkeypatch, verified=lambda: verified)
+    now = dt_util.now()
+    old_end = now + timedelta(hours=4)
+    entity = _entity(hass, now - timedelta(days=1), old_end)
+    entity._transition_to_checked_out = lambda **_kwargs: setattr(
+        entity, "_state", CHECKIN_STATE_CHECKED_OUT
+    )
+    update_calls: list[tuple[datetime, datetime | None]] = []
+
+    async def update_expiry(
+        _entity: Any,
+        new_end: datetime,
+        *,
+        identity_end: datetime | None = None,
+        on_dispatch: Any = None,
+    ) -> bool:
+        """Record only calls made after verified routing becomes available."""
+        update_calls.append((new_end, identity_end))
+        if on_dispatch is not None:
+            on_dispatch()
+        return True
+
+    monkeypatch.setattr(checkout_expiry, "async_update_lock_code_expiry", update_expiry)
+    await runtime.async_checkout(entity, force=True)
+
+    assert entity._state == CHECKIN_STATE_CHECKED_OUT
+    assert entity._tracked_event_end == old_end
+    assert entity._early_expiry_original_end == old_end
+    expected_end = entity._early_expiry_new_end
+    assert expected_end is not None
+    assert not update_calls
+    assert len(notices.created) == 1
+    legacy_notice = notices.created[0][0][1]
+    assert "did not change" in legacy_notice
+    assert "cannot safely serialize" in legacy_notice
+    assert "No expiry write was sent" in legacy_notice
+    assert "verified routing" in legacy_notice
+    assert "123456" not in legacy_notice
+
+    timers[0]["callback"](timers[0]["when"])
+    legacy_retry = entity._early_expiry_retry_task
+    assert legacy_retry is not None
+    await legacy_retry
+    assert not update_calls
+    assert entity._early_expiry_original_end == old_end
+    assert len(timers) == 2
+    assert len(notices.created) == 1
+
+    verified = True
+    checkout_expiry_retry.resume_early_expiry_retry(entity)
+    verified_wait_notice = notices.created[-1][0][1]
+    assert "No expiry write was sent" in verified_wait_notice
+    assert len(timers) == 2
+
+    timers[1]["callback"](timers[1]["when"])
+    verified_retry = entity._early_expiry_retry_task
+    assert verified_retry is not None
+    await verified_retry
+
+    assert update_calls == [(expected_end, old_end)]
+    assert entity._early_expiry_original_end is None
+    assert notices.dismissed
 
 
 async def test_successful_retry_clears_state_after_generation_changes(
@@ -1187,199 +1241,6 @@ async def test_retry_clear_flag_does_not_leak_across_reload(
     assert reloaded._early_expiry_original_end is None
 
 
-async def test_legacy_readback_failure_retries_until_datetime_matches(
-    hass: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Service success without read-back remains pending until it matches."""
-    notices, timers = _patch_checkout_runtime(monkeypatch)
-    now = dt_util.now()
-    old_end = now + timedelta(hours=4)
-    entity = _entity(hass, now - timedelta(days=1), old_end)
-    entity.coordinator.keymaster_runtime_enabled = True
-    monkeypatch.setattr(
-        checkout_expiry, "protected_registry_active", lambda *_args: False
-    )
-    service_calls: list[tuple[Any, ...]] = []
-    readback_results = [False, True]
-    readbacks: list[tuple[str, datetime]] = []
-
-    async def service_call(*args: Any) -> None:
-        """Record a successful datetime service call."""
-        service_calls.append(args)
-
-    monkeypatch.setattr(
-        checkinsensor,
-        "add_call",
-        lambda *_args, **_kwargs: [service_call()],
-    )
-
-    async def wait_for_datetime(
-        _hass: Any, entity_id: str, expected: datetime, _timeout: float
-    ) -> bool:
-        """Simulate a delayed Keymaster datetime state update."""
-        readbacks.append((entity_id, expected))
-        return readback_results.pop(0)
-
-    monkeypatch.setattr(
-        checkout_expiry, "_async_wait_for_expected_datetime", wait_for_datetime
-    )
-    await runtime._maybe_shorten_lock_expiry(entity, now)
-
-    assert len(service_calls) == 1
-    assert len(readbacks) == 1
-    assert entity._early_expiry_original_end == old_end
-    assert notices.created
-
-    entity._state = CHECKIN_STATE_CHECKED_OUT
-    await checkout_expiry_retry._async_run_early_expiry_retry(
-        entity, entity._early_expiry_retry_generation, timers[0]["when"]
-    )
-
-    assert len(service_calls) == 2
-    assert len(readbacks) == 2
-    assert readbacks[0][0] == "datetime.front_door_code_slot_10_date_range_end"
-    assert readbacks[0] == readbacks[1]
-    assert entity._early_expiry_original_end is None
-    assert notices.dismissed
-
-
-async def test_legacy_datetime_readback_uses_real_home_assistant_state(
-    hass: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A real datetime service and HA state confirm the legacy retry."""
-    notices, timers = _patch_checkout_runtime(monkeypatch)
-    now = dt_util.now()
-    old_end = now + timedelta(hours=4)
-    new_end = runtime.compute_early_expiry_time(now, old_end)
-    entity = _entity(hass, now - timedelta(days=1), old_end)
-    entity._state = CHECKIN_STATE_CHECKED_OUT
-    entity._tracked_event_end = new_end
-    entity._early_expiry_original_end = old_end
-    entity._early_expiry_new_end = new_end
-    entity._early_expiry_retry_attempt = 1
-    entity._early_expiry_retry_slot = 10
-    entity.coordinator.keymaster_runtime_enabled = True
-    entity_id = checkout_expiry._legacy_expiry_entity_id("front_door", 10)
-    hass.states.async_set(entity_id, old_end.isoformat())
-    monkeypatch.setattr(checkout_expiry, "protected_registry_active", lambda *_: False)
-    calls = 0
-    delayed_updates: list[asyncio.Task[None]] = []
-    deps = util._keymaster_deps()
-    listened_entities: list[str] = []
-
-    def track_state_change_thread_safely(
-        _hass: Any, entity_ids: list[str], callback: Any
-    ) -> Any:
-        """Marshal HA state events onto the waiter's event loop."""
-        listened_entities.extend(entity_ids)
-        loop = asyncio.get_running_loop()
-
-        def handle_event(event: Any) -> None:
-            """Invoke the waiter callback on its owning loop."""
-            loop.call_soon_threadsafe(callback, event)
-
-        # HA's test harness may dispatch state callbacks from another loop.
-        return deps.track_state_change(_hass, entity_ids, handle_event)
-
-    monkeypatch.setattr(
-        util,
-        "_keymaster_deps",
-        lambda: replace(deps, track_state_change=track_state_change_thread_safely),
-    )
-    checkout_expiry_retry._publish_early_expiry_notice(entity)
-
-    async def set_datetime(call: Any) -> None:
-        """Schedule a delayed HA state update for the dispatched entity."""
-        nonlocal calls
-        calls += 1
-        target = call.data["entity_id"]
-        assert target == entity_id
-
-        async def update_state() -> None:
-            """Set the target state after read-back has started."""
-            await asyncio.sleep(0.01)
-            hass.states.async_set(target, new_end.isoformat())
-
-        delayed_updates.append(asyncio.create_task(update_state()))
-
-    hass.services.async_register("datetime", "set_value", set_datetime)
-    try:
-        await checkout_expiry_retry._async_run_early_expiry_retry(
-            entity, entity._early_expiry_retry_generation, now
-        )
-    finally:
-        if delayed_updates:
-            await asyncio.gather(*delayed_updates, return_exceptions=True)
-        hass.services.async_remove("datetime", "set_value")
-
-    assert calls == 1
-    assert listened_entities == [entity_id]
-    assert hass.states.get(entity_id).state == new_end.isoformat()
-    assert entity._early_expiry_original_end is None
-    assert notices.dismissed
-    assert not timers
-
-
-async def test_legacy_datetime_readback_timeout_keeps_retry_pending(
-    hass: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A dispatched update without state read-back stays pending for retry."""
-    notices, timers = _patch_checkout_runtime(monkeypatch)
-    now = dt_util.now()
-    old_end = now + timedelta(hours=4)
-    entity = _entity(hass, now - timedelta(days=1), old_end)
-    entity.coordinator.keymaster_runtime_enabled = True
-    entity_id = checkout_expiry._legacy_expiry_entity_id("front_door", 10)
-    hass.states.async_set(entity_id, old_end.isoformat())
-    monkeypatch.setattr(
-        checkout_expiry, "protected_registry_active", lambda *_args: False
-    )
-    monkeypatch.setattr(checkout_expiry, "_SET_CODE_CONFIRMATION_TIMEOUT", 0.01)
-    deps = util._keymaster_deps()
-    monkeypatch.setattr(
-        util,
-        "_keymaster_deps",
-        lambda: replace(deps, confirmation_timeout=0.01),
-    )
-    calls: list[str] = []
-    dispatches: list[bool] = []
-
-    async def no_state_update(call: Any) -> None:
-        """Acknowledge service dispatch without changing the HA state."""
-        calls.append(call.data["entity_id"])
-
-    hass.services.async_register("datetime", "set_value", no_state_update)
-    update = checkout_expiry.async_update_lock_code_expiry
-
-    async def observe_dispatch(*args: Any, **kwargs: Any) -> bool:
-        """Record dispatch while executing the real legacy update."""
-        on_dispatch = kwargs.get("on_dispatch")
-
-        def mark_dispatched() -> None:
-            """Record and forward the real dispatch callback."""
-            dispatches.append(True)
-            if callable(on_dispatch):
-                on_dispatch()
-
-        kwargs["on_dispatch"] = mark_dispatched
-        return await update(*args, **kwargs)
-
-    monkeypatch.setattr(
-        checkout_expiry, "async_update_lock_code_expiry", observe_dispatch
-    )
-    try:
-        await runtime._maybe_shorten_lock_expiry(entity, now)
-    finally:
-        hass.services.async_remove("datetime", "set_value")
-
-    assert calls == [entity_id]
-    assert dispatches == [True]
-    assert entity._early_expiry_original_end == old_end
-    assert notices.created
-    assert not notices.dismissed
-    assert len(timers) == 1
-
-
 async def test_resume_retry_waits_for_ready_reservation_data(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1652,56 +1513,3 @@ async def test_checkout_transitions_when_expiry_update_fails(
     assert entity._tracked_event_end == old_end
     assert notices.created
     assert timers
-
-
-async def test_legacy_service_exception_is_not_success(
-    hass: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An explicit legacy service exception is reported as an unsuccessful update."""
-    now = dt_util.now()
-    old_end = now + timedelta(hours=4)
-    start = now - timedelta(days=1)
-    entity = _entity(hass, start, old_end)
-    dispatched = False
-
-    async def service_failure() -> None:
-        """Emulate a failing Home Assistant service call."""
-        raise HomeAssistantError("service failed")
-
-    def add_failing_call(
-        _hass: Any,
-        coroutines: list[Any],
-        *_args: Any,
-        **_kwargs: Any,
-    ) -> list[Any]:
-        """Append the explicit failing request to gather."""
-        coroutines.append(service_failure())
-        return coroutines
-
-    monkeypatch.setattr(
-        checkout_expiry, "coordinator_keymaster_runtime_enabled", lambda *_: True
-    )
-    monkeypatch.setattr(checkout_expiry, "protected_registry_active", lambda *_: False)
-    monkeypatch.setattr(
-        checkout_expiry, "association_requires_verified_routing", lambda *_: False
-    )
-    monkeypatch.setattr(
-        checkout_expiry,
-        "import_module",
-        lambda *_: SimpleNamespace(add_call=add_failing_call),
-    )
-
-    def mark_dispatched() -> None:
-        """Record dispatch before service invocation."""
-        nonlocal dispatched
-        dispatched = True
-
-    result = await checkout_expiry.async_update_lock_code_expiry(
-        entity,
-        runtime.compute_early_expiry_time(now, old_end),
-        identity_end=old_end,
-        on_dispatch=mark_dispatched,
-    )
-
-    assert dispatched
-    assert not result

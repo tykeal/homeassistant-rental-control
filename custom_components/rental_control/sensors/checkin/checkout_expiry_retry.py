@@ -19,7 +19,6 @@ from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.util import dt as dt_util
 
 from ...keymaster_topology import association_requires_verified_routing
-from .checkout_expiry import _legacy_calendar_event_matches
 from .checkout_expiry import _retry_reservation_is_current
 from .checkout_expiry import _verified_retry_identity_end
 
@@ -49,6 +48,7 @@ def initialize_early_expiry_retry(entity: Any) -> None:
     entity._early_expiry_retry_was_dispatched = False
     entity._early_expiry_retry_initial_pending = False
     entity._early_expiry_notice_published = False
+    entity._early_expiry_notice_mode = None
     entity._early_expiry_retry_dispatched = False
     entity._early_expiry_retry_clear_when_done = False
     entity._early_expiry_retry_entity_removed = False
@@ -83,24 +83,63 @@ def dismiss_early_expiry_notice(hass: Any, entry_id: str) -> None:
 
 
 def _publish_early_expiry_notice(entity: Any) -> None:
-    """Explain that the shortening is unconfirmed and will be retried."""
-    if not hasattr(entity._hass, "bus") or getattr(
-        entity, "_early_expiry_notice_published", False
-    ):
+    """Explain why expiry remains pending without overstating dispatch."""
+    if not hasattr(entity._hass, "bus"):
+        return
+    dispatched = getattr(entity, "_early_expiry_retry_was_dispatched", False)
+    if not association_requires_verified_routing(entity._config_entry):
+        if dispatched:
+            mode = "legacy-after-dispatch"
+            message = (
+                "Rental Control cannot safely retry the lock-code expiry while "
+                "this legacy association can be reassigned between slots. No "
+                "further write was sent; an earlier verified update may have "
+                "reached the lock. Retry will wait until verified routing and "
+                "slot serialization are available, up to the reservation's "
+                "original end time."
+            )
+        else:
+            mode = "legacy-blocked"
+            message = (
+                "Rental Control did not change the lock-code expiry because "
+                "this legacy association cannot safely serialize against slot "
+                "reassignment. No expiry write was sent. The pending retry "
+                "will wait until verified routing and slot serialization are "
+                "available, up to the reservation's original end time."
+            )
+    elif dispatched:
+        mode = "verified-unconfirmed"
+        message = (
+            "Rental Control could not confirm the early checkout lock-code "
+            "expiry update. Checkout is complete; it will retry when it can "
+            "safely match the original reservation, up to that reservation's "
+            "original end time. The update may already have reached the lock."
+        )
+    else:
+        mode = "verified-not-dispatched"
+        message = (
+            "Rental Control has not changed the lock-code expiry because it "
+            "could not establish a safe verified update path. No expiry write "
+            "was sent. It will retry when the original reservation can be "
+            "safely verified, up to its original end time."
+        )
+    if getattr(entity, "_early_expiry_notice_mode", None) == mode:
         return
     async_create(
         entity._hass,
-        "Rental Control could not confirm the early checkout lock-code "
-        "expiry update. Checkout is complete; it will retry when it can "
-        "safely match the original reservation, up to that reservation's "
-        "original end time. The update may already have reached the lock.",
-        title="Early checkout expiry not confirmed",
+        message,
+        title=(
+            "Early checkout expiry waiting for verified routing"
+            if mode.startswith("legacy")
+            else "Early checkout expiry not confirmed"
+        ),
         notification_id=_notification_id(entity),
     )
     entity._early_expiry_notice_published = True
+    entity._early_expiry_notice_mode = mode
 
 
-def _clear_early_expiry_retry(entity: Any) -> None:
+def _clear_early_expiry_retry(entity: Any, *, dispatch_finished: bool = False) -> None:
     """Cancel retry state and dismiss its standing notification."""
     task = getattr(entity, "_early_expiry_retry_task", None)
     try:
@@ -111,6 +150,7 @@ def _clear_early_expiry_retry(entity: Any) -> None:
         task is not None
         and task is not current_task
         and getattr(entity, "_early_expiry_retry_dispatched", False)
+        and not dispatch_finished
     ):
         cancel_early_expiry_retry(entity, dismiss=False)
         entity._early_expiry_retry_clear_when_done = True
@@ -126,6 +166,7 @@ def _clear_early_expiry_retry(entity: Any) -> None:
     entity._early_expiry_retry_was_dispatched = False
     entity._early_expiry_retry_initial_pending = False
     entity._early_expiry_notice_published = False
+    entity._early_expiry_notice_mode = None
     entity._early_expiry_retry_clear_when_done = False
     if had_pending_retry and hasattr(entity._hass, "bus"):
         async_dismiss(entity._hass, _notification_id(entity))
@@ -262,6 +303,9 @@ async def _async_run_early_expiry_retry(
         if not _retry_reservation_is_current(entity):
             _clear_early_expiry_retry(entity)
             return
+        if not association_requires_verified_routing(entity._config_entry):
+            _reschedule_early_expiry_retry(entity)
+            return
         checkout_expiry = import_module(
             "custom_components.rental_control.sensors.checkin.checkout_expiry"
         )
@@ -279,13 +323,6 @@ async def _async_run_early_expiry_retry(
         if not _retry_reservation_is_current(entity):
             _clear_early_expiry_retry(entity)
             return
-        if (
-            not association_requires_verified_routing(entity._config_entry)
-            and callable(getattr(entity, "_find_tracked_event", None))
-            and _legacy_calendar_event_matches(entity, original_end) is None
-        ):
-            _reschedule_early_expiry_retry(entity)
-            return
         updated, dispatched, previous_end = await _async_dispatch_retry(
             entity, checkout_expiry, slot, original_end, new_end
         )
@@ -294,7 +331,7 @@ async def _async_run_early_expiry_retry(
                 entity._early_expiry_original_end == original_end
                 and entity._early_expiry_new_end == new_end
             ):
-                _clear_early_expiry_retry(entity)
+                _clear_early_expiry_retry(entity, dispatch_finished=True)
                 _write_retry_state(entity)
             return
         _finish_failed_early_expiry_retry(

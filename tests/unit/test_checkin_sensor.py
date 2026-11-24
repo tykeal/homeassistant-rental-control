@@ -51,7 +51,6 @@ from custom_components.rental_control.const import EVENT_RENTAL_CONTROL_CHECKOUT
 from custom_components.rental_control.const import KEYMASTER_MONITORING_SWITCH
 from custom_components.rental_control.const import UNSUB_LISTENERS
 from custom_components.rental_control.sensors.checkin import checkout_expiry
-from custom_components.rental_control.sensors.checkin import checkout_expiry_guards
 from custom_components.rental_control.sensors.checkin import checkout_expiry_retry
 from custom_components.rental_control.sensors.checkin.event_selection import (
     event_datetime,
@@ -4399,6 +4398,10 @@ class TestEarlyCheckoutExpiry:
             """Keep this test focused on the manual checkout state change."""
             return True
 
+        monkeypatch.setattr(
+            checkout_expiry, "association_requires_verified_routing", lambda *_: True
+        )
+        monkeypatch.setattr(checkout_expiry, "_retry_slot", lambda *_args: 10)
         monkeypatch.setattr(checkout_expiry, "async_update_lock_code_expiry", confirmed)
         await sensor.async_checkout()
 
@@ -4556,7 +4559,7 @@ class TestEarlyCheckoutExpiry:
         assert sensor._tracked_event_end == original_end
         assert sensor._state == CHECKIN_STATE_CHECKED_OUT
 
-    async def test_early_expiry_updates_lock_code_expiry(
+    async def test_verified_early_expiry_updates_lock_code_expiry(
         self,
         hass: HomeAssistant,
         mock_checkin_coordinator: MagicMock,
@@ -4605,56 +4608,25 @@ class TestEarlyCheckoutExpiry:
 
         _setup_early_expiry_switch(hass, mock_checkin_config_entry, is_on=True)
 
-        from custom_components.rental_control.sensors.checkin import runtime
-
         monkeypatch.setattr(
             checkout_expiry, "coordinator_keymaster_runtime_enabled", lambda *_: True
         )
         monkeypatch.setattr(
-            checkout_expiry, "association_requires_verified_routing", lambda *_: False
+            checkout_expiry, "association_requires_verified_routing", lambda *_: True
         )
+        update_expiry = AsyncMock(return_value=True)
         monkeypatch.setattr(
-            checkout_expiry, "protected_registry_active", lambda *_: False
+            checkout_expiry, "async_update_lock_code_expiry", update_expiry
         )
-        monkeypatch.setattr(
-            checkout_expiry,
-            "_async_wait_for_expected_datetime",
-            AsyncMock(return_value=True),
-        )
-        assert checkout_expiry_guards._legacy_slot_reservation_matches(
-            sensor,
-            mock_checkin_coordinator.event_overrides.overrides[10],
-            start,
-            original_end,
-            runtime.compute_early_expiry_time(now, original_end),
-        )
-        assert (
-            checkout_expiry_guards._legacy_calendar_event_matches(
-                sensor, original_end, start, "John Smith"
-            )
-            is not False
-        )
-        assert runtime._legacy_reservation_is_current(
-            sensor,
-            10,
-            original_end,
-            runtime.compute_early_expiry_time(now, original_end),
-        )
-        mock_coro = AsyncMock(return_value=None)
-        with patch(
-            "custom_components.rental_control.sensors.checkinsensor.add_call",
-            return_value=[mock_coro()],
-        ) as mock_add_call:
-            await sensor.async_checkout()
+        await sensor.async_checkout()
 
-            mock_add_call.assert_called_once_with(
-                hass,
-                [],
-                "datetime",
-                "set_value",
-                "datetime.front_door_code_slot_10_date_range_end",
-                {"datetime": sensor._tracked_event_end.isoformat()},
-            )
+        assert sensor._tracked_event_end is not None
+        assert sensor._tracked_event_end < original_end
+        update_expiry.assert_awaited_once()
+        call_args = update_expiry.await_args
+        assert call_args is not None
+        assert call_args.args[0] is sensor
+        assert call_args.kwargs["identity_end"] == original_end
 
     async def test_early_expiry_no_lock_update_without_lockname(
         self,

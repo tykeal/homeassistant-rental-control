@@ -71,6 +71,7 @@ from custom_components.rental_control.keymaster_slot_operations import (
 from custom_components.rental_control.listeners import _handle_keymaster_event
 from custom_components.rental_control.listeners import async_register_keymaster_listener
 from custom_components.rental_control.sensors.checkin import checkout_expiry
+from custom_components.rental_control.sensors.checkin import checkout_expiry_guards
 from custom_components.rental_control.sensors.checkin import checkout_expiry_retry
 from custom_components.rental_control.sensors.checkin import runtime
 from custom_components.rental_control.sensors.checkin import verified_date
@@ -338,7 +339,7 @@ async def test_explicit_lockless_association_ignores_retained_legacy_name(
         coordinator_for_mixins, 1, 1
     )
     expiry_updated = await runtime.async_update_lock_code_expiry(
-        SimpleNamespace(coordinator=coordinator),
+        SimpleNamespace(coordinator=coordinator, _config_entry=rc_entry),
         datetime.now().astimezone(),
     )
 
@@ -1330,7 +1331,6 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
     from datetime import UTC
     from datetime import datetime
     from datetime import timedelta
-    from unittest.mock import AsyncMock
 
     coordinator, store, entity_ids = await _setup_verified_consumer(
         hass, tmp_path / release / ".storage", release
@@ -1357,8 +1357,6 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
         "make_reservation_fingerprint",
         lambda *_args: identity_key,
     )
-    fallback = AsyncMock()
-    monkeypatch.setattr(checkout_expiry, "add_call", fallback)
     original_deps = util._keymaster_deps
     monkeypatch.setattr(
         util,
@@ -1408,7 +1406,6 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
         record["fence_type"] == "allocation"
         for record in store.loaded_result.data["pending_fences"]
     )
-    fallback.assert_not_awaited()
 
 
 async def test_verified_early_checkout_retry_uses_real_dispatch_and_timer(
@@ -1505,6 +1502,150 @@ async def test_verified_early_checkout_retry_uses_real_dispatch_and_timer(
     assert dispatches[0]["entity_id"] == end_id
     assert dispatches[1]["entity_id"] == end_id
     assert entity._early_expiry_original_end is None
+
+
+async def test_legacy_pending_expiry_waits_for_verified_routing_then_dispatches(
+    hass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A legacy pending retry becomes a guarded verified dispatch when routed."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant.common import async_fire_time_changed
+
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.5"
+    )
+    km_entry = hass.config_entries.async_get_entry("consumer-km")
+    assert km_entry is not None
+    hass.config_entries.async_update_entry(
+        km_entry,
+        data={
+            **km_entry.data,
+            "lockname": "Consumer Door",
+            "lock_entity_id": "lock.selected_physical_lock",
+        },
+    )
+    await hass.async_block_till_done()
+
+    identity_key = "consumer-reservation"
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == identity_key else None
+    )
+    route_verified = False
+
+    def requires_verified_routing(*_args: Any) -> bool:
+        """Switch route mode without changing the persisted reservation identity."""
+        return route_verified
+
+    monkeypatch.setattr(
+        checkout_expiry,
+        "association_requires_verified_routing",
+        requires_verified_routing,
+    )
+    monkeypatch.setattr(
+        checkout_expiry,
+        "get_entry_data",
+        lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
+    )
+    monkeypatch.setattr(
+        checkout_expiry_guards,
+        "association_requires_verified_routing",
+        requires_verified_routing,
+    )
+    monkeypatch.setattr(
+        checkout_expiry_retry,
+        "association_requires_verified_routing",
+        requires_verified_routing,
+    )
+    monkeypatch.setattr(
+        verified_date,
+        "make_reservation_fingerprint",
+        lambda *_args: identity_key,
+    )
+    overrides = coordinator.event_overrides
+    assert overrides is not None
+    now = dt_util.now()
+    start = now - timedelta(days=1)
+    old_end = now + timedelta(days=3)
+    overrides.overrides[_SLOT].update(
+        slot_name="Guest",
+        start_time=start,
+        end_time=old_end,
+    )
+    coordinator.last_update_success = False
+    entity_id = entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
+    hass.states.async_set(entity_id, old_end.isoformat())
+    notifications: list[str] = []
+    dismissed: list[str] = []
+    monkeypatch.setattr(
+        checkout_expiry_retry,
+        "async_create",
+        lambda _hass, message, **_kwargs: notifications.append(message),
+    )
+    monkeypatch.setattr(
+        checkout_expiry_retry,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+
+    dispatches: list[dict[str, Any]] = []
+
+    async def set_datetime(call: Any) -> None:
+        """Confirm the safe verified retry by updating actual HA state."""
+        dispatches.append(dict(call.data))
+        hass.states.async_set(call.data["entity_id"], call.data["datetime"])
+
+    hass.services.async_register("datetime", "set_value", set_datetime)
+    entity = SimpleNamespace(
+        _hass=hass,
+        _config_entry=coordinator.config_entry,
+        coordinator=coordinator,
+        _state=CHECKIN_STATE_CHECKED_IN,
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=old_end,
+        _tracked_event_summary="Reserved - Guest",
+        unique_id="legacy-to-verified-retry",
+        _early_expiry_original_end=None,
+        _early_expiry_new_end=None,
+        _early_expiry_retry_attempt=0,
+        _early_expiry_retry_slot=None,
+        _early_expiry_retry_handle=None,
+        _early_expiry_retry_task=None,
+        _early_expiry_retry_generation=0,
+        _early_expiry_notice_published=False,
+        async_write_ha_state=lambda: None,
+    )
+    lifecycle = get_keymaster_lifecycle(hass, coordinator.config_entry.entry_id)
+    assert lifecycle is not None
+    await runtime._maybe_shorten_lock_expiry(entity, now)
+
+    assert not dispatches
+    assert entity._tracked_event_end == old_end
+    assert entity._early_expiry_original_end == old_end
+    assert len(notifications) == 1
+    assert "cannot safely serialize" in notifications[0]
+    assert "No expiry write was sent" in notifications[0]
+    assert "verified routing" in notifications[0]
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=6))
+    await hass.async_block_till_done()
+    assert not dispatches
+    assert entity._early_expiry_original_end == old_end
+
+    route_verified = True
+    checkout_expiry_retry.resume_early_expiry_retry(entity)
+    assert "No expiry write was sent" in notifications[-1]
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=17))
+    await hass.async_block_till_done()
+
+    assert len(dispatches) == 1
+    assert dispatches[0]["entity_id"] == entity_id
+    assert entity._early_expiry_original_end is None
+    assert dismissed
 
 
 @pytest.mark.parametrize("phase", ["queued", "pre_dispatch", "in_dispatch"])
