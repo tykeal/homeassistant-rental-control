@@ -120,6 +120,8 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         )
         retry._clear_early_expiry_retry(entity)
         return
+    if getattr(entity, "_early_expiry_retry_entity_removed", False):
+        return
     # Once sent, the lock may hold new_end even if unconfirmed; keep it.
     if (
         not dispatched

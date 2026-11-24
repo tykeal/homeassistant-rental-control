@@ -490,6 +490,91 @@ async def test_initial_checkout_request_survives_coordinator_refresh(
     assert len(timers) == 1
 
 
+@pytest.mark.parametrize("permanent_removal", [False, True])
+async def test_initial_checkout_failure_after_entity_removal(
+    hass: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    permanent_removal: bool,
+) -> None:
+    """An initial request cannot re-arm a removed entity, but its retry restores."""
+    notices, timers = _patch_checkout_runtime(monkeypatch)
+    now = dt_util.now()
+    start = now - timedelta(days=1)
+    original_end = now + timedelta(hours=4)
+    entity = _entity(hass, start, original_end)
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def fail_after_dispatch(
+        _entity: Any,
+        _new_end: datetime,
+        *,
+        identity_end: datetime | None = None,
+        on_dispatch: Any = None,
+    ) -> bool:
+        """Hold the initial request until after the entity is unloaded."""
+        assert identity_end == original_end
+        if on_dispatch is not None:
+            on_dispatch()
+        started.set()
+        await finish.wait()
+        return False
+
+    monkeypatch.setattr(
+        checkout_expiry, "async_update_lock_code_expiry", fail_after_dispatch
+    )
+    request = asyncio.create_task(runtime._maybe_shorten_lock_expiry(entity, now))
+    await started.wait()
+
+    checkout_expiry_retry.cancel_early_expiry_retry(
+        entity, dismiss=False, entity_removed=True
+    )
+    if permanent_removal:
+        checkout_expiry_retry.dismiss_early_expiry_notice(
+            hass, entity._config_entry.entry_id
+        )
+    pending_generation = entity._early_expiry_retry_generation
+    pending_new_end = entity._early_expiry_new_end
+
+    finish.set()
+    await request
+
+    assert entity._early_expiry_retry_entity_removed
+    assert entity._early_expiry_retry_generation == pending_generation
+    assert entity._early_expiry_original_end == original_end
+    assert entity._early_expiry_new_end == pending_new_end
+    assert entity._early_expiry_retry_initial_pending
+    assert entity._early_expiry_retry_was_dispatched
+    assert entity._early_expiry_retry_task is None
+    assert not timers
+    assert not notices.created
+    if permanent_removal:
+        assert notices.dismissed == ["rental_control_early_checkout_expiry_entry-964"]
+        return
+
+    snapshot = CheckinStateSnapshot(
+        state=entity._state,
+        tracked_event_start=entity._tracked_event_start,
+        tracked_event_end=entity._tracked_event_end,
+        tracked_event_slot_name=entity._tracked_event_slot_name,
+        **checkout_expiry_retry.early_expiry_snapshot_fields(entity),
+    )
+    restored = CheckinExtraStoredData.from_dict(
+        CheckinExtraStoredData.from_snapshot(snapshot).as_dict()
+    ).snapshot
+    reloaded = _entity(hass, start, original_end)
+    for field in restored.__dataclass_fields__:
+        setattr(reloaded, f"_{field}", getattr(restored, field))
+
+    checkout_expiry_retry.resume_early_expiry_retry(reloaded)
+
+    assert reloaded._early_expiry_original_end == original_end
+    assert reloaded._early_expiry_new_end == pending_new_end
+    assert not reloaded._early_expiry_retry_initial_pending
+    assert len(notices.created) == 1
+    assert len(timers) == 1
+
+
 async def test_interrupted_initial_request_resumes_after_restore(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
