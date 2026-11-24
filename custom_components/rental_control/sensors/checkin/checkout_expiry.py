@@ -118,14 +118,16 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
     if not association_requires_verified_routing(entity._config_entry):
         _schedule_legacy_pending_retry(entity)
         return
-    entity._tracked_event_end = new_end
-    dispatched = False
 
     def mark_dispatched() -> None:
         """Record that the new expiry may have reached the lock."""
-        nonlocal dispatched
-        dispatched = True
         entity._early_expiry_retry_was_dispatched = True
+        if (
+            entity._tracked_event_start == tracked_start
+            and entity._tracked_event_slot_name == tracked_name
+            and entity._tracked_event_end == previous_end
+        ):
+            entity._tracked_event_end = new_end
 
     try:
         updated = await async_update_lock_code_expiry(
@@ -154,6 +156,12 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         and entity._early_expiry_original_end == previous_end
         and entity._early_expiry_new_end == new_end
     ):
+        if (
+            entity._tracked_event_start == tracked_start
+            and entity._tracked_event_slot_name == tracked_name
+            and entity._tracked_event_end == previous_end
+        ):
+            entity._tracked_event_end = new_end
         entity._early_expiry_retry_initial_pending = False
         retry = import_module(
             "custom_components.rental_control.sensors.checkin.checkout_expiry_retry"
@@ -164,14 +172,6 @@ async def _maybe_shorten_lock_expiry(entity: Any, now: datetime) -> None:
         return
     if getattr(entity, "_early_expiry_retry_entity_removed", False):
         return
-    # Once sent, the lock may hold new_end even if unconfirmed; keep it.
-    if (
-        not dispatched
-        and entity._tracked_event_start == tracked_start
-        and entity._tracked_event_slot_name == tracked_name
-        and entity._tracked_event_end == new_end
-    ):
-        entity._tracked_event_end = previous_end
     entity._early_expiry_retry_initial_pending = False
     retry = import_module(
         "custom_components.rental_control.sensors.checkin.checkout_expiry_retry"

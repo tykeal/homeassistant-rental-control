@@ -586,6 +586,53 @@ async def test_initial_checkout_failure_after_entity_removal(
     assert len(timers) == 1
 
 
+async def test_initial_request_removed_before_dispatch_keeps_original_tracking(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unloading before dispatch keeps the unmodified tracked reservation."""
+    notices, timers = _patch_checkout_runtime(monkeypatch)
+    now = dt_util.now()
+    start = now - timedelta(days=1)
+    original_end = now + timedelta(hours=4)
+    entity = _entity(hass, start, original_end)
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    dispatches: list[bool] = []
+
+    async def hold_before_dispatch(
+        _entity: Any,
+        _new_end: datetime,
+        *,
+        pre_dispatch_guard: Any = None,
+        **_kwargs: Any,
+    ) -> bool:
+        """Wait until unload invalidates the operation, then test its guard."""
+        started.set()
+        await finish.wait()
+        assert pre_dispatch_guard is not None
+        allowed = pre_dispatch_guard()
+        dispatches.append(allowed)
+        return False
+
+    monkeypatch.setattr(
+        checkout_expiry, "async_update_lock_code_expiry", hold_before_dispatch
+    )
+    request = asyncio.create_task(runtime._maybe_shorten_lock_expiry(entity, now))
+    await started.wait()
+    checkout_expiry_retry.cancel_early_expiry_retry(
+        entity, dismiss=False, entity_removed=True
+    )
+    finish.set()
+    await request
+
+    assert dispatches == [False]
+    assert entity._tracked_event_end == original_end
+    assert entity._early_expiry_original_end == original_end
+    assert entity._early_expiry_retry_initial_pending
+    assert not notices.created
+    assert not timers
+
+
 async def test_interrupted_initial_request_resumes_after_restore(
     hass: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1489,6 +1536,60 @@ async def test_entity_removal_cancels_active_retry_task(hass: Any) -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert entity._early_expiry_retry_task is None
+
+
+async def test_retry_removed_before_dispatch_keeps_original_tracking(
+    hass: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancelling a queued retry cannot persist its speculative new end."""
+    notices, timers = _patch_checkout_runtime(monkeypatch)
+    now = dt_util.now()
+    original_end = now + timedelta(hours=4)
+    entity = _entity(hass, now - timedelta(days=1), original_end)
+
+    async def failed(*_args: Any, **_kwargs: Any) -> bool:
+        """Keep the initial request pending."""
+        return False
+
+    monkeypatch.setattr(checkout_expiry, "async_update_lock_code_expiry", failed)
+    await runtime._maybe_shorten_lock_expiry(entity, now)
+    entity._state = CHECKIN_STATE_CHECKED_OUT
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def hold_retry(
+        _entity: Any,
+        _new_end: datetime,
+        *,
+        pre_dispatch_guard: Any = None,
+        **_kwargs: Any,
+    ) -> bool:
+        """Hold the retry before dispatch while entity removal cancels it."""
+        assert pre_dispatch_guard is not None
+        started.set()
+        await finish.wait()
+        return False
+
+    monkeypatch.setattr(checkout_expiry, "async_update_lock_code_expiry", hold_retry)
+    task = asyncio.create_task(
+        checkout_expiry_retry._async_run_early_expiry_retry(
+            entity, entity._early_expiry_retry_generation, timers[0]["when"]
+        )
+    )
+    entity._early_expiry_retry_task = task
+    await started.wait()
+    checkout_expiry_retry.cancel_early_expiry_retry(
+        entity, dismiss=False, entity_removed=True
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert entity._tracked_event_end == original_end
+    assert entity._early_expiry_original_end == original_end
+    assert entity._early_expiry_retry_entity_removed
+    assert not notices.dismissed
+    assert len(timers) == 1
 
 
 async def test_retry_stops_at_original_reservation_end(

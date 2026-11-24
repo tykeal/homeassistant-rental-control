@@ -324,7 +324,7 @@ async def _async_run_early_expiry_retry(
         if not _retry_reservation_is_current(entity):
             _clear_early_expiry_retry(entity)
             return
-        updated, dispatched, previous_end = await _async_dispatch_retry(
+        updated = await _async_dispatch_retry(
             entity, checkout_expiry, slot, original_end, new_end, generation
         )
         if updated:
@@ -332,6 +332,12 @@ async def _async_run_early_expiry_retry(
                 entity._early_expiry_original_end == original_end
                 and entity._early_expiry_new_end == new_end
             ):
+                if (
+                    entity._tracked_event_start == tracked_start
+                    and entity._tracked_event_slot_name == tracked_name
+                    and entity._tracked_event_end in {original_end, new_end}
+                ):
+                    entity._tracked_event_end = new_end
                 _clear_early_expiry_retry(entity, dispatch_finished=True)
                 _write_retry_state(entity)
             return
@@ -339,8 +345,6 @@ async def _async_run_early_expiry_retry(
             entity,
             generation,
             (original_end, new_end, tracked_start, tracked_name),
-            dispatched,
-            previous_end,
         )
     finally:
         if getattr(entity, "_early_expiry_retry_task", None) is asyncio.current_task():
@@ -352,19 +356,9 @@ def _finish_failed_early_expiry_retry(
     entity: Any,
     generation: int,
     reservation_identity: tuple[datetime, datetime, datetime | None, str | None],
-    dispatched: bool,
-    previous_end: datetime | None,
 ) -> None:
-    """Restore safe tracking and only retry the same current reservation."""
+    """Keep the request pending and retry only the same current reservation."""
     original_end, new_end, tracked_start, tracked_name = reservation_identity
-    if (
-        not dispatched
-        and previous_end == original_end
-        and entity._tracked_event_start == tracked_start
-        and entity._tracked_event_slot_name == tracked_name
-        and entity._tracked_event_end == new_end
-    ):
-        entity._tracked_event_end = original_end
     if entity._early_expiry_retry_generation != generation:
         if getattr(entity, "_early_expiry_retry_clear_when_done", False):
             _clear_early_expiry_retry(entity)
@@ -384,8 +378,8 @@ async def _async_dispatch_retry(
     original_end: datetime,
     new_end: datetime,
     generation: int,
-) -> tuple[bool, bool, datetime | None]:
-    """Dispatch one retry and report whether it may have reached the lock."""
+) -> bool:
+    """Attempt a guarded verified write for the pending reservation."""
     identity_start = (
         getattr(entity, "_early_expiry_reservation_start", None)
         or entity._tracked_event_start
@@ -394,15 +388,11 @@ async def _async_dispatch_retry(
         getattr(entity, "_early_expiry_reservation_slot_name", None)
         or entity._tracked_event_slot_name
     )
-    previous_end = entity._tracked_event_end
     tracked_identity = (
         entity._tracked_event_start == identity_start
         and entity._tracked_event_slot_name == identity_name
-        and previous_end in {original_end, new_end}
+        and entity._tracked_event_end in {original_end, new_end}
     )
-    if tracked_identity:
-        entity._tracked_event_end = new_end
-    dispatched = False
     entity._early_expiry_retry_dispatched = False
     identity_end = original_end
     if association_requires_verified_routing(entity._config_entry):
@@ -414,10 +404,15 @@ async def _async_dispatch_retry(
 
     def mark_dispatched() -> None:
         """Record that this retry may have reached the lock."""
-        nonlocal dispatched
-        dispatched = True
         entity._early_expiry_retry_dispatched = True
         entity._early_expiry_retry_was_dispatched = True
+        if (
+            tracked_identity
+            and entity._tracked_event_start == identity_start
+            and entity._tracked_event_slot_name == identity_name
+            and entity._tracked_event_end == original_end
+        ):
+            entity._tracked_event_end = new_end
 
     try:
         updated = await checkout_expiry.async_update_lock_code_expiry(
@@ -436,4 +431,4 @@ async def _async_dispatch_retry(
             slot,
         )
         updated = False
-    return updated, dispatched, previous_end
+    return bool(updated)
