@@ -101,7 +101,7 @@ def _log_unconfirmed(entry_id: str, slot: int) -> None:
 def _requested_expiry_state(
     hass: Any, entity_id: str, requested_end: datetime
 ) -> bool | None:
-    """Return whether the current aware state is already at least as strict."""
+    """Return whether the current state is already at least as strict."""
     state = hass.states.get(entity_id)
     if (
         state is None
@@ -110,11 +110,7 @@ def _requested_expiry_state(
     ):
         return None
     current_end = dt_util.parse_datetime(state.state)
-    if (
-        current_end is None
-        or current_end.tzinfo is None
-        or current_end.utcoffset() is None
-    ):
+    if current_end is None:
         return None
     return dt_util.as_utc(current_end) <= dt_util.as_utc(requested_end)
 

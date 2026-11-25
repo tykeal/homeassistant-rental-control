@@ -1408,14 +1408,14 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
     )
 
 
-@pytest.mark.parametrize("retry_state", ["later", "earlier", "equal"])
+@pytest.mark.parametrize("retry_state", ["later", "earlier", "equal", "naive_equal"])
 async def test_verified_early_checkout_retry_uses_real_dispatch_and_timer(
     hass,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     retry_state: str,
 ) -> None:
-    """Retries dispatch normally or stop when state is already stricter."""
+    """Retries dispatch normally or stop on an equal or stricter expiry."""
     from datetime import UTC
     from datetime import timedelta
 
@@ -1513,6 +1513,8 @@ async def test_verified_early_checkout_retry_uses_real_dispatch_and_timer(
         retry_end = entity._early_expiry_new_end
         if retry_state == "earlier":
             retry_end -= timedelta(minutes=1)
+        if retry_state == "naive_equal":
+            retry_end = dt_util.as_local(retry_end).replace(tzinfo=None)
         hass.states.async_set(
             end_id,
             retry_end.isoformat(),
@@ -1530,14 +1532,14 @@ async def test_verified_early_checkout_retry_uses_real_dispatch_and_timer(
     assert dismissed
 
 
-@pytest.mark.parametrize("state_value", [None, "not-a-datetime"])
+@pytest.mark.parametrize("state_case", ["missing", "unparseable", "later_aware"])
 async def test_verified_expiry_fails_closed_when_current_datetime_is_unreadable(
     hass,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    state_value: str | None,
+    state_case: str,
 ) -> None:
-    """Missing or unparsable current expiry never releases a write."""
+    """Unreadable expiry fails closed while a later readable expiry writes."""
     from datetime import UTC
     from datetime import timedelta
 
@@ -1573,15 +1575,18 @@ async def test_verified_expiry_fails_closed_when_current_datetime_is_unreadable(
     )
 
     end_id = entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
-    if state_value is None:
+    if state_case == "missing":
         hass.states.async_remove(end_id)
+    elif state_case == "unparseable":
+        hass.states.async_set(end_id, "not-a-datetime")
     else:
-        hass.states.async_set(end_id, state_value)
+        hass.states.async_set(end_id, old_end.isoformat())
     dispatches: list[dict[str, Any]] = []
 
     async def set_datetime(call: Any) -> None:
-        """Record any write that incorrectly passes the fail-closed guard."""
+        """Record the write and apply its requested state for read-back."""
         dispatches.append(dict(call.data))
+        hass.states.async_set(call.data["entity_id"], call.data["datetime"])
 
     hass.services.async_register("datetime", "set_value", set_datetime)
     entity = SimpleNamespace(
@@ -1593,10 +1598,16 @@ async def test_verified_expiry_fails_closed_when_current_datetime_is_unreadable(
         _tracked_event_end=old_end,
     )
 
-    assert not await verified_date.async_update_verified_lock_code_expiry(
+    updated = await verified_date.async_update_verified_lock_code_expiry(
         entity, new_end, identity_end=old_end
     )
-    assert dispatches == []
+    if state_case == "later_aware":
+        assert updated
+        assert len(dispatches) == 1
+        assert dispatches[0]["datetime"] == new_end.isoformat()
+    else:
+        assert not updated
+        assert dispatches == []
 
 
 async def test_initial_update_is_not_dispatched_after_state_override(
