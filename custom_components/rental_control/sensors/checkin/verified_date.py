@@ -9,6 +9,8 @@ from datetime import datetime
 import logging
 from typing import Any
 
+from homeassistant.util import dt as dt_util
+
 from ...helpers import _same_instant
 from ...keymaster_operations import VerifiedOperationRejected
 from ...keymaster_operations import prepare_verified_intent
@@ -19,6 +21,10 @@ from ...util import _SET_CODE_CONFIRMATION_TIMEOUT
 from ...util import _async_wait_for_expected_datetime
 
 _LOGGER = logging.getLogger("custom_components.rental_control.sensors.checkinsensor")
+
+
+class _ExpiryAlreadySatisfied(Exception):
+    """Signal a guarded no-dispatch because the current end is already strict."""
 
 
 async def async_update_verified_lock_code_expiry(
@@ -42,12 +48,21 @@ async def async_update_verified_lock_code_expiry(
     if assignment_is_current is None:
         return False
 
-    def release_dispatch() -> bool:
+    def release_dispatch(entity_id: str) -> bool:
         """Run the final assignment check and record a released dispatch."""
         if not assignment_is_current(False) or (
             pre_dispatch_guard is not None and not pre_dispatch_guard()
         ):
             return False
+        expiry_state = _requested_expiry_state(
+            entity._hass,
+            entity_id,
+            new_end,
+        )
+        if expiry_state is None:
+            return False
+        if expiry_state:
+            raise _ExpiryAlreadySatisfied
         if on_dispatch is not None:
             on_dispatch()
         return True
@@ -81,6 +96,27 @@ def _log_unconfirmed(entry_id: str, slot: int) -> None:
         entry_id,
         slot,
     )
+
+
+def _requested_expiry_state(
+    hass: Any, entity_id: str, requested_end: datetime
+) -> bool | None:
+    """Return whether the current aware state is already at least as strict."""
+    state = hass.states.get(entity_id)
+    if (
+        state is None
+        or requested_end.tzinfo is None
+        or requested_end.utcoffset() is None
+    ):
+        return None
+    current_end = dt_util.parse_datetime(state.state)
+    if (
+        current_end is None
+        or current_end.tzinfo is None
+        or current_end.utcoffset() is None
+    ):
+        return None
+    return dt_util.as_utc(current_end) <= dt_util.as_utc(requested_end)
 
 
 def _owned_slot(entity: Any, identity_end: datetime | None) -> tuple[str, int] | None:
@@ -129,7 +165,7 @@ async def _async_set_and_confirm(
     identity_key: str,
     new_end: datetime,
     assignment_is_current: Callable[[bool], bool],
-    release_dispatch: Callable[[], bool],
+    release_dispatch: Callable[[str], bool],
 ) -> bool:
     """Dispatch the end date under the slot lock and await its confirmation."""
     coordinator = entity.coordinator
@@ -147,12 +183,20 @@ async def _async_set_and_confirm(
         if intent is None or not assignment_is_current(False):
             return False
         entity_id = intent.entity_id(property_key)
-        await intent.async_call(
-            property_key,
-            "set_value",
-            {"datetime": new_end.isoformat()},
-            pre_dispatch_guard=release_dispatch,
-        )
+
+        def pre_dispatch_guard() -> bool:
+            """Check identity and expiry while holding the final dispatch turn."""
+            return release_dispatch(entity_id)
+
+        try:
+            await intent.async_call(
+                property_key,
+                "set_value",
+                {"datetime": new_end.isoformat()},
+                pre_dispatch_guard=pre_dispatch_guard,
+            )
+        except _ExpiryAlreadySatisfied:
+            return True
         if not assignment_is_current(True):
             return False
         if not await _async_wait_for_expected_datetime(

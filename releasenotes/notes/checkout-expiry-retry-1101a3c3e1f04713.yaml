@@ -11,5 +11,9 @@ fixes:
     restart.
 
     Verified updates wait for the expected datetime value to be read back
-    before clearing the notification. Unconfirmed writes remain pending and
-    may already have reached the lock.
+    before clearing the notification. Immediately before a write, they also
+    verify that the current Keymaster datetime is readable and later than the
+    requested expiry; an already earlier or equal expiry satisfies the
+    request without another write. Missing or unreadable datetime state fails
+    closed. Unconfirmed writes remain pending and may already have reached
+    the lock.
