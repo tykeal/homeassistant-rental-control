@@ -1,0 +1,19 @@
+---
+fixes:
+  - |
+    Manual checkout now completes even when Rental Control cannot confirm
+    the early lock-code expiry update. Automatic expiry shortening and retry
+    require verified Keymaster routing and slot serialization. Legacy
+    associations never receive an expiry write; a persistent notification
+    explains the safety block, and bounded retries re-check until verified
+    routing becomes available, the reservation is replaced, or its original
+    end time passes. Pending retries are restored after a Home Assistant
+    restart.
+
+    Verified updates wait for the expected datetime value to be read back
+    before clearing the notification. Immediately before a write, they also
+    verify that the current Keymaster datetime is readable and later than the
+    requested expiry; an already earlier or equal expiry satisfies the
+    request without another write. Missing or unreadable datetime state fails
+    closed. Unconfirmed writes remain pending and may already have reached
+    the lock.

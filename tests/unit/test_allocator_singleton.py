@@ -22,6 +22,7 @@ from custom_components.rental_control.const import CONF_GENERATE
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import UNSUB_LISTENERS
+from custom_components.rental_control.sensors.checkin import checkout_expiry_retry
 
 from tests.fixtures.fake_hass import as_config_entry
 from tests.fixtures.fake_hass import as_hass
@@ -255,6 +256,12 @@ async def test_remove_entry_skips_missing_allocator(
 ) -> None:
     """Removing an uninitialized entry does not create the allocator."""
     hass = FakeHass()
+    dismissed_entries: list[str] = []
+    monkeypatch.setattr(
+        checkout_expiry_retry,
+        "dismiss_early_expiry_notice",
+        lambda _hass, entry_id: dismissed_entries.append(entry_id),
+    )
     monkeypatch.setattr(
         integration,
         "async_get_or_create_allocator",
@@ -270,6 +277,7 @@ async def test_remove_entry_skips_missing_allocator(
 
     assert hass.data == {}
     assert FakeAllocator.load_count == 0
+    assert dismissed_entries == ["entry-missing"]
 
 
 async def test_setup_failure_keeps_data_when_unload_fails(

@@ -9,6 +9,9 @@ from datetime import datetime
 import logging
 from typing import Any
 
+from homeassistant.util import dt as dt_util
+
+from ...helpers import _same_instant
 from ...keymaster_operations import VerifiedOperationRejected
 from ...keymaster_operations import prepare_verified_intent
 from ...keymaster_slot_operations import async_slot_operation
@@ -20,12 +23,17 @@ from ...util import _async_wait_for_expected_datetime
 _LOGGER = logging.getLogger("custom_components.rental_control.sensors.checkinsensor")
 
 
+class _ExpiryAlreadySatisfied(Exception):
+    """Signal a guarded no-dispatch because the current end is already strict."""
+
+
 async def async_update_verified_lock_code_expiry(
     entity: Any,
     new_end: datetime,
     *,
     identity_end: datetime | None,
     on_dispatch: Callable[[], None] | None = None,
+    pre_dispatch_guard: Callable[[], bool] | None = None,
 ) -> bool:
     """Set one date property through a current owner fence and exact capability.
 
@@ -40,10 +48,21 @@ async def async_update_verified_lock_code_expiry(
     if assignment_is_current is None:
         return False
 
-    def release_dispatch() -> bool:
+    def release_dispatch(entity_id: str) -> bool:
         """Run the final assignment check and record a released dispatch."""
-        if not assignment_is_current(False):
+        if not assignment_is_current(False) or (
+            pre_dispatch_guard is not None and not pre_dispatch_guard()
+        ):
             return False
+        expiry_state = _requested_expiry_state(
+            entity._hass,
+            entity_id,
+            new_end,
+        )
+        if expiry_state is None:
+            return False
+        if expiry_state:
+            raise _ExpiryAlreadySatisfied
         if on_dispatch is not None:
             on_dispatch()
         return True
@@ -79,12 +98,33 @@ def _log_unconfirmed(entry_id: str, slot: int) -> None:
     )
 
 
+def _requested_expiry_state(
+    hass: Any, entity_id: str, requested_end: datetime
+) -> bool | None:
+    """Return whether the current state is already at least as strict."""
+    state = hass.states.get(entity_id)
+    if (
+        state is None
+        or requested_end.tzinfo is None
+        or requested_end.utcoffset() is None
+    ):
+        return None
+    current_end = dt_util.parse_datetime(state.state)
+    if current_end is None:
+        return None
+    return dt_util.as_utc(current_end) <= dt_util.as_utc(requested_end)
+
+
 def _owned_slot(entity: Any, identity_end: datetime | None) -> tuple[str, int] | None:
     """Return the tracked reservation's identity and its managed slot."""
     coordinator = entity.coordinator
     overrides = coordinator.event_overrides
-    slot_name = entity._tracked_event_slot_name
-    start = entity._tracked_event_start
+    slot_name = getattr(entity, "_early_expiry_reservation_slot_name", None)
+    if slot_name is None:
+        slot_name = entity._tracked_event_slot_name
+    start = getattr(entity, "_early_expiry_reservation_start", None)
+    if start is None:
+        start = entity._tracked_event_start
     reservation_end = identity_end or entity._tracked_event_end
     if (
         overrides is None
@@ -121,7 +161,7 @@ async def _async_set_and_confirm(
     identity_key: str,
     new_end: datetime,
     assignment_is_current: Callable[[bool], bool],
-    release_dispatch: Callable[[], bool],
+    release_dispatch: Callable[[str], bool],
 ) -> bool:
     """Dispatch the end date under the slot lock and await its confirmation."""
     coordinator = entity.coordinator
@@ -139,12 +179,20 @@ async def _async_set_and_confirm(
         if intent is None or not assignment_is_current(False):
             return False
         entity_id = intent.entity_id(property_key)
-        await intent.async_call(
-            property_key,
-            "set_value",
-            {"datetime": new_end.isoformat()},
-            pre_dispatch_guard=release_dispatch,
-        )
+
+        def pre_dispatch_guard() -> bool:
+            """Check identity and expiry while holding the final dispatch turn."""
+            return release_dispatch(entity_id)
+
+        try:
+            await intent.async_call(
+                property_key,
+                "set_value",
+                {"datetime": new_end.isoformat()},
+                pre_dispatch_guard=pre_dispatch_guard,
+            )
+        except _ExpiryAlreadySatisfied:
+            return True
         if not assignment_is_current(True):
             return False
         if not await _async_wait_for_expected_datetime(
@@ -166,9 +214,12 @@ def _assignment_guard(
     coordinator = entity.coordinator
     config_entry = entity._config_entry
     overrides = coordinator.event_overrides
-    slot_name = entity._tracked_event_slot_name
-    start = entity._tracked_event_start
-    tracked_end = entity._tracked_event_end
+    slot_name = getattr(entity, "_early_expiry_reservation_slot_name", None)
+    if slot_name is None:
+        slot_name = entity._tracked_event_slot_name
+    start = getattr(entity, "_early_expiry_reservation_start", None)
+    if start is None:
+        start = entity._tracked_event_start
     source = verified_slot_source(entity._hass, config_entry, slot)
     generation_reader = getattr(overrides, "get_feedback_generation", None)
     slot_overrides = getattr(overrides, "overrides", None)
@@ -190,7 +241,7 @@ def _assignment_guard(
         if (
             allow_expected_end
             and current_override is not None
-            and current_override.get("end_time") == new_end
+            and _same_instant(current_override.get("end_time"), new_end)
         ):
             expected_override["end_time"] = new_end
         return (
@@ -202,15 +253,32 @@ def _assignment_guard(
             <= slot
             < coordinator.start_slot + coordinator.max_events
             and overrides.get_feedback_generation(slot) == generation
-            and current_override == expected_override
+            and _same_reservation_fields(current_override, expected_override)
             and overrides.get_slot_name(slot) == slot_name
-            and entity._tracked_event_slot_name == slot_name
-            and entity._tracked_event_start == start
-            and entity._tracked_event_end == tracked_end
             and verified_slot_source(entity._hass, config_entry, slot) == source
         )
 
     return assignment_is_current
+
+
+def _same_reservation_fields(
+    current: dict[str, Any] | None, expected: dict[str, Any]
+) -> bool:
+    """Compare reservation fields while treating datetimes as absolute instants."""
+    if current is None or current.keys() != expected.keys():
+        return False
+    for key, expected_value in expected.items():
+        current_value = current[key]
+        if isinstance(current_value, datetime) or isinstance(expected_value, datetime):
+            if not (
+                isinstance(current_value, datetime)
+                and isinstance(expected_value, datetime)
+                and _same_instant(current_value, expected_value)
+            ):
+                return False
+        elif current_value != expected_value:
+            return False
+    return True
 
 
 def _reservation_fields(override: Any) -> dict[str, Any] | None:

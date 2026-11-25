@@ -318,7 +318,24 @@ def compute_early_expiry_time(
     grace_minutes: int = EARLY_CHECKOUT_GRACE_MINUTES,
 ) -> datetime:
     """Compute the earliest safe lock-code expiry time after early checkout."""
-    return min(now + timedelta(minutes=grace_minutes), original_end)
+    if original_end.tzinfo is None:
+        return min(now + timedelta(minutes=grace_minutes), original_end)
+    grace_end_utc = dt.as_utc(now) + timedelta(minutes=grace_minutes)
+    original_end_utc = dt.as_utc(original_end)
+    expiry_utc = min(grace_end_utc, original_end_utc)
+    return expiry_utc.astimezone(original_end.tzinfo)
+
+
+def _same_instant(left: datetime | None, right: datetime | None) -> bool:
+    """Compare optional datetimes by instant rather than local wall time."""
+    if left is None or right is None:
+        return left is right
+    return dt.as_utc(left) == dt.as_utc(right)
+
+
+def _same_instant_in(value: datetime | None, candidates: tuple[datetime, ...]) -> bool:
+    """Return whether a datetime matches any candidate instant."""
+    return any(_same_instant(value, candidate) for candidate in candidates)
 
 
 def get_slot_name(summary: str, description: str, prefix: str) -> str | None:

@@ -62,6 +62,15 @@ class CheckinTrackingSensor(
 ):
     """Sensor that tracks guest check-in/check-out state."""
 
+    _early_expiry_original_end: datetime | None
+    _early_expiry_new_end: datetime | None
+    _early_expiry_retry_attempt: int
+    _early_expiry_retry_slot: int | None
+    _early_expiry_reservation_start: datetime | None
+    _early_expiry_reservation_slot_name: str | None
+    _early_expiry_retry_was_dispatched: bool
+    _early_expiry_retry_initial_pending: bool
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -96,6 +105,7 @@ class CheckinTrackingSensor(
         self._linger_followon_key: str | None = None
         self._linger_baseline: datetime | None = None
         self._event_missing_warned = False
+        runtime.initialize_early_expiry_retry(self)
         self._timer_manager = CheckinTimerManager(hass, async_track_point_in_time)
         self._unique_id = gen_uuid(f"{self.coordinator.unique_id} checkin_tracking")
 
@@ -184,6 +194,7 @@ class CheckinTrackingSensor(
             self._linger_followon_key,
             self._linger_baseline,
             self._event_missing_warned,
+            **runtime.early_expiry_snapshot_fields(self),
         )
 
     def _apply_snapshot(self, snapshot: CheckinStateSnapshot) -> None:
@@ -276,6 +287,7 @@ class CheckinTrackingSensor(
         apply_transition_decision(
             self, decide_coordinator_update(self._decision_context())
         )
+        runtime.resume_early_expiry_retry(self)
 
     def _transition_to_awaiting(self, event: CalendarEvent) -> None:
         """Transition to awaiting_checkin state."""
@@ -401,6 +413,7 @@ class CheckinTrackingSensor(
     async def async_will_remove_from_hass(self) -> None:
         """Clean up when entity is being removed."""
         self._cancel_timer()
+        runtime.cancel_early_expiry_retry(self, dismiss=False, entity_removed=True)
         await super().async_will_remove_from_hass()
 
     @callback

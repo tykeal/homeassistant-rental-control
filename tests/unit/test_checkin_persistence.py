@@ -30,6 +30,14 @@ _EXPECTED_KEYS = {
     "checked_out_event_key",
     "next_event_start_day",
     "checkin_lock_name",
+    "early_expiry_retry_attempt",
+    "early_expiry_retry_slot",
+    "early_expiry_original_end",
+    "early_expiry_new_end",
+    "early_expiry_reservation_start",
+    "early_expiry_reservation_slot_name",
+    "early_expiry_retry_was_dispatched",
+    "early_expiry_retry_initial_pending",
 }
 
 
@@ -54,7 +62,7 @@ def _snapshot() -> CheckinStateSnapshot:
 
 
 def test_as_dict_emits_exact_key_set_and_iso_datetimes() -> None:
-    """Stored data emits the legacy key set and ISO datetime strings."""
+    """Stored data emits all fields and ISO datetime strings."""
     data = CheckinExtraStoredData.from_snapshot(_snapshot()).as_dict()
 
     assert set(data) == _EXPECTED_KEYS
@@ -88,6 +96,40 @@ def test_missing_fields_default_to_no_reservation() -> None:
     assert restored.state == CHECKIN_STATE_NO_RESERVATION
     assert restored.checkin_lock_name is None
     assert restored.next_event_start_day is None
+    assert restored.early_expiry_retry_attempt == 0
+    assert restored.early_expiry_retry_slot is None
+    assert restored.early_expiry_reservation_start is None
+    assert restored.early_expiry_reservation_slot_name is None
+    assert not restored.early_expiry_retry_was_dispatched
+    assert not restored.early_expiry_retry_initial_pending
+
+
+def test_retry_state_round_trips() -> None:
+    """A pending expiry retry survives Home Assistant state restoration."""
+    snapshot = _snapshot()
+    original_end = snapshot.tracked_event_end
+    assert original_end is not None
+    snapshot.early_expiry_original_end = original_end
+    snapshot.early_expiry_new_end = original_end - timedelta(hours=1)
+    snapshot.early_expiry_retry_attempt = 2
+    snapshot.early_expiry_retry_slot = 21
+    snapshot.early_expiry_reservation_start = snapshot.tracked_event_start
+    snapshot.early_expiry_reservation_slot_name = "Guest"
+    snapshot.early_expiry_retry_was_dispatched = True
+    snapshot.early_expiry_retry_initial_pending = True
+
+    stored = CheckinExtraStoredData.from_snapshot(snapshot)
+    restored = CheckinExtraStoredData.from_dict(stored.as_dict())
+
+    assert stored.as_dict()["early_expiry_retry_initial_pending"]
+    assert restored.early_expiry_original_end == snapshot.tracked_event_end
+    assert restored.early_expiry_new_end == snapshot.early_expiry_new_end
+    assert restored.early_expiry_retry_attempt == 2
+    assert restored.early_expiry_retry_slot == 21
+    assert restored.early_expiry_reservation_start == snapshot.tracked_event_start
+    assert restored.early_expiry_reservation_slot_name == "Guest"
+    assert restored.early_expiry_retry_was_dispatched
+    assert not restored.early_expiry_retry_initial_pending
 
 
 def test_invalid_datetimes_log_warning(caplog) -> None:  # type: ignore[no-untyped-def]

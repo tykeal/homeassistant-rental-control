@@ -30,6 +30,8 @@ from custom_components.rental_control import util
 from custom_components.rental_control.allocator.associations import AssociationMode
 from custom_components.rental_control.allocator.associations import AssociationTuple
 from custom_components.rental_control.const import CHECKIN_SENSOR
+from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_IN
+from custom_components.rental_control.const import CHECKIN_STATE_CHECKED_OUT
 from custom_components.rental_control.const import COORDINATOR
 from custom_components.rental_control.const import DOMAIN
 from custom_components.rental_control.const import EARLY_CHECKOUT_EXPIRY_SWITCH
@@ -68,6 +70,9 @@ from custom_components.rental_control.keymaster_slot_operations import (
 )
 from custom_components.rental_control.listeners import _handle_keymaster_event
 from custom_components.rental_control.listeners import async_register_keymaster_listener
+from custom_components.rental_control.sensors.checkin import checkout_expiry
+from custom_components.rental_control.sensors.checkin import checkout_expiry_guards
+from custom_components.rental_control.sensors.checkin import checkout_expiry_retry
 from custom_components.rental_control.sensors.checkin import runtime
 from custom_components.rental_control.sensors.checkin import verified_date
 from custom_components.rental_control.switch import (
@@ -334,7 +339,7 @@ async def test_explicit_lockless_association_ignores_retained_legacy_name(
         coordinator_for_mixins, 1, 1
     )
     expiry_updated = await runtime.async_update_lock_code_expiry(
-        SimpleNamespace(coordinator=coordinator),
+        SimpleNamespace(coordinator=coordinator, _config_entry=rc_entry),
         datetime.now().astimezone(),
     )
 
@@ -1326,7 +1331,6 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
     from datetime import UTC
     from datetime import datetime
     from datetime import timedelta
-    from unittest.mock import AsyncMock
 
     coordinator, store, entity_ids = await _setup_verified_consumer(
         hass, tmp_path / release / ".storage", release
@@ -1353,8 +1357,6 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
         "make_reservation_fingerprint",
         lambda *_args: identity_key,
     )
-    fallback = AsyncMock()
-    monkeypatch.setattr(runtime, "add_call", fallback)
     original_deps = util._keymaster_deps
     monkeypatch.setattr(
         util,
@@ -1362,9 +1364,12 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
         lambda: replace(original_deps(), confirmation_timeout=0.01),
     )
     monkeypatch.setattr(
-        runtime,
+        checkout_expiry,
         "get_entry_data",
         lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
+    )
+    monkeypatch.setattr(
+        checkout_expiry_retry, "_schedule_early_expiry_retry", lambda *_args: None
     )
     dispatches: list[dict[str, Any]] = []
 
@@ -1401,7 +1406,529 @@ async def test_early_checkout_date_uses_verified_live_datetime_capability(
         record["fence_type"] == "allocation"
         for record in store.loaded_result.data["pending_fences"]
     )
-    fallback.assert_not_awaited()
+
+
+@pytest.mark.parametrize("retry_state", ["later", "earlier", "equal", "naive_equal"])
+async def test_verified_early_checkout_retry_uses_real_dispatch_and_timer(
+    hass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    retry_state: str,
+) -> None:
+    """Retries dispatch normally or stop on an equal or stricter expiry."""
+    from datetime import UTC
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant.common import async_fire_time_changed
+
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.5"
+    )
+    km_entry = hass.config_entries.async_get_entry("consumer-km")
+    assert km_entry is not None
+    hass.config_entries.async_update_entry(
+        km_entry,
+        data={
+            **km_entry.data,
+            "lockname": "Consumer Door",
+            "lock_entity_id": "lock.selected_physical_lock",
+        },
+    )
+    await hass.async_block_till_done()
+
+    identity_key = "consumer-reservation"
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == identity_key else None
+    )
+    start = datetime.now(UTC)
+    old_end = start + timedelta(days=3)
+    now = datetime.now(UTC)
+    monkeypatch.setattr(
+        verified_date,
+        "make_reservation_fingerprint",
+        lambda *_args: identity_key,
+    )
+    original_deps = util._keymaster_deps
+    monkeypatch.setattr(
+        util,
+        "_keymaster_deps",
+        lambda: replace(original_deps(), confirmation_timeout=0.01),
+    )
+    monkeypatch.setattr(
+        checkout_expiry,
+        "get_entry_data",
+        lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
+    )
+    notifications: list[str] = []
+    dismissed: list[str] = []
+    monkeypatch.setattr(
+        checkout_expiry_retry,
+        "async_create",
+        lambda _hass, message, **_kwargs: notifications.append(message),
+    )
+    monkeypatch.setattr(
+        checkout_expiry_retry,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+
+    dispatches: list[dict[str, Any]] = []
+
+    async def set_datetime(call) -> None:
+        """Leave the first write unconfirmed; apply the scheduled retry."""
+        dispatches.append(dict(call.data))
+        if len(dispatches) > 1:
+            hass.states.async_set(call.data["entity_id"], call.data["datetime"])
+
+    hass.services.async_register("datetime", "set_value", set_datetime)
+    entity = SimpleNamespace(
+        _hass=hass,
+        _config_entry=coordinator.config_entry,
+        coordinator=coordinator,
+        _state=CHECKIN_STATE_CHECKED_IN,
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=old_end,
+        _tracked_event_summary="Reserved - Guest",
+        unique_id="verified-retry",
+        _early_expiry_original_end=None,
+        _early_expiry_new_end=None,
+        _early_expiry_retry_attempt=0,
+        _early_expiry_retry_slot=None,
+        _early_expiry_retry_handle=None,
+        _early_expiry_retry_task=None,
+        _early_expiry_retry_generation=0,
+        _early_expiry_notice_published=False,
+        async_write_ha_state=lambda: None,
+    )
+    end_id = entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
+    hass.states.async_set(end_id, old_end.isoformat())
+    await runtime._maybe_shorten_lock_expiry(entity, now)
+
+    assert len(dispatches) == 1
+    assert entity._early_expiry_original_end == old_end
+    if retry_state != "later":
+        assert entity._early_expiry_new_end is not None
+        retry_end = entity._early_expiry_new_end
+        if retry_state == "earlier":
+            retry_end -= timedelta(minutes=1)
+        if retry_state == "naive_equal":
+            retry_end = dt_util.as_local(retry_end).replace(tzinfo=None)
+        hass.states.async_set(
+            end_id,
+            retry_end.isoformat(),
+        )
+    entity._state = CHECKIN_STATE_CHECKED_OUT
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=6))
+    await hass.async_block_till_done()
+
+    assert len(dispatches) == (2 if retry_state == "later" else 1)
+    assert dispatches[0]["entity_id"] == end_id
+    if retry_state == "later":
+        assert dispatches[1]["entity_id"] == end_id
+    assert entity._early_expiry_original_end is None
+    assert len(notifications) == 1
+    assert dismissed
+
+
+@pytest.mark.parametrize("state_case", ["missing", "unparseable", "later_aware"])
+async def test_verified_expiry_fails_closed_when_current_datetime_is_unreadable(
+    hass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state_case: str,
+) -> None:
+    """Unreadable expiry fails closed while a later readable expiry writes."""
+    from datetime import UTC
+    from datetime import timedelta
+
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.5"
+    )
+    km_entry = hass.config_entries.async_get_entry("consumer-km")
+    assert km_entry is not None
+    hass.config_entries.async_update_entry(
+        km_entry,
+        data={
+            **km_entry.data,
+            "lockname": "Consumer Door",
+            "lock_entity_id": "lock.selected_physical_lock",
+        },
+    )
+    await hass.async_block_till_done()
+
+    identity_key = "consumer-reservation"
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == identity_key else None
+    )
+    start = datetime.now(UTC)
+    old_end = start + timedelta(days=3)
+    new_end = start + timedelta(hours=1)
+    overrides = coordinator.event_overrides
+    assert overrides is not None
+    overrides.update(_SLOT, "2718", "Guest", start, old_end)
+    monkeypatch.setattr(
+        verified_date,
+        "make_reservation_fingerprint",
+        lambda *_args: identity_key,
+    )
+
+    end_id = entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
+    if state_case == "missing":
+        hass.states.async_remove(end_id)
+    elif state_case == "unparseable":
+        hass.states.async_set(end_id, "not-a-datetime")
+    else:
+        hass.states.async_set(end_id, old_end.isoformat())
+    dispatches: list[dict[str, Any]] = []
+
+    async def set_datetime(call: Any) -> None:
+        """Record the write and apply its requested state for read-back."""
+        dispatches.append(dict(call.data))
+        hass.states.async_set(call.data["entity_id"], call.data["datetime"])
+
+    hass.services.async_register("datetime", "set_value", set_datetime)
+    entity = SimpleNamespace(
+        _hass=hass,
+        _config_entry=coordinator.config_entry,
+        coordinator=coordinator,
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=old_end,
+    )
+
+    updated = await verified_date.async_update_verified_lock_code_expiry(
+        entity, new_end, identity_end=old_end
+    )
+    if state_case == "later_aware":
+        assert updated
+        assert len(dispatches) == 1
+        assert dispatches[0]["datetime"] == new_end.isoformat()
+    else:
+        assert not updated
+        assert dispatches == []
+
+
+async def test_initial_update_is_not_dispatched_after_state_override(
+    hass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A state override invalidates an initial write still preparing dispatch."""
+    from datetime import UTC
+    from datetime import timedelta
+
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.5"
+    )
+    km_entry = hass.config_entries.async_get_entry("consumer-km")
+    assert km_entry is not None
+    hass.config_entries.async_update_entry(
+        km_entry,
+        data={
+            **km_entry.data,
+            "lockname": "Consumer Door",
+            "lock_entity_id": "lock.selected_physical_lock",
+        },
+    )
+    await hass.async_block_till_done()
+
+    identity_key = "consumer-reservation"
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == identity_key else None
+    )
+    now = datetime.now(UTC)
+    start = now - timedelta(days=1)
+    old_end = now + timedelta(days=3)
+    overrides = coordinator.event_overrides
+    assert overrides is not None
+    overrides.overrides[_SLOT].update(
+        slot_name="Guest",
+        start_time=start,
+        end_time=old_end,
+    )
+    monkeypatch.setattr(
+        verified_date,
+        "make_reservation_fingerprint",
+        lambda *_args: identity_key,
+    )
+    monkeypatch.setattr(
+        checkout_expiry,
+        "get_entry_data",
+        lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
+    )
+    prepare_started = asyncio.Event()
+    allow_prepare = asyncio.Event()
+    original_prepare = verified_date.prepare_verified_intent
+
+    async def hold_prepare(*args: Any, **kwargs: Any) -> Any:
+        """Pause while verified intent is prepared, before service dispatch."""
+        prepare_started.set()
+        await allow_prepare.wait()
+        return await original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(verified_date, "prepare_verified_intent", hold_prepare)
+    dispatches: list[dict[str, Any]] = []
+
+    async def set_datetime(call: Any) -> None:
+        """Record a service write if the invalidated intent is dispatched."""
+        dispatches.append(dict(call.data))
+
+    hass.services.async_register("datetime", "set_value", set_datetime)
+    entity = SimpleNamespace(
+        _hass=hass,
+        _config_entry=coordinator.config_entry,
+        coordinator=coordinator,
+        _state=CHECKIN_STATE_CHECKED_IN,
+        _attr_options=["manual_override"],
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=old_end,
+        _tracked_event_summary="Reserved - Guest",
+        _early_expiry_retry_generation=0,
+        _early_expiry_retry_task=None,
+        _early_expiry_retry_handle=None,
+        _early_expiry_retry_dispatched=False,
+        _early_expiry_notice_published=False,
+        _early_expiry_retry_entity_removed=False,
+        entity_id="sensor.test_checkin",
+        unique_id="state-override-write-guard",
+        _cancel_timer=lambda: None,
+        async_write_ha_state=lambda: None,
+    )
+    end_id = entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
+    hass.states.async_set(end_id, old_end.isoformat())
+    request = asyncio.create_task(runtime._maybe_shorten_lock_expiry(entity, now))
+    await prepare_started.wait()
+
+    await runtime.async_set_state(entity, "manual_override")
+    allow_prepare.set()
+    await request
+
+    assert not dispatches
+    assert entity._state == "manual_override"
+    assert entity._early_expiry_original_end is None
+    assert entity._early_expiry_new_end is None
+
+
+async def test_legacy_pending_expiry_waits_for_verified_routing_then_dispatches(
+    hass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A legacy pending retry becomes a guarded verified dispatch when routed."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant.common import async_fire_time_changed
+
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.5"
+    )
+    km_entry = hass.config_entries.async_get_entry("consumer-km")
+    assert km_entry is not None
+    hass.config_entries.async_update_entry(
+        km_entry,
+        data={
+            **km_entry.data,
+            "lockname": "Consumer Door",
+            "lock_entity_id": "lock.selected_physical_lock",
+        },
+    )
+    await hass.async_block_till_done()
+
+    identity_key = "consumer-reservation"
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == identity_key else None
+    )
+    route_verified = False
+
+    def requires_verified_routing(*_args: Any) -> bool:
+        """Switch route mode without changing the persisted reservation identity."""
+        return route_verified
+
+    monkeypatch.setattr(
+        checkout_expiry,
+        "association_requires_verified_routing",
+        requires_verified_routing,
+    )
+    monkeypatch.setattr(
+        checkout_expiry,
+        "get_entry_data",
+        lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
+    )
+    monkeypatch.setattr(
+        checkout_expiry_guards,
+        "association_requires_verified_routing",
+        requires_verified_routing,
+    )
+    monkeypatch.setattr(
+        checkout_expiry_retry,
+        "association_requires_verified_routing",
+        requires_verified_routing,
+    )
+    monkeypatch.setattr(
+        verified_date,
+        "make_reservation_fingerprint",
+        lambda *_args: identity_key,
+    )
+    overrides = coordinator.event_overrides
+    assert overrides is not None
+    now = dt_util.now()
+    start = now - timedelta(days=1)
+    old_end = now + timedelta(days=3)
+    overrides.overrides[_SLOT].update(
+        slot_name="Guest",
+        start_time=start,
+        end_time=old_end,
+    )
+    coordinator.last_update_success = False
+    entity_id = entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
+    hass.states.async_set(entity_id, old_end.isoformat())
+    notifications: list[str] = []
+    dismissed: list[str] = []
+    monkeypatch.setattr(
+        checkout_expiry_retry,
+        "async_create",
+        lambda _hass, message, **_kwargs: notifications.append(message),
+    )
+    monkeypatch.setattr(
+        checkout_expiry_retry,
+        "async_dismiss",
+        lambda _hass, notification_id: dismissed.append(notification_id),
+    )
+
+    dispatches: list[dict[str, Any]] = []
+
+    async def set_datetime(call: Any) -> None:
+        """Confirm the safe verified retry by updating actual HA state."""
+        dispatches.append(dict(call.data))
+        hass.states.async_set(call.data["entity_id"], call.data["datetime"])
+
+    hass.services.async_register("datetime", "set_value", set_datetime)
+    entity = SimpleNamespace(
+        _hass=hass,
+        _config_entry=coordinator.config_entry,
+        coordinator=coordinator,
+        _state=CHECKIN_STATE_CHECKED_IN,
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=old_end,
+        _tracked_event_summary="Reserved - Guest",
+        unique_id="legacy-to-verified-retry",
+        _early_expiry_original_end=None,
+        _early_expiry_new_end=None,
+        _early_expiry_retry_attempt=0,
+        _early_expiry_retry_slot=None,
+        _early_expiry_retry_handle=None,
+        _early_expiry_retry_task=None,
+        _early_expiry_retry_generation=0,
+        _early_expiry_notice_published=False,
+        async_write_ha_state=lambda: None,
+    )
+    lifecycle = get_keymaster_lifecycle(hass, coordinator.config_entry.entry_id)
+    assert lifecycle is not None
+    await runtime._maybe_shorten_lock_expiry(entity, now)
+
+    assert not dispatches
+    assert entity._tracked_event_end == old_end
+    assert entity._early_expiry_original_end == old_end
+    assert len(notifications) == 1
+    assert "cannot safely serialize" in notifications[0]
+    assert "No expiry write was sent" in notifications[0]
+    assert "verified routing" in notifications[0]
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=6))
+    await hass.async_block_till_done()
+    assert not dispatches
+    assert entity._early_expiry_original_end == old_end
+
+    route_verified = True
+    checkout_expiry_retry.resume_early_expiry_retry(entity)
+    assert "No expiry write was sent" in notifications[-1]
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=17))
+    await hass.async_block_till_done()
+
+    assert len(dispatches) == 1
+    assert dispatches[0]["entity_id"] == entity_id
+    assert entity._early_expiry_original_end is None
+    assert dismissed
+
+
+async def test_verified_expiry_fails_closed_without_active_lifecycle(
+    hass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A verified association without live publication cannot dispatch."""
+    from datetime import UTC
+    from datetime import timedelta
+
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
+        hass, tmp_path / ".storage", "v0.6.5"
+    )
+    km_entry = hass.config_entries.async_get_entry("consumer-km")
+    assert km_entry is not None
+    hass.config_entries.async_update_entry(
+        km_entry,
+        data={
+            **km_entry.data,
+            "lockname": "Consumer Door",
+            "lock_entity_id": "lock.selected_physical_lock",
+        },
+    )
+    await hass.async_block_till_done()
+
+    identity_key = "consumer-reservation"
+    coordinator.get_slot_assignment = lambda identity: (
+        _SLOT if identity == identity_key else None
+    )
+    monkeypatch.setattr(
+        verified_date,
+        "make_reservation_fingerprint",
+        lambda *_args: identity_key,
+    )
+    overrides = coordinator.event_overrides
+    assert overrides is not None
+    start = datetime.now(UTC)
+    original_end = start + timedelta(days=3)
+    overrides.overrides[_SLOT].update(
+        slot_name="Guest",
+        start_time=start,
+        end_time=original_end,
+    )
+    entity = SimpleNamespace(
+        _hass=hass,
+        _config_entry=coordinator.config_entry,
+        coordinator=coordinator,
+        _tracked_event_slot_name="Guest",
+        _tracked_event_start=start,
+        _tracked_event_end=original_end,
+        _early_expiry_reservation_slot_name="Guest",
+        _early_expiry_reservation_start=start,
+    )
+    date_entity_id = entity_ids[
+        f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"
+    ]
+    hass.states.async_set(date_entity_id, original_end.isoformat())
+    dispatches: list[dict[str, Any]] = []
+
+    async def set_datetime(call: Any) -> None:
+        """Record a service call that must be blocked by the missing lifecycle."""
+        dispatches.append(dict(call.data))
+
+    hass.services.async_register("datetime", "set_value", set_datetime)
+    stop_keymaster_lifecycle(hass, coordinator.config_entry.entry_id)
+
+    updated = await verified_date.async_update_verified_lock_code_expiry(
+        entity,
+        start + timedelta(hours=1),
+        identity_end=original_end,
+    )
+
+    assert not updated
+    assert not dispatches
 
 
 @pytest.mark.parametrize("phase", ["queued", "pre_dispatch", "in_dispatch"])
@@ -1569,7 +2096,7 @@ async def test_failed_early_checkout_does_not_restore_replaced_reservation(
         lambda *_args: "consumer-reservation",
     )
     monkeypatch.setattr(
-        runtime,
+        checkout_expiry,
         "get_entry_data",
         lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
     )
@@ -1601,6 +2128,7 @@ async def test_failed_early_checkout_does_not_restore_replaced_reservation(
     await asyncio.wait_for(task, timeout=5)
     assert entity._tracked_event_start == replacement_start
     assert entity._tracked_event_end == replacement_end
+    runtime.cancel_early_expiry_retry(entity, dismiss=False)
 
 
 async def test_early_checkout_confirms_its_own_date_feedback(
@@ -1734,6 +2262,7 @@ async def test_early_checkout_ignores_pin_only_feedback_before_dispatch(
     overrides = coordinator.event_overrides
     overrides.update(_SLOT, "2718", "Guest", start, old_end)
     end_id = entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"]
+    hass.states.async_set(end_id, old_end.isoformat())
     dispatches: list[dict[str, Any]] = []
 
     async def set_datetime(call) -> None:
@@ -1802,7 +2331,7 @@ async def test_early_checkout_rolls_back_only_when_nothing_was_sent(
 
     from homeassistant.exceptions import HomeAssistantError
 
-    coordinator, _store, _entity_ids = await _setup_verified_consumer(
+    coordinator, _store, entity_ids = await _setup_verified_consumer(
         hass, tmp_path / ".storage", "v0.6.1"
     )
     km_entry = hass.config_entries.async_get_entry("consumer-km")
@@ -1821,9 +2350,12 @@ async def test_early_checkout_rolls_back_only_when_nothing_was_sent(
         lambda *_args: "consumer-reservation",
     )
     monkeypatch.setattr(
-        runtime,
+        checkout_expiry,
         "get_entry_data",
         lambda *_args: {EARLY_CHECKOUT_EXPIRY_SWITCH: SimpleNamespace(is_on=True)},
+    )
+    monkeypatch.setattr(
+        checkout_expiry_retry, "_schedule_early_expiry_retry", lambda *_args: None
     )
     dispatches: list[dict[str, Any]] = []
 
@@ -1837,6 +2369,10 @@ async def test_early_checkout_rolls_back_only_when_nothing_was_sent(
     start = now - timedelta(days=1)
     old_end = now + timedelta(days=3)
     new_end = runtime.compute_early_expiry_time(now, old_end)
+    hass.states.async_set(
+        entity_ids[f"datetime.code_slots:{_SLOT}.accesslimit_date_range_end"],
+        old_end.isoformat(),
+    )
     entity = SimpleNamespace(
         _hass=hass,
         _config_entry=coordinator.config_entry,

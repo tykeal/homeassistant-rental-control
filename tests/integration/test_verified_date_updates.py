@@ -380,6 +380,10 @@ async def test_same_name_early_checkout_routes_by_tracked_reservation_identity(
         lambda *_args: SimpleNamespace(),
     )
     monkeypatch.setattr(verified_date, "prepare_verified_intent", prepare)
+    hass.states.async_set(
+        f"datetime.keymaster_slot_{target_slot}_end",
+        end.isoformat(),
+    )
 
     async def confirm(*_args: Any, **_kwargs: Any) -> bool:
         """Confirm the date update on the selected slot entity."""

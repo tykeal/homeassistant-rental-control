@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 from datetime import date
 from datetime import datetime
 from datetime import timedelta
@@ -16,6 +17,7 @@ from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.const import CONF_NAME
@@ -2563,6 +2565,39 @@ class TestSlugifiedLocknameEntityIds:
 
 class TestComputeEarlyExpiryTime:
     """Tests for the compute_early_expiry_time helper (T031)."""
+
+    def test_fold_zero_grace_uses_elapsed_utc_minutes(self) -> None:
+        """Grace across the fall-back hour is fifteen real minutes."""
+        eastern = ZoneInfo("America/New_York")
+        now = datetime(2026, 11, 1, 1, 50, tzinfo=eastern, fold=0)
+        original_end = datetime(2026, 11, 1, 3, 0, tzinfo=eastern)
+
+        result = compute_early_expiry_time(now, original_end)
+
+        assert dt_util.as_utc(result) == datetime(2026, 11, 1, 6, 5, tzinfo=UTC)
+        assert result.tzinfo is eastern
+        assert result.fold == 1
+
+    def test_fold_zero_grace_is_capped_by_original_end_in_utc(self) -> None:
+        """The grace result is capped by the original end as an instant."""
+        eastern = ZoneInfo("America/New_York")
+        now = datetime(2026, 11, 1, 1, 50, tzinfo=eastern, fold=0)
+        original_end = datetime(2026, 11, 1, 1, 58, tzinfo=eastern, fold=0)
+
+        result = compute_early_expiry_time(now, original_end)
+
+        assert dt_util.as_utc(result) == datetime(2026, 11, 1, 5, 58, tzinfo=UTC)
+        assert result.fold == 0
+
+    def test_naive_inputs_preserve_naive_result(self) -> None:
+        """Naive datetimes retain the helper's preexisting API behavior."""
+        now = datetime(2026, 1, 1, 12, 0)
+        original_end = now + timedelta(hours=2)
+
+        result = compute_early_expiry_time(now, original_end)
+
+        assert result == now + timedelta(minutes=15)
+        assert result.tzinfo is None
 
     def test_returns_now_plus_grace_when_more_than_grace_remain(self) -> None:
         """Verify returns now + 15min when more than 15min remain."""
